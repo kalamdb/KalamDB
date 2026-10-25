@@ -20,7 +20,7 @@ use crate::{
 };
 
 pub struct DeployOptions {
-    pub env:     Option<String>,
+    pub env: Option<String>,
     pub dry_run: bool,
 }
 
@@ -198,7 +198,7 @@ mod tests {
         run_deploy(
             &ctx,
             &DeployOptions {
-                env:     Some("prod".into()),
+                env: Some("prod".into()),
                 dry_run: true,
             },
         )

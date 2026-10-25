@@ -10,22 +10,22 @@ fn scoped_table_key(user_id: Option<&UserId>, primary_key: &str) -> ScopedPkKey 
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavepointEntry {
-    pub name:           String,
+    pub name: String,
     pub mutation_count: usize,
-    pub next_order:     u64,
+    pub next_order: u64,
 }
 
 /// Cold staged-write state allocated lazily on the first transaction write.
 #[derive(Debug, Clone)]
 pub struct TransactionWriteSet {
-    pub transaction_id:      TransactionId,
+    pub transaction_id: TransactionId,
     pub next_mutation_order: u64,
-    pub ordered_mutations:   Vec<StagedMutation>,
+    pub ordered_mutations: Vec<StagedMutation>,
     pub latest_by_table_key: HashMap<TableId, HashMap<ScopedPkKey, usize>>,
-    pub overlay_cache:       HashMap<TableId, TransactionOverlay>,
-    pub buffer_bytes:        usize,
-    pub savepoint_marks:     Vec<u64>,
-    pub savepoints:          Vec<SavepointEntry>,
+    pub overlay_cache: HashMap<TableId, TransactionOverlay>,
+    pub buffer_bytes: usize,
+    pub savepoint_marks: Vec<u64>,
+    pub savepoints: Vec<SavepointEntry>,
 }
 
 impl TransactionWriteSet {
@@ -119,9 +119,9 @@ impl TransactionWriteSet {
     pub fn push_savepoint(&mut self, name: &str) {
         let normalized = name.trim().to_ascii_lowercase();
         let entry = SavepointEntry {
-            name:           normalized,
+            name: normalized,
             mutation_count: self.ordered_mutations.len(),
-            next_order:     self.next_mutation_order,
+            next_order: self.next_mutation_order,
         };
         self.savepoint_marks.push(entry.next_order);
         self.savepoints.push(entry);

@@ -59,7 +59,7 @@ pub fn split_identifier_parts(target: &str) -> Result<Vec<String>> {
 /// Parsed `table` or `namespace.table` target from CLI input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableTarget {
-    pub namespace:  Option<String>,
+    pub namespace: Option<String>,
     pub table_name: String,
 }
 
@@ -74,11 +74,11 @@ impl TableTarget {
         let parts = split_identifier_parts(trimmed)?;
         match parts.as_slice() {
             [table_name] => Ok(Self {
-                namespace:  None,
+                namespace: None,
                 table_name: table_name.clone(),
             }),
             [namespace, table_name] => Ok(Self {
-                namespace:  Some(namespace.clone()),
+                namespace: Some(namespace.clone()),
                 table_name: table_name.clone(),
             }),
             _ => Err(CLIError::ParseError("expected <table> or <namespace.table>".to_string())),
@@ -88,7 +88,7 @@ impl TableTarget {
     /// Fill in the current namespace when the target was unqualified.
     pub fn qualify(&self, default_namespace: &str) -> QualifiedTableRef {
         QualifiedTableRef {
-            namespace:  self.namespace.clone().unwrap_or_else(|| default_namespace.to_string()),
+            namespace: self.namespace.clone().unwrap_or_else(|| default_namespace.to_string()),
             table_name: self.table_name.clone(),
         }
     }
@@ -97,7 +97,7 @@ impl TableTarget {
 /// Fully qualified `namespace.table` reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QualifiedTableRef {
-    pub namespace:  String,
+    pub namespace: String,
     pub table_name: String,
 }
 
@@ -161,14 +161,14 @@ mod tests {
         assert_eq!(
             TableTarget::parse("messages").unwrap(),
             TableTarget {
-                namespace:  None,
+                namespace: None,
                 table_name: "messages".to_string(),
             }
         );
         assert_eq!(
             TableTarget::parse("chat.messages;").unwrap(),
             TableTarget {
-                namespace:  Some("chat".to_string()),
+                namespace: Some("chat".to_string()),
                 table_name: "messages".to_string(),
             }
         );
@@ -179,7 +179,7 @@ mod tests {
         assert_eq!(
             TableTarget::parse("\"chat\".\"message logs\"").unwrap(),
             TableTarget {
-                namespace:  Some("chat".to_string()),
+                namespace: Some("chat".to_string()),
                 table_name: "message logs".to_string(),
             }
         );

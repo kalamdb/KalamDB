@@ -25,12 +25,12 @@ struct HttpTopicConsumeResponse {
 
 #[derive(Debug, Deserialize)]
 struct HttpTopicMessage {
-    topic_id:     String,
+    topic_id: String,
     partition_id: u32,
-    offset:       u64,
-    payload:      String,
-    user:         Option<String>,
-    op:           String,
+    offset: u64,
+    payload: String,
+    user: Option<String>,
+    op: String,
 }
 
 impl HttpTopicMessage {
@@ -1083,8 +1083,8 @@ impl StartMode {
 
 #[derive(Clone, Copy)]
 struct ConsumeCase {
-    start:       StartMode,
-    batch_size:  u32,
+    start: StartMode,
+    batch_size: u32,
     auto_commit: bool,
 }
 
@@ -1102,43 +1102,43 @@ struct ConsumeCase {
 async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
     let cases = [
         ConsumeCase {
-            start:       StartMode::Earliest,
-            batch_size:  1,
+            start: StartMode::Earliest,
+            batch_size: 1,
             auto_commit: true,
         },
         ConsumeCase {
-            start:       StartMode::Earliest,
-            batch_size:  1,
+            start: StartMode::Earliest,
+            batch_size: 1,
             auto_commit: false,
         },
         ConsumeCase {
-            start:       StartMode::Earliest,
-            batch_size:  20,
+            start: StartMode::Earliest,
+            batch_size: 20,
             auto_commit: true,
         },
         ConsumeCase {
-            start:       StartMode::Earliest,
-            batch_size:  20,
+            start: StartMode::Earliest,
+            batch_size: 20,
             auto_commit: false,
         },
         ConsumeCase {
-            start:       StartMode::Latest,
-            batch_size:  1,
+            start: StartMode::Latest,
+            batch_size: 1,
             auto_commit: true,
         },
         ConsumeCase {
-            start:       StartMode::Latest,
-            batch_size:  1,
+            start: StartMode::Latest,
+            batch_size: 1,
             auto_commit: false,
         },
         ConsumeCase {
-            start:       StartMode::Latest,
-            batch_size:  20,
+            start: StartMode::Latest,
+            batch_size: 20,
             auto_commit: true,
         },
         ConsumeCase {
-            start:       StartMode::Latest,
-            batch_size:  20,
+            start: StartMode::Latest,
+            batch_size: 20,
             auto_commit: false,
         },
     ];
@@ -1474,54 +1474,54 @@ async fn test_topic_http_consume_preserves_impersonated_user_and_payloads() {
     );
 
     struct ExpectedEvent<'a> {
-        offset:  u64,
-        user:    &'a str,
-        op:      &'a str,
-        id:      i64,
-        body:    &'a str,
-        status:  &'a str,
+        offset: u64,
+        user: &'a str,
+        op: &'a str,
+        id: i64,
+        body: &'a str,
+        status: &'a str,
         version: i64,
         deleted: bool,
     }
 
     let expected_events = [
         ExpectedEvent {
-            offset:  0,
-            user:    &alice_user_id,
-            op:      "Insert",
-            id:      1,
-            body:    "alice message v1",
-            status:  "draft",
+            offset: 0,
+            user: &alice_user_id,
+            op: "Insert",
+            id: 1,
+            body: "alice message v1",
+            status: "draft",
             version: 1,
             deleted: false,
         },
         ExpectedEvent {
-            offset:  1,
-            user:    &alice_user_id,
-            op:      "Update",
-            id:      1,
-            body:    "alice message v2",
-            status:  "sent",
+            offset: 1,
+            user: &alice_user_id,
+            op: "Update",
+            id: 1,
+            body: "alice message v2",
+            status: "sent",
             version: 2,
             deleted: false,
         },
         ExpectedEvent {
-            offset:  2,
-            user:    &bob_user_id,
-            op:      "Insert",
-            id:      2,
-            body:    "bob message v1",
-            status:  "queued",
+            offset: 2,
+            user: &bob_user_id,
+            op: "Insert",
+            id: 2,
+            body: "bob message v1",
+            status: "queued",
             version: 1,
             deleted: false,
         },
         ExpectedEvent {
-            offset:  3,
-            user:    &bob_user_id,
-            op:      "Delete",
-            id:      2,
-            body:    "bob message v1",
-            status:  "queued",
+            offset: 3,
+            user: &bob_user_id,
+            op: "Delete",
+            id: 2,
+            body: "bob message v1",
+            status: "queued",
             version: 1,
             deleted: true,
         },

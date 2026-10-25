@@ -247,14 +247,14 @@ pub async fn wait_for_stable_schema_file(path: &Path) -> Option<SystemTime> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SchemaFileStamp {
     modified: Option<SystemTime>,
-    len:      Option<u64>,
+    len: Option<u64>,
 }
 
 fn schema_file_stamp(path: &Path) -> SchemaFileStamp {
     let metadata = fs::metadata(path).ok();
     SchemaFileStamp {
         modified: metadata.as_ref().and_then(|m| m.modified().ok()),
-        len:      metadata.map(|m| m.len()),
+        len: metadata.map(|m| m.len()),
     }
 }
 

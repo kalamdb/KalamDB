@@ -41,8 +41,7 @@ pub async fn contracts_manifest_v1(
     etag_buf.extend_from_slice(&DOMAIN_EPOCH.to_le_bytes());
     etag_buf.extend_from_slice(&module_gen.to_le_bytes());
     for routine in routines {
-        if let Ok(descriptor) = resolve_pinned_descriptor(&stores, &routine.routine_id, module_gen)
-        {
+        if let Ok(descriptor) = resolve_pinned_descriptor(&stores, &routine.routine_id) {
             etag_buf.extend_from_slice(&descriptor.revision_hash);
             let params: Vec<Value> = descriptor
                 .parameters

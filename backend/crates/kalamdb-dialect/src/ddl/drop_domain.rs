@@ -12,17 +12,17 @@ use crate::ddl::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QualifiedDomainName {
     pub namespace_id: SchemaId,
-    pub name:         String,
+    pub name: String,
 }
 
 /// Parsed `DROP DOMAIN [IF EXISTS] name [, ...] [CASCADE|RESTRICT]` statement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropDomainStatement {
     pub namespace_id: SchemaId,
-    pub name:         String,
-    pub targets:      Vec<QualifiedDomainName>,
-    pub if_exists:    bool,
-    pub cascade:      bool,
+    pub name: String,
+    pub targets: Vec<QualifiedDomainName>,
+    pub if_exists: bool,
+    pub cascade: bool,
 }
 
 impl DropDomainStatement {
@@ -59,7 +59,7 @@ impl DropDomainStatement {
             }
             targets.push(QualifiedDomainName {
                 namespace_id: qual.namespace_or(default_namespace),
-                name:         qual.name,
+                name: qual.name,
             });
         }
 

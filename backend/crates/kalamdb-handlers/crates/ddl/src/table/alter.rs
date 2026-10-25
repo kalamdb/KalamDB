@@ -812,10 +812,10 @@ impl AlterTableHandler {
             )));
         }
         Ok(Some(AlterTableStatement {
-            table_name:   owner,
+            table_name: owner,
             namespace_id: index.namespace_id.clone(),
-            operation:    ColumnOperation::RenameIndex {
-                name:     index.name.clone(),
+            operation: ColumnOperation::RenameIndex {
+                name: index.name.clone(),
                 new_name: new_name.to_string(),
             },
         }))
@@ -2226,10 +2226,10 @@ async fn evaluate_default_function_call(
             BuiltinDefault::Ulid => {
                 let func = kalamdb_core::sql::functions::UlidFunction::new();
                 let args = datafusion::logical_expr::ScalarFunctionArgs {
-                    args:           Vec::new(),
-                    arg_fields:     Vec::new(),
-                    number_rows:    1,
-                    return_field:   std::sync::Arc::new(datafusion::arrow::datatypes::Field::new(
+                    args: Vec::new(),
+                    arg_fields: Vec::new(),
+                    number_rows: 1,
+                    return_field: std::sync::Arc::new(datafusion::arrow::datatypes::Field::new(
                         "ulid",
                         datafusion::arrow::datatypes::DataType::Utf8,
                         false,
@@ -3296,10 +3296,10 @@ mod tests {
             namespaces
                 .create_namespace(kalamdb_system::Namespace {
                     namespace_id: namespace_id.clone(),
-                    name:         "default".to_string(),
-                    created_at:   chrono::Utc::now().timestamp_millis(),
-                    options:      None,
-                    table_count:  0,
+                    name: "default".to_string(),
+                    created_at: chrono::Utc::now().timestamp_millis(),
+                    options: None,
+                    table_count: 0,
                 })
                 .unwrap();
         }

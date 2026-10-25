@@ -322,7 +322,7 @@ allowed_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
 
 # Allowed HTTP headers
 # Use ["*"] to allow any header
-allowed_headers = ["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"]
+allowed_headers = ["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With", "X-Kalam-Epoch", "X-Kalam-Descriptor-Revision", "Idempotency-Key"]
 
 # Headers to expose to the browser (default: none)
 # Example: ["X-Custom-Header", "X-Request-Id"]

@@ -24,7 +24,7 @@ fn composite_attributes_keep_parenthesized_modifiers() {
         amount.data_type,
         Some(KalamDataType::Decimal {
             precision: 12,
-            scale:     2,
+            scale: 2,
         })
     );
 
@@ -45,7 +45,7 @@ fn ast_keeps_routine_argument_modifiers() {
         parsed.data_type,
         Some(KalamDataType::Decimal {
             precision: 12,
-            scale:     2,
+            scale: 2,
         })
     );
 }

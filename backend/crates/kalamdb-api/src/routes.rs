@@ -128,9 +128,12 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .service(http::files::download_export)
                 .service(http::files::download_table_export)
                 .service(ws::websocket_handler)
-                .route(
-                    "/functions/{namespace}/{procedure}",
-                    web::post().to(http::functions::invoke_function_v1),
+                .service(
+                    web::resource("/functions/{namespace}/{procedure}")
+                        .app_data(web::PayloadConfig::new(
+                            kalamdb_serialization::DEFAULT_MAX_FRAME_WIRE_BYTES,
+                        ))
+                        .route(web::post().to(http::functions::invoke_function_v1)),
                 ),
         );
 }

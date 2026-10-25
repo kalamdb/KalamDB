@@ -68,7 +68,7 @@ pub fn compile_project_contract(
         .iter()
         .map(|(path, sql)| ContractSource {
             path: path.as_str(),
-            sql:  sql.as_str(),
+            sql: sql.as_str(),
         })
         .collect();
     let mut snapshot =
@@ -129,12 +129,12 @@ pub fn merge_builtin_file_extension(snapshot: &mut ContractSnapshot) {
         .entry("pg_catalog.file".to_string())
         .or_insert_with(|| ContractType {
             type_id: file_type_id.clone(),
-            schema:  "pg_catalog".to_string(),
-            name:    "file".to_string(),
-            kind:    ContractTypeKind::Composite {
+            schema: "pg_catalog".to_string(),
+            name: "file".to_string(),
+            kind: ContractTypeKind::Composite {
                 fields: file_fields,
             },
-            arrow:   file_arrow,
+            arrow: file_arrow,
             comment: None,
         });
 

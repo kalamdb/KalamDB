@@ -4,6 +4,8 @@
 //! directly across backend crates, `link-common`, browser/Node WASM (`kalam-link-wasm`),
 //! and Dart FRB (`kalam-link-dart`).
 
+use std::mem::size_of;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -33,8 +35,6 @@ pub const DEFAULT_MAX_DOMAIN_ELEMENTS: usize = 1_048_576;
 pub const DEFAULT_MAX_DOMAIN_DEPTH: usize = 32;
 /// Default maximum traversal work units per decode operation.
 pub const DEFAULT_MAX_DOMAIN_WORK: usize = 2_097_152;
-/// Maximum initial preallocation per untrusted collection header.
-const MAX_INITIAL_CAPACITY: usize = 1_024;
 
 // Value tags (explicit little-endian fixed widths and presence states).
 const DTAG_OMITTED: u8 = 0x00;
@@ -64,6 +64,7 @@ const DTAG_JSON: u8 = 0x17;
 const DTAG_FILE_REF: u8 = 0x18;
 const DTAG_ENUM: u8 = 0x19;
 pub(crate) const DTAG_COMPOSITE: u8 = 0x1A;
+const DTAG_OBJECT: u8 = 0x1D;
 const DTAG_ARRAY: u8 = 0x1B;
 const DTAG_ROW_SET: u8 = 0x1C;
 
@@ -177,96 +178,37 @@ impl DomainMessageKind {
     }
 }
 
-/// Typed stored file reference in domain payloads (`FR-005`, `FR-040`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DomainFileRef {
-    pub id:     String,
-    pub sub:    String,
-    pub name:   String,
-    pub size:   i64,
-    pub mime:   String,
-    pub sha256: String,
-    pub shard:  Option<i32>,
-}
-
-/// Canonical domain value model shared across backend, `link-common`, WASM, and FRB (`FR-040`,
-/// `FR-048`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum DomainValue {
-    /// Field was omitted from input/patch; distinct from `SqlNull` and `JsonNull`.
-    Omitted,
-    /// SQL `NULL` value.
-    SqlNull,
-    /// JSON `null` value inside a `JSON`/`JSONB` column or parameter.
-    JsonNull,
-    /// `VOID` result from a procedure or void-returning function.
-    Void,
-    Bool(bool),
-    Int8(i8),
-    Int16(i16),
-    Int32(i32),
-    Int64(i64),
-    UInt8(u8),
-    UInt16(u16),
-    UInt32(u32),
-    UInt64(u64),
-    Float32(f32),
-    Float64(f64),
-    Decimal128 {
-        unscaled:  i128,
-        precision: u8,
-        scale:     i8,
-    },
-    Date32(i32),
-    TimeMicros(i64),
-    TimestampMicros(i64),
-    TimestampTzMicros(i64),
-    Uuid([u8; 16]),
-    Utf8(String),
-    Bytes(Vec<u8>),
-    Json(String),
-    FileRef(DomainFileRef),
-    Enum {
-        type_id: u32,
-        label:   String,
-    },
-    /// Ordinal-tagged composite fields `Vec<(slot, value)>`.
-    Composite(Vec<(u16, DomainValue)>),
-    /// Homogeneous or composite array elements.
-    Array(Vec<DomainValue>),
-    /// Tabular row set (`SETOF` / `RETURNS TABLE` / query rows).
-    RowSet(Vec<Vec<(u16, DomainValue)>>),
-}
+pub use kalamdb_commons::models::{DomainFileRef, DomainValue};
 
 /// Decoded current-epoch domain frame header + value payload.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DomainFrame {
-    pub epoch:               u16,
-    pub codec_version:       u16,
-    pub kind:                DomainMessageKind,
-    pub flags:               u8,
+    pub epoch: u16,
+    pub codec_version: u16,
+    pub kind: DomainMessageKind,
+    pub flags: u8,
     pub descriptor_short_id: u16,
-    pub payload:             DomainValue,
+    pub payload: DomainValue,
 }
 
 /// Resource budget enforced during domain frame decoding (`FR-049`).
 #[derive(Debug, Clone, Copy)]
 pub struct DomainDecodeBudget {
-    pub max_wire_bytes:    usize,
+    pub max_wire_bytes: usize,
     pub max_decoded_bytes: usize,
-    pub max_elements:      usize,
-    pub max_depth:         usize,
-    pub max_work:          usize,
+    pub max_elements: usize,
+    pub max_depth: usize,
+    pub max_work: usize,
 }
 
 impl Default for DomainDecodeBudget {
     fn default() -> Self {
         Self {
-            max_wire_bytes:    DEFAULT_MAX_FRAME_WIRE_BYTES,
+            max_wire_bytes: DEFAULT_MAX_FRAME_WIRE_BYTES,
             max_decoded_bytes: DEFAULT_MAX_DOMAIN_DECODED_BYTES,
-            max_elements:      DEFAULT_MAX_DOMAIN_ELEMENTS,
-            max_depth:         DEFAULT_MAX_DOMAIN_DEPTH,
-            max_work:          DEFAULT_MAX_DOMAIN_WORK,
+            max_elements: DEFAULT_MAX_DOMAIN_ELEMENTS,
+            max_depth: DEFAULT_MAX_DOMAIN_DEPTH,
+            max_work: DEFAULT_MAX_DOMAIN_WORK,
         }
     }
 }
@@ -298,6 +240,59 @@ pub fn decode_domain_value(bytes: &[u8], budget: DomainDecodeBudget) -> Result<D
     Ok(value)
 }
 
+fn domain_value_size(value: &DomainValue) -> usize {
+    1 + match value {
+        DomainValue::Omitted | DomainValue::SqlNull | DomainValue::JsonNull | DomainValue::Void => {
+            0
+        },
+        DomainValue::Bool(_) | DomainValue::Int8(_) | DomainValue::UInt8(_) => 1,
+        DomainValue::Int16(_) | DomainValue::UInt16(_) => 2,
+        DomainValue::Int32(_)
+        | DomainValue::UInt32(_)
+        | DomainValue::Float32(_)
+        | DomainValue::Date32(_) => 4,
+        DomainValue::Int64(_)
+        | DomainValue::UInt64(_)
+        | DomainValue::Float64(_)
+        | DomainValue::TimeMicros(_)
+        | DomainValue::TimestampMicros(_)
+        | DomainValue::TimestampTzMicros(_) => 8,
+        DomainValue::Decimal128 { .. } => 18,
+        DomainValue::Uuid(_) => 16,
+        DomainValue::Utf8(text) | DomainValue::Json(text) => 4 + text.len(),
+        DomainValue::Bytes(bytes) => 4 + bytes.len(),
+        DomainValue::Enum { label, .. } => 8 + label.len(),
+        DomainValue::FileRef(file) => {
+            4 * 5
+                + file.id.len()
+                + file.sub.len()
+                + file.name.len()
+                + file.mime.len()
+                + file.sha256.len()
+                + 9
+                + usize::from(file.shard.is_some()) * 4
+        },
+        DomainValue::Composite(fields) => {
+            2 + fields.iter().map(|(_, field)| 2 + domain_value_size(field)).sum::<usize>()
+        },
+        DomainValue::Object(fields) => {
+            2 + fields
+                .iter()
+                .map(|(name, field)| 4 + name.len() + domain_value_size(field))
+                .sum::<usize>()
+        },
+        DomainValue::Array(items) => 4 + items.iter().map(domain_value_size).sum::<usize>(),
+        DomainValue::RowSet(rows) => {
+            4 + rows
+                .iter()
+                .map(|row| {
+                    2 + row.iter().map(|(_, cell)| 2 + domain_value_size(cell)).sum::<usize>()
+                })
+                .sum::<usize>()
+        },
+    }
+}
+
 /// Encode a complete [`DomainFrame`] with `KDOM` header, epoch, kind, and payload.
 pub fn encode_domain_frame(
     kind: DomainMessageKind,
@@ -310,7 +305,7 @@ pub fn encode_domain_frame(
             "unsupported domain frame flags 0x{flags:02x}"
         )));
     }
-    let mut buf = Vec::with_capacity(DOMAIN_FRAME_HEADER_LEN + 64);
+    let mut buf = Vec::with_capacity(DOMAIN_FRAME_HEADER_LEN + domain_value_size(payload));
     buf.extend_from_slice(&DOMAIN_MAGIC);
     buf.extend_from_slice(&DOMAIN_EPOCH.to_le_bytes());
     buf.extend_from_slice(&DOMAIN_CODEC_VERSION.to_le_bytes());
@@ -339,9 +334,8 @@ pub fn encode_domain_frame_from_payload(
             "unsupported domain frame flags 0x{flags:02x}"
         )));
     }
-    let payload_len = u32::try_from(payload.len()).map_err(|_| {
-        SerializationError::Encode("domain frame payload exceeds u32".to_string())
-    })?;
+    let payload_len = u32::try_from(payload.len())
+        .map_err(|_| SerializationError::Encode("domain frame payload exceeds u32".to_string()))?;
     let mut buf = Vec::with_capacity(DOMAIN_FRAME_HEADER_LEN + payload.len());
     buf.extend_from_slice(&DOMAIN_MAGIC);
     buf.extend_from_slice(&DOMAIN_EPOCH.to_le_bytes());
@@ -381,7 +375,7 @@ pub fn decode_domain_frame_for_surface(
     if bytes.starts_with(b"KOBJ") {
         return Err(SerializationError::EpochMismatch {
             expected: DOMAIN_EPOCH,
-            found:    0,
+            found: 0,
         });
     }
     if bytes.len() < DOMAIN_FRAME_HEADER_LEN {
@@ -394,20 +388,20 @@ pub fn decode_domain_frame_for_surface(
     if epoch != DOMAIN_EPOCH {
         return Err(SerializationError::EpochMismatch {
             expected: DOMAIN_EPOCH,
-            found:    epoch,
+            found: epoch,
         });
     }
     let codec_version = u16::from_le_bytes([bytes[6], bytes[7]]);
     if codec_version != DOMAIN_CODEC_VERSION {
         return Err(SerializationError::UnsupportedProtocolVersion {
-            found:     codec_version,
+            found: codec_version,
             supported: DOMAIN_CODEC_VERSION,
         });
     }
     let kind = DomainMessageKind::from_u8(bytes[8])?;
     if !kind.is_allowed_on(surface) {
         return Err(SerializationError::ForbiddenMessageKind {
-            kind:    bytes[8],
+            kind: bytes[8],
             surface: format!("{surface:?}"),
         });
     }
@@ -549,6 +543,11 @@ pub(crate) fn write_domain_value(buf: &mut Vec<u8>, value: &DomainValue) -> Resu
             precision,
             scale,
         } => {
+            if *precision == 0 || *precision > 38 || *scale < 0 || (*scale as u8) > *precision {
+                return Err(SerializationError::Encode(format!(
+                    "invalid decimal128 metadata ({precision}, {scale})"
+                )));
+            }
             buf.push(DTAG_DECIMAL128);
             buf.push(*precision);
             buf.push(*scale as u8);
@@ -607,6 +606,17 @@ pub(crate) fn write_domain_value(buf: &mut Vec<u8>, value: &DomainValue) -> Resu
             buf.extend_from_slice(&type_id.to_le_bytes());
             write_len_bytes(buf, label.as_bytes())?;
         },
+        DomainValue::Object(fields) => {
+            buf.push(DTAG_OBJECT);
+            let count = u16::try_from(fields.len()).map_err(|_| {
+                SerializationError::Encode("object field count exceeds u16".to_string())
+            })?;
+            buf.extend_from_slice(&count.to_le_bytes());
+            for (name, field_val) in fields {
+                write_len_bytes(buf, name.as_bytes())?;
+                write_domain_value(buf, field_val)?;
+            }
+        },
         DomainValue::Composite(fields) => {
             buf.push(DTAG_COMPOSITE);
             let count = u16::try_from(fields.len()).map_err(|_| {
@@ -646,7 +656,16 @@ pub(crate) fn write_domain_value(buf: &mut Vec<u8>, value: &DomainValue) -> Resu
                     SerializationError::Encode("row column count exceeds u16".to_string())
                 })?;
                 buf.extend_from_slice(&col_count.to_le_bytes());
+                let mut prev_slot = None;
                 for (slot, cell) in row {
+                    if let Some(prev) = prev_slot {
+                        if *slot <= prev {
+                            return Err(SerializationError::Encode(format!(
+                                "rowset slots must be strictly increasing ({prev} then {slot})"
+                            )));
+                        }
+                    }
+                    prev_slot = Some(*slot);
                     buf.extend_from_slice(&slot.to_le_bytes());
                     write_domain_value(buf, cell)?;
                 }
@@ -666,12 +685,12 @@ fn write_len_bytes(buf: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
 }
 
 struct DomainReader<'a> {
-    rest:          &'a [u8],
-    budget:        DomainDecodeBudget,
-    depth:         usize,
-    work:          usize,
+    rest: &'a [u8],
+    budget: DomainDecodeBudget,
+    depth: usize,
+    work: usize,
     decoded_bytes: usize,
-    elements:      usize,
+    elements: usize,
 }
 
 impl<'a> DomainReader<'a> {
@@ -749,6 +768,24 @@ impl<'a> DomainReader<'a> {
         }
         self.decoded_bytes = next;
         Ok(())
+    }
+
+    /// Validate untrusted counts and charge the actual owned element layout before reserving.
+    /// Reserving exactly once also prevents geometric Vec growth from exceeding the budget.
+    fn collection<T>(&mut self, count: usize, min_wire_bytes: usize) -> Result<Vec<T>> {
+        if count > self.remaining() / min_wire_bytes {
+            return Err(SerializationError::Truncated);
+        }
+        self.charge_elements(count)?;
+        let bytes = count.checked_mul(size_of::<T>()).ok_or_else(|| {
+            SerializationError::Decode("domain decoded byte budget overflow".to_string())
+        })?;
+        self.charge_bytes(bytes)?;
+        let mut values = Vec::new();
+        values.try_reserve_exact(count).map_err(|error| {
+            SerializationError::Decode(format!("domain collection allocation failed: {error}"))
+        })?;
+        Ok(values)
     }
 
     #[inline]
@@ -919,17 +956,27 @@ fn read_domain_value(reader: &mut DomainReader<'_>) -> Result<DomainValue> {
             let label = reader.string()?;
             Ok(DomainValue::Enum { type_id, label })
         },
+        DTAG_OBJECT => {
+            reader.enter_nested()?;
+            let res = (|| {
+                let count = reader.u16()? as usize;
+                let mut fields = reader.collection::<(String, DomainValue)>(count, 5)?;
+                for _ in 0..count {
+                    let name = reader.string()?;
+                    let val = read_domain_value(reader)?;
+                    fields.push((name, val));
+                }
+                Ok(DomainValue::Object(fields))
+            })();
+            reader.exit_nested();
+            res
+        },
         DTAG_COMPOSITE => {
             reader.enter_nested()?;
             let res = (|| {
                 let count = reader.u16()? as usize;
                 // Each composite entry is at least 2 bytes (slot) + 1 byte (value tag) = 3 bytes.
-                if count.saturating_mul(3) > reader.remaining() {
-                    return Err(SerializationError::Truncated);
-                }
-                reader.charge_elements(count)?;
-                reader.charge_bytes(count.saturating_mul(24))?;
-                let mut fields = Vec::with_capacity(count.min(MAX_INITIAL_CAPACITY));
+                let mut fields = reader.collection::<(u16, DomainValue)>(count, 3)?;
                 let mut prev_slot = None;
                 for _ in 0..count {
                     let slot = reader.u16()?;
@@ -953,12 +1000,7 @@ fn read_domain_value(reader: &mut DomainReader<'_>) -> Result<DomainValue> {
             reader.enter_nested()?;
             let res = (|| {
                 let len = reader.u32()? as usize;
-                if len > reader.remaining() {
-                    return Err(SerializationError::Truncated);
-                }
-                reader.charge_elements(len)?;
-                reader.charge_bytes(len.saturating_mul(16))?;
-                let mut items = Vec::with_capacity(len.min(MAX_INITIAL_CAPACITY));
+                let mut items = reader.collection::<DomainValue>(len, 1)?;
                 for _ in 0..len {
                     items.push(read_domain_value(reader)?);
                 }
@@ -971,20 +1013,21 @@ fn read_domain_value(reader: &mut DomainReader<'_>) -> Result<DomainValue> {
             reader.enter_nested()?;
             let res = (|| {
                 let row_count = reader.u32()? as usize;
-                if row_count.saturating_mul(2) > reader.remaining() {
-                    return Err(SerializationError::Truncated);
-                }
-                reader.charge_elements(row_count)?;
-                let mut rows = Vec::with_capacity(row_count.min(MAX_INITIAL_CAPACITY));
+                let mut rows = reader.collection::<Vec<(u16, DomainValue)>>(row_count, 2)?;
                 for _ in 0..row_count {
                     let col_count = reader.u16()? as usize;
-                    if col_count.saturating_mul(3) > reader.remaining() {
-                        return Err(SerializationError::Truncated);
-                    }
-                    reader.charge_elements(col_count)?;
-                    let mut row = Vec::with_capacity(col_count.min(MAX_INITIAL_CAPACITY));
+                    let mut row = reader.collection::<(u16, DomainValue)>(col_count, 3)?;
+                    let mut prev_slot = None;
                     for _ in 0..col_count {
                         let slot = reader.u16()?;
+                        if let Some(prev) = prev_slot {
+                            if slot <= prev {
+                                return Err(SerializationError::Decode(format!(
+                                    "duplicate or unsorted rowset slot {slot} after {prev}"
+                                )));
+                            }
+                        }
+                        prev_slot = Some(slot);
                         let cell = read_domain_value(reader)?;
                         row.push((slot, cell));
                     }
@@ -1004,6 +1047,99 @@ mod tests {
     use super::*;
 
     #[test]
+    fn collection_decode_charges_owned_storage_before_allocation() {
+        let cases = [
+            (DomainValue::Array(vec![DomainValue::Void]), size_of::<DomainValue>()),
+            (
+                DomainValue::Composite(vec![(1, DomainValue::Void)]),
+                size_of::<(u16, DomainValue)>(),
+            ),
+            (
+                DomainValue::Object(vec![(String::new(), DomainValue::Void)]),
+                size_of::<(String, DomainValue)>(),
+            ),
+            (DomainValue::RowSet(vec![vec![]]), size_of::<Vec<(u16, DomainValue)>>()),
+            (
+                DomainValue::RowSet(vec![vec![(1, DomainValue::Void)]]),
+                size_of::<Vec<(u16, DomainValue)>>() + size_of::<(u16, DomainValue)>(),
+            ),
+        ];
+        for (value, owned_bytes) in cases {
+            let bytes = encode_domain_value(&value).unwrap();
+            let mut budget = DomainDecodeBudget {
+                max_decoded_bytes: owned_bytes,
+                ..DomainDecodeBudget::default()
+            };
+            assert_eq!(decode_domain_value(&bytes, budget).unwrap(), value);
+            budget.max_decoded_bytes -= 1;
+            assert!(
+                decode_domain_value(&bytes, budget).is_err(),
+                "collection exceeded its decoded-byte budget: {value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn collection_decode_charges_nested_storage_and_string_bytes() {
+        let value = DomainValue::Object(vec![(
+            "key".into(),
+            DomainValue::Array(vec![DomainValue::Utf8("value".into())]),
+        )]);
+        let bytes = encode_domain_value(&value).unwrap();
+        let mut budget = DomainDecodeBudget {
+            max_decoded_bytes: size_of::<(String, DomainValue)>()
+                + size_of::<DomainValue>()
+                + "key".len()
+                + "value".len(),
+            ..DomainDecodeBudget::default()
+        };
+        assert_eq!(decode_domain_value(&bytes, budget).unwrap(), value);
+        budget.max_decoded_bytes -= 1;
+        assert!(decode_domain_value(&bytes, budget).is_err());
+    }
+
+    #[test]
+    fn collection_decode_respects_budget_across_capacity_growth() {
+        let value = DomainValue::Array(vec![DomainValue::Void; 1025]);
+        let bytes = encode_domain_value(&value).unwrap();
+        let mut budget = DomainDecodeBudget {
+            max_decoded_bytes: 1025 * size_of::<DomainValue>(),
+            ..DomainDecodeBudget::default()
+        };
+        let decoded = decode_domain_value(&bytes, budget).unwrap();
+        assert_eq!(decoded, value);
+        let DomainValue::Array(items) = decoded else {
+            panic!("expected array");
+        };
+        assert!(items.capacity() * size_of::<DomainValue>() <= budget.max_decoded_bytes);
+        budget.max_decoded_bytes -= 1;
+        assert!(decode_domain_value(&bytes, budget).is_err());
+    }
+
+    #[test]
+    fn rowset_encode_rejects_duplicate_and_unsorted_slots() {
+        for slots in [[1, 1], [2, 1]] {
+            let value = DomainValue::RowSet(vec![vec![
+                (slots[0], DomainValue::Void),
+                (slots[1], DomainValue::Void),
+            ]]);
+            assert!(encode_domain_value(&value).is_err());
+        }
+    }
+
+    #[test]
+    fn decimal_encode_rejects_metadata_the_decoder_cannot_read() {
+        for (precision, scale) in [(0, 0), (39, 0), (2, -1), (2, 3)] {
+            let value = DomainValue::Decimal128 {
+                unscaled: 1,
+                precision,
+                scale,
+            };
+            assert!(encode_domain_value(&value).is_err());
+        }
+    }
+
+    #[test]
     fn t070_golden_vectors_and_presence_distinction() {
         // Golden vector 1: 4 distinct presence states (Omitted, SqlNull, JsonNull, Void)
         assert_eq!(encode_domain_value(&DomainValue::Omitted).unwrap(), vec![0x00]);
@@ -1017,9 +1153,9 @@ mod tests {
             (
                 2,
                 DomainValue::Decimal128 {
-                    unscaled:  -123_456_789,
+                    unscaled: -123_456_789,
                     precision: 18,
-                    scale:     4,
+                    scale: 4,
                 },
             ),
             (3, DomainValue::TimestampTzMicros(1_792_793_625_123_456)),
@@ -1098,7 +1234,7 @@ mod tests {
             err_epoch,
             SerializationError::EpochMismatch {
                 expected: DOMAIN_EPOCH,
-                found:    99,
+                found: 99,
             }
         );
     }
@@ -1149,9 +1285,9 @@ mod tests {
             (
                 2,
                 DomainValue::Decimal128 {
-                    unscaled:  123_456_789_012_345,
+                    unscaled: 123_456_789_012_345,
                     precision: 18,
-                    scale:     4,
+                    scale: 4,
                 },
             ),
             (3, DomainValue::TimestampTzMicros(1_792_793_625_123_456)),
@@ -1338,9 +1474,9 @@ mod tests {
                 arr.copy_from_slice(&bytes[*pos..*pos + 16]);
                 *pos += 16;
                 Ok(DomainValue::Decimal128 {
-                    unscaled:  i128::from_le_bytes(arr),
+                    unscaled: i128::from_le_bytes(arr),
                     precision: p,
-                    scale:     s,
+                    scale: s,
                 })
             },
             19 => {
@@ -1373,6 +1509,34 @@ mod tests {
             },
             _ => Ok(DomainValue::Void),
         }
+    }
+
+    #[test]
+    fn object_round_trips_and_unsorted_rowset_is_rejected() {
+        let value = DomainValue::Object(vec![
+            ("ok".into(), DomainValue::Bool(true)),
+            ("n".into(), DomainValue::Int32(5)),
+        ]);
+        let bytes = encode_domain_value(&value).unwrap();
+        assert_eq!(decode_domain_value(&bytes, DomainDecodeBudget::default()).unwrap(), value);
+
+        // Deliberately malformed raw input: one row with descending slots 2, 1.
+        let encoded = [
+            DTAG_ROW_SET,
+            1,
+            0,
+            0,
+            0,
+            2,
+            0,
+            2,
+            0,
+            DTAG_VOID,
+            1,
+            0,
+            DTAG_VOID,
+        ];
+        assert!(decode_domain_value(&encoded, DomainDecodeBudget::default()).is_err());
     }
 
     fn encode_prost_dynamic_candidate(val: &DomainValue) -> Vec<u8> {

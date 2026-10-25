@@ -95,7 +95,7 @@ mod tests {
         let row = SharedTableRow {
             _version: VersionId::try_from_i64(seq).unwrap(),
             _deleted: false,
-            fields:   Row::new(values),
+            fields: Row::new(values),
         };
         (key, row)
     }

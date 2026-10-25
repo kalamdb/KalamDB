@@ -25,14 +25,14 @@ use crate::{error::FlushResultExt, FlushError, FlushManifestHelper, ManifestServ
 /// Flushes shared table data to Parquet files. All rows are written to a single
 /// Parquet file per flush operation (no user partitioning like user tables).
 pub struct SharedTableFlushJob {
-    store:             Arc<SharedTableIndexedStore>,
-    table_id:          Arc<TableId>,
-    schema:            SchemaRef,
-    storage_cached:    Arc<StorageCached>,
-    manifest_helper:   FlushManifestHelper,
-    metadata:          FlushTableMetadata,
-    scan_batch_size:   usize,
-    scope_hook:        Arc<dyn FlushScopeHook>,
+    store: Arc<SharedTableIndexedStore>,
+    table_id: Arc<TableId>,
+    schema: SchemaRef,
+    storage_cached: Arc<StorageCached>,
+    manifest_helper: FlushManifestHelper,
+    metadata: FlushTableMetadata,
+    scan_batch_size: usize,
+    scope_hook: Arc<dyn FlushScopeHook>,
     retain_latest_hot: bool,
 }
 
@@ -221,10 +221,10 @@ impl TableFlush for SharedTableFlushJob {
                 );
             }
             return Ok(FlushJobResult {
-                rows_flushed:  0,
+                rows_flushed: 0,
                 parquet_files: vec![],
-                scope_hints:   vec![],
-                metadata:      FlushMetadata::shared_table(),
+                scope_hints: vec![],
+                metadata: FlushMetadata::shared_table(),
             });
         }
 
@@ -256,10 +256,10 @@ impl TableFlush for SharedTableFlushJob {
         // eliminates a redundant double-compaction.
 
         Ok(FlushJobResult {
-            rows_flushed:  rows_count,
+            rows_flushed: rows_count,
             parquet_files: vec![write_result.destination_path],
-            scope_hints:   vec![FlushScopeHint::Shared],
-            metadata:      FlushMetadata::shared_table(),
+            scope_hints: vec![FlushScopeHint::Shared],
+            metadata: FlushMetadata::shared_table(),
         })
     }
 

@@ -277,8 +277,8 @@ fn persist_alter_domain(
                         .name
                         .unwrap_or_else(|| next_domain_check_name(&catalog_type.name, &checks));
                     checks.push(DomainCheckSpec {
-                        name:      assigned_name,
-                        expr:      clause.expression,
+                        name: assigned_name,
+                        expr: clause.expression,
                         validated: clause.validated,
                     });
                     if clause.validated {
@@ -526,8 +526,8 @@ fn build_initial_domain_checks(
             .clone()
             .unwrap_or_else(|| next_domain_check_name(domain_name, &specs));
         specs.push(DomainCheckSpec {
-            name:      assigned_name,
-            expr:      clause.expression.clone(),
+            name: assigned_name,
+            expr: clause.expression.clone(),
             validated: clause.validated,
         });
     }
@@ -616,8 +616,8 @@ fn extract_domain_state(
         .iter()
         .filter(|f| f.name != "__base" && f.name != "__default" && !f.dropped)
         .map(|f| DomainCheckSpec {
-            name:      f.name.clone(),
-            expr:      f.type_name.clone(),
+            name: f.name.clone(),
+            expr: f.type_name.clone(),
             validated: f.not_null,
         })
         .collect();

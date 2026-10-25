@@ -40,14 +40,14 @@ use crate::{
 /// Aggregated application components that need to be shared across the
 /// HTTP server and shutdown handling.
 pub struct ApplicationComponents {
-    pub session_factory:     Arc<DataFusionSessionFactory>,
-    pub sql_executor:        Arc<SqlExecutor>,
-    pub rate_limiter:        Arc<RateLimiter>,
-    pub live_query_manager:  Arc<LiveQueryManager>,
-    pub user_repo:           Arc<dyn kalamdb_auth::UserRepository>,
+    pub session_factory: Arc<DataFusionSessionFactory>,
+    pub sql_executor: Arc<SqlExecutor>,
+    pub rate_limiter: Arc<RateLimiter>,
+    pub live_query_manager: Arc<LiveQueryManager>,
+    pub user_repo: Arc<dyn kalamdb_auth::UserRepository>,
     pub connection_registry: Arc<ConnectionsManager>,
-    pub jobs_runtime:        Option<JobsManagerRuntime>,
-    pub trigger_runtime:     Option<TriggerDispatcherRuntime>,
+    pub jobs_runtime: Option<JobsManagerRuntime>,
+    pub trigger_runtime: Option<TriggerDispatcherRuntime>,
 }
 
 async fn fail_bootstrap<T>(
@@ -499,9 +499,9 @@ pub async fn run(
     let mut postgres_wire_listener = match PostgresWireListener::start(
         config,
         PostgresWireRuntimeDeps {
-            app_context:  app_context.clone(),
+            app_context: app_context.clone(),
             sql_executor: components.sql_executor.clone(),
-            user_repo:    components.user_repo.clone(),
+            user_repo: components.user_repo.clone(),
         },
     )
     .await
@@ -558,14 +558,14 @@ pub async fn run(
 /// route registration, app_data wiring, auth config, rate limiting, etc.) but binds
 /// to an ephemeral port and provides an explicit shutdown handle.
 pub struct RunningTestHttpServer {
-    pub base_url:        String,
-    pub bind_addr:       SocketAddr,
-    pub app_context:     Arc<kalamdb_core::app_context::AppContext>,
-    http_server:         HttpServerRuntime,
-    jobs_runtime:        JobsManagerRuntime,
-    trigger_runtime:     Option<TriggerDispatcherRuntime>,
+    pub base_url: String,
+    pub bind_addr: SocketAddr,
+    pub app_context: Arc<kalamdb_core::app_context::AppContext>,
+    http_server: HttpServerRuntime,
+    jobs_runtime: JobsManagerRuntime,
+    trigger_runtime: Option<TriggerDispatcherRuntime>,
     connection_registry: Arc<ConnectionsManager>,
-    job_drain_timeout:   std::time::Duration,
+    job_drain_timeout: std::time::Duration,
 }
 
 impl RunningTestHttpServer {

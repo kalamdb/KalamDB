@@ -115,7 +115,7 @@ impl SqlExecutor {
                 let statement =
                     kalamdb_sql::parser::KalamParser::parse_one(sql).map_err(|error| {
                         StatementClassificationError::InvalidSql {
-                            sql:     sql.to_string(),
+                            sql: sql.to_string(),
                             message: error.to_string(),
                         }
                     })?;

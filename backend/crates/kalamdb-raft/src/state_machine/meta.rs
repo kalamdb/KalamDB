@@ -62,11 +62,11 @@ pub struct MetaStateMachine {
     /// Last applied log index (for idempotency)
     last_applied_index: AtomicU64,
     /// Last applied log term
-    last_applied_term:  AtomicU64,
+    last_applied_term: AtomicU64,
     /// Notifies waiters when the applied index advances.
-    last_applied_tx:    tokio::sync::watch::Sender<u64>,
+    last_applied_tx: tokio::sync::watch::Sender<u64>,
     /// Approximate data size in bytes
-    approximate_size:   AtomicU64,
+    approximate_size: AtomicU64,
 
     /// Optional applier for persisting to providers
     applier: parking_lot::RwLock<Option<Arc<dyn MetaApplier>>>,

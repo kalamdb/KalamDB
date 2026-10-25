@@ -40,6 +40,7 @@ mod auth_type;
 mod call_argument;
 mod catalog_type_kind;
 mod connection;
+mod domain_value;
 mod file_ref;
 mod function_runtime;
 mod payload_mode;
@@ -76,6 +77,7 @@ pub use datatypes::{
     assert_finite_type_graph, assert_finite_type_graph_with_limits, KalamDataType, LogicalTypeRef,
     TypeGraphNode,
 };
+pub use domain_value::{DomainFileRef, DomainValue};
 pub use file_ref::FileRef;
 pub use function_runtime::FunctionRuntime;
 pub use ids::*;

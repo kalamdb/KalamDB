@@ -5,9 +5,9 @@ use crate::sql::unquote;
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Schema {
     pub(crate) namespaces: BTreeSet<String>,
-    pub(crate) tables:     BTreeMap<String, Table>,
-    pub(crate) policies:   BTreeMap<String, Policy>,
-    pub(crate) topics:     BTreeMap<String, Topic>,
+    pub(crate) tables: BTreeMap<String, Table>,
+    pub(crate) policies: BTreeMap<String, Policy>,
+    pub(crate) topics: BTreeMap<String, Topic>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -50,14 +50,14 @@ pub(crate) const FLUSH_POLICY_OPTION: &str = "FLUSH_POLICY";
 
 #[derive(Debug, Clone)]
 pub(crate) struct Policy {
-    pub(crate) key:            String,
-    pub(crate) name_sql:       String,
-    pub(crate) name_key:       String,
-    pub(crate) table_sql:      String,
-    pub(crate) table_key:      String,
-    pub(crate) command:        PolicyCommand,
-    pub(crate) targets:        Vec<PolicyTarget>,
-    pub(crate) using_sql:      Option<String>,
+    pub(crate) key: String,
+    pub(crate) name_sql: String,
+    pub(crate) name_key: String,
+    pub(crate) table_sql: String,
+    pub(crate) table_key: String,
+    pub(crate) command: PolicyCommand,
+    pub(crate) targets: Vec<PolicyTarget>,
+    pub(crate) using_sql: Option<String>,
     pub(crate) with_check_sql: Option<String>,
 }
 
@@ -137,22 +137,22 @@ pub(crate) fn policy_key(table_key: &str, name_key: &str) -> String {
 
 #[derive(Debug, Clone)]
 pub(crate) struct Table {
-    pub(crate) key:          String,
-    pub(crate) name_sql:     String,
-    pub(crate) kind:         Option<TableKind>,
+    pub(crate) key: String,
+    pub(crate) name_sql: String,
+    pub(crate) kind: Option<TableKind>,
     pub(crate) column_order: Vec<String>,
-    pub(crate) columns:      BTreeMap<String, Column>,
-    pub(crate) constraints:  Vec<String>,
-    pub(crate) options:      BTreeMap<String, String>,
-    pub(crate) indexes:      BTreeMap<String, TableIndex>,
+    pub(crate) columns: BTreeMap<String, Column>,
+    pub(crate) constraints: Vec<String>,
+    pub(crate) options: BTreeMap<String, String>,
+    pub(crate) indexes: BTreeMap<String, TableIndex>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TableIndex {
-    pub(crate) name:    String,
+    pub(crate) name: String,
     pub(crate) columns: Vec<String>,
-    pub(crate) unique:  bool,
-    pub(crate) kind:    TableIndexKind,
+    pub(crate) unique: bool,
+    pub(crate) kind: TableIndexKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,15 +169,15 @@ impl TableIndex {
 
 #[derive(Debug, Clone)]
 pub(crate) struct Column {
-    pub(crate) key:           String,
-    pub(crate) name_sql:      String,
-    pub(crate) type_sql:      String,
-    pub(crate) type_key:      String,
-    pub(crate) not_null:      bool,
-    pub(crate) default_sql:   Option<String>,
-    pub(crate) primary_key:   bool,
+    pub(crate) key: String,
+    pub(crate) name_sql: String,
+    pub(crate) type_sql: String,
+    pub(crate) type_key: String,
+    pub(crate) not_null: bool,
+    pub(crate) default_sql: Option<String>,
+    pub(crate) primary_key: bool,
     pub(crate) extra_options: Vec<String>,
-    pub(crate) create_sql:    String,
+    pub(crate) create_sql: String,
 }
 
 impl Column {
@@ -212,17 +212,17 @@ impl Column {
 
 #[derive(Debug, Clone)]
 pub(crate) struct Topic {
-    pub(crate) key:           String,
-    pub(crate) name_sql:      String,
+    pub(crate) key: String,
+    pub(crate) name_sql: String,
     pub(crate) if_not_exists: bool,
-    pub(crate) partitions:    Option<u32>,
-    pub(crate) retention:     TopicRetention,
-    pub(crate) sources:       BTreeMap<String, TopicSource>,
+    pub(crate) partitions: Option<u32>,
+    pub(crate) retention: TopicRetention,
+    pub(crate) sources: BTreeMap<String, TopicSource>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct TopicRetention {
-    pub(crate) retention_seconds:   Option<String>,
+    pub(crate) retention_seconds: Option<String>,
     pub(crate) retention_max_bytes: Option<String>,
 }
 
@@ -234,12 +234,12 @@ impl TopicRetention {
 
 #[derive(Debug, Clone)]
 pub(crate) struct TopicSource {
-    pub(crate) key:              String,
-    pub(crate) table_sql:        String,
-    pub(crate) table_key:        String,
-    pub(crate) operation:        TopicOperation,
-    pub(crate) filter_expr:      Option<String>,
-    pub(crate) payload_mode:     TopicPayloadMode,
+    pub(crate) key: String,
+    pub(crate) table_sql: String,
+    pub(crate) table_key: String,
+    pub(crate) operation: TopicOperation,
+    pub(crate) filter_expr: Option<String>,
+    pub(crate) payload_mode: TopicPayloadMode,
     pub(crate) payload_explicit: bool,
 }
 
@@ -256,9 +256,9 @@ impl TopicSource {
 
 #[derive(Debug, Clone)]
 pub(crate) struct PendingTopicSource {
-    pub(crate) topic_key:      String,
+    pub(crate) topic_key: String,
     pub(crate) topic_name_sql: String,
-    pub(crate) source:         TopicSource,
+    pub(crate) source: TopicSource,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

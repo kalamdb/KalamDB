@@ -336,24 +336,24 @@ async fn spawn_wire_test_server() -> (String, PostgresWireListener, Arc<AppConte
     let password_hash = hash_password("secret", Some(4)).await.expect("hash password");
     user_repo
         .create_user(User {
-            user_id:               UserId::new("admin"),
-            password_hash:         password_hash.clone(),
-            role:                  Role::Dba,
-            name:                  None,
-            email:                 None,
-            auth_type:             AuthType::Password,
-            auth_data:             None,
-            storage_mode:          kalamdb_system::providers::storages::models::StorageMode::Table,
-            storage_id:            None,
+            user_id: UserId::new("admin"),
+            password_hash: password_hash.clone(),
+            role: Role::Dba,
+            name: None,
+            email: None,
+            auth_type: AuthType::Password,
+            auth_data: None,
+            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
+            storage_id: None,
             failed_login_attempts: 0,
-            locked_until:          None,
-            last_login_at:         None,
-            created_at:            0,
-            updated_at:            0,
-            last_seen:             None,
-            deleted_at:            None,
-            invite_expires_at:     None,
-            invited_by:            None,
+            locked_until: None,
+            last_login_at: None,
+            created_at: 0,
+            updated_at: 0,
+            last_seen: None,
+            deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         })
         .await
         .expect("create admin user");
@@ -381,7 +381,7 @@ fn prepared_statement_limit_rejects_new_entries_after_cap() {
     state
         .put_prepared_statement(WirePreparedStatement {
             name: "stmt_one".to_string(),
-            sql:  "SELECT 1".to_string(),
+            sql: "SELECT 1".to_string(),
         })
         .expect("first statement fits");
 
@@ -398,7 +398,7 @@ fn prepared_statement_limit_allows_replacing_existing_name() {
     state
         .put_prepared_statement(WirePreparedStatement {
             name: "stmt".to_string(),
-            sql:  "SELECT 1".to_string(),
+            sql: "SELECT 1".to_string(),
         })
         .expect("first statement fits");
     state
@@ -407,7 +407,7 @@ fn prepared_statement_limit_allows_replacing_existing_name() {
     state
         .put_prepared_statement(WirePreparedStatement {
             name: "stmt".to_string(),
-            sql:  "SELECT 2".to_string(),
+            sql: "SELECT 2".to_string(),
         })
         .expect("replacement fits");
 
@@ -420,7 +420,7 @@ fn portal_limit_rejects_new_entries_after_cap_and_close_releases_slot() {
 
     state
         .put_portal(WirePortal {
-            name:           "portal_one".to_string(),
+            name: "portal_one".to_string(),
             statement_name: "stmt".to_string(),
         })
         .expect("first portal fits");
@@ -452,7 +452,7 @@ fn prepared_statement_and_sql_byte_budgets_reject_oversized_entries() {
     assert_eq!(
         state.ensure_statement_sql_bytes(too_long_sql),
         Err(WireConnectionStateError::StatementSqlBytesExceeded {
-            limit:  16,
+            limit: 16,
             actual: too_long_sql.len(),
         })
     );
@@ -460,14 +460,14 @@ fn prepared_statement_and_sql_byte_budgets_reject_oversized_entries() {
     state
         .put_prepared_statement(WirePreparedStatement {
             name: "s1".to_string(),
-            sql:  "SELECT 12345".to_string(),
+            sql: "SELECT 12345".to_string(),
         })
         .expect("first statement fits within 24-byte budget");
 
     let err = state
         .put_prepared_statement(WirePreparedStatement {
             name: "s2".to_string(),
-            sql:  "SELECT 67890".to_string(),
+            sql: "SELECT 67890".to_string(),
         })
         .expect_err("second statement exceeds total byte budget");
     assert!(matches!(

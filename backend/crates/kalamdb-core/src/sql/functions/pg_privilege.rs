@@ -12,28 +12,28 @@ use super::scalar::{
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AlwaysTruePrivilegeFunction {
-    name:    &'static str,
+    name: &'static str,
     aliases: Vec<String>,
 }
 
 impl AlwaysTruePrivilegeFunction {
     pub fn has_function_privilege() -> Self {
         Self {
-            name:    "has_function_privilege",
+            name: "has_function_privilege",
             aliases: vec!["pg_catalog.has_function_privilege".to_string()],
         }
     }
 
     pub fn has_table_privilege() -> Self {
         Self {
-            name:    "has_table_privilege",
+            name: "has_table_privilege",
             aliases: vec!["pg_catalog.has_table_privilege".to_string()],
         }
     }
 
     pub fn has_schema_privilege() -> Self {
         Self {
-            name:    "has_schema_privilege",
+            name: "has_schema_privilege",
             aliases: vec!["pg_catalog.has_schema_privilege".to_string()],
         }
     }

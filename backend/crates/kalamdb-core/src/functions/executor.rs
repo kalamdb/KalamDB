@@ -2,24 +2,27 @@
 
 use std::sync::Arc;
 
+use super::bind::PinnedRoutineDescriptor;
 use arrow::{
     array::RecordBatch,
-    datatypes::{Field, Schema},
+    datatypes::{DataType, Field, Schema},
 };
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::{
     conversions::arrow_json_conversion::scalar_value_to_json,
+    datatypes::ToArrowType,
     models::{
         RoutineCall, RoutineId, RoutineKind, RoutineNullSafety, RoutineParameterMode, TopicId,
         TransactionId,
     },
-    FunctionModuleId, FunctionRevisionId, FunctionRuntime, Role, UserId,
+    FunctionModuleId, FunctionRevisionId, FunctionRuntime, KalamDataType, Role, UserId,
 };
 use kalamdb_filestore::StorageCached;
 use kalamdb_functions::{
     now_ms, ActiveFunctionSet, FunctionActivation, FunctionCallOrigin, FunctionCallResult,
-    FunctionExecutionRoot, FunctionsError, ImplementationRef, InlineArtifact, Invocation,
-    InvocationScope, ModuleRevision, ProcedureFrame, RoutineValue, StagedTopicPublish, ABI_VERSION,
+    FunctionErrorCode, FunctionExecutionRoot, FunctionsError, ImplementationRef, InlineArtifact,
+    Invocation, InvocationScope, ModuleRevision, ProcedureFrame, RoutineValue, StagedTopicPublish,
+    ABI_VERSION,
 };
 use kalamdb_sql::ddl::CallStatement;
 use kalamdb_system::{ActivateFunctionOutcome, CatalogRoutine};
@@ -162,6 +165,29 @@ impl FunctionService {
         routine_id: RoutineId,
         args: Vec<RoutineValue>,
     ) -> Result<FunctionCallResult, KalamDbError> {
+        Self::invoke_with(app, exec_ctx, origin, routine_id, args, None).await
+    }
+
+    /// Invoke a routine whose descriptor was already pinned by the caller.
+    pub async fn invoke_pinned(
+        app: Arc<AppContext>,
+        exec_ctx: &ExecutionContext,
+        origin: FunctionCallOrigin,
+        descriptor: Arc<PinnedRoutineDescriptor>,
+        args: Vec<RoutineValue>,
+    ) -> Result<FunctionCallResult, KalamDbError> {
+        let routine_id = descriptor.routine_id.clone();
+        Self::invoke_with(app, exec_ctx, origin, routine_id, args, Some(descriptor)).await
+    }
+
+    async fn invoke_with(
+        app: Arc<AppContext>,
+        exec_ctx: &ExecutionContext,
+        origin: FunctionCallOrigin,
+        routine_id: RoutineId,
+        args: Vec<RoutineValue>,
+        pinned: Option<Arc<PinnedRoutineDescriptor>>,
+    ) -> Result<FunctionCallResult, KalamDbError> {
         let request_id = exec_ctx
             .request_id()
             .map(|id| id.to_string())
@@ -179,7 +205,7 @@ impl FunctionService {
         // transaction back if the caller disconnects before commit.
         let owned_tx_guard = OwnedFunctionTx {
             app: Arc::clone(&app),
-            id:  Mutex::new(None),
+            id: Mutex::new(None),
         };
 
         let actor = exec_ctx.user_id().clone();
@@ -193,6 +219,7 @@ impl FunctionService {
             origin,
             routine_id.clone(),
             args,
+            pinned,
             &mut request_state,
             &coordinator,
             owned_tx,
@@ -206,11 +233,19 @@ impl FunctionService {
             {
                 kalamdb_observability::record_function_timeout();
             }
-            log::error!(
-                target: "kalamdb::functions",
-                "execution_id={request_id} request_id={request_id} routine={routine_id} actor={actor} principal={actor} source={origin_kind} code={:?} {error}",
-                error.function_error_code()
-            );
+            if is_client_function_error(error) {
+                log::warn!(
+                    target: "kalamdb::functions",
+                    "execution_id={request_id} request_id={request_id} routine={routine_id} actor={actor} principal={actor} source={origin_kind} code={:?} {error}",
+                    error.function_error_code()
+                );
+            } else {
+                log::error!(
+                    target: "kalamdb::functions",
+                    "execution_id={request_id} request_id={request_id} routine={routine_id} actor={actor} principal={actor} source={origin_kind} code={:?} {error}",
+                    error.function_error_code()
+                );
+            }
         }
         let duration_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
         let (module_id, revision_id) = match app.function_runtime().active_set().lookup(&routine_id)
@@ -301,6 +336,7 @@ async fn invoke_root(
     origin: FunctionCallOrigin,
     routine_id: RoutineId,
     args: Vec<RoutineValue>,
+    pinned: Option<Arc<PinnedRoutineDescriptor>>,
     request_state: &mut RequestTransactionState<'_>,
     coordinator: &AppContextRequestTransactionCoordinator<'_>,
     owned_tx: bool,
@@ -342,34 +378,37 @@ async fn invoke_root(
     let root = FunctionExecutionRoot {
         actor_user: exec_ctx.user_id().clone(),
         actor_role: exec_ctx.user_role(),
-        origin:     origin.clone(),
+        origin: origin.clone(),
         deployment: Arc::clone(&deployment),
     };
     let host = CoreFunctionHost {
-        app:      Arc::clone(&app),
-        handle:   tokio::runtime::Handle::current(),
-        session:  Arc::new(HostSession {
+        app: Arc::clone(&app),
+        handle: tokio::runtime::Handle::current(),
+        session: Arc::new(HostSession {
             exec_ctx,
             stack: SmallVec::new(),
             root,
             principal_ctx: Arc::new(Mutex::new(SmallVec::new())),
         }),
-        origin:   origin.clone(),
-        scope:    InvocationScope {
+        origin: origin.clone(),
+        scope: InvocationScope {
             deadline: std::time::Instant::now()
                 + app.function_runtime().engine().map_err(map_functions)?.config().timeout,
             // Cancelled when the HTTP statement future is dropped, and again
             // on timeout inside the engine. The socket watch lives on the
             // connection, not here.
-            cancel:   CancellationToken::new(),
-            depth:    0,
+            cancel: CancellationToken::new(),
+            depth: 0,
         },
         sql_gate: Arc::new(tokio::sync::Mutex::new(())),
     };
     let value = {
-        let prepared = prepare_call_target(&host, routine_id.clone(), &args)?;
+        let prepared = prepare_call_target(&host, routine_id.clone(), &args, pinned.as_deref())?;
         match prepared {
-            PreparedCall::StrictNull { routine } => {
+            PreparedCall::StrictNull {
+                routine,
+                parameters,
+            } => {
                 let value = RoutineValue::new(ScalarValue::Null);
                 let stores = host.app.system_tables().catalog_stores();
                 bind::validate_call_return(
@@ -377,6 +416,7 @@ async fn invoke_root(
                     &stores,
                     &routine,
                     &value,
+                    parameters.as_ref(),
                 )?;
                 value
             },
@@ -384,6 +424,7 @@ async fn invoke_root(
                 routine,
                 body,
                 input_args,
+                parameters,
                 child,
             } => {
                 if owned_tx {
@@ -392,19 +433,27 @@ async fn invoke_root(
                     *began_owned_tx = true;
                     owned_tx_guard.arm(transaction_id);
                 }
-                let value =
-                    Box::pin(invoke_sql_routine_body(&child, &routine, &body, &input_args)).await?;
+                let value = Box::pin(invoke_sql_routine_body(
+                    &child,
+                    &routine,
+                    &body,
+                    &input_args,
+                    parameters.as_ref(),
+                ))
+                .await?;
                 let stores = host.app.system_tables().catalog_stores();
                 bind::validate_call_return(
                     host.app.schema_registry().type_registry(),
                     &stores,
                     &routine,
                     &value,
+                    parameters.as_ref(),
                 )?;
                 value
             },
             PreparedCall::V8 {
                 routine,
+                parameters,
                 invocation,
                 child,
             } => {
@@ -435,6 +484,7 @@ async fn invoke_root(
                         &stores,
                         &routine,
                         &value,
+                        parameters.as_ref(),
                     )?;
                 }
                 value
@@ -474,17 +524,20 @@ pub(super) async fn invoke_nested(
 enum PreparedCall {
     StrictNull {
         routine: CatalogRoutine,
+        parameters: Arc<[kalamdb_system::CatalogRoutineParameter]>,
     },
     Sql {
-        routine:    CatalogRoutine,
-        body:       String,
+        routine: CatalogRoutine,
+        body: String,
         input_args: Vec<(kalamdb_system::CatalogRoutineParameter, RoutineValue)>,
-        child:      CoreFunctionHost,
+        parameters: Arc<[kalamdb_system::CatalogRoutineParameter]>,
+        child: CoreFunctionHost,
     },
     V8 {
-        routine:    CatalogRoutine,
+        routine: CatalogRoutine,
+        parameters: Arc<[kalamdb_system::CatalogRoutineParameter]>,
         invocation: Invocation,
-        child:      Arc<dyn kalamdb_functions::FunctionHost>,
+        child: Arc<dyn kalamdb_functions::FunctionHost>,
     },
 }
 
@@ -493,16 +546,20 @@ async fn invoke_on_host(
     routine_id: RoutineId,
     args: &[RoutineValue],
 ) -> Result<RoutineValue, KalamDbError> {
-    let prepared = prepare_call_target(host, routine_id.clone(), args)?;
+    let prepared = prepare_call_target(host, routine_id.clone(), args, None)?;
     let stores = host.app.system_tables().catalog_stores();
     match prepared {
-        PreparedCall::StrictNull { routine } => {
+        PreparedCall::StrictNull {
+            routine,
+            parameters,
+        } => {
             let value = RoutineValue::new(ScalarValue::Null);
             bind::validate_call_return(
                 host.app.schema_registry().type_registry(),
                 &stores,
                 &routine,
                 &value,
+                parameters.as_ref(),
             )?;
             Ok(value)
         },
@@ -510,20 +567,29 @@ async fn invoke_on_host(
             routine,
             body,
             input_args,
+            parameters,
             child,
         } => {
-            let value =
-                Box::pin(invoke_sql_routine_body(&child, &routine, &body, &input_args)).await?;
+            let value = Box::pin(invoke_sql_routine_body(
+                &child,
+                &routine,
+                &body,
+                &input_args,
+                parameters.as_ref(),
+            ))
+            .await?;
             bind::validate_call_return(
                 host.app.schema_registry().type_registry(),
                 &stores,
                 &routine,
                 &value,
+                parameters.as_ref(),
             )?;
             Ok(value)
         },
         PreparedCall::V8 {
             routine,
+            parameters,
             invocation,
             child,
         } => {
@@ -534,6 +600,7 @@ async fn invoke_on_host(
                 &stores,
                 &routine,
                 &value,
+                parameters.as_ref(),
             )?;
             Ok(value)
         },
@@ -545,7 +612,7 @@ pub(super) fn prepare_nested_v8_call(
     routine_id: RoutineId,
     args: &[RoutineValue],
 ) -> Result<Option<(Invocation, Arc<dyn kalamdb_functions::FunctionHost>)>, KalamDbError> {
-    match prepare_call_target(host, routine_id, args)? {
+    match prepare_call_target(host, routine_id, args, None)? {
         PreparedCall::V8 {
             invocation, child, ..
         } => Ok(Some((invocation, child))),
@@ -557,17 +624,26 @@ fn prepare_call_target(
     host: &CoreFunctionHost,
     routine_id: RoutineId,
     args: &[RoutineValue],
+    pinned: Option<&PinnedRoutineDescriptor>,
 ) -> Result<PreparedCall, KalamDbError> {
     let _prepare_span = kalamdb_observability::kdb_info_span_entered!("func.prepare_call");
     let stores = host.app.system_tables().catalog_stores();
-    let routine = {
+    let (routine, parameters) = if let Some(pinned) = pinned {
+        (pinned.routine.clone(), Arc::clone(&pinned.parameters))
+    } else {
         let _span = kalamdb_observability::kdb_info_span_entered!("func.prepare.get_routine");
-        stores.get_routine(&routine_id).map_err(|error| {
+        let routine = stores.get_routine(&routine_id).map_err(|error| {
             KalamDbError::ExecutionError(format!("failed to load procedure {routine_id}: {error}"))
-        })?
-    };
-    let Some(routine) = routine else {
-        return Err(FunctionsError::UnknownProcedure(routine_id.to_string()).into());
+        })?;
+        let Some(routine) = routine else {
+            return Err(FunctionsError::UnknownProcedure(routine_id.to_string()).into());
+        };
+        let loaded = stores.list_parameters(&routine_id).map_err(|error| {
+            KalamDbError::CatalogError(format!(
+                "failed to load parameters for routine {routine_id}: {error}"
+            ))
+        })?;
+        (routine, Arc::from(loaded))
     };
 
     let (caller_user, caller_role) = {
@@ -596,28 +672,23 @@ fn prepare_call_target(
         owner_role,
     );
 
-    {
-        let _span = kalamdb_observability::kdb_info_span_entered!("func.prepare.validate_args");
-        bind::validate_call_arguments(
-            host.app.schema_registry().type_registry(),
-            &stores,
-            &routine.routine_id,
-            args,
-        )?;
-    }
     let input_args = {
         let _span = kalamdb_observability::kdb_info_span_entered!("func.prepare.resolve_args");
-        bind::resolve_input_arguments(
+        bind::resolve_and_validate_parameters(
             host.app.schema_registry().type_registry(),
             &stores,
             &routine.routine_id,
+            parameters.as_ref(),
             args,
         )?
     };
     if routine.null_safety == RoutineNullSafety::ReturnsNullOnNullInput
         && input_args.iter().any(|(_, val)| is_null_routine_value(val))
     {
-        return Ok(PreparedCall::StrictNull { routine });
+        return Ok(PreparedCall::StrictNull {
+            routine,
+            parameters,
+        });
     }
 
     let language = routine.language.as_deref().unwrap_or("");
@@ -643,6 +714,7 @@ fn prepare_call_target(
             routine,
             body,
             input_args,
+            parameters,
             child,
         });
     }
@@ -663,19 +735,48 @@ fn prepare_call_target(
         volatility: routine.volatility,
     };
 
+    let return_template = return_template_for(&routine);
     let mut child = host.clone();
     child.session = Arc::new(push_frame(host.session.as_ref(), frame)?);
     Ok(PreparedCall::V8 {
         routine,
+        parameters,
         invocation: Invocation {
             routine_id,
             revision,
             args,
             scope: host.scope.clone(),
-            return_template: None,
+            return_template,
         },
         child: Arc::new(child),
     })
+}
+
+fn is_client_function_error(error: &KalamDbError) -> bool {
+    matches!(
+        error.function_error_code(),
+        Some(
+            FunctionErrorCode::InvalidArguments
+                | FunctionErrorCode::ProcedureNotFound
+                | FunctionErrorCode::ExecuteDenied
+                | FunctionErrorCode::AuthenticationRequired
+                | FunctionErrorCode::StaleRevision
+        )
+    )
+}
+
+fn return_template_for(routine: &CatalogRoutine) -> Option<RoutineValue> {
+    let data_type = routine.return_data_type?;
+    if data_type == KalamDataType::Json {
+        return Some(RoutineValue::json(ScalarValue::Utf8(None)));
+    }
+    let arrow = data_type.to_arrow_type().ok()?;
+    let arrow = if routine.return_is_array {
+        DataType::List(Arc::new(Field::new("item", arrow, !routine.return_not_null)))
+    } else {
+        arrow
+    };
+    ScalarValue::try_from(&arrow).ok().map(RoutineValue::new)
 }
 
 fn is_null_routine_value(val: &RoutineValue) -> bool {
@@ -690,6 +791,7 @@ async fn invoke_sql_routine_body(
     routine: &CatalogRoutine,
     body: &str,
     input_args: &[(kalamdb_system::CatalogRoutineParameter, RoutineValue)],
+    parameters: &[kalamdb_system::CatalogRoutineParameter],
 ) -> Result<RoutineValue, KalamDbError> {
     host.scope.check().map_err(map_functions)?;
     let _gate = host.sql_gate.lock().await;
@@ -710,18 +812,7 @@ async fn invoke_sql_routine_body(
         }
     }
 
-    let all_params = host
-        .app
-        .system_tables()
-        .catalog_stores()
-        .list_parameters(&routine.routine_id)
-        .map_err(|error| {
-            KalamDbError::CatalogError(format!(
-                "failed to load parameters for routine {}: {error}",
-                routine.routine_id
-            ))
-        })?;
-    let out_params: Vec<_> = all_params
+    let out_params: Vec<_> = parameters
         .iter()
         .filter(|param| {
             matches!(param.mode, RoutineParameterMode::Out | RoutineParameterMode::InOut)
@@ -740,7 +831,7 @@ async fn invoke_sql_routine_body(
     let mut working_body = body.trim();
     let mut declare_decls: Vec<(String, Option<String>)> = Vec::new();
     if routine.language.as_deref().is_some_and(|l| l.eq_ignore_ascii_case("PLPGSQL")) {
-        let (decls, after_begin) = extract_plpgsql_declare_and_body(working_body);
+        let (decls, after_begin) = super::sql_body::extract_plpgsql_declare_and_body(working_body);
         declare_decls = decls;
         if let Some(after) = after_begin {
             working_body = after;
@@ -750,7 +841,7 @@ async fn invoke_sql_routine_body(
     let executor = host.app.sql_executor();
     for (var_name, init_expr) in declare_decls {
         let init_val = if let Some(expr_sql) = init_expr {
-            eval_plpgsql_expr(&executor, &ctx, &expr_sql, &env_args).await?
+            super::sql_body::eval_plpgsql_expr(&executor, &ctx, &expr_sql, &env_args).await?
         } else {
             RoutineValue::new(ScalarValue::Null)
         };
@@ -761,23 +852,29 @@ async fn invoke_sql_routine_body(
                 ord,
             )
             .map_err(KalamDbError::InvalidSql)?,
-            routine_id:   routine.routine_id.clone(),
-            name:         var_name,
-            ordinal:      ord,
-            type_id:      None,
-            type_name:    "TEXT".to_string(),
-            is_array:     false,
-            not_null:     false,
-            nonempty:     false,
-            data_type:    Some(kalamdb_commons::KalamDataType::Text),
-            mode:         RoutineParameterMode::In,
+            routine_id: routine.routine_id.clone(),
+            name: var_name,
+            ordinal: ord,
+            type_id: None,
+            type_name: "TEXT".to_string(),
+            is_array: false,
+            not_null: false,
+            nonempty: false,
+            data_type: Some(kalamdb_commons::KalamDataType::Text),
+            mode: RoutineParameterMode::In,
             default_expr: None,
         };
         env_args.push((pseudo_param, init_val));
     }
 
-    let (returned, last_result) =
-        execute_plpgsql_block(&executor, &ctx, routine, working_body, &mut env_args).await?;
+    let (returned, last_result) = super::sql_body::execute_plpgsql_block(
+        &executor,
+        &ctx,
+        routine,
+        working_body,
+        &mut env_args,
+    )
+    .await?;
     if let Some(ret_val) = returned {
         return Ok(ret_val);
     }
@@ -827,435 +924,6 @@ async fn invoke_sql_routine_body(
         },
         None => Ok(RoutineValue::new(ScalarValue::Null)),
     }
-}
-
-fn extract_plpgsql_declare_and_body(body: &str) -> (Vec<(String, Option<String>)>, Option<&str>) {
-    let trimmed = body.trim().trim_end_matches(';').trim();
-    let upper = trimmed.to_ascii_uppercase();
-    let Some(begin_pos) = find_top_level_keyword(&upper, "BEGIN") else {
-        return (Vec::new(), None);
-    };
-    let mut decls = Vec::new();
-    let before_begin = trimmed[..begin_pos].trim();
-    if let Some(after_declare) = strip_keyword_prefix_ci(before_begin, "DECLARE") {
-        for raw_decl in split_plpgsql_statements(after_declare) {
-            let decl = raw_decl.trim();
-            if decl.is_empty() {
-                continue;
-            }
-            if let Some((lhs, rhs)) = decl.split_once(":=").or_else(|| decl.split_once('=')) {
-                let var_name = lhs.split_whitespace().next().unwrap_or("").trim().to_string();
-                if !var_name.is_empty() {
-                    decls.push((var_name, Some(rhs.trim().to_string())));
-                }
-            } else {
-                let var_name = decl.split_whitespace().next().unwrap_or("").trim().to_string();
-                if !var_name.is_empty() {
-                    decls.push((var_name, None));
-                }
-            }
-        }
-    }
-    let after_begin = &trimmed[begin_pos + "BEGIN".len()..];
-    if !after_begin.starts_with(|c: char| c.is_whitespace() || c == ';') {
-        return (decls, None);
-    }
-    let after_begin = after_begin.trim();
-    let after_upper = after_begin.to_ascii_uppercase();
-    let stripped = if after_upper.ends_with("END") {
-        &after_begin[..after_begin.len() - 3]
-    } else {
-        after_begin
-    };
-    (decls, Some(stripped.trim()))
-}
-
-fn find_top_level_keyword(upper: &str, keyword: &str) -> Option<usize> {
-    let bytes = upper.as_bytes();
-    let kw = keyword.as_bytes();
-    if bytes.len() < kw.len() {
-        return None;
-    }
-    for i in 0..=(bytes.len() - kw.len()) {
-        if &bytes[i..i + kw.len()] == kw {
-            let before_ok = i == 0 || !bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'_';
-            let after_idx = i + kw.len();
-            let after_ok = after_idx == bytes.len()
-                || (!bytes[after_idx].is_ascii_alphanumeric() && bytes[after_idx] != b'_');
-            if before_ok && after_ok {
-                return Some(i);
-            }
-        }
-    }
-    None
-}
-
-fn split_plpgsql_statements(body: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let bytes = body.as_bytes();
-    let mut i = 0usize;
-    let mut start = 0usize;
-    let mut paren_depth = 0i32;
-    let mut block_depth = 0i32;
-
-    while i < bytes.len() {
-        let ch = bytes[i];
-        if ch == b'\'' || ch == b'"' {
-            let quote = ch;
-            i += 1;
-            while i < bytes.len() {
-                if bytes[i] == quote {
-                    i += 1;
-                    if i < bytes.len() && bytes[i] == quote {
-                        i += 1;
-                        continue;
-                    }
-                    break;
-                }
-                i += 1;
-            }
-            continue;
-        }
-        if ch == b'(' {
-            paren_depth += 1;
-            i += 1;
-            continue;
-        }
-        if ch == b')' {
-            paren_depth = (paren_depth - 1).max(0);
-            i += 1;
-            continue;
-        }
-        if paren_depth == 0 && (ch.is_ascii_alphabetic() || ch == b'_') {
-            let word_start = i;
-            i += 1;
-            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                i += 1;
-            }
-            let word = &body[word_start..i];
-            let preceded_by_end = body[start..word_start]
-                .split_whitespace()
-                .last()
-                .is_some_and(|prev| prev.eq_ignore_ascii_case("END"));
-            if (word.eq_ignore_ascii_case("IF") || word.eq_ignore_ascii_case("LOOP"))
-                && !preceded_by_end
-            {
-                block_depth += 1;
-            } else if (word.eq_ignore_ascii_case("IF") || word.eq_ignore_ascii_case("LOOP"))
-                && preceded_by_end
-            {
-                block_depth = (block_depth - 1).max(0);
-            }
-            continue;
-        }
-        if ch == b';' && paren_depth == 0 && block_depth == 0 {
-            let piece = body[start..i].trim();
-            if !piece.is_empty() {
-                out.push(piece.to_string());
-            }
-            i += 1;
-            start = i;
-            continue;
-        }
-        i += 1;
-    }
-    let tail = body[start..].trim();
-    if !tail.is_empty() {
-        out.push(tail.to_string());
-    }
-    out
-}
-
-async fn eval_plpgsql_expr(
-    executor: &crate::sql::executor::SqlExecutor,
-    ctx: &ExecutionContext,
-    expr_sql: &str,
-    env_args: &[(kalamdb_system::CatalogRoutineParameter, RoutineValue)],
-) -> Result<RoutineValue, KalamDbError> {
-    let select_sql = format!("SELECT {expr_sql}");
-    let sql = substitute_sql_routine_parameters(&select_sql, env_args);
-    let params: Vec<ScalarValue> = env_args.iter().map(|(_, val)| val.value.clone()).collect();
-    let metadata = executor
-        .prepare_statement_metadata(&sql, ctx)
-        .map_err(|err| KalamDbError::InvalidSql(err.to_string()))?;
-    let result = Box::pin(executor.execute_with_metadata(&metadata, ctx, params)).await?;
-    super::convert::execution_result_to_routine(result)
-}
-
-async fn eval_plpgsql_bool(
-    executor: &crate::sql::executor::SqlExecutor,
-    ctx: &ExecutionContext,
-    cond_sql: &str,
-    env_args: &[(kalamdb_system::CatalogRoutineParameter, RoutineValue)],
-) -> Result<bool, KalamDbError> {
-    let val = eval_plpgsql_expr(executor, ctx, cond_sql, env_args).await?;
-    Ok(matches!(val.value, ScalarValue::Boolean(Some(true))))
-}
-
-fn execute_plpgsql_block<'a>(
-    executor: &'a crate::sql::executor::SqlExecutor,
-    ctx: &'a ExecutionContext,
-    routine: &'a CatalogRoutine,
-    block_sql: &'a str,
-    env_args: &'a mut Vec<(kalamdb_system::CatalogRoutineParameter, RoutineValue)>,
-) -> std::pin::Pin<
-    Box<
-        dyn std::future::Future<
-                Output = Result<(Option<RoutineValue>, Option<ExecutionResult>), KalamDbError>,
-            > + Send
-            + 'a,
-    >,
-> {
-    Box::pin(async move {
-        let statements = split_plpgsql_statements(block_sql);
-        let mut last_result = None;
-        for raw_sql in statements {
-            let trimmed_stmt = raw_sql.trim().trim_end_matches(';').trim();
-            if trimmed_stmt.is_empty()
-                || trimmed_stmt.eq_ignore_ascii_case("BEGIN")
-                || trimmed_stmt.eq_ignore_ascii_case("END")
-                || trimmed_stmt.eq_ignore_ascii_case("NULL")
-            {
-                continue;
-            }
-            if let Some(rest) = strip_keyword_prefix_ci(trimmed_stmt, "RETURN") {
-                let expr_sql = rest.trim();
-                if expr_sql.is_empty() {
-                    return Ok((Some(RoutineValue::new(ScalarValue::Null)), last_result));
-                }
-                let val = eval_plpgsql_expr(executor, ctx, expr_sql, env_args).await?;
-                return Ok((Some(val), last_result));
-            }
-            if let Some((cond_sql, loop_body)) = parse_while_loop_stmt(trimmed_stmt) {
-                let mut iterations = 0usize;
-                while eval_plpgsql_bool(executor, ctx, cond_sql, env_args).await? {
-                    iterations += 1;
-                    if iterations > 10_000 {
-                        return Err(KalamDbError::from(FunctionsError::ResourceLimit(
-                            "PL/pgSQL loop iteration limit".into(),
-                        )));
-                    }
-                    let (ret, res) =
-                        execute_plpgsql_block(executor, ctx, routine, loop_body, env_args).await?;
-                    if res.is_some() {
-                        last_result = res;
-                    }
-                    if ret.is_some() {
-                        return Ok((ret, last_result));
-                    }
-                }
-                continue;
-            }
-            if let Some((cond_sql, then_body, else_body)) = parse_if_stmt(trimmed_stmt) {
-                if eval_plpgsql_bool(executor, ctx, cond_sql, env_args).await? {
-                    let (ret, res) =
-                        execute_plpgsql_block(executor, ctx, routine, then_body, env_args).await?;
-                    if res.is_some() {
-                        last_result = res;
-                    }
-                    if ret.is_some() {
-                        return Ok((ret, last_result));
-                    }
-                } else if let Some(else_sql) = else_body {
-                    let (ret, res) =
-                        execute_plpgsql_block(executor, ctx, routine, else_sql, env_args).await?;
-                    if res.is_some() {
-                        last_result = res;
-                    }
-                    if ret.is_some() {
-                        return Ok((ret, last_result));
-                    }
-                }
-                continue;
-            }
-            if let Some((lhs, rhs)) = split_plpgsql_assignment(trimmed_stmt) {
-                let assigned_val = eval_plpgsql_expr(executor, ctx, rhs, env_args).await?;
-                if let Some((_, slot)) =
-                    env_args.iter_mut().find(|(p, _)| p.name.eq_ignore_ascii_case(lhs))
-                {
-                    *slot = assigned_val;
-                }
-                continue;
-            }
-            let sql = substitute_sql_routine_parameters(trimmed_stmt, env_args);
-            let params: Vec<ScalarValue> =
-                env_args.iter().map(|(_, val)| val.value.clone()).collect();
-            let metadata = executor
-                .prepare_statement_metadata(&sql, ctx)
-                .map_err(|err| KalamDbError::InvalidSql(err.to_string()))?;
-            if metadata.classified_statement.as_ref().is_some_and(|statement| {
-                matches!(
-                    statement.kind(),
-                    kalamdb_sql::SqlStatementKind::BeginTransaction
-                        | kalamdb_sql::SqlStatementKind::CommitTransaction
-                        | kalamdb_sql::SqlStatementKind::RollbackTransaction
-                )
-            }) {
-                return Err(KalamDbError::from(FunctionsError::Invalid(
-                    "transaction control is not allowed inside a routine".into(),
-                )));
-            }
-            if matches!(
-                routine.volatility,
-                kalamdb_commons::models::RoutineVolatility::Immutable
-                    | kalamdb_commons::models::RoutineVolatility::Stable
-            ) && metadata.classified_statement.as_ref().is_some_and(|statement| {
-                !matches!(
-                    statement.kind(),
-                    kalamdb_sql::SqlStatementKind::Select
-                        | kalamdb_sql::SqlStatementKind::DataFusionMetaCommand
-                        | kalamdb_sql::SqlStatementKind::SetSearchPath(_)
-                )
-            }) {
-                return Err(KalamDbError::from(FunctionsError::Invalid(format!(
-                    "{} routine {} cannot execute read-write or DDL statements",
-                    routine.volatility.as_str(),
-                    routine.routine_id
-                ))));
-            }
-            let result = Box::pin(executor.execute_with_metadata(&metadata, ctx, params)).await?;
-            last_result = Some(result);
-        }
-        Ok((None, last_result))
-    })
-}
-
-fn parse_while_loop_stmt(stmt: &str) -> Option<(&str, &str)> {
-    let rest = strip_keyword_prefix_ci(stmt.trim(), "WHILE")?.trim();
-    let upper = rest.to_ascii_uppercase();
-    if !upper.ends_with("END LOOP") {
-        return None;
-    }
-    let without_end = rest[..rest.len() - "END LOOP".len()].trim();
-    let upper_inner = without_end.to_ascii_uppercase();
-    let loop_pos = find_top_level_keyword(&upper_inner, "LOOP")?;
-    let cond = without_end[..loop_pos].trim();
-    let body = without_end[loop_pos + "LOOP".len()..].trim();
-    Some((cond, body))
-}
-
-fn parse_if_stmt(stmt: &str) -> Option<(&str, &str, Option<&str>)> {
-    let rest = strip_keyword_prefix_ci(stmt.trim(), "IF")?.trim();
-    let upper = rest.to_ascii_uppercase();
-    if !upper.ends_with("END IF") {
-        return None;
-    }
-    let without_end = rest[..rest.len() - "END IF".len()].trim();
-    let upper_inner = without_end.to_ascii_uppercase();
-    let then_pos = find_top_level_keyword(&upper_inner, "THEN")?;
-    let cond = without_end[..then_pos].trim();
-    let after_then = without_end[then_pos + "THEN".len()..].trim();
-    let upper_after_then = after_then.to_ascii_uppercase();
-    if let Some(else_pos) = find_top_level_keyword(&upper_after_then, "ELSE") {
-        let then_body = after_then[..else_pos].trim();
-        let else_body = after_then[else_pos + "ELSE".len()..].trim();
-        Some((cond, then_body, Some(else_body)))
-    } else {
-        Some((cond, after_then, None))
-    }
-}
-
-fn strip_keyword_prefix_ci<'a>(input: &'a str, keyword: &str) -> Option<&'a str> {
-    if input.len() < keyword.len() {
-        return None;
-    }
-    let (prefix, rest) = input.split_at(keyword.len());
-    if !prefix.eq_ignore_ascii_case(keyword) {
-        return None;
-    }
-    if rest.is_empty() || rest.starts_with(char::is_whitespace) {
-        Some(rest)
-    } else {
-        None
-    }
-}
-
-fn split_plpgsql_assignment(stmt: &str) -> Option<(&str, &str)> {
-    let (lhs, rhs) = stmt.split_once(":=")?;
-    let lhs = lhs.trim();
-    let rhs = rhs.trim();
-    if lhs.is_empty()
-        || rhs.is_empty()
-        || !lhs.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
-        return None;
-    }
-    Some((lhs, rhs))
-}
-
-fn substitute_sql_routine_parameters(
-    sql: &str,
-    input_args: &[(kalamdb_system::CatalogRoutineParameter, RoutineValue)],
-) -> String {
-    if input_args.is_empty() {
-        return sql.to_string();
-    }
-    let mut named: Vec<(&str, usize)> = input_args
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, (param, _))| {
-            let trimmed = param.name.trim();
-            if trimmed.is_empty() || trimmed.starts_with('$') {
-                None
-            } else {
-                Some((trimmed, idx + 1))
-            }
-        })
-        .collect();
-    if named.is_empty() {
-        return sql.to_string();
-    }
-    named.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
-
-    let mut out = String::with_capacity(sql.len() + 16);
-    let bytes = sql.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let ch = bytes[i];
-        if ch == b'\'' || ch == b'"' {
-            let quote = ch;
-            out.push(quote as char);
-            i += 1;
-            while i < bytes.len() {
-                let c = bytes[i];
-                out.push(c as char);
-                i += 1;
-                if c == quote {
-                    if i < bytes.len() && bytes[i] == quote {
-                        out.push(bytes[i] as char);
-                        i += 1;
-                    } else {
-                        break;
-                    }
-                }
-            }
-            continue;
-        }
-        if ch.is_ascii_alphabetic() || ch == b'_' {
-            let start = i;
-            i += 1;
-            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                i += 1;
-            }
-            let ident = &sql[start..i];
-            let preceded_by_dot = start > 0 && bytes[start - 1] == b'.';
-            let followed_by_paren = sql[i..].trim_start().starts_with('(');
-            if !preceded_by_dot && !followed_by_paren {
-                if let Some((_, pos)) =
-                    named.iter().find(|(name, _)| name.eq_ignore_ascii_case(ident))
-                {
-                    out.push('$');
-                    out.push_str(&pos.to_string());
-                    continue;
-                }
-            }
-            out.push_str(ident);
-            continue;
-        }
-        out.push(ch as char);
-        i += 1;
-    }
-    out
 }
 
 fn revision_for_routine(
@@ -1342,8 +1010,8 @@ pub async fn rebuild_active_function_set(app: &AppContext) -> Result<(), KalamDb
             })?;
             Some(Arc::new(InlineArtifact {
                 artifact_id: artifact_id.clone(),
-                source:      source.into(),
-                language:    routine.language.clone().unwrap_or_default(),
+                source: source.into(),
+                language: routine.language.clone().unwrap_or_default(),
             }))
         } else {
             None
@@ -1493,7 +1161,7 @@ pub async fn rollback_module_revision(
 
 struct OwnedFunctionTx {
     app: Arc<AppContext>,
-    id:  Mutex<Option<TransactionId>>,
+    id: Mutex<Option<TransactionId>>,
 }
 
 impl OwnedFunctionTx {
@@ -1515,7 +1183,7 @@ impl Drop for OwnedFunctionTx {
 }
 
 struct ActiveRunGuard {
-    runtime:      Arc<crate::functions::FunctionRuntimeState>,
+    runtime: Arc<crate::functions::FunctionRuntimeState>,
     execution_id: String,
 }
 
@@ -1648,8 +1316,8 @@ fn procedure_out_value_to_execution_result(
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
     Ok(ExecutionResult::Rows {
         row_count: batch.num_rows(),
-        batches:   vec![batch],
-        schema:    None,
+        batches: vec![batch],
+        schema: None,
     })
 }
 
@@ -1666,8 +1334,8 @@ fn routine_value_to_execution_result(
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
     Ok(ExecutionResult::Rows {
         row_count: batch.num_rows(),
-        batches:   vec![batch],
-        schema:    None,
+        batches: vec![batch],
+        schema: None,
     })
 }
 
@@ -1702,28 +1370,28 @@ mod tests {
     fn catalog_routine(language: &str, artifact: bool) -> CatalogRoutine {
         let ns = SchemaId::new("api");
         CatalogRoutine {
-            routine_id:         RoutineId::from_parts(Some(&ns), "health"),
-            namespace_id:       ns,
-            name:               "health".to_string(),
-            owner:              UserId::new("root"),
-            security:           RoutineSecurityMode::Invoker,
-            language:           Some(language.to_string()),
-            body:               Some("return 1;".to_string()),
-            return_type_id:     None,
-            return_type_name:   None,
-            return_is_array:    false,
-            return_not_null:    false,
-            comment:            None,
-            return_data_type:   None,
+            routine_id: RoutineId::from_parts(Some(&ns), "health"),
+            namespace_id: ns,
+            name: "health".to_string(),
+            owner: UserId::new("root"),
+            security: RoutineSecurityMode::Invoker,
+            language: Some(language.to_string()),
+            body: Some("return 1;".to_string()),
+            return_type_id: None,
+            return_type_name: None,
+            return_is_array: false,
+            return_not_null: false,
+            comment: None,
+            return_data_type: None,
             inline_source_hash: Some("hash".to_string()),
             inline_artifact_id: artifact.then(|| ArtifactId::new("js")),
-            kind:               kalamdb_commons::models::RoutineKind::default(),
-            volatility:         kalamdb_commons::models::RoutineVolatility::default(),
-            null_safety:        kalamdb_commons::models::RoutineNullSafety::default(),
-            parallel_safety:    kalamdb_commons::models::RoutineParallelSafety::default(),
-            cost:               None,
-            rows:               None,
-            config_params:      None,
+            kind: kalamdb_commons::models::RoutineKind::default(),
+            volatility: kalamdb_commons::models::RoutineVolatility::default(),
+            null_safety: kalamdb_commons::models::RoutineNullSafety::default(),
+            parallel_safety: kalamdb_commons::models::RoutineParallelSafety::default(),
+            cost: None,
+            rows: None,
+            config_params: None,
         }
     }
 

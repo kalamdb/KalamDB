@@ -21,7 +21,7 @@ pub struct CatalogRoutineGrant {
         default = "None",
         comment = "routine_id:grantee"
     )]
-    pub grant_id:   RoutineGrantId,
+    pub grant_id: RoutineGrantId,
     #[column(
         id = 2,
         ordinal = 2,
@@ -41,7 +41,7 @@ pub struct CatalogRoutineGrant {
         default = "None",
         comment = "EXECUTE grantee"
     )]
-    pub grantee:    RoutineGrantee,
+    pub grantee: RoutineGrantee,
 }
 
 impl kalamdb_commons::KSerializable for CatalogRoutineGrant {}

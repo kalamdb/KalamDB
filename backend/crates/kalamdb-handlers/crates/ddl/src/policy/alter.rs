@@ -64,13 +64,13 @@ impl TypedStatementHandler<AlterPolicyStatement> for AlterPolicyHandler {
                         ))
                     })?;
                 let replacement = CreatePolicyStatement {
-                    policy_name:    previous.policy_name,
-                    table_id:       previous.table_id,
-                    command:        previous.command,
-                    targets:        targets.unwrap_or(previous.targets),
-                    using_sql:      using_sql.or(previous.using_sql),
+                    policy_name: previous.policy_name,
+                    table_id: previous.table_id,
+                    command: previous.command,
+                    targets: targets.unwrap_or(previous.targets),
+                    using_sql: using_sql.or(previous.using_sql),
                     with_check_sql: with_check_sql.or(previous.with_check_sql),
-                    original_sql:   String::new(),
+                    original_sql: String::new(),
                 };
                 let replacement = CreatePolicyHandler::new(self.app_context.clone())
                     .compile_policy(&replacement)

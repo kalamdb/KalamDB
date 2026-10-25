@@ -16,6 +16,7 @@ use super::{
         V2_ROW_FLAG_DELETED, V2_ROW_FLAG_NULL_BITMAP, V2_ROW_FLAG_OFFSET_WIDTH_MASK,
         V2_ROW_FLAG_OFFSET_WIDTH_SHIFT, V2_ROW_FLAG_SUPPORTED_MASK,
     },
+    fixed_value_encoding::FixedValueEncoding,
     schema::{StorageDataType, StorageSchema},
     value::{decode_value, null_for_type, skip_value, Reader},
 };
@@ -30,14 +31,14 @@ use crate::{
 /// Validated zero-copy view over a v2 row payload (`FLAG_ROW_BODY_V2`).
 #[derive(Debug, Clone, Copy)]
 pub struct RowView<'a> {
-    stored_version:    u16,
-    deleted:           bool,
-    slot_span:         usize,
-    bitmap:            Option<&'a [u8]>,
-    fixed_region:      &'a [u8],
+    stored_version: u16,
+    deleted: bool,
+    slot_span: usize,
+    bitmap: Option<&'a [u8]>,
+    fixed_region: &'a [u8],
     var_offsets_bytes: &'a [u8],
     offset_byte_width: usize,
-    var_data:          &'a [u8],
+    var_data: &'a [u8],
 }
 
 impl<'a> RowView<'a> {
@@ -78,7 +79,11 @@ impl<'a> RowView<'a> {
         }
 
         let slot_span = reader.u16()? as usize;
-        let layout = schema.layout_for_version(stored_version).unwrap_or_else(|| schema.layout());
+        let layout = schema.layout_for_version(stored_version).ok_or_else(|| {
+            SerializationError::Decode(format!(
+                "missing v2 row schema layout for version {stored_version}"
+            ))
+        })?;
         if slot_span != layout.slot_span {
             return Err(SerializationError::Decode(format!(
                 "v2 row slot span {slot_span} does not match schema layout span {}",
@@ -236,8 +241,22 @@ impl<'a> RowView<'a> {
             .layout_for_version(self.stored_version)
             .unwrap_or_else(|| schema.layout());
         if let Some((offset, width)) = layout.fixed_offsets.get(ordinal).and_then(|opt| *opt) {
-            let slice = &self.fixed_region[offset..offset + width];
-            return decode_fixed_value(slice, &field.data_type);
+            let slice = self
+                .fixed_region
+                .get(offset..offset + width)
+                .ok_or(SerializationError::Truncated)?;
+            let stored =
+                layout.fixed_encodings.get(ordinal).and_then(|encoding| *encoding).ok_or_else(
+                    || {
+                        SerializationError::Decode(format!(
+                            "missing fixed encoding for ordinal {ordinal}"
+                        ))
+                    },
+                )?;
+            if Some(stored) == FixedValueEncoding::for_type(&field.data_type) {
+                return decode_fixed_value(slice, &field.data_type);
+            }
+            return stored.decode_as(slice, &field.data_type);
         }
         let slice = self.variable_slice(ordinal, schema)?.ok_or(SerializationError::Truncated)?;
         decode_variable_value_v2(slice, &field.data_type)
@@ -392,7 +411,7 @@ pub fn decode_shared_row(
     Ok(SharedTableRow {
         _version: version,
         _deleted: decoded.deleted,
-        fields:   decoded.fields,
+        fields: decoded.fields,
     })
 }
 
@@ -407,7 +426,7 @@ pub fn decode_shared_row_selected(
     Ok(SharedTableRow {
         _version: version,
         _deleted: decoded.deleted,
-        fields:   decoded.fields,
+        fields: decoded.fields,
     })
 }
 
@@ -430,7 +449,7 @@ pub fn decode_stream_row(
 
 pub(crate) struct DecodedRow {
     deleted: bool,
-    fields:  Row,
+    fields: Row,
 }
 
 /// Decode a row payload's live (non-dropped) fields directly into columnar `Vec<ScalarValue>`
@@ -520,7 +539,7 @@ pub(crate) fn decode_row_body(bytes: &[u8], schema: &StorageSchema) -> Result<De
         }
         return Ok(DecodedRow {
             deleted: view.is_deleted(),
-            fields:  Row { values },
+            fields: Row { values },
         });
     }
     let mut reader = Reader::new(payload);
@@ -559,7 +578,7 @@ fn decode_row_body_selected(
         }
         return Ok(DecodedRow {
             deleted: view.is_deleted(),
-            fields:  Row { values },
+            fields: Row { values },
         });
     }
     let mut reader = Reader::new(payload);

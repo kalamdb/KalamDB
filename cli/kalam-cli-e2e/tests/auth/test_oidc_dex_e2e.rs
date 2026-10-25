@@ -43,13 +43,13 @@ const TEST_KEY_ID: &str = "cli-device-test-key";
 
 #[derive(Clone)]
 struct DexProviderInfo {
-    issuer:                 String,
-    token_url:              String,
-    client_id:              String,
-    client_secret:          Option<String>,
-    username:               String,
-    password:               String,
-    subject:                String,
+    issuer: String,
+    token_url: String,
+    client_id: String,
+    client_secret: Option<String>,
+    username: String,
+    password: String,
+    subject: String,
     supports_browser_login: bool,
 }
 
@@ -57,7 +57,7 @@ struct DexProviderInfo {
 struct DexTokenResponse {
     access_token: String,
     #[serde(default)]
-    id_token:     Option<String>,
+    id_token: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -67,32 +67,32 @@ struct JwtPayloadSubject {
 
 #[derive(Serialize)]
 struct TestJwtClaims {
-    sub:   String,
-    iss:   String,
-    aud:   String,
-    exp:   usize,
-    iat:   usize,
-    nbf:   usize,
+    sub: String,
+    iss: String,
+    aud: String,
+    exp: usize,
+    iat: usize,
+    nbf: usize,
     email: String,
 }
 
 struct KalamDbTestServer {
     base_url: String,
-    child:    Child,
+    child: Child,
     data_dir: TempDir,
     log_path: PathBuf,
 }
 
 #[derive(Deserialize)]
 struct CurrentUserResponseView {
-    user:            CurrentUserView,
+    user: CurrentUserView,
     admin_ui_access: bool,
 }
 
 #[derive(Deserialize)]
 struct CurrentUserView {
-    id:    String,
-    role:  String,
+    id: String,
+    role: String,
     email: Option<String>,
 }
 
@@ -686,13 +686,13 @@ where
     let host = container.get_host().await.context("failed to resolve Dex host")?.to_string();
     let port = container.get_host_port_ipv4(5556).await.context("failed to resolve Dex port")?;
     let provider = DexProviderInfo {
-        issuer:                 format!("http://{host}:{port}"),
-        token_url:              format!("http://{host}:{port}/token"),
-        client_id:              DEX_CLIENT_ID.to_string(),
-        client_secret:          Some(DEX_FALLBACK_CLIENT_SECRET.to_string()),
-        username:               DEX_FALLBACK_USERNAME.to_string(),
-        password:               DEX_FALLBACK_PASSWORD.to_string(),
-        subject:                DEX_FALLBACK_USERNAME.to_string(),
+        issuer: format!("http://{host}:{port}"),
+        token_url: format!("http://{host}:{port}/token"),
+        client_id: DEX_CLIENT_ID.to_string(),
+        client_secret: Some(DEX_FALLBACK_CLIENT_SECRET.to_string()),
+        username: DEX_FALLBACK_USERNAME.to_string(),
+        password: DEX_FALLBACK_PASSWORD.to_string(),
+        subject: DEX_FALLBACK_USERNAME.to_string(),
         supports_browser_login: false,
     };
     let result = test_fn(provider).await;
@@ -1299,12 +1299,12 @@ async fn write_response(
 fn issue_rs256_token(issuer: &str, client_id: &str, subject: &str, email: &str) -> Result<String> {
     let now = chrono::Utc::now().timestamp();
     let claims = TestJwtClaims {
-        sub:   subject.to_string(),
-        iss:   issuer.to_string(),
-        aud:   client_id.to_string(),
-        exp:   (now + 3600) as usize,
-        iat:   now.saturating_sub(1) as usize,
-        nbf:   now.saturating_sub(1) as usize,
+        sub: subject.to_string(),
+        iss: issuer.to_string(),
+        aud: client_id.to_string(),
+        exp: (now + 3600) as usize,
+        iat: now.saturating_sub(1) as usize,
+        nbf: now.saturating_sub(1) as usize,
         email: email.to_string(),
     };
     let mut header = Header::new(Algorithm::RS256);

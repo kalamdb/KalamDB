@@ -90,7 +90,7 @@ pub fn logical_type_ref_for_arrow(data_type: &DataType) -> PgWireResult<LogicalT
         DataType::Decimal128(precision, scale) | DataType::Decimal256(precision, scale) => {
             LogicalTypeRef::Builtin(KalamDataType::Decimal {
                 precision: *precision,
-                scale:     (*scale).max(0) as u8,
+                scale: (*scale).max(0) as u8,
             })
         },
         DataType::FixedSizeList(item, size)

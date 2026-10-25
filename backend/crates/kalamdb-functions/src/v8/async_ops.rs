@@ -22,15 +22,15 @@ type Pending = std::pin::Pin<Box<dyn std::future::Future<Output = Completion>>>;
 
 struct NestedWork {
     invocation: Invocation,
-    host:       Arc<dyn FunctionHost>,
-    resolver:   v8::Global<v8::PromiseResolver>,
+    host: Arc<dyn FunctionHost>,
+    resolver: v8::Global<v8::PromiseResolver>,
 }
 
 #[derive(Default)]
 pub(crate) struct Operations {
-    pending:        Vec<Pending>,
-    nested:         Vec<NestedWork>,
-    count:          usize,
+    pending: Vec<Pending>,
+    nested: Vec<NestedWork>,
+    count: usize,
     argument_bytes: usize,
 }
 

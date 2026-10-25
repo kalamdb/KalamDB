@@ -63,7 +63,7 @@ enum ColumnDefaultRepr {
     Literal(JsonValue),
     FunctionCall {
         routine_id: RoutineId,
-        arguments:  Vec<CallArgument>,
+        arguments: Vec<CallArgument>,
     },
 }
 
@@ -74,7 +74,7 @@ impl From<&ColumnDefault> for ColumnDefaultRepr {
             ColumnDefault::Literal(json) => ColumnDefaultRepr::Literal(json.clone()),
             ColumnDefault::FunctionCall(call) => ColumnDefaultRepr::FunctionCall {
                 routine_id: call.routine_id.clone(),
-                arguments:  call.arguments.clone(),
+                arguments: call.arguments.clone(),
             },
         }
     }
@@ -99,7 +99,7 @@ enum StoredColumnDefault {
     Literal(String),
     FunctionCall {
         routine_id: RoutineId,
-        arguments:  Vec<CallArgument>,
+        arguments: Vec<CallArgument>,
     },
 }
 
@@ -110,7 +110,7 @@ impl From<&ColumnDefault> for StoredColumnDefault {
             ColumnDefault::Literal(json) => StoredColumnDefault::Literal(json.to_string()),
             ColumnDefault::FunctionCall(call) => StoredColumnDefault::FunctionCall {
                 routine_id: call.routine_id.clone(),
-                arguments:  call.arguments.clone(),
+                arguments: call.arguments.clone(),
             },
         }
     }

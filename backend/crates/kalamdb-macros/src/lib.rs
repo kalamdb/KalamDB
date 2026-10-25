@@ -67,7 +67,7 @@ pub fn table(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         columns.push(ColumnSpec {
             field_name: field_ident.clone(),
-            args:       column_attr,
+            args: column_attr,
         });
     }
 
@@ -159,7 +159,7 @@ pub fn table(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 struct ColumnSpec {
     field_name: Ident,
-    args:       ColumnArgs,
+    args: ColumnArgs,
 }
 
 fn extract_column_attr(attrs: &mut Vec<Attribute>) -> Option<ColumnArgs> {
@@ -185,11 +185,11 @@ fn extract_column_attr(attrs: &mut Vec<Attribute>) -> Option<ColumnArgs> {
 
 #[derive(Default)]
 struct TableArgs {
-    name:         String,
-    namespace:    Option<String>,
-    table_type:   TableKind,
+    name: String,
+    namespace: Option<String>,
+    table_type: TableKind,
     access_level: Option<TableAccessKind>,
-    comment:      Option<String>,
+    comment: Option<String>,
 }
 
 impl Parse for TableArgs {
@@ -337,15 +337,15 @@ fn parse_table_access_value(input: ParseStream<'_>) -> Result<TableAccessKind> {
 
 #[derive(Default)]
 struct ColumnArgs {
-    column_id:        u64,
+    column_id: u64,
     ordinal_position: u32,
-    data_type:        Option<syn::Expr>,
-    is_nullable:      bool,
-    is_primary_key:   bool,
+    data_type: Option<syn::Expr>,
+    is_nullable: bool,
+    is_primary_key: bool,
     is_partition_key: bool,
-    default_value:    String,
-    comment:          Option<String>,
-    parse_error:      Option<syn::Error>,
+    default_value: String,
+    comment: Option<String>,
+    parse_error: Option<syn::Error>,
 }
 
 impl ColumnArgs {

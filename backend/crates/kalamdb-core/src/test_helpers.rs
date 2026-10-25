@@ -158,10 +158,10 @@ pub fn init_test_app_context() -> Arc<TestDb> {
             namespaces
                 .create_namespace(kalamdb_system::Namespace {
                     namespace_id: default_namespace,
-                    name:         "default".to_string(),
-                    created_at:   chrono::Utc::now().timestamp_millis(),
-                    options:      Some(serde_json::json!({})),
-                    table_count:  0,
+                    name: "default".to_string(),
+                    created_at: chrono::Utc::now().timestamp_millis(),
+                    options: Some(serde_json::json!({})),
+                    table_count: 0,
                 })
                 .unwrap();
         }
@@ -277,14 +277,14 @@ pub fn create_test_session_simple() -> Arc<SessionContext> {
 /// filled CI disks near the end of the workspace suite.
 struct OwnedTestBackend {
     inner: Option<Arc<dyn StorageBackend>>,
-    _db:   Option<TestDb>,
+    _db: Option<TestDb>,
 }
 
 impl OwnedTestBackend {
     fn new(db: TestDb) -> Self {
         Self {
             inner: Some(db.backend()),
-            _db:   Some(db),
+            _db: Some(db),
         }
     }
 

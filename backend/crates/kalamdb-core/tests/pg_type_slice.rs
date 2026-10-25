@@ -228,7 +228,7 @@ fn plan_gaps(
         amount_field.and_then(|field| field.data_type)
             != Some(KalamDataType::Decimal {
                 precision: 12,
-                scale:     2,
+                scale: 2,
             }),
         "composite attribute numeric(12,2) did not keep precision 12 scale 2",
     );
@@ -244,7 +244,7 @@ fn plan_gaps(
         amount.data_type()
             != KalamDataType::Decimal {
                 precision: 12,
-                scale:     2,
+                scale: 2,
             },
         format!("plan numeric(12,2) became {}", amount.data_type().sql_name()),
     );

@@ -136,6 +136,18 @@ await unsubscribe();
 await client.disconnect();
 ```
 
+## Routine invocation
+
+Generated clients call `KalamDBClient.invokeRoutine`. The call posts to `/v1/functions/{schema}/{name}` and does not build SQL.
+
+JSON is the default external representation. The body is `{ "epoch", "arguments" }`. Pass `format: 'binary'` to send a current-epoch `KDOM` `RpcRequest` (`application/x-kalam-domain`) and decode the `RpcResult` frame. Object arguments are positional in enumeration order, which matches generated request field order.
+
+Both formats send `x-kalam-epoch`. When the descriptor includes `revision`, the client also sends `x-kalam-descriptor-revision`. A failed call throws `KalamRoutineError` with the server `code` (`STALE_REVISION`, `EPOCH_MISMATCH`, and the other function HTTP codes), `message`, and HTTP status. The client does not retry a mutation after an uncertain outcome.
+
+The Dart client exposes the same contract on `KalamClient.invokeRoutine` (`descriptorRevision`, `format: 'binary'`) and throws `KalamRoutineException`.
+
+The public site SDK pages live in the sibling `KalamSite` tree (`../KalamSite/content/sdk`). That tree is outside this workspace and was not validated with this change.
+
 ## React Live Queries
 
 `@kalamdb/react` provides `KalamProvider`, `LiveQuery`, `LiveQueries`, `useLiveQuery`, `useLiveQueries`, and `useLiveSelection`. It supports raw SQL mode and typed Drizzle mode through `@kalamdb/orm`.

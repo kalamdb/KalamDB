@@ -56,19 +56,19 @@ pub(super) type PrincipalContextCache = SmallVec<[(PrincipalKey, ExecutionContex
 
 #[derive(Clone)]
 pub(super) struct CoreFunctionHost {
-    pub app:      Arc<AppContext>,
-    pub handle:   Handle,
-    pub session:  Arc<HostSession>,
-    pub origin:   FunctionCallOrigin,
-    pub scope:    InvocationScope,
+    pub app: Arc<AppContext>,
+    pub handle: Handle,
+    pub session: Arc<HostSession>,
+    pub origin: FunctionCallOrigin,
+    pub scope: InvocationScope,
     pub sql_gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 #[derive(Clone)]
 pub(super) struct HostSession {
-    pub exec_ctx:      ExecutionContext,
-    pub stack:         ProcedureFrameStack,
-    pub root:          FunctionExecutionRoot,
+    pub exec_ctx: ExecutionContext,
+    pub stack: ProcedureFrameStack,
+    pub root: FunctionExecutionRoot,
     pub principal_ctx: Arc<Mutex<PrincipalContextCache>>,
 }
 
@@ -79,8 +79,8 @@ impl CoreFunctionHost {
             return session.exec_ctx.clone();
         };
         let key = PrincipalKey {
-            user:      frame.principal_user.clone(),
-            role:      frame.principal_role,
+            user: frame.principal_user.clone(),
+            role: frame.principal_role,
             namespace: if frame.security == RoutineSecurityMode::Definer {
                 frame.namespace_id.clone()
             } else {
@@ -375,15 +375,15 @@ impl FunctionHost for CoreFunctionHost {
     fn metadata(&self) -> Option<InvocationMetadata> {
         let ctx = self.current_exec_ctx();
         Some(InvocationMetadata {
-            actor:      kalamdb_functions::ActorMeta {
-                id:   self.session.exec_ctx.user_id().clone(),
+            actor: kalamdb_functions::ActorMeta {
+                id: self.session.exec_ctx.user_id().clone(),
                 role: self.session.exec_ctx.user_role(),
             },
-            principal:  kalamdb_functions::ActorMeta {
-                id:   ctx.user_id().clone(),
+            principal: kalamdb_functions::ActorMeta {
+                id: ctx.user_id().clone(),
                 role: ctx.user_role(),
             },
-            namespace:  ctx.default_namespace(),
+            namespace: ctx.default_namespace(),
             request_id: ctx.request_id().unwrap_or_default().to_string(),
         })
     }
@@ -542,8 +542,8 @@ impl FunctionHost for CoreFunctionHost {
                 run_id,
                 scheduled_at,
             } => kalamdb_functions::InvocationSource::Schedule {
-                schedule_id:  schedule_id.clone(),
-                run_id:       run_id.clone(),
+                schedule_id: schedule_id.clone(),
+                run_id: run_id.clone(),
                 scheduled_at: *scheduled_at,
             },
             FunctionCallOrigin::Topic {
@@ -554,10 +554,10 @@ impl FunctionHost for CoreFunctionHost {
                 attempt,
             } => kalamdb_functions::InvocationSource::Topic {
                 topic_name: topic_name.clone(),
-                event_id:   event_id.clone(),
-                partition:  *partition,
-                offset:     *offset,
-                attempt:    *attempt,
+                event_id: event_id.clone(),
+                partition: *partition,
+                offset: *offset,
+                attempt: *attempt,
             },
             FunctionCallOrigin::Sql | FunctionCallOrigin::Http { .. } => {
                 kalamdb_functions::InvocationSource::Call

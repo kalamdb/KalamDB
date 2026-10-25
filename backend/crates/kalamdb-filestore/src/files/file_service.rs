@@ -25,14 +25,14 @@ use crate::{
 struct MintedFileLocation {
     storage_id: StorageId,
     table_type: TableType,
-    table_id:   TableId,
-    user_id:    Option<UserId>,
+    table_id: TableId,
+    user_id: Option<UserId>,
 }
 
 #[derive(Clone, Debug)]
 struct MintedFileEntry {
-    file_ref:   FileRef,
-    location:   Option<MintedFileLocation>,
+    file_ref: FileRef,
+    location: Option<MintedFileLocation>,
     staged_raw: Option<Bytes>,
 }
 
@@ -220,8 +220,8 @@ impl FileStorageService {
         self.minted_files.insert(
             file_ref.id.clone(),
             MintedFileEntry {
-                file_ref:   file_ref.clone(),
-                location:   Some(MintedFileLocation {
+                file_ref: file_ref.clone(),
+                location: Some(MintedFileLocation {
                     storage_id: storage_id.clone(),
                     table_type,
                     table_id: table_id.clone(),
@@ -311,8 +311,8 @@ impl FileStorageService {
         self.minted_files.insert(
             file_id,
             MintedFileEntry {
-                file_ref:   file_ref.clone(),
-                location:   None,
+                file_ref: file_ref.clone(),
+                location: None,
                 staged_raw: Some(data),
             },
         );
@@ -394,8 +394,8 @@ impl FileStorageService {
                 self.minted_files.insert(
                     file_ref.id.clone(),
                     MintedFileEntry {
-                        file_ref:   file_ref.clone(),
-                        location:   Some(MintedFileLocation {
+                        file_ref: file_ref.clone(),
+                        location: Some(MintedFileLocation {
                             storage_id: storage_id.clone(),
                             table_type,
                             table_id: table_id.clone(),

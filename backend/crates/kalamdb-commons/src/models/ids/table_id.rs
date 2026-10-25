@@ -26,7 +26,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TableId {
     namespace_id: SchemaId,
-    table_name:   TableName,
+    table_name: TableName,
 }
 
 impl TableId {
@@ -44,7 +44,7 @@ impl TableId {
     pub fn from_ref(namespace_id: &SchemaId, table_name: &TableName) -> Self {
         Self {
             namespace_id: namespace_id.clone(),
-            table_name:   table_name.clone(),
+            table_name: table_name.clone(),
         }
     }
 
@@ -85,7 +85,7 @@ impl TableId {
     pub fn from_strings(namespace_id: &str, table_name: &str) -> Self {
         Self {
             namespace_id: SchemaId::new(namespace_id),
-            table_name:   TableName::new(table_name),
+            table_name: TableName::new(table_name),
         }
     }
 
@@ -123,7 +123,7 @@ impl TableId {
         if let Ok((namespace_id, table_name)) = decode_key::<(String, String)>(key) {
             return Some(Self {
                 namespace_id: SchemaId::new(namespace_id),
-                table_name:   TableName::new(table_name),
+                table_name: TableName::new(table_name),
             });
         }
 
@@ -185,7 +185,7 @@ impl<'de> Deserialize<'de> for TableId {
                 match (namespace, table) {
                     (Some(namespace), Some(table)) => Ok(TableId {
                         namespace_id: SchemaId::new(namespace),
-                        table_name:   TableName::new(table),
+                        table_name: TableName::new(table),
                     }),
                     _ => Err(E::custom(format!("Invalid table_id format: {}", value))),
                 }

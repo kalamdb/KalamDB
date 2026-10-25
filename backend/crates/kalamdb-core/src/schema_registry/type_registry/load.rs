@@ -29,16 +29,16 @@ impl TypeRegistry {
             | LogicalTypeRef::Jsonb
             | LogicalTypeRef::TimestampTz
             | LogicalTypeRef::Geometry => Ok(ResolvedLayout {
-                type_ref:   type_ref.clone(),
+                type_ref: type_ref.clone(),
                 arrow_type: arrow_type_for_ref(type_ref, None)?,
-                nested:     None,
+                nested: None,
             }),
             LogicalTypeRef::Named { type_id } => {
                 let nested = self.get_or_load(stores, type_id)?;
                 Ok(ResolvedLayout {
-                    type_ref:   type_ref.clone(),
+                    type_ref: type_ref.clone(),
                     arrow_type: nested.arrow_type.clone(),
-                    nested:     Some(nested),
+                    nested: Some(nested),
                 })
             },
             LogicalTypeRef::List {
@@ -60,9 +60,9 @@ impl TypeRegistry {
                     }
                 }
                 Ok(ResolvedLayout {
-                    type_ref:   type_ref.clone(),
+                    type_ref: type_ref.clone(),
                     arrow_type: DataType::List(Arc::new(item)),
-                    nested:     inner.nested,
+                    nested: inner.nested,
                 })
             },
             LogicalTypeRef::Map { .. } => Err(KalamDbError::InvalidSql(
@@ -111,7 +111,7 @@ impl TypeRegistry {
         loading: &mut Vec<TypeId>,
     ) -> Result<Arc<ResolvedType>, KalamDbError> {
         let key = RevisionKey {
-            type_id:  catalog_type.type_id.clone(),
+            type_id: catalog_type.type_id.clone(),
             revision: catalog_type.type_revision,
         };
 
@@ -212,27 +212,27 @@ impl TypeRegistry {
             catalog_fields.into_iter().filter(|field| !field.dropped).enumerate()
         {
             fields.push(ResolvedTypeField {
-                name:              catalog_field.name.clone(),
-                slot:              catalog_field.physical_slot(),
-                ordinal:           catalog_field.ordinal,
-                type_ref:          LogicalTypeRef::from_builtin(KalamDataType::Text),
-                not_null:          true,
-                dropped:           false,
-                nested:            None,
+                name: catalog_field.name.clone(),
+                slot: catalog_field.physical_slot(),
+                ordinal: catalog_field.ordinal,
+                type_ref: LogicalTypeRef::from_builtin(KalamDataType::Text),
+                not_null: true,
+                dropped: false,
+                nested: None,
                 arrow_child_index: live_index,
-                constraint_expr:   None,
+                constraint_expr: None,
             });
         }
         let resolved = Arc::new(ResolvedType {
-            type_id:      catalog_type.type_id,
-            revision:     TypeRevision::from_u32(catalog_type.type_revision.max(1))
+            type_id: catalog_type.type_id,
+            revision: TypeRevision::from_u32(catalog_type.type_revision.max(1))
                 .unwrap_or(TypeRevision::INITIAL),
             namespace_id: catalog_type.namespace_id,
-            name:         catalog_type.name,
-            kind:         CatalogTypeKind::Enum,
-            fields:       fields.into(),
+            name: catalog_type.name,
+            kind: CatalogTypeKind::Enum,
+            fields: fields.into(),
             arrow_fields: Arc::new(Fields::from(Vec::<Arc<Field>>::new())),
-            arrow_type:   DataType::Utf8,
+            arrow_type: DataType::Utf8,
         });
         self.revisions.insert(key, Arc::clone(&resolved));
         self.evict_if_needed();

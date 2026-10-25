@@ -80,13 +80,13 @@ pub trait TransactionMutationSink: std::fmt::Debug + Send + Sync {
 /// Query-time transaction context shared between the coordinator and providers.
 #[derive(Debug, Clone)]
 pub struct TransactionQueryContext {
-    pub transaction_id:   TransactionId,
+    pub transaction_id: TransactionId,
     /// Live pin cell shared with [`crate::TransactionHandle`].
-    snapshot_log_index:   Arc<AtomicU64>,
-    pub overlay_view:     Arc<dyn TransactionOverlayView>,
-    pub mutation_sink:    Arc<dyn TransactionMutationSink>,
+    snapshot_log_index: Arc<AtomicU64>,
+    pub overlay_view: Arc<dyn TransactionOverlayView>,
+    pub mutation_sink: Arc<dyn TransactionMutationSink>,
     pub access_validator: Arc<dyn TransactionAccessValidator>,
-    pk_claims:            Option<PrimaryKeyClaims>,
+    pk_claims: Option<PrimaryKeyClaims>,
 }
 
 impl TransactionQueryContext {

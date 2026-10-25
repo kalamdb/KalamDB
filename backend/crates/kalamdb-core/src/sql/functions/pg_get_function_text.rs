@@ -33,9 +33,9 @@ enum FunctionTextKind {
 /// / catalog-aware `pg_get_function_result`.
 #[derive(Debug, Clone)]
 pub struct PgGetFunctionTextFunction {
-    name:          &'static str,
-    aliases:       Vec<String>,
-    kind:          FunctionTextKind,
+    name: &'static str,
+    aliases: Vec<String>,
+    kind: FunctionTextKind,
     system_tables: Arc<SystemTablesRegistry>,
 }
 

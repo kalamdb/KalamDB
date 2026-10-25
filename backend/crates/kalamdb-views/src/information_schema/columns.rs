@@ -82,8 +82,8 @@ fn extended_schema(base: &SchemaRef) -> SchemaRef {
 /// Wraps DataFusion's `information_schema.columns` and normalizes type metadata.
 #[derive(Debug)]
 pub struct ExtendedInformationSchemaColumnsProvider {
-    inner:         Arc<dyn TableProvider>,
-    schema:        SchemaRef,
+    inner: Arc<dyn TableProvider>,
+    schema: SchemaRef,
     system_tables: Arc<SystemTablesRegistry>,
 }
 
@@ -424,13 +424,13 @@ fn plan_err(error: arrow::error::ArrowError) -> DataFusionError {
 }
 
 struct ExtendedColumnsScanSource {
-    provider:        Arc<ExtendedInformationSchemaColumnsProvider>,
-    session_state:   SessionState,
+    provider: Arc<ExtendedInformationSchemaColumnsProvider>,
+    session_state: SessionState,
     physical_filter: Option<Arc<dyn datafusion::physical_expr::PhysicalExpr>>,
-    projection:      Option<Vec<usize>>,
-    limit:           Option<usize>,
-    output_schema:   SchemaRef,
-    filters:         Vec<Expr>,
+    projection: Option<Vec<usize>>,
+    limit: Option<usize>,
+    output_schema: SchemaRef,
+    filters: Vec<Expr>,
 }
 
 #[async_trait]
@@ -500,8 +500,8 @@ impl TableProvider for ExtendedInformationSchemaColumnsProvider {
 
         Ok(Arc::new(DeferredBatchExec::new(Arc::new(ExtendedColumnsScanSource {
             provider: Arc::new(ExtendedInformationSchemaColumnsProvider {
-                inner:         Arc::clone(&self.inner),
-                schema:        Arc::clone(&self.schema),
+                inner: Arc::clone(&self.inner),
+                schema: Arc::clone(&self.schema),
                 system_tables: Arc::clone(&self.system_tables),
             }),
             session_state,

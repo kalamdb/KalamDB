@@ -4,6 +4,7 @@ mod array;
 mod batch;
 mod decode;
 mod encode;
+mod fixed_value_encoding;
 mod from_table;
 mod metadata;
 mod scalar;
@@ -107,10 +108,10 @@ mod tests {
         values.insert("customer".to_string(), struct_scalar(7, "ada"));
         values.insert("tags".to_string(), utf8_list(&["vip", "west"]));
         UserTableRow {
-            user_id:  UserId::new("user-1"),
+            user_id: UserId::new("user-1"),
             _version: VersionId::try_from_i64(100).unwrap(),
             _deleted: false,
-            fields:   Row { values },
+            fields: Row { values },
         }
     }
 
@@ -157,10 +158,10 @@ mod tests {
         let mut values = std::collections::BTreeMap::new();
         values.insert("customer".to_string(), struct_scalar(1, "lin"));
         let row = UserTableRow {
-            user_id:  UserId::new("user-2"),
+            user_id: UserId::new("user-2"),
             _version: VersionId::try_from_i64(1).unwrap(),
             _deleted: false,
-            fields:   Row { values },
+            fields: Row { values },
         };
         let encoded = encode_user_row(&row, &old_schema).unwrap();
 
@@ -216,10 +217,10 @@ mod tests {
         let mut fields = std::collections::BTreeMap::new();
         fields.insert("vec".to_string(), scalar);
         let row = UserTableRow {
-            user_id:  UserId::new("user-emb"),
+            user_id: UserId::new("user-emb"),
             _version: VersionId::try_from_i64(1).unwrap(),
             _deleted: true,
-            fields:   Row { values: fields },
+            fields: Row { values: fields },
         };
 
         let encoded = encode_user_row(&row, &schema).unwrap();
@@ -236,10 +237,10 @@ mod tests {
         let mut values = std::collections::BTreeMap::new();
         values.insert("id".to_string(), ScalarValue::IntervalYearMonth(Some(1)));
         let row = UserTableRow {
-            user_id:  UserId::new("user-3"),
+            user_id: UserId::new("user-3"),
             _version: VersionId::try_from_i64(1).unwrap(),
             _deleted: false,
-            fields:   Row { values },
+            fields: Row { values },
         };
         let err = encode_user_row(&row, &schema).unwrap_err();
         assert!(matches!(err, SerializationError::Encode(_)));
@@ -257,7 +258,7 @@ mod tests {
         let shared = SharedTableRow {
             _version: version,
             _deleted: true,
-            fields:   fields.clone(),
+            fields: fields.clone(),
         };
         let encoded = encode_shared_row(&shared, &schema).unwrap();
         let decoded = decode_shared_row(encoded.as_slice(), &schema, version).unwrap();
@@ -272,10 +273,10 @@ mod tests {
         assert_eq!(selected.fields.values.get("id"), fields.values.get("id"));
 
         let stream = StreamTableRow {
-            user_id:    UserId::new("owner"),
-            _version:   VersionId::try_from_i64(5).unwrap(),
+            user_id: UserId::new("owner"),
+            _version: VersionId::try_from_i64(5).unwrap(),
             _timestamp: 1_700_000_000_000,
-            fields:     fields.clone(),
+            fields: fields.clone(),
         };
         let encoded = encode_stream_row(&stream, &schema).unwrap();
         let decoded = decode_stream_row(
@@ -305,10 +306,10 @@ mod tests {
         values.insert("id".to_string(), ScalarValue::Int64(Some(1)));
         values.insert("gone".to_string(), ScalarValue::Utf8(Some("drop-me".to_string())));
         let row = UserTableRow {
-            user_id:  UserId::new("user-x"),
+            user_id: UserId::new("user-x"),
             _version: VersionId::try_from_i64(1).unwrap(),
             _deleted: false,
-            fields:   Row { values },
+            fields: Row { values },
         };
         let encoded = encode_user_row(&row, &wide).unwrap();
         let narrow = StorageSchema::new(1, vec![StorageField::new("id", StorageDataType::Int64)]);
@@ -336,10 +337,10 @@ mod tests {
         values.insert("id".to_string(), ScalarValue::Int64(Some(2001)));
         values.insert("quantity".to_string(), ScalarValue::Int32(Some(5)));
         let row = UserTableRow {
-            user_id:  UserId::new("user-x"),
+            user_id: UserId::new("user-x"),
             _version: VersionId::try_from_i64(1).unwrap(),
             _deleted: false,
-            fields:   Row { values },
+            fields: Row { values },
         };
         let encoded = encode_user_row(&row, &int32_schema).unwrap();
         let int64_schema = StorageSchema::new(
@@ -438,10 +439,10 @@ mod tests {
         values.insert("note".to_string(), ScalarValue::Utf8(Some("hello v2".to_string())));
         values.insert("customer".to_string(), struct_scalar(99, "Ada"));
         let row = UserTableRow {
-            user_id:  UserId::new("u1"),
+            user_id: UserId::new("u1"),
             _version: VersionId::try_from_i64(7).unwrap(),
             _deleted: false,
-            fields:   Row { values },
+            fields: Row { values },
         };
 
         let encoded = encode_user_row_v2(&row, &schema).unwrap();
@@ -505,10 +506,10 @@ mod tests {
         v1_values.insert("id".to_string(), ScalarValue::Int64(Some(1)));
         v1_values.insert("name".to_string(), ScalarValue::Utf8(Some("legacy".to_string())));
         let v1_row = UserTableRow {
-            user_id:  UserId::new("u1"),
+            user_id: UserId::new("u1"),
             _version: VersionId::try_from_i64(1).unwrap(),
             _deleted: false,
-            fields:   Row { values: v1_values },
+            fields: Row { values: v1_values },
         };
         let encoded_v1 = encode_user_row(&v1_row, &v1_schema).unwrap();
 
@@ -517,10 +518,10 @@ mod tests {
         v2_values.insert("name".to_string(), ScalarValue::Utf8(Some("modern".to_string())));
         v2_values.insert("score".to_string(), ScalarValue::Int64(Some(250)));
         let v2_row = UserTableRow {
-            user_id:  UserId::new("u1"),
+            user_id: UserId::new("u1"),
             _version: VersionId::try_from_i64(2).unwrap(),
             _deleted: false,
-            fields:   Row { values: v2_values },
+            fields: Row { values: v2_values },
         };
         let encoded_v2 = encode_user_row_v2(&v2_row, &v2_schema).unwrap();
 
@@ -580,10 +581,10 @@ mod tests {
         values.insert("a".to_string(), ScalarValue::Utf8(Some("hello".to_string())));
         values.insert("b".to_string(), ScalarValue::Utf8(Some("world".to_string())));
         let row = UserTableRow {
-            user_id:  UserId::new("u1"),
+            user_id: UserId::new("u1"),
             _version: VersionId::try_from_i64(1).unwrap(),
             _deleted: false,
-            fields:   Row { values },
+            fields: Row { values },
         };
         let encoded = encode_user_row_v2(&row, &schema).unwrap();
         let (header, payload) =
@@ -619,10 +620,10 @@ mod tests {
         values.insert("id".to_string(), ScalarValue::Int32(Some(77)));
         values.insert("legacy_name".to_string(), ScalarValue::Utf8(Some("drop-me".to_string())));
         let row = UserTableRow {
-            user_id:  UserId::new("u1"),
+            user_id: UserId::new("u1"),
             _version: VersionId::try_from_i64(1).unwrap(),
             _deleted: false,
-            fields:   Row { values },
+            fields: Row { values },
         };
         let encoded_v1 = encode_user_row(&row, &v1).unwrap();
 
@@ -652,5 +653,64 @@ mod tests {
             decoded.fields.values.get("label"),
             Some(&ScalarValue::Utf8(Some("backfilled".to_string())))
         );
+    }
+
+    #[test]
+    fn v2_historical_fixed_values_use_the_stored_type_before_coercion() {
+        let cases = [
+            (
+                StorageDataType::Int32,
+                StorageDataType::Int64,
+                ScalarValue::Int32(Some(-77)),
+                ScalarValue::Int64(Some(-77)),
+            ),
+            (
+                StorageDataType::Float32,
+                StorageDataType::Float64,
+                ScalarValue::Float32(Some(1.5)),
+                ScalarValue::Float64(Some(1.5)),
+            ),
+            (
+                StorageDataType::TimestampMillisecond,
+                StorageDataType::TimestampMicrosecond,
+                ScalarValue::TimestampMillisecond(Some(123), None),
+                ScalarValue::TimestampMicrosecond(Some(123_000), None),
+            ),
+        ];
+        for (stored_type, current_type, value, expected) in cases {
+            let old = StorageSchema::new(1, vec![StorageField::new("value", stored_type)]);
+            let mut current = StorageSchema::new(2, vec![StorageField::new("value", current_type)]);
+            current.register_historical_version(1, &old.fields);
+            let row = SharedTableRow {
+                _version: VersionId::try_from_i64(1).unwrap(),
+                _deleted: false,
+                fields: Row {
+                    values: [("value".to_string(), value)].into_iter().collect(),
+                },
+            };
+            let encoded = encode_shared_row_v2(&row, &old).unwrap();
+            let decoded = decode_shared_row(encoded.as_slice(), &current, row._version).unwrap();
+            assert_eq!(decoded.fields.values["value"], expected);
+            let selected =
+                decode_shared_row_selected(encoded.as_slice(), &current, row._version, &[0])
+                    .unwrap();
+            assert_eq!(selected.fields, decoded.fields);
+        }
+    }
+
+    #[test]
+    fn v2_rejects_missing_historical_layout_instead_of_reinterpreting_bytes() {
+        let old = StorageSchema::new(1, vec![StorageField::new("value", StorageDataType::Int64)]);
+        let current =
+            StorageSchema::new(2, vec![StorageField::new("value", StorageDataType::Float64)]);
+        let row = SharedTableRow {
+            _version: VersionId::try_from_i64(1).unwrap(),
+            _deleted: false,
+            fields: Row {
+                values: [("value".to_string(), ScalarValue::Int64(Some(42)))].into_iter().collect(),
+            },
+        };
+        let encoded = encode_shared_row_v2(&row, &old).unwrap();
+        assert!(decode_shared_row(encoded.as_slice(), &current, row._version).is_err());
     }
 }

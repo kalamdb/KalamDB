@@ -211,7 +211,7 @@ impl CreateTableStatement {
 
                                 let policy = if rows > 0 && interval > 0 {
                                     FlushPolicy::Combined {
-                                        row_limit:        rows,
+                                        row_limit: rows,
                                         interval_seconds: interval,
                                     }
                                 } else if rows > 0 {

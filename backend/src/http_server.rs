@@ -51,12 +51,12 @@ impl RootSpanBuilder for KalamDbRootSpanBuilder {
 
 /// Owns the running Actix server task and its shutdown handle.
 pub(crate) struct HttpServerRuntime {
-    bind_addr:    SocketAddr,
+    bind_addr: SocketAddr,
     http_version: &'static str,
-    ui_status:    &'static str,
-    handle:       actix_web::dev::ServerHandle,
-    task:         tokio::task::JoinHandle<std::io::Result<()>>,
-    completed:    bool,
+    ui_status: &'static str,
+    handle: actix_web::dev::ServerHandle,
+    task: tokio::task::JoinHandle<std::io::Result<()>>,
+    completed: bool,
 }
 
 impl HttpServerRuntime {

@@ -631,9 +631,9 @@ unsafe fn handle_alter_foreign_table(
 
 /// Info collected before PostgreSQL removes the foreign table catalog entry.
 struct DropTarget {
-    namespace:   String,
-    table_name:  String,
-    table_type:  TableType,
+    namespace: String,
+    table_name: String,
+    table_type: TableType,
     server_name: String,
 }
 

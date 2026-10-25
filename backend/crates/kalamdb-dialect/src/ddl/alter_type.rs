@@ -22,29 +22,29 @@ pub enum EnumValueNeighbor {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AlterTypeOperation {
     AddAttribute {
-        field:    String,
+        field: String,
         type_ref: TypeReference,
     },
     DropAttribute {
-        field:   String,
+        field: String,
         cascade: bool,
     },
     RenameAttribute {
         from: String,
-        to:   String,
+        to: String,
     },
     AlterAttributeType {
-        field:    String,
+        field: String,
         type_ref: TypeReference,
     },
     AddValue {
-        label:         String,
+        label: String,
         if_not_exists: bool,
-        neighbor:      Option<EnumValueNeighbor>,
+        neighbor: Option<EnumValueNeighbor>,
     },
     RenameValue {
         from: String,
-        to:   String,
+        to: String,
     },
     SetSchema {
         schema: SchemaId,
@@ -57,8 +57,8 @@ pub enum AlterTypeOperation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlterTypeStatement {
     pub namespace_id: SchemaId,
-    pub name:         String,
-    pub operation:    AlterTypeOperation,
+    pub name: String,
+    pub operation: AlterTypeOperation,
 }
 
 impl AlterTypeStatement {

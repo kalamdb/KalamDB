@@ -19,14 +19,14 @@ const FRAME_KEY: &str = "kalamdb#HostFrame";
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct HostFrames {
-    hosts:      Vec<Arc<dyn FunctionHost>>,
+    hosts: Vec<Arc<dyn FunctionHost>>,
     generation: u64,
 }
 
 impl Default for HostFrames {
     fn default() -> Self {
         Self {
-            hosts:      Vec::new(),
+            hosts: Vec::new(),
             generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
         }
     }

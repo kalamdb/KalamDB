@@ -21,9 +21,9 @@ use crate::{
 };
 
 pub struct PreparedServer {
-    pub layout:          ManagedLayout,
-    pub record:          InstanceRecord,
-    pub program:         PathBuf,
+    pub layout: ManagedLayout,
+    pub record: InstanceRecord,
+    pub program: PathBuf,
     pub already_running: bool,
 }
 

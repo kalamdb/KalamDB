@@ -18,7 +18,7 @@ pub enum CallArgument {
     /// Catalog-typed literal, including typed `NULL` (`CAST(NULL AS UUID)`).
     Typed {
         data_type: KalamDataType,
-        value:     JsonValue,
+        value: JsonValue,
     },
     Placeholder(usize),
     /// Positional composite tuple literal (`ROW(a, b, ...)`).

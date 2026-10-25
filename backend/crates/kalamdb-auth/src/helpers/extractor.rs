@@ -49,7 +49,7 @@ use crate::{
 /// HTTP error responses.
 #[derive(Debug)]
 pub struct AuthExtractError {
-    inner:   AuthError,
+    inner: AuthError,
     /// Time taken to process the request (for response payload)
     took_ms: f64,
 }
@@ -176,7 +176,7 @@ impl ResponseError for AuthExtractError {
 impl From<AuthError> for AuthExtractError {
     fn from(error: AuthError) -> Self {
         Self {
-            inner:   error,
+            inner: error,
             took_ms: 0.0,
         }
     }

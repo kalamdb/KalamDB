@@ -4,7 +4,7 @@ use crate::ddl::{create_schedule::ScheduleParser, DdlResult};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropScheduleStatement {
     pub schedule_id: ScheduleId,
-    pub if_exists:   bool,
+    pub if_exists: bool,
 }
 impl DropScheduleStatement {
     pub fn parse(sql: &str, namespace: &SchemaId) -> DdlResult<Self> {

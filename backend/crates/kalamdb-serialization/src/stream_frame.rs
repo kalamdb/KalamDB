@@ -14,14 +14,14 @@ const STREAM_RECORD_PUT: u8 = 1;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RawStreamRecord<'a> {
     Put {
-        user_id:     &'a str,
-        version:     i64,
-        timestamp:   i64,
+        user_id: &'a str,
+        version: i64,
+        timestamp: i64,
         row_payload: &'a [u8],
     },
     Delete {
-        user_id:   &'a str,
-        version:   i64,
+        user_id: &'a str,
+        version: i64,
         timestamp: i64,
     },
 }
@@ -163,9 +163,9 @@ mod tests {
         assert_eq!(
             decode_raw_stream_record(payload).unwrap(),
             RawStreamRecord::Put {
-                user_id:     "u1",
-                version:     10,
-                timestamp:   1234,
+                user_id: "u1",
+                version: 10,
+                timestamp: 1234,
                 row_payload: &[1, 2, 3],
             }
         );
@@ -177,8 +177,8 @@ mod tests {
         assert_eq!(
             decode_raw_stream_record(del_payload).unwrap(),
             RawStreamRecord::Delete {
-                user_id:   "u2",
-                version:   11,
+                user_id: "u2",
+                version: 11,
                 timestamp: 5678,
             }
         );

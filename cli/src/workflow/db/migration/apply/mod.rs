@@ -24,35 +24,35 @@ use crate::{
 };
 
 pub struct ApplyMigrationOptions {
-    pub force:         bool,
+    pub force: bool,
     pub include_draft: bool,
 }
 
 impl ApplyMigrationOptions {
     pub fn dev_force() -> Self {
         Self {
-            force:         true,
+            force: true,
             include_draft: false,
         }
     }
 
     pub fn dev_watch() -> Self {
         Self {
-            force:         false,
+            force: false,
             include_draft: false,
         }
     }
 
     pub fn dev_confirmed_draft() -> Self {
         Self {
-            force:         true,
+            force: true,
             include_draft: true,
         }
     }
 
     pub fn db_migrate() -> Self {
         Self {
-            force:         true,
+            force: true,
             include_draft: false,
         }
     }

@@ -21,7 +21,7 @@ pub struct CatalogRoutine {
         default = "None",
         comment = "Schema-qualified routine identity"
     )]
-    pub routine_id:         RoutineId,
+    pub routine_id: RoutineId,
     #[column(
         id = 2,
         ordinal = 2,
@@ -31,7 +31,7 @@ pub struct CatalogRoutine {
         default = "None",
         comment = "Owning schema"
     )]
-    pub namespace_id:       SchemaId,
+    pub namespace_id: SchemaId,
     #[column(
         id = 3,
         ordinal = 3,
@@ -41,7 +41,7 @@ pub struct CatalogRoutine {
         default = "None",
         comment = "Unqualified routine name"
     )]
-    pub name:               String,
+    pub name: String,
     #[column(
         id = 4,
         ordinal = 4,
@@ -51,7 +51,7 @@ pub struct CatalogRoutine {
         default = "None",
         comment = "Routine owner"
     )]
-    pub owner:              UserId,
+    pub owner: UserId,
     #[column(
         id = 5,
         ordinal = 5,
@@ -61,7 +61,7 @@ pub struct CatalogRoutine {
         default = "None",
         comment = "SECURITY INVOKER or DEFINER"
     )]
-    pub security:           RoutineSecurityMode,
+    pub security: RoutineSecurityMode,
     #[column(
         id = 6,
         ordinal = 6,
@@ -72,7 +72,7 @@ pub struct CatalogRoutine {
         comment = "Implementation language"
     )]
     #[serde(default)]
-    pub language:           Option<String>,
+    pub language: Option<String>,
     #[column(
         id = 7,
         ordinal = 7,
@@ -83,7 +83,7 @@ pub struct CatalogRoutine {
         comment = "Optional SQL/source body"
     )]
     #[serde(default)]
-    pub body:               Option<String>,
+    pub body: Option<String>,
     #[column(
         id = 8,
         ordinal = 8,
@@ -94,7 +94,7 @@ pub struct CatalogRoutine {
         comment = "Named return type when not VOID"
     )]
     #[serde(default)]
-    pub return_type_id:     Option<TypeId>,
+    pub return_type_id: Option<TypeId>,
     #[column(
         id = 9,
         ordinal = 9,
@@ -105,7 +105,7 @@ pub struct CatalogRoutine {
         comment = "Resolved return type name"
     )]
     #[serde(default)]
-    pub return_type_name:   Option<String>,
+    pub return_type_name: Option<String>,
     #[column(
         id = 10,
         ordinal = 10,
@@ -115,7 +115,7 @@ pub struct CatalogRoutine {
         default = "None",
         comment = "True when the return is SETOF / array"
     )]
-    pub return_is_array:    bool,
+    pub return_is_array: bool,
     #[column(
         id = 11,
         ordinal = 11,
@@ -125,7 +125,7 @@ pub struct CatalogRoutine {
         default = "None",
         comment = "Return NOT NULL"
     )]
-    pub return_not_null:    bool,
+    pub return_not_null: bool,
     #[column(
         id = 12,
         ordinal = 12,
@@ -136,7 +136,7 @@ pub struct CatalogRoutine {
         comment = "Optional routine comment"
     )]
     #[serde(default)]
-    pub comment:            Option<String>,
+    pub comment: Option<String>,
     #[column(
         id = 13,
         ordinal = 13,
@@ -147,7 +147,7 @@ pub struct CatalogRoutine {
         comment = "Builtin return KalamDataType when the return is not a named CREATE TYPE"
     )]
     #[serde(default)]
-    pub return_data_type:   Option<KalamDataType>,
+    pub return_data_type: Option<KalamDataType>,
     #[column(
         id = 14,
         ordinal = 14,
@@ -180,7 +180,7 @@ pub struct CatalogRoutine {
         comment = "Routine kind: FUNCTION or PROCEDURE"
     )]
     #[serde(default)]
-    pub kind:               RoutineKind,
+    pub kind: RoutineKind,
     #[column(
         id = 17,
         ordinal = 17,
@@ -191,7 +191,7 @@ pub struct CatalogRoutine {
         comment = "Volatility: IMMUTABLE, STABLE, or VOLATILE"
     )]
     #[serde(default)]
-    pub volatility:         RoutineVolatility,
+    pub volatility: RoutineVolatility,
     #[column(
         id = 18,
         ordinal = 18,
@@ -202,7 +202,7 @@ pub struct CatalogRoutine {
         comment = "Null handling: CALLED ON NULL INPUT or RETURNS NULL ON NULL INPUT"
     )]
     #[serde(default)]
-    pub null_safety:        RoutineNullSafety,
+    pub null_safety: RoutineNullSafety,
     #[column(
         id = 19,
         ordinal = 19,
@@ -213,7 +213,7 @@ pub struct CatalogRoutine {
         comment = "Parallel safety: UNSAFE, RESTRICTED, or SAFE"
     )]
     #[serde(default)]
-    pub parallel_safety:    RoutineParallelSafety,
+    pub parallel_safety: RoutineParallelSafety,
     #[column(
         id = 20,
         ordinal = 20,
@@ -224,7 +224,7 @@ pub struct CatalogRoutine {
         comment = "Estimated execution cost"
     )]
     #[serde(default)]
-    pub cost:               Option<f64>,
+    pub cost: Option<f64>,
     #[column(
         id = 21,
         ordinal = 21,
@@ -235,7 +235,7 @@ pub struct CatalogRoutine {
         comment = "Estimated result rows for set-returning functions"
     )]
     #[serde(default)]
-    pub rows:               Option<i64>,
+    pub rows: Option<i64>,
     #[column(
         id = 22,
         ordinal = 22,
@@ -246,7 +246,7 @@ pub struct CatalogRoutine {
         comment = "Routine configuration parameters (SET/RESET)"
     )]
     #[serde(default)]
-    pub config_params:      Option<String>,
+    pub config_params: Option<String>,
 }
 
 impl kalamdb_commons::KSerializable for CatalogRoutine {}

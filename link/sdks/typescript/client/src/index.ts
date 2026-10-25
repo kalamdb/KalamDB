@@ -101,7 +101,7 @@ export type {
 } from './types.js';
 
 // Client
-export { createClient, KalamDBClient } from './client.js';
+export { createClient, KalamDBClient, KalamRoutineError } from './client.js';
 
 export {
   createLiveQueryDescriptor,

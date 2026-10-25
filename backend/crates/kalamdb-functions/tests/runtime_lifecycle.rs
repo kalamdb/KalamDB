@@ -17,9 +17,9 @@ use tokio_util::sync::CancellationToken;
 
 struct Host {
     principal: String,
-    revision:  Arc<ModuleRevision>,
-    scope:     InvocationScope,
-    dropped:   Arc<AtomicBool>,
+    revision: Arc<ModuleRevision>,
+    scope: InvocationScope,
+    dropped: Arc<AtomicBool>,
 }
 struct PendingDrop(Arc<AtomicBool>);
 impl Drop for PendingDrop {
@@ -114,14 +114,14 @@ fn request(source: &str, timeout: Duration) -> (Invocation, Arc<Host>) {
     let revision = Arc::new(ModuleRevision::typescript_fixture(source));
     let scope = InvocationScope {
         deadline: Instant::now() + timeout,
-        cancel:   CancellationToken::new(),
-        depth:    0,
+        cancel: CancellationToken::new(),
+        depth: 0,
     };
     let host = Arc::new(Host {
         principal: "root".into(),
-        revision:  Arc::clone(&revision),
-        scope:     scope.clone(),
-        dropped:   Arc::new(AtomicBool::new(false)),
+        revision: Arc::clone(&revision),
+        scope: scope.clone(),
+        dropped: Arc::new(AtomicBool::new(false)),
     });
     (
         Invocation {
@@ -257,10 +257,10 @@ async fn runtime_memory_cpu_soak() {
                   __kalamCtx.db.query('principal'); }";
     let (base, host) = request(source, Duration::from_secs(120));
     let next = || Invocation {
-        routine_id:      base.routine_id.clone(),
-        revision:        base.revision.clone(),
-        args:            vec![],
-        scope:           base.scope.clone(),
+        routine_id: base.routine_id.clone(),
+        revision: base.revision.clone(),
+        args: vec![],
+        scope: base.scope.clone(),
         return_template: None,
     };
     let start = Instant::now();

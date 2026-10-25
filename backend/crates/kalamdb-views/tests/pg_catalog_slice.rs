@@ -37,34 +37,34 @@ async fn pg_catalog_slice_projects_schemas_tables_enums_routines_defaults_and_ro
         .namespaces()
         .create_namespace(Namespace {
             namespace_id: SchemaId::new("billing"),
-            name:         "billing".to_string(),
-            created_at:   1_000,
-            options:      Some(serde_json::Value::Object(opts)),
-            table_count:  1,
+            name: "billing".to_string(),
+            created_at: 1_000,
+            options: Some(serde_json::Value::Object(opts)),
+            table_count: 1,
         })
         .expect("create schema");
 
     registry
         .users()
         .create_user(User {
-            user_id:               UserId::new("alice"),
-            password_hash:         "secret-bcrypt-hash".to_string(),
-            role:                  Role::User,
-            name:                  None,
-            email:                 Some("alice@example.com".to_string()),
-            auth_type:             AuthType::Password,
-            auth_data:             None,
-            storage_mode:          StorageMode::Table,
-            storage_id:            Some(StorageId::local()),
+            user_id: UserId::new("alice"),
+            password_hash: "secret-bcrypt-hash".to_string(),
+            role: Role::User,
+            name: None,
+            email: Some("alice@example.com".to_string()),
+            auth_type: AuthType::Password,
+            auth_data: None,
+            storage_mode: StorageMode::Table,
+            storage_id: Some(StorageId::local()),
             failed_login_attempts: 0,
-            locked_until:          None,
-            last_login_at:         None,
-            created_at:            1_000,
-            updated_at:            1_000,
-            last_seen:             None,
-            deleted_at:            None,
-            invite_expires_at:     None,
-            invited_by:            None,
+            locked_until: None,
+            last_login_at: None,
+            created_at: 1_000,
+            updated_at: 1_000,
+            last_seen: None,
+            deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         })
         .expect("create user");
 
@@ -119,18 +119,18 @@ async fn pg_catalog_slice_projects_schemas_tables_enums_routines_defaults_and_ro
         registry
             .catalog_stores()
             .upsert_type_field(CatalogTypeField {
-                type_field_id:    TypeFieldId::from_slot(&enum_id, pos).expect("field id"),
-                type_id:          enum_id.clone(),
-                name:             label.to_string(),
-                ordinal:          pos,
-                field_type_id:    None,
-                type_name:        "text".to_string(),
-                is_array:         false,
-                not_null:         true,
-                nonempty:         false,
-                data_type:        None,
-                slot:             pos,
-                dropped:          false,
+                type_field_id: TypeFieldId::from_slot(&enum_id, pos).expect("field id"),
+                type_id: enum_id.clone(),
+                name: label.to_string(),
+                ordinal: pos,
+                field_type_id: None,
+                type_name: "text".to_string(),
+                is_array: false,
+                not_null: true,
+                nonempty: false,
+                data_type: None,
+                slot: pos,
+                dropped: false,
                 element_nullable: true,
             })
             .expect("put enum label");
@@ -141,28 +141,28 @@ async fn pg_catalog_slice_projects_schemas_tables_enums_routines_defaults_and_ro
     registry
         .catalog_stores()
         .upsert_routine(CatalogRoutine {
-            routine_id:         routine_id.clone(),
-            namespace_id:       SchemaId::new("billing"),
-            name:               "compute_total".to_string(),
-            owner:              UserId::new("alice"),
-            security:           RoutineSecurityMode::Invoker,
-            language:           Some("sql".to_string()),
-            body:               Some("SELECT $1 * 2".to_string()),
-            return_type_id:     None,
-            return_type_name:   Some("bigint".to_string()),
-            return_is_array:    false,
-            return_not_null:    false,
-            comment:            Some("Doubles the amount".to_string()),
-            return_data_type:   Some(KalamDataType::BigInt),
+            routine_id: routine_id.clone(),
+            namespace_id: SchemaId::new("billing"),
+            name: "compute_total".to_string(),
+            owner: UserId::new("alice"),
+            security: RoutineSecurityMode::Invoker,
+            language: Some("sql".to_string()),
+            body: Some("SELECT $1 * 2".to_string()),
+            return_type_id: None,
+            return_type_name: Some("bigint".to_string()),
+            return_is_array: false,
+            return_not_null: false,
+            comment: Some("Doubles the amount".to_string()),
+            return_data_type: Some(KalamDataType::BigInt),
             inline_source_hash: None,
             inline_artifact_id: None,
-            kind:               RoutineKind::Function,
-            volatility:         RoutineVolatility::Immutable,
-            null_safety:        RoutineNullSafety::ReturnsNullOnNullInput,
-            parallel_safety:    RoutineParallelSafety::Safe,
-            cost:               None,
-            rows:               None,
-            config_params:      None,
+            kind: RoutineKind::Function,
+            volatility: RoutineVolatility::Immutable,
+            null_safety: RoutineNullSafety::ReturnsNullOnNullInput,
+            parallel_safety: RoutineParallelSafety::Safe,
+            cost: None,
+            rows: None,
+            config_params: None,
         })
         .expect("put routine");
     registry
@@ -296,10 +296,10 @@ async fn directus_catalog_reports_indexes_foreign_keys_and_column_types() {
         .namespaces()
         .create_namespace(Namespace {
             namespace_id: SchemaId::new("directus"),
-            name:         "directus".to_string(),
-            created_at:   1_000,
-            options:      None,
-            table_count:  2,
+            name: "directus".to_string(),
+            created_at: 1_000,
+            options: None,
+            table_count: 2,
         })
         .expect("create schema");
 
@@ -353,22 +353,22 @@ async fn directus_catalog_reports_indexes_foreign_keys_and_column_types() {
         false,
     ));
     articles.foreign_keys.push(ForeignKeyDefinition {
-        name:                 "articles_author_foreign".to_string(),
-        columns:              vec!["author".to_string()],
+        name: "articles_author_foreign".to_string(),
+        columns: vec!["author".to_string()],
         referenced_namespace: SchemaId::new("directus"),
-        referenced_table:     TableName::new("authors"),
-        referenced_columns:   vec!["id".to_string()],
-        on_update:            ForeignKeyAction::NoAction,
-        on_delete:            ForeignKeyAction::Cascade,
+        referenced_table: TableName::new("authors"),
+        referenced_columns: vec!["id".to_string()],
+        on_update: ForeignKeyAction::NoAction,
+        on_delete: ForeignKeyAction::Cascade,
     });
     articles.foreign_keys.push(ForeignKeyDefinition {
-        name:                 "articles_editor_foreign".to_string(),
-        columns:              vec!["author".to_string()],
+        name: "articles_editor_foreign".to_string(),
+        columns: vec!["author".to_string()],
         referenced_namespace: SchemaId::new("directus"),
-        referenced_table:     TableName::new("editors"),
-        referenced_columns:   vec!["id".to_string()],
-        on_update:            ForeignKeyAction::NoAction,
-        on_delete:            ForeignKeyAction::SetNull,
+        referenced_table: TableName::new("editors"),
+        referenced_columns: vec!["id".to_string()],
+        on_update: ForeignKeyAction::NoAction,
+        on_delete: ForeignKeyAction::SetNull,
     });
     registry
         .tables()

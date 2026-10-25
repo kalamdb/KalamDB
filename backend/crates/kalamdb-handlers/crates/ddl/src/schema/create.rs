@@ -198,7 +198,7 @@ mod tests {
         let ctx = test_context();
 
         let stmt = CreateSchemaStatement {
-            name:          SchemaId::new("test_typed_ns"),
+            name: SchemaId::new("test_typed_ns"),
             if_not_exists: false,
         };
 
@@ -222,7 +222,7 @@ mod tests {
         let ctx = test_context();
 
         let stmt = CreateSchemaStatement {
-            name:          SchemaId::new("test_typed_ns_ine"),
+            name: SchemaId::new("test_typed_ns_ine"),
             if_not_exists: true,
         };
 
@@ -251,7 +251,7 @@ mod tests {
         );
 
         let stmt = CreateSchemaStatement {
-            name:          SchemaId::new("unauthorized_ns"),
+            name: SchemaId::new("unauthorized_ns"),
             if_not_exists: false,
         };
 
@@ -277,7 +277,7 @@ mod tests {
         let handler = CreateSchemaHandler::new(app_ctx);
         let ctx = test_context();
         let stmt = CreateSchemaStatement {
-            name:          SchemaId::new("existing_ns"),
+            name: SchemaId::new("existing_ns"),
             if_not_exists: false,
         };
 
@@ -297,7 +297,7 @@ mod tests {
         let handler = CreateSchemaHandler::new(app_ctx);
         let ctx = test_context();
         let stmt = CreateSchemaStatement {
-            name:          SchemaId::new("existing_ns_if"),
+            name: SchemaId::new("existing_ns_if"),
             if_not_exists: true,
         };
 

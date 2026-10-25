@@ -238,6 +238,9 @@ jobs:
       - name: Serialization boundary
         run: python3 scripts/check-serialization-boundary.py --fail
 
+      - name: Codec ownership
+        run: python3 link/tests/sdk-contracts/check_codec_ownership.py
+
       # Default features omit embedded-ui, AWS, Dex/testcontainers, and tokio-postgres.
       # Enable kalam-cli-e2e/oidc + kalamdb-server/oidc locally (or via cli/run-tests.sh)
       # when running Dex OIDC tests. MinIO: KALAMDB_SERVER_FEATURES=cloud-aws.

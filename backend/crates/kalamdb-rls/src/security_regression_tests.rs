@@ -169,7 +169,7 @@ fn null_scalar_equality_is_unknown_and_denies() {
     let bound = bind(PolicyProgram::RowLocal {
         expr: BoundExprShape::ColumnEqualsScalar {
             column_id: 3,
-            value:     PolicyScalar::String("active".to_string()),
+            value: PolicyScalar::String("active".to_string()),
         },
     });
     assert!(!authorizes(&bound, &row(Some("alice"), None)));
@@ -178,15 +178,15 @@ fn null_scalar_equality_is_unknown_and_denies() {
 #[test]
 fn null_membership_key_does_not_authorize_protected_row() {
     let relation = AuthorizationRelation {
-        protected_table:   TableId::from_strings("app", "documents"),
-        protected_keys:    vec![1],
-        relation_table:    TableId::from_strings("app", "members"),
-        relation_keys:     vec![2],
-        principal_column:  1,
-        principal:         PrincipalExpr::CurrentUser,
+        protected_table: TableId::from_strings("app", "documents"),
+        protected_keys: vec![1],
+        relation_table: TableId::from_strings("app", "members"),
+        relation_keys: vec![2],
+        principal_column: 1,
+        principal: PrincipalExpr::CurrentUser,
         static_predicates: Vec::new(),
-        dependencies:      vec![TableId::from_strings("app", "members")],
-        invalidation:      InvalidationStrategy::TargetedPrincipal,
+        dependencies: vec![TableId::from_strings("app", "members")],
+        invalidation: InvalidationStrategy::TargetedPrincipal,
     };
     let membership = policy("member_read", PolicyProgram::AuthorizationRelation(relation.clone()));
     let bound = BoundTablePolicies::bind(
@@ -208,15 +208,15 @@ fn null_membership_key_does_not_authorize_protected_row() {
 fn null_principal_membership_row_is_ignored() {
     let relation_table = TableId::from_strings("app", "members");
     let relation = AuthorizationRelation {
-        protected_table:   TableId::from_strings("app", "messages"),
-        protected_keys:    vec![2],
-        relation_table:    relation_table.clone(),
-        relation_keys:     vec![2],
-        principal_column:  1,
-        principal:         PrincipalExpr::CurrentUser,
+        protected_table: TableId::from_strings("app", "messages"),
+        protected_keys: vec![2],
+        relation_table: relation_table.clone(),
+        relation_keys: vec![2],
+        principal_column: 1,
+        principal: PrincipalExpr::CurrentUser,
         static_predicates: Vec::new(),
-        dependencies:      vec![relation_table],
-        invalidation:      InvalidationStrategy::TargetedPrincipal,
+        dependencies: vec![relation_table],
+        invalidation: InvalidationStrategy::TargetedPrincipal,
     };
     let members = TableDefinition::new(
         SchemaId::new("app"),
@@ -247,19 +247,19 @@ fn null_principal_membership_row_is_ignored() {
 fn equality_static_predicate_rejects_null_column() {
     let relation_table = TableId::from_strings("app", "members");
     let relation = AuthorizationRelation {
-        protected_table:   TableId::from_strings("app", "messages"),
-        protected_keys:    vec![2],
-        relation_table:    relation_table.clone(),
-        relation_keys:     vec![2],
-        principal_column:  1,
-        principal:         PrincipalExpr::CurrentUser,
+        protected_table: TableId::from_strings("app", "messages"),
+        protected_keys: vec![2],
+        relation_table: relation_table.clone(),
+        relation_keys: vec![2],
+        principal_column: 1,
+        principal: PrincipalExpr::CurrentUser,
         static_predicates: vec![ScalarPredicate {
             column_id: 3,
-            operator:  PredicateOperator::Eq,
-            value:     PolicyScalar::String("active".to_string()),
+            operator: PredicateOperator::Eq,
+            value: PolicyScalar::String("active".to_string()),
         }],
-        dependencies:      vec![relation_table],
-        invalidation:      InvalidationStrategy::TargetedPrincipal,
+        dependencies: vec![relation_table],
+        invalidation: InvalidationStrategy::TargetedPrincipal,
     };
     let members = TableDefinition::new(
         SchemaId::new("app"),
@@ -365,7 +365,7 @@ fn permissive_or_across_policies_grants_when_any_policy_matches() {
         PolicyProgram::RowLocal {
             expr: BoundExprShape::ColumnEqualsScalar {
                 column_id: 3,
-                value:     PolicyScalar::String("public".to_string()),
+                value: PolicyScalar::String("public".to_string()),
             },
         },
     );

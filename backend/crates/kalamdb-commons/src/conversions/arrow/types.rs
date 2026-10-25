@@ -134,7 +134,7 @@ impl FromArrowType for KalamDataType {
                 }
                 KalamDataType::Decimal {
                     precision: *precision,
-                    scale:     *scale as u8,
+                    scale: *scale as u8,
                 }
             },
             ArrowDataType::FixedSizeList(field, size) => {

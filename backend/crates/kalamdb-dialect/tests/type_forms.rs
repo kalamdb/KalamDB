@@ -152,7 +152,7 @@ fn test_pg18_alter_and_drop_type_forms() {
                 stmt.operation,
                 AlterTypeOperation::RenameValue {
                     from: "sad".to_string(),
-                    to:   "unhappy".to_string(),
+                    to: "unhappy".to_string(),
                 }
             );
         },

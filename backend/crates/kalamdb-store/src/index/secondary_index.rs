@@ -37,11 +37,11 @@ where
     K: Clone + AsRef<[u8]> + Send + Sync,
 {
     /// Storage backend
-    backend:       Arc<dyn StorageBackend>,
+    backend: Arc<dyn StorageBackend>,
     /// Partition for this index (e.g., "idx_users_username")
-    partition:     Partition,
+    partition: Partition,
     /// Whether this is a unique index (one-to-one) or non-unique (one-to-many)
-    unique:        bool,
+    unique: bool,
     /// Function to extract index key from entity
     key_extractor: Arc<dyn IndexKeyExtractor<T, K>>,
 }
@@ -323,10 +323,10 @@ mod tests {
 
     #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
     struct TestUser {
-        user_id:  String,
+        user_id: String,
         username: String,
-        role:     String,
-        email:    String,
+        role: String,
+        email: String,
     }
 
     fn create_test_backend() -> (Arc<dyn StorageBackend>, TempDir) {
@@ -346,10 +346,10 @@ mod tests {
             });
 
         let user = TestUser {
-            user_id:  "u1".to_string(),
+            user_id: "u1".to_string(),
             username: "alice".to_string(),
-            role:     "admin".to_string(),
-            email:    "alice@example.com".to_string(),
+            role: "admin".to_string(),
+            email: "alice@example.com".to_string(),
         };
 
         // Put entry
@@ -373,17 +373,17 @@ mod tests {
             });
 
         let user1 = TestUser {
-            user_id:  "u1".to_string(),
+            user_id: "u1".to_string(),
             username: "alice".to_string(),
-            role:     "admin".to_string(),
-            email:    "alice@example.com".to_string(),
+            role: "admin".to_string(),
+            email: "alice@example.com".to_string(),
         };
 
         let user2 = TestUser {
-            user_id:  "u2".to_string(),
+            user_id: "u2".to_string(),
             username: "alice".to_string(), // Same username
-            role:     "user".to_string(),
-            email:    "alice2@example.com".to_string(),
+            role: "user".to_string(),
+            email: "alice2@example.com".to_string(),
         };
 
         idx.put("u1", &user1, None).unwrap();
@@ -403,17 +403,17 @@ mod tests {
             });
 
         let user_old = TestUser {
-            user_id:  "u1".to_string(),
+            user_id: "u1".to_string(),
             username: "alice".to_string(),
-            role:     "user".to_string(),
-            email:    "alice@example.com".to_string(),
+            role: "user".to_string(),
+            email: "alice@example.com".to_string(),
         };
 
         let user_new = TestUser {
-            user_id:  "u1".to_string(),
+            user_id: "u1".to_string(),
             username: "alice_updated".to_string(), // Changed username
-            role:     "admin".to_string(),
-            email:    "alice@example.com".to_string(),
+            role: "admin".to_string(),
+            email: "alice@example.com".to_string(),
         };
 
         // Insert original
@@ -439,10 +439,10 @@ mod tests {
             });
 
         let user = TestUser {
-            user_id:  "u1".to_string(),
+            user_id: "u1".to_string(),
             username: "alice".to_string(),
-            role:     "admin".to_string(),
-            email:    "alice@example.com".to_string(),
+            role: "admin".to_string(),
+            email: "alice@example.com".to_string(),
         };
 
         idx.put("u1", &user, None).unwrap();
@@ -464,22 +464,22 @@ mod tests {
 
         let users = vec![
             TestUser {
-                user_id:  "u1".to_string(),
+                user_id: "u1".to_string(),
                 username: "alice".to_string(),
-                role:     "admin".to_string(),
-                email:    "alice@example.com".to_string(),
+                role: "admin".to_string(),
+                email: "alice@example.com".to_string(),
             },
             TestUser {
-                user_id:  "u2".to_string(),
+                user_id: "u2".to_string(),
                 username: "bob".to_string(),
-                role:     "admin".to_string(),
-                email:    "bob@example.com".to_string(),
+                role: "admin".to_string(),
+                email: "bob@example.com".to_string(),
             },
             TestUser {
-                user_id:  "u3".to_string(),
+                user_id: "u3".to_string(),
                 username: "charlie".to_string(),
-                role:     "user".to_string(),
-                email:    "charlie@example.com".to_string(),
+                role: "user".to_string(),
+                email: "charlie@example.com".to_string(),
             },
         ];
 
@@ -509,17 +509,17 @@ mod tests {
             });
 
         let user1 = TestUser {
-            user_id:  "u1".to_string(),
+            user_id: "u1".to_string(),
             username: "alice".to_string(),
-            role:     "admin".to_string(),
-            email:    "alice@example.com".to_string(),
+            role: "admin".to_string(),
+            email: "alice@example.com".to_string(),
         };
 
         let user2 = TestUser {
-            user_id:  "u2".to_string(),
+            user_id: "u2".to_string(),
             username: "bob".to_string(),
-            role:     "admin".to_string(),
-            email:    "bob@example.com".to_string(),
+            role: "admin".to_string(),
+            email: "bob@example.com".to_string(),
         };
 
         idx.put("u1", &user1, None).unwrap();

@@ -33,23 +33,23 @@ use crate::{
 /// One resident V8 isolate, idle or currently running a CALL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionInstanceSnapshot {
-    pub instance_id:     u64,
-    pub worker:          usize,
-    pub module_id:       String,
-    pub revision_id:     String,
-    pub state:           &'static str,
-    pub reserved_bytes:  u64,
+    pub instance_id: u64,
+    pub worker: usize,
+    pub module_id: String,
+    pub revision_id: String,
+    pub state: &'static str,
+    pub reserved_bytes: u64,
     pub used_heap_bytes: u64,
     pub peak_heap_bytes: u64,
-    pub invocations:     u64,
+    pub invocations: u64,
 }
 
 /// Process-wide function-runtime memory reservation.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FunctionMemoryCensus {
-    pub reserved_bytes:   u64,
-    pub limit_bytes:      u64,
-    pub idle_instances:   u64,
+    pub reserved_bytes: u64,
+    pub limit_bytes: u64,
+    pub idle_instances: u64,
     pub active_instances: u64,
 }
 
@@ -59,25 +59,25 @@ enum Control {
 
 #[derive(Clone)]
 struct WorkerRuntime {
-    index:        usize,
-    config:       EngineConfig,
-    memory:       Arc<AtomicUsize>,
+    index: usize,
+    config: EngineConfig,
+    memory: Arc<AtomicUsize>,
     memory_freed: Arc<Notify>,
-    peers:        Arc<Vec<mpsc::UnboundedSender<Control>>>,
-    instances:    Arc<DashMap<u64, FunctionInstanceSnapshot>>,
-    next_id:      Arc<AtomicU64>,
-    lifecycle:    LifecycleSlot,
+    peers: Arc<Vec<mpsc::UnboundedSender<Control>>>,
+    instances: Arc<DashMap<u64, FunctionInstanceSnapshot>>,
+    next_id: Arc<AtomicU64>,
+    lifecycle: LifecycleSlot,
 }
 
 struct Work {
     invocation: Invocation,
-    host:       Arc<dyn FunctionHost>,
-    reply:      oneshot::Sender<Result<RoutineValue>>,
-    _active:    Option<OwnedSemaphorePermit>,
-    _root:      Option<OwnedSemaphorePermit>,
-    _lane:      Option<LaneCharge>,
+    host: Arc<dyn FunctionHost>,
+    reply: oneshot::Sender<Result<RoutineValue>>,
+    _active: Option<OwnedSemaphorePermit>,
+    _root: Option<OwnedSemaphorePermit>,
+    _lane: Option<LaneCharge>,
     #[cfg(feature = "traceability")]
-    span:       tracing::Span,
+    span: tracing::Span,
 }
 
 /// A reservation for the lifetime of a V8 isolate, including while it is warm/idle.
@@ -87,9 +87,9 @@ struct Work {
 /// with the isolate makes `max_memory_bytes` describe resident function-runtime capacity instead of
 /// only in-flight calls.
 struct MemoryCharge {
-    used:   Arc<AtomicUsize>,
+    used: Arc<AtomicUsize>,
     amount: usize,
-    freed:  Arc<Notify>,
+    freed: Arc<Notify>,
 }
 
 impl MemoryCharge {
@@ -171,7 +171,7 @@ impl Drop for MemoryCharge {
 
 /// Root/active permits held until the invocation is acknowledged by a worker.
 pub struct FunctionAdmission {
-    root:   Option<OwnedSemaphorePermit>,
+    root: Option<OwnedSemaphorePermit>,
     active: Option<OwnedSemaphorePermit>,
 }
 
@@ -183,19 +183,19 @@ const QUIET_EVENT_INTERVAL: Duration = Duration::from_secs(60);
 /// One V8 isolate plus the lifecycle information needed to decide whether keeping it warm is still
 /// worthwhile. The memory reservation intentionally lives in this wrapper, not in an invocation.
 struct SessionInstance {
-    id:             u64,
-    session:        V8Session,
-    created_at:     Instant,
-    last_used_at:   Instant,
-    invocations:    u64,
-    instances:      Arc<DashMap<u64, FunctionInstanceSnapshot>>,
-    _memory:        MemoryCharge,
-    worker:         usize,
-    lifecycle:      LifecycleSlot,
-    drop_reason:    &'static str,
+    id: u64,
+    session: V8Session,
+    created_at: Instant,
+    last_used_at: Instant,
+    invocations: u64,
+    instances: Arc<DashMap<u64, FunctionInstanceSnapshot>>,
+    _memory: MemoryCharge,
+    worker: usize,
+    lifecycle: LifecycleSlot,
+    drop_reason: &'static str,
     last_procedure: Option<String>,
     last_reused_at: Option<Instant>,
-    last_idle_at:   Option<Instant>,
+    last_idle_at: Option<Instant>,
 }
 
 impl SessionInstance {
@@ -453,13 +453,13 @@ fn preferred_worker(revision_id: &FunctionRevisionId, workers: usize) -> usize {
 }
 
 pub struct FunctionEngine {
-    config:    EngineConfig,
-    workers:   Vec<mpsc::Sender<Work>>,
+    config: EngineConfig,
+    workers: Vec<mpsc::Sender<Work>>,
     lane_load: Vec<Arc<AtomicUsize>>,
-    active:    Arc<Semaphore>,
-    roots:     Arc<Semaphore>,
-    queued:    Arc<Semaphore>,
-    memory:    Arc<AtomicUsize>,
+    active: Arc<Semaphore>,
+    roots: Arc<Semaphore>,
+    queued: Arc<Semaphore>,
+    memory: Arc<AtomicUsize>,
     instances: Arc<DashMap<u64, FunctionInstanceSnapshot>>,
     revisions: Cache<FunctionRevisionId, Arc<ModuleRevision>>,
     lifecycle: LifecycleSlot,
@@ -872,9 +872,9 @@ async fn run_v8(
         return (Err(error), None);
     }
     let limits = RuntimeLimits {
-        timeout:        work.invocation.scope.deadline.saturating_duration_since(Instant::now()),
+        timeout: work.invocation.scope.deadline.saturating_duration_since(Instant::now()),
         max_heap_bytes: runtime.config.max_heap_bytes,
-        abi_version:    work.invocation.revision.abi_version,
+        abi_version: work.invocation.revision.abi_version,
     };
     let revision_id = work.invocation.revision.revision_id.clone();
     let artifact = work.invocation.revision.byte_len();
@@ -1083,10 +1083,10 @@ mod tests {
 
     fn echo_invocation(depth: usize, value: i32) -> Invocation {
         Invocation {
-            routine_id:      RoutineId::new("echo"),
-            revision:        Arc::new(ModuleRevision::typescript_fixture(FIXTURE_SOURCE)),
-            args:            vec![RoutineValue::new(ScalarValue::Int32(Some(value)))],
-            scope:           InvocationScope {
+            routine_id: RoutineId::new("echo"),
+            revision: Arc::new(ModuleRevision::typescript_fixture(FIXTURE_SOURCE)),
+            args: vec![RoutineValue::new(ScalarValue::Int32(Some(value)))],
+            scope: InvocationScope {
                 deadline: Instant::now() + Duration::from_secs(5),
                 cancel: CancellationToken::new(),
                 depth,
@@ -1115,13 +1115,13 @@ mod tests {
         config.max_value_bytes = 4;
         let engine = FunctionEngine::new(config).unwrap();
         let invocation = Invocation {
-            routine_id:      RoutineId::new("echo"),
-            revision:        Arc::new(ModuleRevision::typescript_fixture(FIXTURE_SOURCE)),
-            args:            vec![RoutineValue::new(ScalarValue::Utf8(Some("x".repeat(64))))],
-            scope:           InvocationScope {
+            routine_id: RoutineId::new("echo"),
+            revision: Arc::new(ModuleRevision::typescript_fixture(FIXTURE_SOURCE)),
+            args: vec![RoutineValue::new(ScalarValue::Utf8(Some("x".repeat(64))))],
+            scope: InvocationScope {
                 deadline: Instant::now() + Duration::from_secs(5),
-                cancel:   CancellationToken::new(),
-                depth:    0,
+                cancel: CancellationToken::new(),
+                depth: 0,
             },
             return_template: None,
         };
@@ -1137,13 +1137,13 @@ mod tests {
         config.max_active = 1;
         let engine = FunctionEngine::new(config).unwrap();
         let hang = Invocation {
-            routine_id:      RoutineId::new("hang"),
-            revision:        Arc::new(ModuleRevision::typescript_fixture(FIXTURE_SOURCE)),
-            args:            Vec::new(),
-            scope:           InvocationScope {
+            routine_id: RoutineId::new("hang"),
+            revision: Arc::new(ModuleRevision::typescript_fixture(FIXTURE_SOURCE)),
+            args: Vec::new(),
+            scope: InvocationScope {
                 deadline: Instant::now() + Duration::from_millis(80),
-                cancel:   CancellationToken::new(),
-                depth:    0,
+                cancel: CancellationToken::new(),
+                depth: 0,
             },
             return_template: None,
         };
@@ -1322,13 +1322,13 @@ mod tests {
         let cancel = CancellationToken::new();
         let hang_fut = engine.invoke(
             Invocation {
-                routine_id:      RoutineId::new("hang"),
-                revision:        hang,
-                args:            Vec::new(),
-                scope:           InvocationScope {
+                routine_id: RoutineId::new("hang"),
+                revision: hang,
+                args: Vec::new(),
+                scope: InvocationScope {
                     deadline: Instant::now() + Duration::from_secs(15),
-                    cancel:   cancel.clone(),
-                    depth:    0,
+                    cancel: cancel.clone(),
+                    depth: 0,
                 },
                 return_template: None,
             },

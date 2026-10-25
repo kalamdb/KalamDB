@@ -30,19 +30,19 @@ pub(crate) mod cluster_common {
     use crate::common::*;
 
     struct ClusterHelperStats {
-        calls:            AtomicU64,
-        attempts:         AtomicU64,
+        calls: AtomicU64,
+        attempts: AtomicU64,
         retryable_errors: AtomicU64,
-        total_micros:     AtomicU64,
+        total_micros: AtomicU64,
     }
 
     impl ClusterHelperStats {
         const fn new() -> Self {
             Self {
-                calls:            AtomicU64::new(0),
-                attempts:         AtomicU64::new(0),
+                calls: AtomicU64::new(0),
+                attempts: AtomicU64::new(0),
                 retryable_errors: AtomicU64::new(0),
-                total_micros:     AtomicU64::new(0),
+                total_micros: AtomicU64::new(0),
             }
         }
     }

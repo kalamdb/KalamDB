@@ -34,8 +34,8 @@ pub const KALAM_CHAR_MAX_METADATA_KEY: &str = "kalam_character_maximum_length";
 /// A single `CHECK (expr)` constraint on a domain.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DomainCheckSpec {
-    pub name:      String,
-    pub expr:      String,
+    pub name: String,
+    pub expr: String,
     #[serde(default = "default_domain_check_validated")]
     pub validated: bool,
 }
@@ -47,12 +47,12 @@ fn default_domain_check_validated() -> bool {
 /// Resolved metadata for a domain in a domain chain (ordered from base domain to outer domain).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DomainConstraintSpec {
-    pub domain_name:  String,
-    pub not_null:     bool,
+    pub domain_name: String,
+    pub not_null: bool,
     #[serde(default)]
     pub default_expr: Option<String>,
     #[serde(default)]
-    pub checks:       Vec<DomainCheckSpec>,
+    pub checks: Vec<DomainCheckSpec>,
 }
 
 /// Read `KalamDataType` from Arrow field metadata.

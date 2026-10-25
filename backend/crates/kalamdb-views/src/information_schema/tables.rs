@@ -66,8 +66,8 @@ fn extended_schema(base: &SchemaRef) -> SchemaRef {
 /// Wraps DataFusion's `information_schema.tables` and appends `kdb_*` metadata.
 #[derive(Debug)]
 pub struct ExtendedInformationSchemaTablesProvider {
-    inner:         Arc<dyn TableProvider>,
-    schema:        SchemaRef,
+    inner: Arc<dyn TableProvider>,
+    schema: SchemaRef,
     system_tables: Arc<SystemTablesRegistry>,
 }
 
@@ -196,13 +196,13 @@ fn plan_err(error: arrow::error::ArrowError) -> DataFusionError {
 }
 
 struct ExtendedTablesScanSource {
-    provider:        Arc<ExtendedInformationSchemaTablesProvider>,
-    session_state:   SessionState,
+    provider: Arc<ExtendedInformationSchemaTablesProvider>,
+    session_state: SessionState,
     physical_filter: Option<Arc<dyn datafusion::physical_expr::PhysicalExpr>>,
-    projection:      Option<Vec<usize>>,
-    limit:           Option<usize>,
-    output_schema:   SchemaRef,
-    filters:         Vec<Expr>,
+    projection: Option<Vec<usize>>,
+    limit: Option<usize>,
+    output_schema: SchemaRef,
+    filters: Vec<Expr>,
 }
 
 #[async_trait]
@@ -272,8 +272,8 @@ impl TableProvider for ExtendedInformationSchemaTablesProvider {
 
         Ok(Arc::new(DeferredBatchExec::new(Arc::new(ExtendedTablesScanSource {
             provider: Arc::new(ExtendedInformationSchemaTablesProvider {
-                inner:         Arc::clone(&self.inner),
-                schema:        Arc::clone(&self.schema),
+                inner: Arc::clone(&self.inner),
+                schema: Arc::clone(&self.schema),
                 system_tables: Arc::clone(&self.system_tables),
             }),
             session_state,

@@ -732,22 +732,22 @@ async fn build_default_values_insert_rows(
 }
 
 pub(crate) struct LiteralInsertRows {
-    pub table_type:         TableType,
+    pub table_type: TableType,
     pub primary_key_column: Option<String>,
-    pub rows:               Vec<Row>,
-    pub returning:          Option<Vec<SelectItem>>,
+    pub rows: Vec<Row>,
+    pub returning: Option<Vec<SelectItem>>,
 }
 
 pub(crate) struct LiteralOnConflictUpdateRows {
-    pub table_type:         TableType,
+    pub table_type: TableType,
     pub primary_key_column: String,
-    pub rows:               Vec<Row>,
-    pub action:             ParsedOnConflictAction,
-    pub returning:          Option<Vec<SelectItem>>,
+    pub rows: Vec<Row>,
+    pub action: ParsedOnConflictAction,
+    pub returning: Option<Vec<SelectItem>>,
 }
 
 pub(crate) struct OnConflictStagedMutation {
-    pub mutation:     StagedMutation,
+    pub mutation: StagedMutation,
     pub returned_row: Row,
 }
 
@@ -958,7 +958,7 @@ pub(crate) fn reject_system_table_dml(table_type: TableType) -> Result<(), Kalam
 }
 
 pub(crate) struct OnConflictUserIds {
-    pub lookup_user_id:           Option<UserId>,
+    pub lookup_user_id: Option<UserId>,
     pub default_mutation_user_id: Option<UserId>,
 }
 
@@ -970,11 +970,11 @@ pub(crate) fn on_conflict_user_ids(
     let user_id = exec_ctx.user_id().clone();
     Ok(match table_type {
         TableType::User | TableType::Stream => OnConflictUserIds {
-            lookup_user_id:           Some(user_id.clone()),
+            lookup_user_id: Some(user_id.clone()),
             default_mutation_user_id: Some(user_id),
         },
         TableType::Shared => OnConflictUserIds {
-            lookup_user_id:           Some(user_id),
+            lookup_user_id: Some(user_id),
             default_mutation_user_id: None,
         },
         TableType::System => unreachable!("system tables rejected above"),
@@ -1064,7 +1064,7 @@ pub(crate) fn build_on_conflict_staged_mutation(
         }
 
         Ok(OnConflictStagedMutation {
-            mutation:     StagedMutation::new(
+            mutation: StagedMutation::new(
                 transaction_id.clone(),
                 table_id.clone(),
                 table_type,
@@ -1078,7 +1078,7 @@ pub(crate) fn build_on_conflict_staged_mutation(
         })
     } else {
         Ok(OnConflictStagedMutation {
-            mutation:     StagedMutation::new(
+            mutation: StagedMutation::new(
                 transaction_id.clone(),
                 table_id.clone(),
                 table_type,

@@ -25,13 +25,13 @@ pub enum LogicalTypeRef {
         type_id: TypeId,
     },
     List {
-        element:          Box<LogicalTypeRef>,
+        element: Box<LogicalTypeRef>,
         element_nullable: bool,
     },
     /// Reserved. Not a legal stored column type.
     Map {
-        key:            Box<LogicalTypeRef>,
-        value:          Box<LogicalTypeRef>,
+        key: Box<LogicalTypeRef>,
+        value: Box<LogicalTypeRef>,
         value_nullable: bool,
     },
 }
@@ -340,7 +340,7 @@ mod tests {
     fn numeric_modifier_stays_on_the_decimal_payload() {
         let numeric = LogicalTypeRef::from_builtin(KalamDataType::Decimal {
             precision: 12,
-            scale:     2,
+            scale: 2,
         });
         assert_eq!(numeric.sql_name(), "DECIMAL(12, 2)");
         assert!(!numeric.is_jsonb());

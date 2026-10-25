@@ -4862,7 +4862,6 @@ dependencies = [
  "openidconnect",
  "parking_lot",
  "reqwest 0.12.28",
- "rmp-serde",
  "rust-embed",
  "serde",
  "serde_json",
@@ -4933,8 +4932,6 @@ dependencies = [
  "nanoid",
  "once_cell",
  "parking_lot",
- "rmp",
- "rmp-serde",
  "serde",
  "serde_json",
  "smallvec",
@@ -5562,6 +5559,7 @@ name = "kalamdb-serialization"
 version = "0.8.0"
 dependencies = [
  "arrow",
+ "base64 0.23.1",
  "criterion",
  "datafusion-common",
  "flexbuffers",

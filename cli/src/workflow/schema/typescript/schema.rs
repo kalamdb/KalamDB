@@ -24,53 +24,53 @@ const SCHEMA_TEMPLATE: &str = "src/generated/schema.ts";
 #[derive(Serialize)]
 struct SchemaContext {
     #[serde(flatten)]
-    file:            GeneratedHeader,
-    needs_orm:       bool,
-    needs_file:      bool,
+    file: GeneratedHeader,
+    needs_orm: bool,
+    needs_file: bool,
     needs_file_type: bool,
-    needs_sql:       bool,
+    needs_sql: bool,
     drizzle_imports: String,
-    decls:           Vec<SchemaDecl>,
-    tables:          Vec<TableDecl>,
+    decls: Vec<SchemaDecl>,
+    tables: Vec<TableDecl>,
 }
 
 #[derive(Serialize, Default)]
 struct SchemaDecl {
-    jsdoc:            String,
-    ident:            String,
-    is_enum:          bool,
-    union:            String,
-    is_object:        bool,
-    fields:           Vec<FieldDecl>,
-    is_alias:         bool,
-    alias_of:         String,
-    is_topic:         bool,
-    is_topic_empty:   bool,
-    variants:         Vec<TopicVariant>,
+    jsdoc: String,
+    ident: String,
+    is_enum: bool,
+    union: String,
+    is_object: bool,
+    fields: Vec<FieldDecl>,
+    is_alias: bool,
+    alias_of: String,
+    is_topic: bool,
+    is_topic_empty: bool,
+    variants: Vec<TopicVariant>,
     is_request_empty: bool,
-    is_result:        bool,
-    ty:               String,
+    is_result: bool,
+    ty: String,
 }
 
 #[derive(Serialize)]
 struct FieldDecl {
     name: String,
-    ty:   String,
+    ty: String,
 }
 
 #[derive(Serialize)]
 struct TopicVariant {
-    tag:        String,
-    row_ident:  String,
+    tag: String,
+    row_ident: String,
     terminator: String,
 }
 
 #[derive(Serialize)]
 struct TableDecl {
-    var_name:   String,
-    factory:    &'static str,
+    var_name: String,
+    factory: &'static str,
     table_name: String,
-    columns:    Vec<ColumnDecl>,
+    columns: Vec<ColumnDecl>,
 }
 
 #[derive(Serialize)]
@@ -98,14 +98,14 @@ pub(super) fn render_schema_source(
         "typescript",
         SCHEMA_TEMPLATE,
         &SchemaContext {
-            file:            GeneratedHeader::from_hash(hash),
-            needs_orm:       !snapshot.tables.is_empty(),
-            needs_file:      snapshot_has_file_column(snapshot),
+            file: GeneratedHeader::from_hash(hash),
+            needs_orm: !snapshot.tables.is_empty(),
+            needs_file: snapshot_has_file_column(snapshot),
             needs_file_type: snapshot.types.contains_key("pg_catalog.file"),
-            needs_sql:       snapshot_has_default_column(snapshot),
+            needs_sql: snapshot_has_default_column(snapshot),
             drizzle_imports: drizzle_imports(snapshot),
-            decls:           schema_decls(snapshot, names, procedures),
-            tables:          table_decls(snapshot, names),
+            decls: schema_decls(snapshot, names, procedures),
+            tables: table_decls(snapshot, names),
         },
     )
 }
@@ -234,8 +234,8 @@ fn topic_decl(
             .iter()
             .enumerate()
             .map(|(index, table_id)| TopicVariant {
-                tag:        escape_double_quoted_string(&table_payload_tag(table_id)),
-                row_ident:  row_type_ident(snapshot, names, table_id).to_string(),
+                tag: escape_double_quoted_string(&table_payload_tag(table_id)),
+                row_ident: row_type_ident(snapshot, names, table_id).to_string(),
                 terminator: if index == last {
                     ";".to_string()
                 } else {
@@ -278,7 +278,7 @@ fn field_decls(fields: &[ContractField], names: &AssignedNames) -> Vec<FieldDecl
         .iter()
         .map(|field| FieldDecl {
             name: field.name.clone(),
-            ty:   render_field_type(field, names, TargetLang::TypeScript),
+            ty: render_field_type(field, names, TargetLang::TypeScript),
         })
         .collect()
 }
@@ -288,19 +288,15 @@ fn table_decls(snapshot: &ContractSnapshot, names: &AssignedNames) -> Vec<TableD
         .tables
         .values()
         .map(|table| TableDecl {
-            var_name:   value_ident(
-                &table.schema,
-                &table.name,
-                names.uses_local_name(&table.schema),
-            ),
-            factory:    match table.kind {
+            var_name: value_ident(&table.schema, &table.name, names.uses_local_name(&table.schema)),
+            factory: match table.kind {
                 ContractTableKind::User => "kTable.user",
                 ContractTableKind::Shared => "kTable.shared",
                 ContractTableKind::Stream => "kTable.stream",
                 ContractTableKind::Unspecified => "kTable",
             },
             table_name: escape_double_quoted_string(&table.table_id),
-            columns:    table
+            columns: table
                 .fields
                 .iter()
                 .map(|field| ColumnDecl {

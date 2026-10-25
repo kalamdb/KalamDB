@@ -107,7 +107,7 @@ pub fn prefers_version(candidate: VersionId, current: VersionId) -> bool {
 
 /// Shared version candidate used by metadata-first MVCC merge helpers.
 pub struct VersionCandidate<P> {
-    pub pk_key:  PkBucketKey,
+    pub pk_key: PkBucketKey,
     pub version: VersionId,
     pub deleted: bool,
     pub payload: P,
@@ -275,7 +275,7 @@ where
 pub struct ParquetRowData {
     pub version: VersionId,
     pub deleted: bool,
-    pub fields:  Row,
+    pub fields: Row,
 }
 
 /// Minimal row surface required by the shared MVCC merge helpers.
@@ -497,10 +497,10 @@ pub fn parquet_batch_to_metadata(
 /// cold-row materialization until after winner selection.
 #[derive(Debug)]
 pub struct ParquetBatchDecoder<'a> {
-    batch:                &'a RecordBatch,
-    version_array:        &'a Int64Array,
-    deleted_array:        Option<&'a BooleanArray>,
-    pk_column:            Option<PkColumn<'a>>,
+    batch: &'a RecordBatch,
+    version_array: &'a Int64Array,
+    deleted_array: Option<&'a BooleanArray>,
+    pk_column: Option<PkColumn<'a>>,
     value_column_indices: Vec<usize>,
 }
 
@@ -720,7 +720,7 @@ impl<'a> ParquetBatchDecoder<'a> {
         Ok(ParquetRowData {
             version: metadata.version,
             deleted: metadata.deleted,
-            fields:  Row::new(values),
+            fields: Row::new(values),
         })
     }
 }
@@ -737,18 +737,18 @@ const MAX_RECORDED_SCAN_FILES: usize = 16;
 /// cheaply and accurately.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DeferredScanDiagnostics {
-    pub hot_rows_scanned:   Option<usize>,
-    pub cold_rows_scanned:  Option<usize>,
-    pub cold_files_total:   Option<usize>,
+    pub hot_rows_scanned: Option<usize>,
+    pub cold_rows_scanned: Option<usize>,
+    pub cold_files_total: Option<usize>,
     pub cold_files_skipped: Option<usize>,
     pub cold_files_scanned: Option<usize>,
-    pub cold_files:         Vec<String>,
+    pub cold_files: Vec<String>,
 }
 
 /// A materialized deferred batch with optional scan diagnostics.
 #[derive(Debug)]
 pub struct DeferredBatchOutput {
-    pub batch:       RecordBatch,
+    pub batch: RecordBatch,
     pub diagnostics: DeferredScanDiagnostics,
 }
 
@@ -768,12 +768,12 @@ impl DeferredBatchOutput {
 
 #[derive(Clone)]
 struct DeferredBatchMetrics {
-    set:                Arc<ExecutionPlanMetricsSet>,
-    output_rows:        Count,
-    output_batches:     Count,
-    hot_rows_scanned:   Count,
-    cold_rows_scanned:  Count,
-    cold_files_total:   Count,
+    set: Arc<ExecutionPlanMetricsSet>,
+    output_rows: Count,
+    output_batches: Count,
+    hot_rows_scanned: Count,
+    cold_rows_scanned: Count,
+    cold_files_total: Count,
     cold_files_skipped: Count,
     cold_files_scanned: Count,
 }
@@ -878,9 +878,9 @@ pub trait DeferredBatchSource: Send + Sync {
 /// Shared execution node for one-shot sources that defer batch creation until
 /// execution time.
 pub struct DeferredBatchExec {
-    source:     Arc<dyn DeferredBatchSource>,
+    source: Arc<dyn DeferredBatchSource>,
     properties: Arc<PlanProperties>,
-    metrics:    Option<DeferredBatchMetrics>,
+    metrics: Option<DeferredBatchMetrics>,
 }
 
 impl DeferredBatchExec {

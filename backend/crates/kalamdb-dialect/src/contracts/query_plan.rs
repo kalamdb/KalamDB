@@ -78,16 +78,16 @@ pub enum PredicateOperand {
 /// not extra predicates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryPredicate {
-    pub column:   String,
+    pub column: String,
     pub operator: String,
-    pub operand:  PredicateOperand,
+    pub operand: PredicateOperand,
 }
 
 /// Positional parameter discovered in the statement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryParameter {
-    pub ordinal:         u32,
-    pub placeholder:     String,
+    pub ordinal: u32,
+    pub placeholder: String,
     /// Set when every comparison of this placeholder targets one column.
     pub compared_column: Option<String>,
 }
@@ -95,57 +95,57 @@ pub struct QueryParameter {
 /// Output column. Expression aliases do not become keys.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryColumn {
-    pub name:          String,
+    pub name: String,
     pub source_column: Option<String>,
-    pub type_name:     Option<String>,
-    pub not_null:      bool,
-    pub is_read_only:  bool,
-    pub key_ordinal:   Option<u16>,
-    pub expression:    bool,
+    pub type_name: Option<String>,
+    pub not_null: bool,
+    pub is_read_only: bool,
+    pub key_ordinal: Option<u16>,
+    pub expression: bool,
 }
 
 /// Sort key taken from `ORDER BY`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryOrderKey {
-    pub expression:  String,
-    pub ascending:   bool,
+    pub expression: String,
+    pub ascending: bool,
     pub nulls_first: Option<bool>,
 }
 
 /// One-shot pagination. Live windows are a separate limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct QueryPagination {
-    pub limit:  Option<u64>,
+    pub limit: Option<u64>,
     pub offset: Option<u64>,
 }
 
 /// Features observed in the AST. Unsupported features fail analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct QueryFeatures {
-    pub joins:         bool,
-    pub subqueries:    bool,
-    pub grouping:      bool,
-    pub windows:       bool,
-    pub distinct:      bool,
-    pub aggregates:    bool,
-    pub pagination:    bool,
-    pub cte:           bool,
+    pub joins: bool,
+    pub subqueries: bool,
+    pub grouping: bool,
+    pub windows: bool,
+    pub distinct: bool,
+    pub aggregates: bool,
+    pub pagination: bool,
+    pub cte: bool,
     pub set_operation: bool,
-    pub locking:       bool,
+    pub locking: bool,
 }
 
 /// Whether this definition may be subscribed with the current live shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveEligibility {
     pub eligible: bool,
-    pub reason:   Option<String>,
+    pub reason: Option<String>,
 }
 
 /// Single relation referenced by the query, when there is exactly one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuerySourceTable {
-    pub schema:   Option<String>,
-    pub name:     String,
+    pub schema: Option<String>,
+    pub name: String,
     pub table_id: Option<String>,
 }
 
@@ -172,22 +172,22 @@ impl QueryCancellation {
 /// Immutable plan for one named `SELECT`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypedQueryPlan {
-    pub epoch:                u16,
-    pub name:                 String,
-    pub sql:                  String,
-    pub table:                Option<QuerySourceTable>,
-    pub parameters:           Vec<QueryParameter>,
-    pub columns:              Vec<QueryColumn>,
+    pub epoch: u16,
+    pub name: String,
+    pub sql: String,
+    pub table: Option<QuerySourceTable>,
+    pub parameters: Vec<QueryParameter>,
+    pub columns: Vec<QueryColumn>,
     pub projects_all_columns: bool,
-    pub predicates:           Vec<QueryPredicate>,
-    pub order_by:             Vec<QueryOrderKey>,
-    pub pagination:           QueryPagination,
-    pub cardinality:          QueryCardinality,
-    pub key_columns:          Vec<String>,
-    pub key_complete:         bool,
-    pub live:                 LiveEligibility,
-    pub features:             QueryFeatures,
-    pub cancellation:         QueryCancellation,
+    pub predicates: Vec<QueryPredicate>,
+    pub order_by: Vec<QueryOrderKey>,
+    pub pagination: QueryPagination,
+    pub cardinality: QueryCardinality,
+    pub key_columns: Vec<String>,
+    pub key_complete: bool,
+    pub live: LiveEligibility,
+    pub features: QueryFeatures,
+    pub cancellation: QueryCancellation,
 }
 
 impl TypedQueryPlan {
@@ -294,7 +294,7 @@ pub fn analyze_named_query(
 }
 
 struct BoundTable<'a> {
-    table:  &'a ContractTable,
+    table: &'a ContractTable,
     source: QuerySourceTable,
 }
 
@@ -332,8 +332,8 @@ fn resolve_table<'a>(
     };
     Ok(BoundTable {
         source: QuerySourceTable {
-            schema:   Some(table.schema.clone()),
-            name:     table.name.clone(),
+            schema: Some(table.schema.clone()),
+            name: table.name.clone(),
             table_id: Some(table.table_id.clone()),
         },
         table,
@@ -343,18 +343,18 @@ fn resolve_table<'a>(
 fn unbound_source(parts: &[String]) -> QuerySourceTable {
     match parts {
         [name] => QuerySourceTable {
-            schema:   None,
-            name:     name.clone(),
+            schema: None,
+            name: name.clone(),
             table_id: None,
         },
         [schema, name] => QuerySourceTable {
-            schema:   Some(schema.clone()),
-            name:     name.clone(),
+            schema: Some(schema.clone()),
+            name: name.clone(),
             table_id: None,
         },
         _ => QuerySourceTable {
-            schema:   None,
-            name:     parts.join("."),
+            schema: None,
+            name: parts.join("."),
             table_id: None,
         },
     }
@@ -488,11 +488,11 @@ fn live_eligibility(sql: &str) -> LiveEligibility {
     match QueryParser::analyze_subscription_query(sql) {
         Ok(_) => LiveEligibility {
             eligible: true,
-            reason:   None,
+            reason: None,
         },
         Err(error) => LiveEligibility {
             eligible: false,
-            reason:   Some(error.into_user_message()),
+            reason: Some(error.into_user_message()),
         },
     }
 }
@@ -522,7 +522,7 @@ fn pagination_from_query(
         LimitClause::OffsetCommaLimit { offset, limit } => (Some(limit), Some(offset)),
     };
     Ok(QueryPagination {
-        limit:  limit.and_then(literal_u64),
+        limit: limit.and_then(literal_u64),
         offset: offset.and_then(literal_u64),
     })
 }
@@ -549,8 +549,8 @@ fn order_by_from_query(query: &Query) -> Vec<QueryOrderKey> {
 
 fn order_key(item: &OrderByExpr) -> QueryOrderKey {
     QueryOrderKey {
-        expression:  item.expr.to_string(),
-        ascending:   item.options.asc.unwrap_or(true),
+        expression: item.expr.to_string(),
+        ascending: item.options.asc.unwrap_or(true),
         nulls_first: item.options.nulls_first,
     }
 }
@@ -668,16 +668,16 @@ fn walk_order_and_limit(query: &Query, walker: &mut ExprWalker) {
 struct ExprWalker {
     parameters: Vec<ParamDraft>,
     predicates: Vec<QueryPredicate>,
-    lambda:     bool,
+    lambda: bool,
     subqueries: bool,
-    windows:    bool,
+    windows: bool,
     aggregates: bool,
 }
 
 struct ParamDraft {
     placeholder: String,
-    ordinal:     u32,
-    columns:     BTreeSet<String>,
+    ordinal: u32,
+    columns: BTreeSet<String>,
 }
 
 impl Visitor for ExprWalker {
@@ -744,9 +744,9 @@ impl ExprWalker {
             return;
         }
         self.parameters.push(ParamDraft {
-            ordinal:     positional_ordinal(placeholder).unwrap_or(0),
+            ordinal: positional_ordinal(placeholder).unwrap_or(0),
             placeholder: placeholder.to_string(),
-            columns:     BTreeSet::new(),
+            columns: BTreeSet::new(),
         });
     }
 

@@ -20,9 +20,9 @@ use crate::error::{CLIError, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcedureBinding {
-    pub routine_id:  String,
-    pub schema:      String,
-    pub name:        String,
+    pub routine_id: String,
+    pub schema: String,
+    pub name: String,
     pub export_name: String,
     pub source_path: PathBuf,
     pub implemented: bool,
@@ -30,7 +30,7 @@ pub struct ProcedureBinding {
 
 #[derive(Debug, Default)]
 struct ProcedureImports {
-    aliases:    HashSet<String>,
+    aliases: HashSet<String>,
     namespaces: HashSet<String>,
 }
 
@@ -254,8 +254,8 @@ enum InitKind {
     Ignore,
     Malformed,
     Binding {
-        namespace:   String,
-        method:      String,
+        namespace: String,
+        method: String,
         implemented: bool,
     },
 }

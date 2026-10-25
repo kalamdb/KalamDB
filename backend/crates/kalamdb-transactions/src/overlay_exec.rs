@@ -32,19 +32,19 @@ use crate::overlay::TransactionOverlay;
 /// Physical execution node that merges transaction-local overlay rows with committed scan output.
 #[derive(Debug, Clone)]
 pub struct TransactionOverlayExec {
-    input:              Arc<dyn ExecutionPlan>,
-    table_id:           TableId,
+    input: Arc<dyn ExecutionPlan>,
+    table_id: TableId,
     primary_key_column: Arc<str>,
-    overlay:            TransactionOverlay,
-    user_scope:         Option<UserId>,
-    final_projection:   Option<Vec<usize>>,
-    fetch:              Option<usize>,
+    overlay: TransactionOverlay,
+    user_scope: Option<UserId>,
+    final_projection: Option<Vec<usize>>,
+    fetch: Option<usize>,
     /// Predicates the child scan already applied to committed rows. Overlay
     /// rows are merged after that scan, so the same predicate has to run on
     /// the merged batch. Otherwise `NOT IN` and `<>` keep uncommitted rows
     /// that do not match.
-    residual_filter:    Option<Arc<dyn PhysicalExpr>>,
-    cache:              Arc<PlanProperties>,
+    residual_filter: Option<Arc<dyn PhysicalExpr>>,
+    cache: Arc<PlanProperties>,
 }
 
 impl TransactionOverlayExec {
@@ -474,24 +474,24 @@ mod tests {
         overlay.apply_entry(TransactionOverlayEntry {
             transaction_id: transaction_id.clone(),
             mutation_order: 0,
-            table_id:       table_id.clone(),
-            table_type:     TableType::Shared,
-            user_id:        None,
+            table_id: table_id.clone(),
+            table_type: TableType::Shared,
+            user_id: None,
             operation_kind: OperationKind::Update,
-            primary_key:    "1".to_string(),
-            payload:        row(&[("name", ScalarValue::Utf8(Some("after".to_string())))]),
-            tombstone:      false,
+            primary_key: "1".to_string(),
+            payload: row(&[("name", ScalarValue::Utf8(Some("after".to_string())))]),
+            tombstone: false,
         });
         overlay.apply_entry(TransactionOverlayEntry {
             transaction_id: transaction_id.clone(),
             mutation_order: 1,
-            table_id:       table_id.clone(),
-            table_type:     TableType::Shared,
-            user_id:        None,
+            table_id: table_id.clone(),
+            table_type: TableType::Shared,
+            user_id: None,
             operation_kind: OperationKind::Delete,
-            primary_key:    "2".to_string(),
-            payload:        Row::new(BTreeMap::new()),
-            tombstone:      true,
+            primary_key: "2".to_string(),
+            payload: Row::new(BTreeMap::new()),
+            tombstone: true,
         });
         overlay.apply_entry(TransactionOverlayEntry {
             transaction_id,
@@ -604,16 +604,16 @@ mod tests {
         overlay.apply_entry(TransactionOverlayEntry {
             transaction_id: transaction_id.clone(),
             mutation_order: 0,
-            table_id:       table_id.clone(),
-            table_type:     TableType::Shared,
-            user_id:        None,
+            table_id: table_id.clone(),
+            table_type: TableType::Shared,
+            user_id: None,
             operation_kind: OperationKind::Update,
-            primary_key:    "1".to_string(),
-            payload:        row(&[
+            primary_key: "1".to_string(),
+            payload: row(&[
                 ("name", ScalarValue::Utf8(Some("after".to_string()))),
                 (SystemColumnNames::VERSION, ScalarValue::Int64(Some(99))),
             ]),
-            tombstone:      false,
+            tombstone: false,
         });
         overlay.apply_entry(TransactionOverlayEntry {
             transaction_id,
@@ -681,16 +681,16 @@ mod tests {
         overlay.apply_entry(TransactionOverlayEntry {
             transaction_id: transaction_id.clone(),
             mutation_order: 0,
-            table_id:       table_id.clone(),
-            table_type:     TableType::User,
-            user_id:        Some(first_user.clone()),
+            table_id: table_id.clone(),
+            table_type: TableType::User,
+            user_id: Some(first_user.clone()),
             operation_kind: OperationKind::Insert,
-            primary_key:    "1".to_string(),
-            payload:        row(&[
+            primary_key: "1".to_string(),
+            payload: row(&[
                 ("id", ScalarValue::Int64(Some(1))),
                 ("name", ScalarValue::Utf8(Some("alice".to_string()))),
             ]),
-            tombstone:      false,
+            tombstone: false,
         });
         overlay.apply_entry(TransactionOverlayEntry {
             transaction_id,
@@ -751,14 +751,14 @@ mod tests {
 
         #[derive(Debug)]
         struct EmptyTwoPartitionExec {
-            schema:     SchemaRef,
+            schema: SchemaRef,
             properties: Arc<PlanProperties>,
         }
 
         impl EmptyTwoPartitionExec {
             fn new(schema: SchemaRef) -> Self {
                 Self {
-                    schema:     Arc::clone(&schema),
+                    schema: Arc::clone(&schema),
                     properties: Arc::new(PlanProperties::new(
                         EquivalenceProperties::new(schema),
                         Partitioning::UnknownPartitioning(2),

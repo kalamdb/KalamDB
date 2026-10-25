@@ -262,11 +262,11 @@ fn is_untyped_placeholder(expr: &Expr) -> bool {
 
 fn cast_expr_to_text(expr: Expr) -> Expr {
     Expr::Cast {
-        kind:      CastKind::Cast,
-        expr:      Box::new(expr),
+        kind: CastKind::Cast,
+        expr: Box::new(expr),
         data_type: DataType::Text,
-        array:     false,
-        format:    None,
+        array: false,
+        format: None,
     }
 }
 
@@ -276,21 +276,21 @@ fn is_json_path_operand(expr: &Expr) -> bool {
 
 fn make_function_call(name: &str, args: Vec<Expr>) -> Expr {
     Expr::Function(Function {
-        name:             ObjectName::from(vec![Ident::new(name)]),
+        name: ObjectName::from(vec![Ident::new(name)]),
         uses_odbc_syntax: false,
-        parameters:       FunctionArguments::None,
-        args:             FunctionArguments::List(FunctionArgumentList {
+        parameters: FunctionArguments::None,
+        args: FunctionArguments::List(FunctionArgumentList {
             duplicate_treatment: None,
-            args:                args
+            args: args
                 .into_iter()
                 .map(|arg| FunctionArg::Unnamed(FunctionArgExpr::Expr(arg)))
                 .collect(),
-            clauses:             vec![],
+            clauses: vec![],
         }),
-        filter:           None,
-        null_treatment:   None,
-        over:             None,
-        within_group:     vec![],
+        filter: None,
+        null_treatment: None,
+        over: None,
+        within_group: vec![],
     })
 }
 
@@ -397,11 +397,11 @@ fn rewrite_pg_oid_cast_expr(expr: &Expr) -> Option<Expr> {
 
 fn cast_expr_to_bigint(expr: Expr) -> Expr {
     Expr::Cast {
-        kind:      CastKind::Cast,
-        expr:      Box::new(expr),
+        kind: CastKind::Cast,
+        expr: Box::new(expr),
         data_type: DataType::BigInt(None),
-        array:     false,
-        format:    None,
+        array: false,
+        format: None,
     }
 }
 
@@ -459,7 +459,7 @@ fn rewrite_pg_regex_expr(expr: &Expr) -> Option<Expr> {
 
     match op {
         BinaryOperator::PGRegexNotMatch => Some(Expr::UnaryOp {
-            op:   UnaryOperator::Not,
+            op: UnaryOperator::Not,
             expr: Box::new(make_function_call(
                 "regexp_like",
                 vec![(**left).clone(), (**right).clone()],
@@ -469,7 +469,7 @@ fn rewrite_pg_regex_expr(expr: &Expr) -> Option<Expr> {
             Some(make_function_call("regexp_like", vec![(**left).clone(), (**right).clone()]))
         },
         BinaryOperator::PGRegexNotIMatch => Some(Expr::UnaryOp {
-            op:   UnaryOperator::Not,
+            op: UnaryOperator::Not,
             expr: Box::new(make_function_call(
                 "regexp_like",
                 vec![
@@ -536,8 +536,8 @@ fn typrelid_zero_alias(expr: &Expr) -> Option<String> {
 
 fn make_typrelid_zero_expr(alias: &str) -> Expr {
     Expr::BinaryOp {
-        left:  Box::new(compound_field_expr(alias, "typrelid")),
-        op:    BinaryOperator::Eq,
+        left: Box::new(compound_field_expr(alias, "typrelid")),
+        op: BinaryOperator::Eq,
         right: Box::new(Expr::value(Value::Number("0".to_string(), false))),
     }
 }

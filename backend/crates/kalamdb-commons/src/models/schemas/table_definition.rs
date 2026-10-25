@@ -82,85 +82,85 @@ pub struct TableDefinition {
 
 #[derive(Serialize)]
 struct TableDefinitionSerializeRepr<'a> {
-    namespace_id:   &'a SchemaId,
-    table_name:     &'a TableName,
-    table_type:     TableType,
-    columns:        &'a [ColumnDefinition],
+    namespace_id: &'a SchemaId,
+    table_name: &'a TableName,
+    table_type: TableType,
+    columns: &'a [ColumnDefinition],
     schema_version: u32,
     next_column_id: u64,
-    table_options:  &'a TableOptions,
-    table_comment:  &'a Option<String>,
+    table_options: &'a TableOptions,
+    table_comment: &'a Option<String>,
     scalar_indexes: &'a [ScalarIndexDefinition],
-    foreign_keys:   &'a [ForeignKeyDefinition],
-    created_at:     DateTime<Utc>,
-    updated_at:     DateTime<Utc>,
+    foreign_keys: &'a [ForeignKeyDefinition],
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
 }
 
 impl<'a> From<&'a TableDefinition> for TableDefinitionSerializeRepr<'a> {
     fn from(table: &'a TableDefinition) -> Self {
         Self {
-            namespace_id:   &table.namespace_id,
-            table_name:     &table.table_name,
-            table_type:     table.table_type,
-            columns:        &table.columns,
+            namespace_id: &table.namespace_id,
+            table_name: &table.table_name,
+            table_type: table.table_type,
+            columns: &table.columns,
             schema_version: table.schema_version,
             next_column_id: table.next_column_id,
-            table_options:  &table.table_options,
-            table_comment:  &table.table_comment,
+            table_options: &table.table_options,
+            table_comment: &table.table_comment,
             scalar_indexes: &table.scalar_indexes,
-            foreign_keys:   &table.foreign_keys,
-            created_at:     table.created_at,
-            updated_at:     table.updated_at,
+            foreign_keys: &table.foreign_keys,
+            created_at: table.created_at,
+            updated_at: table.updated_at,
         }
     }
 }
 
 #[derive(Deserialize)]
 struct TableDefinitionRepr {
-    namespace_id:   SchemaId,
-    table_name:     TableName,
-    table_type:     TableType,
-    columns:        Vec<ColumnDefinition>,
+    namespace_id: SchemaId,
+    table_name: TableName,
+    table_type: TableType,
+    columns: Vec<ColumnDefinition>,
     schema_version: u32,
     next_column_id: u64,
-    table_options:  TableOptions,
-    table_comment:  Option<String>,
+    table_options: TableOptions,
+    table_comment: Option<String>,
     #[serde(default)]
     scalar_indexes: Vec<ScalarIndexDefinition>,
     #[serde(default)]
-    foreign_keys:   Vec<ForeignKeyDefinition>,
-    created_at:     DateTime<Utc>,
-    updated_at:     DateTime<Utc>,
+    foreign_keys: Vec<ForeignKeyDefinition>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
 }
 
 #[derive(PartialEq, Serialize)]
 struct SemanticSchema<'a> {
-    namespace_id:   &'a SchemaId,
-    table_name:     &'a TableName,
-    table_type:     TableType,
-    columns:        &'a [ColumnDefinition],
+    namespace_id: &'a SchemaId,
+    table_name: &'a TableName,
+    table_type: TableType,
+    columns: &'a [ColumnDefinition],
     next_column_id: u64,
-    table_options:  TableOptions,
-    table_comment:  &'a Option<String>,
+    table_options: TableOptions,
+    table_comment: &'a Option<String>,
     scalar_indexes: &'a [ScalarIndexDefinition],
-    foreign_keys:   &'a [ForeignKeyDefinition],
+    foreign_keys: &'a [ForeignKeyDefinition],
 }
 
 impl From<TableDefinitionRepr> for TableDefinition {
     fn from(value: TableDefinitionRepr) -> Self {
         Self {
-            namespace_id:   value.namespace_id,
-            table_name:     value.table_name,
-            table_type:     value.table_type,
-            columns:        value.columns,
+            namespace_id: value.namespace_id,
+            table_name: value.table_name,
+            table_type: value.table_type,
+            columns: value.columns,
             schema_version: value.schema_version,
             next_column_id: value.next_column_id,
-            table_options:  value.table_options,
-            table_comment:  value.table_comment,
+            table_options: value.table_options,
+            table_comment: value.table_comment,
             scalar_indexes: value.scalar_indexes,
-            foreign_keys:   value.foreign_keys,
-            created_at:     value.created_at,
-            updated_at:     value.updated_at,
+            foreign_keys: value.foreign_keys,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
         }
     }
 }
@@ -824,8 +824,8 @@ mod tests {
 
         // Update to custom stream options
         let custom_opts = TableOptions::Stream(crate::models::schemas::StreamTableOptions {
-            ttl_seconds:           1800,
-            eviction_strategy:     "size_based".to_string(),
+            ttl_seconds: 1800,
+            eviction_strategy: "size_based".to_string(),
             max_stream_size_bytes: 1_000_000_000,
         });
 

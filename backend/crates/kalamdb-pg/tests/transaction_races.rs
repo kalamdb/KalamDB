@@ -63,7 +63,7 @@ async fn pg_commit_vs_rollback_repeats_without_leaking_state() {
             async move {
                 commit_service
                     .commit_transaction(request(CommitTransactionRequest {
-                        session_id:     session_id.to_string(),
+                        session_id: session_id.to_string(),
                         transaction_id: commit_tx,
                     }))
                     .await
@@ -71,7 +71,7 @@ async fn pg_commit_vs_rollback_repeats_without_leaking_state() {
             async move {
                 rollback_service
                     .rollback_transaction(request(RollbackTransactionRequest {
-                        session_id:     session_id.to_string(),
+                        session_id: session_id.to_string(),
                         transaction_id: rollback_tx,
                     }))
                     .await
@@ -150,7 +150,7 @@ async fn pg_commit_vs_close_session_repeats_without_leaking_state() {
             async move {
                 commit_service
                     .commit_transaction(request(CommitTransactionRequest {
-                        session_id:     session_id.to_string(),
+                        session_id: session_id.to_string(),
                         transaction_id: commit_tx,
                     }))
                     .await

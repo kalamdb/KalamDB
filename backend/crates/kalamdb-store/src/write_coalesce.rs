@@ -55,7 +55,7 @@ impl Drop for CoalesceGuard {
 
 /// Buffered storage operations plus effects that must run only after they persist.
 pub struct CoalescedBatch {
-    pub ops:           Vec<Operation>,
+    pub ops: Vec<Operation>,
     pub after_persist: Vec<PersistHook>,
 }
 
@@ -118,8 +118,8 @@ pub fn defer_after_persist(hook: impl FnOnce() + Send + 'static) {
 pub fn buffer_put(partition: &Partition, key: &[u8], value: &[u8]) -> bool {
     buffer_operation(Operation::Put {
         partition: partition.clone(),
-        key:       key.to_vec(),
-        value:     value.to_vec(),
+        key: key.to_vec(),
+        value: value.to_vec(),
     })
 }
 
@@ -127,7 +127,7 @@ pub fn buffer_put(partition: &Partition, key: &[u8], value: &[u8]) -> bool {
 pub fn buffer_delete(partition: &Partition, key: &[u8]) -> bool {
     buffer_operation(Operation::Delete {
         partition: partition.clone(),
-        key:       key.to_vec(),
+        key: key.to_vec(),
     })
 }
 
@@ -211,8 +211,8 @@ mod tests {
             writer
                 .batch(vec![Operation::Put {
                     partition: hot_write.clone(),
-                    key:       b"row".to_vec(),
-                    value:     b"table".to_vec(),
+                    key: b"row".to_vec(),
+                    value: b"table".to_vec(),
                 }])
                 .unwrap();
             writer.put(&raft_write, b"log:1", b"entry").unwrap();

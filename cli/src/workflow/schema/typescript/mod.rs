@@ -77,6 +77,7 @@ mod tests {
         assert!(source.contains("createMessage: (input: ChatCreateMessageRequest"));
         assert!(!source.contains("kalam.chat.createMessage"));
         assert!(source.contains("invokeRoutine:"));
+        assert!(source.contains("readonly revision?: string"));
     }
 
     #[test]
@@ -312,11 +313,11 @@ COMMENT ON FUNCTION chat.ping IS 'Liveness probe';
             crate::workflow::schema::procedures::ProcedureCatalog::from_snapshot(&snapshot, &names);
         write_typescript(&crate::workflow::schema::output::SchemaEmitInput {
             project_root: temp.path(),
-            output_path:  &output,
-            snapshot:     &snapshot,
-            hash:         &hash,
-            names:        &names,
-            procedures:   &procedures,
+            output_path: &output,
+            snapshot: &snapshot,
+            hash: &hash,
+            names: &names,
+            procedures: &procedures,
         })
         .unwrap();
         let dts =

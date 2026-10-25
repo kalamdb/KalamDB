@@ -6,28 +6,28 @@ use crate::ddl::{create_type::split_qualified_ident, DdlResult};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateTriggerStatement {
-    pub trigger_id:       TriggerId,
-    pub namespace_id:     SchemaId,
-    pub name:             String,
-    pub topic_id:         TopicId,
-    pub routine_id:       RoutineId,
-    pub principal:        String,
-    pub start_from:       String,
-    pub retries:          i32,
+    pub trigger_id: TriggerId,
+    pub namespace_id: SchemaId,
+    pub name: String,
+    pub topic_id: TopicId,
+    pub routine_id: RoutineId,
+    pub principal: String,
+    pub start_from: String,
+    pub retries: i32,
     pub retry_backoff_ms: i64,
-    pub concurrency:      i32,
+    pub concurrency: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropTriggerStatement {
     pub trigger_id: TriggerId,
-    pub if_exists:  bool,
+    pub if_exists: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlterTriggerStatement {
     pub trigger_id: TriggerId,
-    pub enabled:    bool,
+    pub enabled: bool,
 }
 
 impl CreateTriggerStatement {

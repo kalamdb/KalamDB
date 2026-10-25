@@ -16,7 +16,7 @@ use kalamdb_commons::{models::schemas::TableDefinition, schemas::serial_sequence
 use crate::error::KalamDbError;
 
 struct SerialColumn {
-    table_id:      TableId,
+    table_id: TableId,
     sequence_name: String,
 }
 
@@ -70,7 +70,7 @@ pub(crate) fn remember_serial_columns(table: &TableDefinition) {
         by_column().insert(
             column_key(namespace, table_name, &column.column_name),
             SerialColumn {
-                table_id:      table_id.clone(),
+                table_id: table_id.clone(),
                 sequence_name: sequence_name.clone(),
             },
         );

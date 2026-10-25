@@ -123,8 +123,9 @@ fn golden_nullability_nested_struct_alias_and_codecs() {
     assert!(dart.contains("late final chat = ChatFunctions(_client);"));
     assert!(dart
         .contains("Future<ChatCreateMessageResult> createMessage(ChatCreateMessageRequest input)"));
-    assert!(dart.contains("SELECT chat.create_message($1, $2) AS result"));
-    assert!(dart.contains("final result = _kalamCallResult(response);"));
+    assert!(dart.contains("invokeRoutine("));
+    assert!(dart.contains("name: 'create_message'"));
+    assert!(!dart.contains("SELECT chat.create_message"));
     assert!(dart.contains("ChatUser.fromJson(_asJsonMap(result))"));
 
     assert!(rust.contains("pub struct ChatAddress"));
@@ -160,14 +161,14 @@ fn scaffold_writes_once_and_does_not_recreate_moved_handlers() {
     fs::write(root.join("schema.sql"), GOLDEN_SQL).unwrap();
     let mut config = minimal_sql_project_config();
     config.schema = SchemaSection {
-        mode:      SchemaMode::Sql,
-        path:      Some("schema.sql".into()),
-        watch:     false,
+        mode: SchemaMode::Sql,
+        path: Some("schema.sql".into()),
+        watch: false,
         languages: vec!["typescript".into()],
-        targets:   [(
+        targets: [(
             "typescript".into(),
             SchemaTarget {
-                output:            "src/generated/kalam.ts".into(),
+                output: "src/generated/kalam.ts".into(),
                 unqualified_names: false,
             },
         )]
@@ -276,14 +277,14 @@ CREATE FUNCTION api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return "ok";
     .unwrap();
     let mut config = minimal_sql_project_config();
     config.schema = SchemaSection {
-        mode:      SchemaMode::Sql,
-        path:      Some("schema.sql".into()),
-        watch:     false,
+        mode: SchemaMode::Sql,
+        path: Some("schema.sql".into()),
+        watch: false,
         languages: vec!["typescript".into()],
-        targets:   [(
+        targets: [(
             "typescript".into(),
             SchemaTarget {
-                output:            "src/generated/kalam.ts".into(),
+                output: "src/generated/kalam.ts".into(),
                 unqualified_names: false,
             },
         )]
@@ -327,29 +328,29 @@ fn generate_does_not_require_a_server_url() {
     .unwrap();
     let config = KalamProjectConfig {
         schema: SchemaSection {
-            mode:      SchemaMode::Sql,
-            path:      Some("schema.sql".into()),
-            watch:     false,
+            mode: SchemaMode::Sql,
+            path: Some("schema.sql".into()),
+            watch: false,
             languages: vec!["typescript".into(), "dart".into(), "rust".into()],
-            targets:   [
+            targets: [
                 (
                     "typescript".into(),
                     SchemaTarget {
-                        output:            "src/generated/kalam.ts".into(),
+                        output: "src/generated/kalam.ts".into(),
                         unqualified_names: false,
                     },
                 ),
                 (
                     "dart".into(),
                     SchemaTarget {
-                        output:            "lib/generated/kalam.dart".into(),
+                        output: "lib/generated/kalam.dart".into(),
                         unqualified_names: false,
                     },
                 ),
                 (
                     "rust".into(),
                     SchemaTarget {
-                        output:            "src/generated/kalam.rs".into(),
+                        output: "src/generated/kalam.rs".into(),
                         unqualified_names: false,
                     },
                 ),
@@ -398,14 +399,14 @@ CREATE PROCEDURE chat.ping();
 fn typescript_project_config() -> KalamProjectConfig {
     let mut config = minimal_sql_project_config();
     config.schema = SchemaSection {
-        mode:      SchemaMode::Sql,
-        path:      Some("schema.sql".into()),
-        watch:     false,
+        mode: SchemaMode::Sql,
+        path: Some("schema.sql".into()),
+        watch: false,
         languages: vec!["typescript".into()],
-        targets:   [(
+        targets: [(
             "typescript".into(),
             SchemaTarget {
-                output:            "src/generated/kalam.ts".into(),
+                output: "src/generated/kalam.ts".into(),
                 unqualified_names: false,
             },
         )]

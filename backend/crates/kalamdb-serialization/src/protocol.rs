@@ -44,20 +44,20 @@ const RESP_ERROR: u8 = 2;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackedInsert {
     pub required_meta_index: u64,
-    pub transaction_id:      Option<TransactionId>,
-    pub table_id:            TableId,
-    pub user_id:             Option<UserId>,
-    pub encoded_fields:      Vec<Vec<u8>>,
+    pub transaction_id: Option<TransactionId>,
+    pub table_id: TableId,
+    pub user_id: Option<UserId>,
+    pub encoded_fields: Vec<Vec<u8>>,
 }
 
 /// Decoded packed Raft DELETE command payload (`0xA4` / `0xA5`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackedDelete {
     pub required_meta_index: u64,
-    pub transaction_id:      Option<TransactionId>,
-    pub table_id:            TableId,
-    pub user_id:             Option<UserId>,
-    pub pk_values:           Option<Vec<String>>,
+    pub transaction_id: Option<TransactionId>,
+    pub table_id: TableId,
+    pub user_id: Option<UserId>,
+    pub pk_values: Option<Vec<String>>,
 }
 
 /// Compact binary representation of common `DataResponse` variants (`0xA3`).
@@ -189,6 +189,11 @@ pub fn decode_packed_insert(tag: u8, bytes: &[u8]) -> Result<PackedInsert> {
     let mut pos = 1usize;
     let required_meta_index = read_u64(bytes, &mut pos)?;
     let flags = read_u8(bytes, &mut pos)?;
+    if flags & !(FLAG_HAS_TX | FLAG_HAS_USER) != 0 {
+        return Err(SerializationError::Decode(format!(
+            "unsupported packed insert flags 0x{flags:02x}"
+        )));
+    }
     let transaction_id = if flags & FLAG_HAS_TX != 0 {
         Some(TransactionId::try_new(read_u16_str(bytes, &mut pos)?).map_err(|e| {
             SerializationError::Decode(format!("packed insert transaction id: {e}"))
@@ -205,6 +210,11 @@ pub fn decode_packed_insert(tag: u8, bytes: &[u8]) -> Result<PackedInsert> {
         None
     };
     let row_count = read_u32(bytes, &mut pos)? as usize;
+    if row_count > (bytes.len() - pos) / 4 {
+        return Err(SerializationError::Decode(
+            "packed insert row count exceeds remaining payload".to_string(),
+        ));
+    }
     let mut encoded_fields = Vec::with_capacity(row_count);
     for _ in 0..row_count {
         encoded_fields.push(read_u32_bytes(bytes, &mut pos)?.to_vec());
@@ -288,6 +298,11 @@ pub fn decode_packed_delete(tag: u8, bytes: &[u8]) -> Result<PackedDelete> {
     let mut pos = 1usize;
     let required_meta_index = read_u64(bytes, &mut pos)?;
     let flags = read_u8(bytes, &mut pos)?;
+    if flags & !(FLAG_HAS_TX | FLAG_HAS_USER | FLAG_HAS_PK_VALUES) != 0 {
+        return Err(SerializationError::Decode(format!(
+            "unsupported packed delete flags 0x{flags:02x}"
+        )));
+    }
     let transaction_id = if flags & FLAG_HAS_TX != 0 {
         Some(TransactionId::try_new(read_u16_str(bytes, &mut pos)?).map_err(|e| {
             SerializationError::Decode(format!("packed delete transaction id: {e}"))
@@ -545,6 +560,33 @@ mod tests {
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     struct Sample {
         n: i64,
+    }
+
+    #[test]
+    fn packed_insert_rejects_impossible_row_count_before_reading_rows() {
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
+        let mut bytes =
+            encode_packed_insert(PACKED_SHARED_INSERT, 0, None, &table_id, None, &[]).unwrap();
+        let count_offset = bytes.len() - 4;
+        for count in [1024, u32::MAX] {
+            bytes[count_offset..].copy_from_slice(&count.to_le_bytes());
+            let error = decode_packed_insert(PACKED_SHARED_INSERT, &bytes).unwrap_err();
+            assert!(error.to_string().contains("row count"), "{error}");
+        }
+    }
+
+    #[test]
+    fn packed_commands_reject_unknown_flags() {
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
+        let mut insert =
+            encode_packed_insert(PACKED_SHARED_INSERT, 0, None, &table_id, None, &[]).unwrap();
+        insert[9] |= 0x80;
+        assert!(decode_packed_insert(PACKED_SHARED_INSERT, &insert).is_err());
+
+        let mut delete =
+            encode_packed_delete(PACKED_SHARED_DELETE, 0, None, &table_id, None, None).unwrap();
+        delete[9] |= 0x80;
+        assert!(decode_packed_delete(PACKED_SHARED_DELETE, &delete).is_err());
     }
 
     #[test]

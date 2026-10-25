@@ -69,11 +69,11 @@ pub struct SubscribeStatement {
     /// Full SELECT query (e.g., "SELECT event_type FROM app.messages WHERE user_id = 'alice'")
     pub select_query: String,
     /// Namespace name (e.g., "app") - extracted from query
-    pub namespace:    SchemaId,
+    pub namespace: SchemaId,
     /// Table name (e.g., "messages") - extracted from query
-    pub table_name:   TableName,
+    pub table_name: TableName,
     /// Optional subscription options (e.g., last_rows=10, batch_size=100, from=123)
-    pub options:      SubscriptionOptions,
+    pub options: SubscriptionOptions,
 }
 
 impl SubscribeStatement {
@@ -329,8 +329,8 @@ impl SubscribeStatement {
 #[derive(Default)]
 struct ResumeDomainParts {
     history_incarnation: Option<String>,
-    scope_id:            Option<u64>,
-    partition_id:        Option<u64>,
+    scope_id: Option<u64>,
+    partition_id: Option<u64>,
 }
 
 impl ResumeDomainParts {

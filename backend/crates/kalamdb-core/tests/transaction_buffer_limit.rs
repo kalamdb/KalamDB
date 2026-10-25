@@ -42,11 +42,11 @@ async fn transaction_buffer_limit_aborts_transaction_and_rejects_follow_up_write
 
     let limit_error = service
         .execute_insert(InsertRequest {
-            table_id:   table_id.clone(),
+            table_id: table_id.clone(),
             table_type: TableType::Shared,
             session_id: Some(session_id.to_string()),
-            user_id:    Some(user_id.clone()),
-            rows:       vec![row(1, &oversized_name)],
+            user_id: Some(user_id.clone()),
+            rows: vec![row(1, &oversized_name)],
         })
         .await
         .expect_err("oversized write should fail");
@@ -55,11 +55,11 @@ async fn transaction_buffer_limit_aborts_transaction_and_rejects_follow_up_write
 
     let follow_up_error = service
         .execute_insert(InsertRequest {
-            table_id:   table_id.clone(),
+            table_id: table_id.clone(),
             table_type: TableType::Shared,
             session_id: Some(session_id.to_string()),
-            user_id:    Some(user_id.clone()),
-            rows:       vec![row(2, "still-blocked")],
+            user_id: Some(user_id.clone()),
+            rows: vec![row(2, "still-blocked")],
         })
         .await
         .expect_err("aborted transaction should keep rejecting writes");

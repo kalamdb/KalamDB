@@ -42,15 +42,15 @@ impl ForeignKeyAction {
 /// Foreign key stored on [`super::TableDefinition`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForeignKeyDefinition {
-    pub name:                 String,
-    pub columns:              Vec<String>,
+    pub name: String,
+    pub columns: Vec<String>,
     pub referenced_namespace: SchemaId,
-    pub referenced_table:     TableName,
-    pub referenced_columns:   Vec<String>,
+    pub referenced_table: TableName,
+    pub referenced_columns: Vec<String>,
     #[serde(default, skip_serializing_if = "ForeignKeyAction::is_no_action")]
-    pub on_update:            ForeignKeyAction,
+    pub on_update: ForeignKeyAction,
     #[serde(default, skip_serializing_if = "ForeignKeyAction::is_no_action")]
-    pub on_delete:            ForeignKeyAction,
+    pub on_delete: ForeignKeyAction,
 }
 
 #[cfg(test)]
@@ -59,13 +59,13 @@ mod tests {
 
     fn articles_author_key() -> ForeignKeyDefinition {
         ForeignKeyDefinition {
-            name:                 "articles_author_foreign".to_string(),
-            columns:              vec!["author".to_string()],
+            name: "articles_author_foreign".to_string(),
+            columns: vec!["author".to_string()],
             referenced_namespace: SchemaId::new("directus"),
-            referenced_table:     TableName::new("authors"),
-            referenced_columns:   vec!["id".to_string()],
-            on_update:            ForeignKeyAction::NoAction,
-            on_delete:            ForeignKeyAction::Cascade,
+            referenced_table: TableName::new("authors"),
+            referenced_columns: vec!["id".to_string()],
+            on_update: ForeignKeyAction::NoAction,
+            on_delete: ForeignKeyAction::Cascade,
         }
     }
 

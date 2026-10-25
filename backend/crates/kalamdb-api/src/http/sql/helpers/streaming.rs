@@ -22,11 +22,11 @@ use super::{
 const INLINE_SQL_ROWS_MAX: usize = 32;
 
 struct StreamingRowsState {
-    prefix:               Option<Bytes>,
-    batches:              std::vec::IntoIter<arrow::record_batch::RecordBatch>,
-    suffix:               Option<Bytes>,
-    schema_fields:        std::sync::Arc<Vec<SchemaField>>,
-    user_role:            Option<Role>,
+    prefix: Option<Bytes>,
+    batches: std::vec::IntoIter<arrow::record_batch::RecordBatch>,
+    suffix: Option<Bytes>,
+    schema_fields: std::sync::Arc<Vec<SchemaField>>,
+    user_role: Option<Role>,
     row_separator_needed: bool,
 }
 

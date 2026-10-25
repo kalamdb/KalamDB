@@ -9,7 +9,7 @@ use crate::{emitter::diff_schema_parts, parser::parse_schema};
 /// UP and DOWN SQL statements for a migration step.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MigrationStatements {
-    pub up:   String,
+    pub up: String,
     pub down: String,
 }
 
@@ -18,7 +18,7 @@ pub struct MigrationStatements {
 pub enum SchemaDiffError {
     #[error("failed to read schema file '{path}': {source}")]
     ReadFile {
-        path:   String,
+        path: String,
         source: std::io::Error,
     },
     #[error("{message}")]
@@ -34,7 +34,7 @@ pub struct DiffOptions {
     /// replaced with advisory comments so the developer reviews them explicitly.
     pub allow_destructive: bool,
     /// Default connection schema for unqualified contract objects (defaults to `"public"`).
-    pub default_schema:    Option<String>,
+    pub default_schema: Option<String>,
 }
 
 /// Compare two schema files and produce semantic UP SQL plus a conservative DOWN note.

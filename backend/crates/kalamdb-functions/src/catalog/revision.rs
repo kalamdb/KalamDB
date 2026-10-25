@@ -9,13 +9,13 @@ use crate::limits::ABI_VERSION;
 /// Immutable metadata for a module revision the runtime can load.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleRevision {
-    pub module_id:     FunctionModuleId,
-    pub revision_id:   FunctionRevisionId,
-    pub artifact_id:   ArtifactId,
-    pub runtime:       FunctionRuntime,
-    pub abi_version:   u32,
+    pub module_id: FunctionModuleId,
+    pub revision_id: FunctionRevisionId,
+    pub artifact_id: ArtifactId,
+    pub runtime: FunctionRuntime,
+    pub abi_version: u32,
     pub contract_hash: String,
-    pub source:        Arc<str>,
+    pub source: Arc<str>,
 }
 
 impl ModuleRevision {

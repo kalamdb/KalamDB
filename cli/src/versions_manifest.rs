@@ -22,12 +22,12 @@ struct ManifestPackages {
     #[serde(default)]
     typescript: HashMap<String, PackageRecord>,
     #[serde(default)]
-    dart:       HashMap<String, PackageRecord>,
+    dart: HashMap<String, PackageRecord>,
 }
 
 #[derive(Debug, Deserialize)]
 struct PackageRecord {
-    version:   String,
+    version: String,
     #[serde(default)]
     published: Option<String>,
 }

@@ -79,7 +79,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct AllocationSample {
     allocations: u64,
-    bytes:       u64,
+    bytes: u64,
 }
 
 impl AllocationSample {
@@ -131,7 +131,7 @@ impl AllocationGuard {
     fn sample(&self) -> AllocationSample {
         AllocationSample {
             allocations: ALLOCATION_COUNT.load(Ordering::SeqCst),
-            bytes:       ALLOCATION_BYTES.load(Ordering::SeqCst),
+            bytes: ALLOCATION_BYTES.load(Ordering::SeqCst),
         }
     }
 }
@@ -209,33 +209,33 @@ fn make_user_insert_request(
     id: i64,
 ) -> InsertRequest {
     InsertRequest {
-        table_id:   table_id.clone(),
+        table_id: table_id.clone(),
         table_type: TableType::User,
         session_id: session_id.map(str::to_string),
-        user_id:    Some(UserId::new(AUTOCOMMIT_USER)),
-        rows:       vec![row(id, &format!("name_{id}"))],
+        user_id: Some(UserId::new(AUTOCOMMIT_USER)),
+        rows: vec![row(id, &format!("name_{id}"))],
     }
 }
 
 fn make_system_insert_request(session_id: Option<&str>) -> InsertRequest {
     InsertRequest {
-        table_id:   TableId::new(SchemaId::new("system"), TableName::new("users")),
+        table_id: TableId::new(SchemaId::new("system"), TableName::new("users")),
         table_type: TableType::System,
         session_id: session_id.map(str::to_string),
-        user_id:    None,
-        rows:       vec![empty_row()],
+        user_id: None,
+        rows: vec![empty_row()],
     }
 }
 
 fn make_scan_request(table_id: &TableId, session_id: Option<&str>) -> ScanRequest {
     ScanRequest {
-        table_id:   table_id.clone(),
+        table_id: table_id.clone(),
         table_type: TableType::User,
         session_id: session_id.map(str::to_string),
-        columns:    vec![],
-        limit:      None,
-        user_id:    Some(UserId::new(AUTOCOMMIT_USER)),
-        filters:    vec![],
+        columns: vec![],
+        limit: None,
+        user_id: Some(UserId::new(AUTOCOMMIT_USER)),
+        filters: vec![],
     }
 }
 
@@ -256,11 +256,11 @@ async fn seed_user_table(
 
         service
             .execute_insert(InsertRequest {
-                table_id:   table_id.clone(),
+                table_id: table_id.clone(),
                 table_type: TableType::User,
                 session_id: None,
-                user_id:    Some(UserId::new(AUTOCOMMIT_USER)),
-                rows:       chunk_rows,
+                user_id: Some(UserId::new(AUTOCOMMIT_USER)),
+                rows: chunk_rows,
             })
             .await
             .expect("seed insert succeeds");

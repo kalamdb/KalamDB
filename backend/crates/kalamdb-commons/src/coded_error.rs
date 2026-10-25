@@ -115,9 +115,9 @@ impl ErrorArg {
 /// An error that remembers its code and arguments instead of a rendered sentence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodedError {
-    code:     ErrorCode,
-    args:     SmallVec<[ErrorArg; 4]>,
-    source:   Option<Box<CodedError>>,
+    code: ErrorCode,
+    args: SmallVec<[ErrorArg; 4]>,
+    source: Option<Box<CodedError>>,
     /// The sentence was already rendered (for example after a function exception).
     verbatim: bool,
 }

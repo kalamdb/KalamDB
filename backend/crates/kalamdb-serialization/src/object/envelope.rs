@@ -72,9 +72,9 @@ impl EncodedObject {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnvelopeHeader {
     pub protocol_version: u16,
-    pub object_kind:      ObjectKind,
-    pub schema_version:   u16,
-    pub flags:            u16,
+    pub object_kind: ObjectKind,
+    pub schema_version: u16,
+    pub flags: u16,
 }
 
 pub(crate) const HEADER_LEN: usize = 4 + 2 + 1 + 2 + 2 + 4;
@@ -169,7 +169,7 @@ pub(crate) fn decode_envelope(
     let protocol_version = u16::from_le_bytes([bytes[4], bytes[5]]);
     if protocol_version != PROTOCOL_VERSION {
         return Err(SerializationError::UnsupportedProtocolVersion {
-            found:     protocol_version,
+            found: protocol_version,
             supported: PROTOCOL_VERSION,
         });
     }
@@ -177,7 +177,7 @@ pub(crate) fn decode_envelope(
     if object_kind != expected_kind {
         return Err(SerializationError::WrongObjectKind {
             expected: expected_kind,
-            found:    object_kind,
+            found: object_kind,
         });
     }
     let schema_version = u16::from_le_bytes([bytes[7], bytes[8]]);
@@ -244,7 +244,7 @@ mod tests {
             err,
             SerializationError::WrongObjectKind {
                 expected: ObjectKind::Generic,
-                found:    ObjectKind::Row,
+                found: ObjectKind::Row,
             }
         ));
     }
@@ -257,7 +257,7 @@ mod tests {
         assert!(matches!(
             err,
             SerializationError::UnsupportedProtocolVersion {
-                found:     99,
+                found: 99,
                 supported: PROTOCOL_VERSION,
             }
         ));

@@ -57,18 +57,18 @@ fn is_wire_catalog_database(name: &str) -> bool {
 }
 
 pub struct KalamStartupHandler<P = DefaultServerParameterProvider> {
-    session_manager:          Arc<BackendSessionManager>,
-    user_repo:                Arc<dyn UserRepository>,
-    parameter_provider:       P,
+    session_manager: Arc<BackendSessionManager>,
+    user_repo: Arc<dyn UserRepository>,
+    parameter_provider: P,
     pid_secret_key_generator: Arc<dyn PidSecretKeyGenerator>,
     prepared_statement_limit: usize,
-    portal_limit:             usize,
+    portal_limit: usize,
 }
 
 #[derive(Debug)]
 pub struct WireSessionGuard {
     session_manager: Arc<BackendSessionManager>,
-    session_id:      String,
+    session_id: String,
 }
 
 impl WireSessionGuard {

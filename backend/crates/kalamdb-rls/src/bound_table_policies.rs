@@ -9,19 +9,19 @@ use crate::{row_access::*, AuthorizationCacheKey, AuthorizationSet};
 
 #[derive(Debug, Clone)]
 pub struct BoundPolicy {
-    pub policy_id:         PolicyId,
-    pub policy_name:       String,
-    pub command:           PolicyCommand,
+    pub policy_id: PolicyId,
+    pub policy_name: String,
+    pub command: PolicyCommand,
     pub policy_generation: u64,
-    pub program:           PolicyProgram,
-    explain_clause:        Option<String>,
+    pub program: PolicyProgram,
+    explain_clause: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct BoundTablePolicies {
     principal: UserId,
-    bypass:    bool,
-    policies:  Vec<BoundPolicy>,
+    bypass: bool,
+    policies: Vec<BoundPolicy>,
 }
 
 impl BoundTablePolicies {
@@ -442,15 +442,15 @@ mod tests {
     #[test]
     fn membership_policy_authorizes_only_keys_in_bound_set() {
         let relation = AuthorizationRelation {
-            protected_table:   TableId::from_strings("app", "documents"),
-            protected_keys:    vec![1],
-            relation_table:    TableId::from_strings("app", "document_members"),
-            relation_keys:     vec![2],
-            principal_column:  1,
-            principal:         PrincipalExpr::CurrentUser,
+            protected_table: TableId::from_strings("app", "documents"),
+            protected_keys: vec![1],
+            relation_table: TableId::from_strings("app", "document_members"),
+            relation_keys: vec![2],
+            principal_column: 1,
+            principal: PrincipalExpr::CurrentUser,
             static_predicates: Vec::new(),
-            dependencies:      vec![TableId::from_strings("app", "document_members")],
-            invalidation:      InvalidationStrategy::TargetedPrincipal,
+            dependencies: vec![TableId::from_strings("app", "document_members")],
+            invalidation: InvalidationStrategy::TargetedPrincipal,
         };
         let membership = policy(
             "member_read",

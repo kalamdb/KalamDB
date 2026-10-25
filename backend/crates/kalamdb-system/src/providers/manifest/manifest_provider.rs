@@ -28,16 +28,16 @@ use crate::{
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ManifestStorageRow {
-    cache_key:      String,
-    namespace_id:   String,
-    table_name:     String,
-    scope:          String,
-    etag:           Option<String>,
+    cache_key: String,
+    namespace_id: String,
+    table_name: String,
+    scope: String,
+    etag: Option<String>,
     last_refreshed: i64,
-    last_accessed:  i64,
-    in_memory:      bool,
-    sync_state:     String,
-    manifest_json:  Value,
+    last_accessed: i64,
+    in_memory: bool,
+    sync_state: String,
+    manifest_json: Value,
 }
 
 /// Callback type for checking if a cache key is in process memory.
@@ -45,7 +45,7 @@ pub type InMemoryChecker = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 /// System.manifest table provider using IndexedEntityStore architecture
 pub struct ManifestTableProvider {
-    store:             IndexedEntityStore<ManifestId, SystemTableRow>,
+    store: IndexedEntityStore<ManifestId, SystemTableRow>,
     /// Optional callback to check if a cache key is in process memory (injected from kalamdb-core)
     in_memory_checker: RwLock<Option<InMemoryChecker>>,
 }
@@ -58,7 +58,7 @@ impl Clone for ManifestTableProvider {
         };
 
         Self {
-            store:             self.store.clone(),
+            store: self.store.clone(),
             in_memory_checker: RwLock::new(in_memory_checker),
         }
     }

@@ -362,9 +362,9 @@ impl From<FileRef> for PyFileRef {
 #[derive(Clone)]
 struct PyFileUpload {
     placeholder: String,
-    filename:    String,
-    data:        Vec<u8>,
-    mime:        Option<String>,
+    filename: String,
+    data: Vec<u8>,
+    mime: Option<String>,
 }
 
 #[pymethods]
@@ -405,9 +405,9 @@ impl PyFileUpload {
 #[pyclass]
 struct PyFileDownload {
     #[pyo3(get)]
-    bytes:               Vec<u8>,
+    bytes: Vec<u8>,
     #[pyo3(get)]
-    content_type:        Option<String>,
+    content_type: Option<String>,
     #[pyo3(get)]
     content_disposition: Option<String>,
 }
@@ -415,8 +415,8 @@ struct PyFileDownload {
 impl From<FileDownload> for PyFileDownload {
     fn from(download: FileDownload) -> Self {
         Self {
-            bytes:               download.bytes,
-            content_type:        download.content_type,
+            bytes: download.bytes,
+            content_type: download.content_type,
             content_disposition: download.content_disposition,
         }
     }
@@ -461,12 +461,12 @@ impl Auth {
 /// Internal state — holds the underlying Rust client plus auth state for
 /// lazy login and on-expiry refresh.
 struct ClientState {
-    client:        KalamLinkClient,
+    client: KalamLinkClient,
     /// The auth credentials the user provided. Kept so we can re-run login()
     /// when the JWT expires.
     original_auth: AuthProvider,
     /// Current JWT (None if not yet authenticated or anonymous).
-    jwt:           Option<String>,
+    jwt: Option<String>,
     /// True once we've successfully authenticated the underlying client.
     authenticated: bool,
 }
@@ -485,7 +485,7 @@ struct ClientState {
 #[pyclass]
 struct KalamClient {
     state: Arc<Mutex<ClientState>>,
-    url:   String,
+    url: String,
 }
 
 #[pymethods]
@@ -579,7 +579,7 @@ impl KalamClient {
                 jwt,
                 authenticated,
             })),
-            url:   url_owned,
+            url: url_owned,
         })
     }
 
@@ -1247,9 +1247,9 @@ impl Consumer {
 /// `await live_events.next()` manually.
 #[pyclass]
 struct LiveEvents {
-    inner:         Arc<Mutex<Option<SubscriptionManager>>>,
+    inner: Arc<Mutex<Option<SubscriptionManager>>>,
     on_checkpoint: Option<Py<PyAny>>,
-    on_error:      Option<Py<PyAny>>,
+    on_error: Option<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -1388,7 +1388,7 @@ impl LiveEvents {
 /// A materialized live row stream for a SQL query or table.
 #[pyclass]
 struct LiveRows {
-    inner:         Arc<Mutex<Option<LiveRowsSubscription>>>,
+    inner: Arc<Mutex<Option<LiveRowsSubscription>>>,
     on_checkpoint: Option<Py<PyAny>>,
 }
 

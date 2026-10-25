@@ -21,7 +21,7 @@ use super::{
 
 /// RocksDB initializer for creating/opening a database with fixed physical CFs.
 pub struct RocksDbInit {
-    db_path:  String,
+    db_path: String,
     settings: RocksDbSettings,
 }
 
@@ -29,7 +29,7 @@ impl RocksDbInit {
     /// Create a new initializer for the given path with custom settings.
     pub fn new(db_path: impl Into<String>, settings: RocksDbSettings) -> Self {
         Self {
-            db_path:  db_path.into(),
+            db_path: db_path.into(),
             settings: resolve_rocksdb_settings(settings),
         }
     }

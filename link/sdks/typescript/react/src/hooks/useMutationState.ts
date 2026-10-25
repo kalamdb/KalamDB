@@ -22,8 +22,8 @@ export type MutationAction =
 
 interface ReducerState {
   insertingCount: number;
-  updating: Set<RowKey>;
-  deleting: Set<RowKey>;
+  updatingCounts: Map<RowKey, number>;
+  deletingCounts: Map<RowKey, number>;
   error?: Error;
 }
 
@@ -33,15 +33,15 @@ const DRIZZLE_BASE_NAME = Symbol.for('drizzle:BaseName');
 
 const INITIAL: ReducerState = {
   insertingCount: 0,
-  updating: new Set<RowKey>(),
-  deleting: new Set<RowKey>(),
+  updatingCounts: new Map<RowKey, number>(),
+  deletingCounts: new Map<RowKey, number>(),
 };
 
 function toPublic(state: ReducerState): MutationState {
   return {
     inserting: state.insertingCount > 0,
-    updating: state.updating,
-    deleting: state.deleting,
+    updating: activeKeys(state.updatingCounts),
+    deleting: activeKeys(state.deletingCounts),
     error: state.error,
   };
 }
@@ -174,13 +174,13 @@ function reducer(state: ReducerState, action: MutationAction): ReducerState {
     case 'insert:finish':
       return { ...state, insertingCount: Math.max(0, state.insertingCount - 1) };
     case 'update:start':
-      return { ...state, updating: withKey(state.updating, action.rowKey), error: undefined };
+      return { ...state, updatingCounts: addCount(state.updatingCounts, action.rowKey), error: undefined };
     case 'update:finish':
-      return { ...state, updating: withoutKey(state.updating, action.rowKey) };
+      return { ...state, updatingCounts: releaseCount(state.updatingCounts, action.rowKey) };
     case 'delete:start':
-      return { ...state, deleting: withKey(state.deleting, action.rowKey), error: undefined };
+      return { ...state, deletingCounts: addCount(state.deletingCounts, action.rowKey), error: undefined };
     case 'delete:finish':
-      return { ...state, deleting: withoutKey(state.deleting, action.rowKey) };
+      return { ...state, deletingCounts: releaseCount(state.deletingCounts, action.rowKey) };
     case 'error':
       return { ...state, error: action.error };
     case 'clear-error':
@@ -188,15 +188,26 @@ function reducer(state: ReducerState, action: MutationAction): ReducerState {
   }
 }
 
-function withKey(values: Set<RowKey>, key: RowKey): Set<RowKey> {
-  const next = new Set(values);
-  next.add(key);
+function activeKeys(counts: Map<RowKey, number>): Set<RowKey> {
+  const keys = new Set<RowKey>();
+  for (const [key, count] of counts) {
+    if (count > 0) keys.add(key);
+  }
+  return keys;
+}
+
+function addCount(counts: Map<RowKey, number>, key: RowKey): Map<RowKey, number> {
+  const next = new Map(counts);
+  next.set(key, (next.get(key) ?? 0) + 1);
   return next;
 }
 
-function withoutKey(values: Set<RowKey>, key: RowKey): Set<RowKey> {
-  const next = new Set(values);
-  next.delete(key);
+function releaseCount(counts: Map<RowKey, number>, key: RowKey): Map<RowKey, number> {
+  const current = counts.get(key) ?? 0;
+  if (current <= 0) return counts;
+  const next = new Map(counts);
+  if (current === 1) next.delete(key);
+  else next.set(key, current - 1);
   return next;
 }
 

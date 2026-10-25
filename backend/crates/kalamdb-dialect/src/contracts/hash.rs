@@ -16,11 +16,11 @@ use super::snapshot::{
 /// cached descriptors or ETags.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScopedContractHashes {
-    pub epoch:         u16,
+    pub epoch: u16,
     pub contract_hash: String,
-    pub types:         BTreeMap<String, String>,
-    pub tables:        BTreeMap<String, String>,
-    pub routines:      BTreeMap<String, String>,
+    pub types: BTreeMap<String, String>,
+    pub tables: BTreeMap<String, String>,
+    pub routines: BTreeMap<String, String>,
 }
 
 /// SHA-256 hex digest of the resolved logical contract. Independent of SQL whitespace/comments.

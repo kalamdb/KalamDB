@@ -42,7 +42,7 @@ use crate::{
 /// - Storage operations → StorageExecutor
 /// - Job operations → Local (jobs are Raft-only, no SQL handlers)
 pub struct ProviderMetaApplier {
-    executor:    CommandExecutorImpl,
+    executor: CommandExecutorImpl,
     app_context: Arc<AppContext>,
 }
 

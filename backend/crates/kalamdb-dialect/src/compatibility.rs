@@ -139,13 +139,13 @@ pub fn sql_type_to_type_reference(sql_type: &SQLDataType) -> Result<TypeReferenc
 
 fn builtin_type_reference(data_type: KalamDataType) -> TypeReference {
     TypeReference {
-        namespace_id:       None,
-        name:               data_type.sql_name().to_string(),
-        data_type:          Some(data_type),
+        namespace_id: None,
+        name: data_type.sql_name().to_string(),
+        data_type: Some(data_type),
         syntactic_modifier: None,
-        is_array:           false,
-        not_null:           false,
-        nonempty:           false,
+        is_array: false,
+        not_null: false,
+        nonempty: false,
     }
 }
 
@@ -293,7 +293,7 @@ mod tests {
             dtype,
             KalamDataType::Decimal {
                 precision: 12,
-                scale:     2,
+                scale: 2,
             }
         );
     }
@@ -341,7 +341,7 @@ mod tests {
         use sqlparser::ast::CharacterLength;
         let varchar_255 = SQLDataType::Varchar(Some(CharacterLength::IntegerLength {
             length: 255,
-            unit:   None,
+            unit: None,
         }));
         assert_eq!(character_maximum_length(&varchar_255), Some(255));
         assert_eq!(character_maximum_length(&SQLDataType::Character(None)), Some(1));

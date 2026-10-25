@@ -65,9 +65,9 @@ const MAX_POST_FLUSH_TASKS: usize = 2;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlushParams {
     /// Table identifier (required)
-    pub table_id:        TableId,
+    pub table_id: TableId,
     /// Table type (required)
-    pub table_type:      TableType,
+    pub table_type: TableType,
     /// Flush threshold in rows (optional, defaults to config)
     #[serde(default)]
     pub flush_threshold: Option<u64>,
@@ -224,10 +224,10 @@ impl FlushExecutor {
                 .note_retained_hot(table_id.as_ref(), None)
                 .map_err(|error| KalamDbError::Other(error.to_string()))?;
             return Ok(FlushJobResult {
-                rows_flushed:  0,
+                rows_flushed: 0,
                 parquet_files: vec![],
-                scope_hints:   vec![],
-                metadata:      kalamdb_flush::FlushMetadata::shared_table(),
+                scope_hints: vec![],
+                metadata: kalamdb_flush::FlushMetadata::shared_table(),
             });
         }
 
@@ -496,8 +496,8 @@ impl FlushExecutor {
             self.try_spawn_post_flush_task("post-flush shared cleanup", &table_id, async move {
                 // Build a minimal JobContext just for the helper
                 let params = FlushParams {
-                    table_id:        cleanup_table_id.clone(),
-                    table_type:      TableType::Shared,
+                    table_id: cleanup_table_id.clone(),
+                    table_type: TableType::Shared,
                     flush_threshold: None,
                 };
                 let ctx =
@@ -656,11 +656,8 @@ mod tests {
     #[test]
     fn test_flush_params_validate() {
         let params = FlushParams {
-            table_id:        TableId::new(
-                SchemaId::default(),
-                kalamdb_commons::TableName::new("users"),
-            ),
-            table_type:      TableType::User,
+            table_id: TableId::new(SchemaId::default(), kalamdb_commons::TableName::new("users")),
+            table_type: TableType::User,
             flush_threshold: Some(10000),
         };
 

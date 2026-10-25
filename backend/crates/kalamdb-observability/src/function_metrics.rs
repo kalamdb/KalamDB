@@ -23,14 +23,14 @@ fn invocation_rate_buckets() -> &'static RateBuckets {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FunctionMetricsSnapshot {
-    pub function_invocations_total:       u64,
-    pub function_invocations_per_second:  f64,
+    pub function_invocations_total: u64,
+    pub function_invocations_per_second: f64,
     pub function_invocation_errors_total: u64,
-    pub function_active_runs:             u64,
-    pub avg_function_latency_ms:          f64,
-    pub function_timeouts_total:          u64,
-    pub function_oom_total:               u64,
-    pub avg_function_queue_wait_ms:       f64,
+    pub function_active_runs: u64,
+    pub avg_function_latency_ms: f64,
+    pub function_timeouts_total: u64,
+    pub function_oom_total: u64,
+    pub avg_function_queue_wait_ms: f64,
 }
 
 impl FunctionMetricsSnapshot {
@@ -83,18 +83,18 @@ pub fn function_metrics_snapshot() -> FunctionMetricsSnapshot {
             .max(1)
     };
     FunctionMetricsSnapshot {
-        function_invocations_total:       INVOCATIONS_TOTAL.load(Ordering::Relaxed),
-        function_invocations_per_second:  snapshot_rate(
+        function_invocations_total: INVOCATIONS_TOTAL.load(Ordering::Relaxed),
+        function_invocations_per_second: snapshot_rate(
             invocation_rate_buckets(),
             now_second,
             elapsed_window,
         ),
         function_invocation_errors_total: INVOCATION_ERRORS_TOTAL.load(Ordering::Relaxed),
-        function_active_runs:             ACTIVE_FUNCTION_RUNS.load(Ordering::Relaxed),
-        avg_function_latency_ms:          avg_ms,
-        function_timeouts_total:          FUNCTION_TIMEOUTS_TOTAL.load(Ordering::Relaxed),
-        function_oom_total:               FUNCTION_OOM_TOTAL.load(Ordering::Relaxed),
-        avg_function_queue_wait_ms:       if total == 0 {
+        function_active_runs: ACTIVE_FUNCTION_RUNS.load(Ordering::Relaxed),
+        avg_function_latency_ms: avg_ms,
+        function_timeouts_total: FUNCTION_TIMEOUTS_TOTAL.load(Ordering::Relaxed),
+        function_oom_total: FUNCTION_OOM_TOTAL.load(Ordering::Relaxed),
+        avg_function_queue_wait_ms: if total == 0 {
             0.0
         } else {
             (FUNCTION_QUEUE_WAIT_MICROS.load(Ordering::Relaxed) as f64 / total as f64) / 1000.0

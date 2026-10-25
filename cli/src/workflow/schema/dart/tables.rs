@@ -18,10 +18,10 @@ use crate::workflow::schema::{
 pub struct TableSpecContext {
     pub const_name: String,
     pub class_name: String,
-    pub table_id:   String,
+    pub table_id: String,
     pub key_column: String,
-    pub mode:       &'static str,
-    pub columns:    Vec<TableColumnContext>,
+    pub mode: &'static str,
+    pub columns: Vec<TableColumnContext>,
 }
 
 pub fn table_specs(snapshot: &ContractSnapshot, names: &AssignedNames) -> Vec<TableSpecContext> {

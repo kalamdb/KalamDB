@@ -14,10 +14,10 @@ use crate::{
 
 #[derive(Debug, Default)]
 struct PendingFlushScan {
-    table_ids:         Vec<TableId>,
-    pending_entries:   usize,
+    table_ids: Vec<TableId>,
+    pending_entries: usize,
     duplicate_entries: usize,
-    read_errors:       usize,
+    read_errors: usize,
 }
 
 fn collect_pending_flush_tables(

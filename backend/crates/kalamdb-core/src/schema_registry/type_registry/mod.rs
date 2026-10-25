@@ -21,14 +21,14 @@ const TYPE_CACHE_MAX_ENTRIES: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct RevisionKey {
-    type_id:  TypeId,
+    type_id: TypeId,
     revision: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct TableLayoutKey {
-    namespace_id:   SchemaId,
-    table_name:     TableName,
+    namespace_id: SchemaId,
+    table_name: TableName,
     schema_version: u32,
 }
 
@@ -36,12 +36,12 @@ struct TableLayoutKey {
 /// Table Arrow layouts are cached by schema revision and dropped when a named
 /// type they use is invalidated.
 pub struct TypeRegistry {
-    current:       DashMap<TypeId, Arc<ResolvedType>>,
-    revisions:     DashMap<RevisionKey, Arc<ResolvedType>>,
-    reverse_deps:  DashMap<TypeId, Vec<TypeId>>,
+    current: DashMap<TypeId, Arc<ResolvedType>>,
+    revisions: DashMap<RevisionKey, Arc<ResolvedType>>,
+    reverse_deps: DashMap<TypeId, Vec<TypeId>>,
     table_layouts: DashMap<TableLayoutKey, Arc<arrow::datatypes::Schema>>,
-    table_deps:    DashMap<TypeId, Vec<TableLayoutKey>>,
-    max_entries:   usize,
+    table_deps: DashMap<TypeId, Vec<TableLayoutKey>>,
+    max_entries: usize,
 }
 
 impl std::fmt::Debug for TypeRegistry {
@@ -57,12 +57,12 @@ impl std::fmt::Debug for TypeRegistry {
 impl TypeRegistry {
     pub fn new() -> Self {
         Self {
-            current:       DashMap::with_capacity(32),
-            revisions:     DashMap::with_capacity(32),
-            reverse_deps:  DashMap::with_capacity(32),
+            current: DashMap::with_capacity(32),
+            revisions: DashMap::with_capacity(32),
+            reverse_deps: DashMap::with_capacity(32),
             table_layouts: DashMap::with_capacity(32),
-            table_deps:    DashMap::with_capacity(32),
-            max_entries:   TYPE_CACHE_MAX_ENTRIES,
+            table_deps: DashMap::with_capacity(32),
+            max_entries: TYPE_CACHE_MAX_ENTRIES,
         }
     }
 
@@ -77,7 +77,7 @@ impl TypeRegistry {
         revision: kalamdb_commons::TypeRevision,
     ) -> Option<Arc<ResolvedType>> {
         let key = RevisionKey {
-            type_id:  type_id.clone(),
+            type_id: type_id.clone(),
             revision: revision.get(),
         };
         self.revisions.get(&key).map(|entry| Arc::clone(entry.value()))

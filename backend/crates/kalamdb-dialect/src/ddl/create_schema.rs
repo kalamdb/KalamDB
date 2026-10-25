@@ -9,7 +9,7 @@ use crate::ddl::DdlResult;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateSchemaStatement {
-    pub name:          SchemaId,
+    pub name: SchemaId,
     pub if_not_exists: bool,
 }
 

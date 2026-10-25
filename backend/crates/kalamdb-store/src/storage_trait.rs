@@ -361,8 +361,8 @@ mod tests {
     fn test_operation_construction() {
         let op = Operation::Put {
             partition: Partition::new("test"),
-            key:       b"key1".to_vec(),
-            value:     b"value1".to_vec(),
+            key: b"key1".to_vec(),
+            value: b"value1".to_vec(),
         };
 
         match op {

@@ -88,13 +88,13 @@ impl<V: PgCatalogView> PgCatalogViewTableProvider<V> {
 }
 
 struct PgCatalogScanSource<V: PgCatalogView> {
-    view:            Arc<V>,
+    view: Arc<V>,
     physical_filter: Option<Arc<dyn PhysicalExpr>>,
-    projection:      Option<Vec<usize>>,
-    limit:           Option<usize>,
-    output_schema:   SchemaRef,
-    role:            Role,
-    settings:        Option<SessionConfigValues>,
+    projection: Option<Vec<usize>>,
+    limit: Option<usize>,
+    output_schema: SchemaRef,
+    role: Role,
+    settings: Option<SessionConfigValues>,
 }
 
 impl<V: PgCatalogView> std::fmt::Debug for PgCatalogScanSource<V> {

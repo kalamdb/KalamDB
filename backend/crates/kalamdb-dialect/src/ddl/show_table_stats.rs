@@ -32,7 +32,7 @@ impl ShowTableStatsStatement {
 
         Ok(Self {
             namespace_id: namespace.map(|ns| SchemaId::new(&ns)),
-            table_name:   TableName::new(&table),
+            table_name: TableName::new(&table),
         })
     }
 }

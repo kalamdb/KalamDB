@@ -9,9 +9,9 @@ use crate::epochs::PolicyCatalogEpoch;
 /// CREATE/ALTER/DROP POLICY must fail closed for already-bound subscriptions.
 #[derive(Clone)]
 pub struct AuthorizationPolicyGuard {
-    table_id:            TableId,
+    table_id: TableId,
     expected_generation: u64,
-    source:              Arc<dyn PolicyCatalogEpoch>,
+    source: Arc<dyn PolicyCatalogEpoch>,
 }
 
 impl std::fmt::Debug for AuthorizationPolicyGuard {

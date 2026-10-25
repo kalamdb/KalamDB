@@ -13,11 +13,11 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct IssuedAuthTokens {
-    pub access_token:       String,
-    pub refresh_token:      String,
-    pub access_expires_in:  Duration,
+    pub access_token: String,
+    pub refresh_token: String,
+    pub access_expires_in: Duration,
     pub refresh_expires_in: Duration,
-    pub expires_at:         DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
     pub refresh_expires_at: DateTime<Utc>,
 }
 

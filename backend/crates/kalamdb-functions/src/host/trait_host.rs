@@ -13,16 +13,16 @@ pub type HostFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>
 pub enum InvocationSource {
     Call,
     Schedule {
-        schedule_id:  kalamdb_commons::ScheduleId,
-        run_id:       String,
+        schedule_id: kalamdb_commons::ScheduleId,
+        run_id: String,
         scheduled_at: i64,
     },
     Topic {
         topic_name: String,
-        event_id:   String,
-        partition:  u32,
-        offset:     u64,
-        attempt:    u32,
+        event_id: String,
+        partition: u32,
+        offset: u64,
+        attempt: u32,
     },
 }
 

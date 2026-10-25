@@ -36,25 +36,25 @@ use crate::test_support::*;
 
 #[derive(Debug, Clone, Deserialize)]
 struct HttpConsumeMessage {
-    offset:       u64,
+    offset: u64,
     partition_id: u32,
-    key:          Option<String>,
+    key: Option<String>,
     #[serde(default)]
-    user:         Option<String>,
+    user: Option<String>,
     #[serde(default)]
-    op:           Option<String>,
+    op: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct HttpConsumeResponse {
-    messages:    Vec<HttpConsumeMessage>,
+    messages: Vec<HttpConsumeMessage>,
     next_offset: u64,
-    has_more:    bool,
+    has_more: bool,
 }
 
 #[derive(Debug, Deserialize)]
 struct HttpAckResponse {
-    success:             bool,
+    success: bool,
     acknowledged_offset: u64,
 }
 
@@ -154,9 +154,9 @@ async fn wait_until_group_reads_at_least(
 
         if aggregated_messages.len() >= min_messages {
             return HttpConsumeResponse {
-                messages:    aggregated_messages,
+                messages: aggregated_messages,
                 next_offset: response_next_offset,
-                has_more:    response_has_more,
+                has_more: response_has_more,
             };
         }
 

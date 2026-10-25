@@ -352,9 +352,8 @@ pub(crate) fn send_ws_message(
             ws.send_with_str(&json)
         },
         SerializationType::Domain => {
-            let bytes = link_common::encode_client_message(msg).map_err(|e| {
-                JsValue::from_str(&format!("domain serialization error: {e}"))
-            })?;
+            let bytes = link_common::encode_client_message(msg)
+                .map_err(|e| JsValue::from_str(&format!("domain serialization error: {e}")))?;
             ws.send_with_u8_array(&bytes)
         },
     }
@@ -371,7 +370,7 @@ mod tests {
             false,
             ProtocolOptions {
                 serialization: SerializationType::Domain,
-                compression:   CompressionType::None,
+                compression: CompressionType::None,
             },
         )
         .expect("url");
@@ -385,7 +384,7 @@ mod tests {
             true,
             ProtocolOptions {
                 serialization: SerializationType::Domain,
-                compression:   CompressionType::Gzip,
+                compression: CompressionType::Gzip,
             },
         )
         .expect("url");

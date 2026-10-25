@@ -260,32 +260,32 @@ impl FlushManifestHelper {
 /// Hot tombstones kept only while a cold segment can still contain the primary key.
 pub struct TombstoneColdMask {
     column_id: Option<u64>,
-    manifest:  Option<Arc<ManifestCacheEntry>>,
-    drop_all:  bool,
+    manifest: Option<Arc<ManifestCacheEntry>>,
+    drop_all: bool,
 }
 
 impl TombstoneColdMask {
     fn preserve_all() -> Self {
         Self {
             column_id: None,
-            manifest:  None,
-            drop_all:  false,
+            manifest: None,
+            drop_all: false,
         }
     }
 
     fn drop_all() -> Self {
         Self {
             column_id: None,
-            manifest:  None,
-            drop_all:  true,
+            manifest: None,
+            drop_all: true,
         }
     }
 
     fn from_manifest(column_id: u64, entry: Arc<ManifestCacheEntry>) -> Self {
         Self {
             column_id: Some(column_id),
-            manifest:  Some(entry),
-            drop_all:  false,
+            manifest: Some(entry),
+            drop_all: false,
         }
     }
 

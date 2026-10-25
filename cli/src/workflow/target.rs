@@ -40,47 +40,47 @@ pub use crate::workflow::project::resolve::ResolutionSource;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetSelector {
-    pub start_dir:   PathBuf,
+    pub start_dir: PathBuf,
     pub project_dir: Option<PathBuf>,
-    pub global:      bool,
-    pub env:         Option<String>,
-    pub url:         Option<String>,
-    pub host:        Option<String>,
-    pub port:        Option<u16>,
-    pub namespace:   Option<String>,
-    pub instance:    Option<String>,
+    pub global: bool,
+    pub env: Option<String>,
+    pub url: Option<String>,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub namespace: Option<String>,
+    pub instance: Option<String>,
 }
 
 impl TargetSelector {
     pub fn new(start_dir: impl Into<PathBuf>) -> Self {
         Self {
-            start_dir:   start_dir.into(),
+            start_dir: start_dir.into(),
             project_dir: None,
-            global:      false,
-            env:         None,
-            url:         None,
-            host:        None,
-            port:        None,
-            namespace:   None,
-            instance:    None,
+            global: false,
+            env: None,
+            url: None,
+            host: None,
+            port: None,
+            namespace: None,
+            instance: None,
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedTarget {
-    pub kind:                TargetKind,
-    pub environment_name:    String,
-    pub purpose:             EnvironmentPurpose,
-    pub url:                 String,
-    pub namespace:           SchemaId,
+    pub kind: TargetKind,
+    pub environment_name: String,
+    pub purpose: EnvironmentPurpose,
+    pub url: String,
+    pub namespace: SchemaId,
     pub credential_instance: String,
-    pub project_root:        Option<PathBuf>,
-    pub project_name:        Option<String>,
-    pub layout:              Option<ManagedLayout>,
-    pub env_source:          ResolutionSource,
-    pub url_source:          ResolutionSource,
-    pub namespace_source:    ResolutionSource,
+    pub project_root: Option<PathBuf>,
+    pub project_name: Option<String>,
+    pub layout: Option<ManagedLayout>,
+    pub env_source: ResolutionSource,
+    pub url_source: ResolutionSource,
+    pub namespace_source: ResolutionSource,
 }
 
 impl ResolvedTarget {
@@ -98,11 +98,11 @@ impl ResolvedTarget {
 
     pub fn to_environment(&self) -> ResolvedEnvironment {
         ResolvedEnvironment {
-            name:             self.environment_name.clone(),
-            url:              self.url.clone(),
-            namespace:        self.namespace.clone(),
-            env_source:       self.env_source,
-            url_source:       self.url_source,
+            name: self.environment_name.clone(),
+            url: self.url.clone(),
+            namespace: self.namespace.clone(),
+            env_source: self.env_source,
+            url_source: self.url_source,
             namespace_source: self.namespace_source,
         }
     }

@@ -12,8 +12,8 @@ type ColumnBuckets = DashMap<Arc<str>, Arc<ValueBuckets>>;
 
 struct IndexedSubscriber {
     table_id: TableId,
-    route:    LiveRoute,
-    handle:   SubscriptionHandle,
+    route: LiveRoute,
+    handle: SubscriptionHandle,
 }
 
 /// In-memory shared-table subscriber relation with exact typed-key lookup.
@@ -23,8 +23,8 @@ struct IndexedSubscriber {
 #[derive(Default)]
 pub(crate) struct IndexedSubscriberRelation {
     subscribers: DashMap<LiveQueryId, IndexedSubscriber>,
-    broadcast:   DashMap<TableId, SubscriptionBucket>,
-    keyed:       DashMap<TableId, Arc<ColumnBuckets>>,
+    broadcast: DashMap<TableId, SubscriptionBucket>,
+    keyed: DashMap<TableId, Arc<ColumnBuckets>>,
 }
 
 impl IndexedSubscriberRelation {

@@ -25,7 +25,7 @@ enum CheckStatus {
 
 #[derive(Debug, Serialize)]
 struct DoctorCheck {
-    name:   &'static str,
+    name: &'static str,
     status: CheckStatus,
     detail: String,
 }

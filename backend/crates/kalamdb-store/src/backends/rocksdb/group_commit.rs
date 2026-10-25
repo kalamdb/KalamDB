@@ -11,25 +11,25 @@ use rocksdb::DB;
 use crate::storage_trait::{Result, StorageError};
 
 struct WalGroupState {
-    next_ticket:      u64,
-    durable_ticket:   u64,
+    next_ticket: u64,
+    durable_ticket: u64,
     flushing_through: Option<u64>,
 }
 
 pub(super) struct WalGroupCommit {
     state: Mutex<WalGroupState>,
-    cv:    Condvar,
+    cv: Condvar,
 }
 
 impl WalGroupCommit {
     pub(super) fn new() -> Self {
         Self {
             state: Mutex::new(WalGroupState {
-                next_ticket:      0,
-                durable_ticket:   0,
+                next_ticket: 0,
+                durable_ticket: 0,
                 flushing_through: None,
             }),
-            cv:    Condvar::new(),
+            cv: Condvar::new(),
         }
     }
 

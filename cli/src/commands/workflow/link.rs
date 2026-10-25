@@ -12,8 +12,8 @@ pub(super) fn handle_link(cli: &Cli, args: &LinkArgs) -> Result<()> {
     link_project(
         &ctx,
         LinkOptions {
-            env:       cli.env.clone(),
-            url:       args.url.clone().or_else(|| cli.url.clone()),
+            env: cli.env.clone(),
+            url: args.url.clone().or_else(|| cli.url.clone()),
             namespace: args.namespace.clone(),
         },
     )

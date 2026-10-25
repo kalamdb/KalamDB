@@ -254,10 +254,10 @@ pub async fn parse_sql_payload(
         Either::Left(req) => {
             let req = req.into_inner();
             Ok(ParsedSqlPayload {
-                sql:          req.sql,
-                params:       req.params,
+                sql: req.sql,
+                params: req.params,
                 namespace_id: req.namespace_id,
-                files:        None,
+                files: None,
                 is_multipart: false,
             })
         },

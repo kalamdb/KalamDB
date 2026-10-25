@@ -149,7 +149,7 @@ mod tests {
     fn empty_plan() -> LogicalPlan {
         LogicalPlan::EmptyRelation(EmptyRelation {
             produce_one_row: false,
-            schema:          Arc::new(DFSchema::empty()),
+            schema: Arc::new(DFSchema::empty()),
         })
     }
 
@@ -166,21 +166,21 @@ mod tests {
         assert!(!SqlExecutor::logical_plan_has_limit(&unlimited));
 
         let with_limit = LogicalPlan::Limit(Limit {
-            skip:  None,
+            skip: None,
             fetch: Some(Box::new(lit(5000_i64))),
             input: Arc::new(empty_plan()),
         });
         assert!(SqlExecutor::logical_plan_has_limit(&with_limit));
 
         let with_sort_fetch = LogicalPlan::Sort(Sort {
-            expr:  vec![SortExpr::new(lit(1_i64), true, false)],
+            expr: vec![SortExpr::new(lit(1_i64), true, false)],
             input: Arc::new(empty_plan()),
             fetch: Some(5000),
         });
         assert!(SqlExecutor::logical_plan_has_limit(&with_sort_fetch));
 
         let sort_without_fetch = LogicalPlan::Sort(Sort {
-            expr:  vec![SortExpr::new(lit(1_i64), true, false)],
+            expr: vec![SortExpr::new(lit(1_i64), true, false)],
             input: Arc::new(empty_plan()),
             fetch: None,
         });
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn unwrap_default_order_wrappers_peels_sort_and_limit_only() {
         let sorted = LogicalPlan::Sort(Sort {
-            expr:  vec![SortExpr::new(lit(1_i64), true, false)],
+            expr: vec![SortExpr::new(lit(1_i64), true, false)],
             input: Arc::new(empty_plan()),
             fetch: None,
         });
@@ -200,7 +200,7 @@ mod tests {
         ));
 
         let limited = LogicalPlan::Limit(Limit {
-            skip:  None,
+            skip: None,
             fetch: Some(Box::new(lit(1_i64))),
             input: Arc::new(sorted),
         });

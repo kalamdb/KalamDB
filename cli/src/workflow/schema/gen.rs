@@ -22,7 +22,7 @@ use crate::{
 #[derive(Default)]
 pub struct GenerateOptions {
     pub languages: Option<Vec<String>>,
-    pub check:     bool,
+    pub check: bool,
 }
 
 pub fn generate_schema_artifacts(

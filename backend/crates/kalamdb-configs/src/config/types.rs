@@ -75,7 +75,9 @@ pub struct CorsSettings {
     pub allowed_methods: Vec<String>,
 
     /// Allowed HTTP headers. Use ["*"] for any header.
-    /// Default: ["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"]
+    /// Default: Authorization, Content-Type, Accept, Origin, X-Requested-With,
+    /// plus the function-call headers `X-Kalam-Epoch`, `X-Kalam-Descriptor-Revision`,
+    /// and `Idempotency-Key`.
     #[serde(default = "default_cors_headers")]
     pub allowed_headers: Vec<String>,
 
@@ -111,6 +113,9 @@ fn default_cors_headers() -> Vec<String> {
         "Accept".to_string(),
         "Origin".to_string(),
         "X-Requested-With".to_string(),
+        "X-Kalam-Epoch".to_string(),
+        "X-Kalam-Descriptor-Revision".to_string(),
+        "Idempotency-Key".to_string(),
     ]
 }
 
@@ -125,13 +130,13 @@ impl Default for CorsSettings {
             // specific browser-origin behavior through config or env overrides.
             // The runtime treats an empty list as wildcard CORS, but startup
             // validation rejects that for non-localhost HTTP exposure.
-            allowed_origins:   Vec::new(),
-            allowed_methods:   default_cors_methods(),
-            allowed_headers:   default_cors_headers(),
-            expose_headers:    Vec::new(),
+            allowed_origins: Vec::new(),
+            allowed_methods: default_cors_methods(),
+            allowed_headers: default_cors_headers(),
+            expose_headers: Vec::new(),
             // Credentialed CORS requires an explicit origin allowlist.
             allow_credentials: false,
-            max_age:           default_cors_max_age(),
+            max_age: default_cors_max_age(),
         }
     }
 }
@@ -160,9 +165,9 @@ pub struct SecuritySettings {
 impl Default for SecuritySettings {
     fn default() -> Self {
         Self {
-            cors:                   CorsSettings::default(),
-            trusted_proxy_ranges:   Vec::new(),
-            max_ws_message_size:    default_max_ws_message_size(),
+            cors: CorsSettings::default(),
+            trusted_proxy_ranges: Vec::new(),
+            max_ws_message_size: default_max_ws_message_size(),
             strict_ws_origin_check: false,
         }
     }
@@ -198,11 +203,11 @@ pub struct FileUploadSettings {
 impl Default for FileUploadSettings {
     fn default() -> Self {
         Self {
-            max_size_bytes:        default_file_max_size_bytes(),
+            max_size_bytes: default_file_max_size_bytes(),
             max_files_per_request: default_file_max_files_per_request(),
-            max_files_per_folder:  default_file_max_files_per_folder(),
-            staging_path:          default_file_staging_path(),
-            allowed_mime_types:    default_file_allowed_mime_types(),
+            max_files_per_folder: default_file_max_files_per_folder(),
+            staging_path: default_file_staging_path(),
+            allowed_mime_types: default_file_allowed_mime_types(),
         }
     }
 }
@@ -210,22 +215,22 @@ impl Default for FileUploadSettings {
 /// Server settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerSettings {
-    pub host:          String,
-    pub port:          u16,
+    pub host: String,
+    pub port: u16,
     #[serde(default)]
     pub public_origin: Option<String>,
     #[serde(default = "default_workers")]
-    pub workers:       usize,
+    pub workers: usize,
     /// Enable HTTP/2 protocol support (default: true)
     /// When true, server uses bind_auto_h2c() for automatic HTTP/1.1 and HTTP/2 cleartext
     /// negotiation When false, server only supports HTTP/1.1
     #[serde(default = "default_enable_http2")]
-    pub enable_http2:  bool,
+    pub enable_http2: bool,
     /// Path to the Admin UI static files (e.g., "./ui/dist")
     /// When set, the server will serve the UI at /ui route
     /// Set to None/null to disable UI serving
     #[serde(default = "default_ui_path")]
-    pub ui_path:       Option<String>,
+    pub ui_path: Option<String>,
 }
 
 impl ServerSettings {
@@ -272,21 +277,21 @@ pub struct StorageSettings {
     /// - {data_path}/snapshots - Raft snapshots
     /// - {data_path}/functions - Function artifacts and per-procedure runtime logs
     #[serde(default = "default_data_path")]
-    pub data_path:              String,
+    pub data_path: String,
     /// Template for shared table paths (placeholders: {namespace}, {tableName})
     #[serde(default = "default_shared_tables_template")]
     pub shared_tables_template: String,
     /// Template for user table paths (placeholders: {namespace}, {tableName}, {userId})
     #[serde(default = "default_user_tables_template")]
-    pub user_tables_template:   String,
+    pub user_tables_template: String,
     #[serde(default)]
-    pub rocksdb:                RocksDbSettings,
+    pub rocksdb: RocksDbSettings,
     /// Remote storage timeout settings (S3, GCS, Azure)
     #[serde(default)]
-    pub remote_timeouts:        RemoteStorageTimeouts,
+    pub remote_timeouts: RemoteStorageTimeouts,
     /// Parquet cold-segment write tuning (flush and compaction).
     #[serde(default)]
-    pub parquet:                ParquetWriteSettings,
+    pub parquet: ParquetWriteSettings,
 }
 
 /// Parquet writer settings for cold segment files.
@@ -397,11 +402,11 @@ impl Default for RocksDbCfProfileSettings {
 impl Default for RocksDbCfProfilesSettings {
     fn default() -> Self {
         Self {
-            system_meta:  default_rocksdb_system_meta_profile(),
+            system_meta: default_rocksdb_system_meta_profile(),
             system_index: default_rocksdb_system_index_profile(),
-            hot_data:     default_rocksdb_hot_data_profile(),
-            hot_index:    default_rocksdb_hot_index_profile(),
-            raft:         default_rocksdb_raft_profile(),
+            hot_data: default_rocksdb_hot_data_profile(),
+            hot_index: default_rocksdb_hot_index_profile(),
+            raft: default_rocksdb_raft_profile(),
         }
     }
 }
@@ -508,14 +513,14 @@ pub struct RocksDbSettings {
 impl Default for RocksDbSettings {
     fn default() -> Self {
         Self {
-            cf_profiles:         RocksDbCfProfilesSettings::default(),
-            memory_mode:         RocksDbMemoryMode::Compact,
-            block_cache_size:    default_rocksdb_block_cache_size(),
+            cf_profiles: RocksDbCfProfilesSettings::default(),
+            memory_mode: RocksDbMemoryMode::Compact,
+            block_cache_size: default_rocksdb_block_cache_size(),
             max_background_jobs: default_rocksdb_max_background_jobs(),
-            max_open_files:      default_rocksdb_max_open_files(),
-            sync_writes:         default_rocksdb_sync_writes(),
-            disable_wal:         false,
-            compact_on_startup:  default_rocksdb_compact_on_startup(),
+            max_open_files: default_rocksdb_max_open_files(),
+            sync_writes: default_rocksdb_sync_writes(),
+            disable_wal: false,
+            compact_on_startup: default_rocksdb_compact_on_startup(),
         }
     }
 }
@@ -788,7 +793,7 @@ impl Default for RemoteStorageTimeouts {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LimitsSettings {
     #[serde(default = "default_max_query_limit")]
-    pub max_query_limit:     usize,
+    pub max_query_limit: usize,
     #[serde(default = "default_query_limit")]
     pub default_query_limit: usize,
 }
@@ -796,7 +801,7 @@ pub struct LimitsSettings {
 impl Default for LimitsSettings {
     fn default() -> Self {
         Self {
-            max_query_limit:     default_max_query_limit(),
+            max_query_limit: default_max_query_limit(),
             default_query_limit: default_query_limit(),
         }
     }
@@ -806,15 +811,15 @@ impl Default for LimitsSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingSettings {
     #[serde(default = "default_log_level")]
-    pub level:                   String,
+    pub level: String,
     /// Directory for all log files (default: "./logs")
     /// Used for app.log/server.log, slow.jsonl, and other log files
     #[serde(default = "default_logs_path")]
-    pub logs_path:               String,
+    pub logs_path: String,
     #[serde(default = "default_true")]
-    pub log_to_console:          bool,
+    pub log_to_console: bool,
     #[serde(default = "default_log_format")]
-    pub format:                  String,
+    pub format: String,
     /// Optional per-target log level overrides (e.g., datafusion="info", arrow="warn")
     /// Configure via a TOML table:
     /// [logging.targets]
@@ -822,14 +827,14 @@ pub struct LoggingSettings {
     /// arrow = "warn"
     /// parquet = "warn"
     #[serde(default)]
-    pub targets:                 HashMap<String, String>,
+    pub targets: HashMap<String, String>,
     /// Slow query logging threshold in milliseconds (default: 1200).
     /// Queries taking longer than this threshold are logged to slow.jsonl.
     #[serde(default = "default_slow_query_threshold_ms")]
     pub slow_query_threshold_ms: u64,
     /// OpenTelemetry OTLP export settings (Jaeger/Tempo/Collector)
     #[serde(default)]
-    pub otlp:                    OtlpSettings,
+    pub otlp: OtlpSettings,
 }
 
 /// OpenTelemetry OTLP trace export settings
@@ -837,31 +842,31 @@ pub struct LoggingSettings {
 pub struct OtlpSettings {
     /// Enable OTLP trace exporting
     #[serde(default = "default_otlp_enabled")]
-    pub enabled:      bool,
+    pub enabled: bool,
     /// OTLP endpoint.
     /// - gRPC: "http://127.0.0.1:4317"
     /// - HTTP: "http://127.0.0.1:4318" ("/v1/traces" appended automatically)
     #[serde(default = "default_otlp_endpoint")]
-    pub endpoint:     String,
+    pub endpoint: String,
     /// Protocol: "grpc" or "http"
     #[serde(default = "default_otlp_protocol")]
-    pub protocol:     String,
+    pub protocol: String,
     /// Service name shown in Jaeger
     #[serde(default = "default_otlp_service_name")]
     pub service_name: String,
     /// Export timeout in milliseconds
     #[serde(default = "default_otlp_timeout_ms")]
-    pub timeout_ms:   u64,
+    pub timeout_ms: u64,
 }
 
 impl Default for OtlpSettings {
     fn default() -> Self {
         Self {
-            enabled:      default_otlp_enabled(),
-            endpoint:     default_otlp_endpoint(),
-            protocol:     default_otlp_protocol(),
+            enabled: default_otlp_enabled(),
+            endpoint: default_otlp_endpoint(),
+            protocol: default_otlp_protocol(),
             service_name: default_otlp_service_name(),
-            timeout_ms:   default_otlp_timeout_ms(),
+            timeout_ms: default_otlp_timeout_ms(),
         }
     }
 }
@@ -870,17 +875,17 @@ impl Default for OtlpSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceSettings {
     #[serde(default = "default_keepalive_timeout")]
-    pub keepalive_timeout:           u64,
+    pub keepalive_timeout: u64,
     #[serde(default = "default_max_connections")]
-    pub max_connections:             usize,
+    pub max_connections: usize,
     /// Backlog size for pending connections (default: 4096).
     #[serde(default = "default_backlog")]
-    pub backlog:                     u32,
+    pub backlog: u32,
     /// Number of tokio runtime worker threads (default: 0 = auto, uses num_cpus capped at 4)
     /// Lower values reduce idle RSS from thread stacks (~2MB per thread).
     /// Set to 0 for auto-detection, or an explicit count for Docker/constrained environments.
     #[serde(default)]
-    pub tokio_worker_threads:        usize,
+    pub tokio_worker_threads: usize,
     /// Max blocking threads for synchronous operations (default: 32).
     /// Applied to the outer Tokio runtime blocking pool and Actix worker blocking pools.
     /// Used for RocksDB, Parquet, and other synchronous operations.
@@ -889,23 +894,23 @@ pub struct PerformanceSettings {
     /// Client request timeout in seconds (default: 5)
     /// Time allowed for client to send complete request headers
     #[serde(default = "default_client_request_timeout")]
-    pub client_request_timeout:      u64,
+    pub client_request_timeout: u64,
     /// Client disconnect timeout in seconds (default: 2)
     /// Time allowed for graceful connection shutdown
     #[serde(default = "default_client_disconnect_timeout")]
-    pub client_disconnect_timeout:   u64,
+    pub client_disconnect_timeout: u64,
 }
 
 impl Default for PerformanceSettings {
     fn default() -> Self {
         Self {
-            keepalive_timeout:           default_keepalive_timeout(),
-            max_connections:             default_max_connections(),
-            backlog:                     default_backlog(),
-            tokio_worker_threads:        0,
+            keepalive_timeout: default_keepalive_timeout(),
+            max_connections: default_max_connections(),
+            backlog: default_backlog(),
+            tokio_worker_threads: 0,
             worker_max_blocking_threads: default_worker_max_blocking_threads(),
-            client_request_timeout:      default_client_request_timeout(),
-            client_disconnect_timeout:   default_client_disconnect_timeout(),
+            client_request_timeout: default_client_request_timeout(),
+            client_disconnect_timeout: default_client_disconnect_timeout(),
         }
     }
 }
@@ -913,13 +918,13 @@ impl Default for PerformanceSettings {
 impl Default for LoggingSettings {
     fn default() -> Self {
         Self {
-            level:                   default_log_level(),
-            logs_path:               default_logs_path(),
-            log_to_console:          default_true(),
-            format:                  default_log_format(),
-            targets:                 HashMap::new(),
+            level: default_log_level(),
+            logs_path: default_logs_path(),
+            log_to_console: default_true(),
+            format: default_log_format(),
+            targets: HashMap::new(),
             slow_query_threshold_ms: default_slow_query_threshold_ms(),
-            otlp:                    OtlpSettings::default(),
+            otlp: OtlpSettings::default(),
         }
     }
 }
@@ -998,10 +1003,10 @@ pub struct FlushCompactionSettings {
 impl Default for FlushCompactionSettings {
     fn default() -> Self {
         Self {
-            enabled:                 default_flush_compaction_enabled(),
-            min_eligible_segments:   default_flush_compaction_min_eligible_segments(),
-            max_segments_per_run:    default_flush_compaction_max_segments_per_run(),
-            user_max_segment_rows:   default_flush_compaction_user_max_segment_rows(),
+            enabled: default_flush_compaction_enabled(),
+            min_eligible_segments: default_flush_compaction_min_eligible_segments(),
+            max_segments_per_run: default_flush_compaction_max_segments_per_run(),
+            user_max_segment_rows: default_flush_compaction_user_max_segment_rows(),
             shared_max_segment_rows: default_flush_compaction_shared_max_segment_rows(),
         }
     }
@@ -1040,8 +1045,8 @@ impl Default for ManifestCacheSettings {
     fn default() -> Self {
         Self {
             eviction_interval_seconds: default_manifest_cache_eviction_interval(),
-            max_entries:               default_manifest_cache_max_entries(),
-            eviction_ttl_days:         default_manifest_cache_eviction_ttl_days(),
+            max_entries: default_manifest_cache_max_entries(),
+            eviction_ttl_days: default_manifest_cache_eviction_ttl_days(),
         }
     }
 }
@@ -1089,11 +1094,11 @@ pub struct TopicSettings {
 impl Default for TopicSettings {
     fn default() -> Self {
         Self {
-            visibility_timeout_secs:          default_topic_visibility_timeout_secs(),
-            default_retention_seconds:        default_topic_retention_seconds(),
-            default_retention_max_bytes:      default_topic_retention_max_bytes(),
+            visibility_timeout_secs: default_topic_visibility_timeout_secs(),
+            default_retention_seconds: default_topic_retention_seconds(),
+            default_retention_max_bytes: default_topic_retention_max_bytes(),
             retention_check_interval_seconds: default_topic_retention_check_interval_seconds(),
-            retention_batch_size:             default_topic_retention_batch_size(),
+            retention_batch_size: default_topic_retention_batch_size(),
         }
     }
 }
@@ -1120,8 +1125,8 @@ pub struct WebSocketSettings {
 impl Default for WebSocketSettings {
     fn default() -> Self {
         Self {
-            client_timeout_secs:     default_websocket_client_timeout(),
-            auth_timeout_secs:       default_websocket_auth_timeout(),
+            client_timeout_secs: default_websocket_client_timeout(),
+            auth_timeout_secs: default_websocket_auth_timeout(),
             heartbeat_interval_secs: default_websocket_heartbeat_interval(),
         }
     }
@@ -1189,15 +1194,15 @@ impl Default for PgExtensionSettings {
 impl Default for PostgresWireSettings {
     fn default() -> Self {
         Self {
-            enabled:                  false,
-            host:                     default_postgres_wire_host(),
-            port:                     default_postgres_wire_port(),
-            tls_enabled:              false,
-            tls_cert_path:            None,
-            tls_key_path:             None,
+            enabled: false,
+            host: default_postgres_wire_host(),
+            port: default_postgres_wire_port(),
+            tls_enabled: false,
+            tls_cert_path: None,
+            tls_key_path: None,
             prepared_statement_limit: default_postgres_wire_prepared_statement_limit(),
-            portal_limit:             default_postgres_wire_portal_limit(),
-            show_system_columns:      default_postgres_wire_show_system_columns(),
+            portal_limit: default_postgres_wire_portal_limit(),
+            show_system_columns: default_postgres_wire_show_system_columns(),
         }
     }
 }
@@ -1207,7 +1212,7 @@ impl Default for PostgresWireSettings {
 pub struct FunctionsSettings {
     /// Project function module id (default `backend`). One module for all project-backed routines.
     #[serde(default = "default_functions_module")]
-    pub module:  String,
+    pub module: String,
     #[serde(default)]
     pub runtime: FunctionsRuntimeSettings,
 }
@@ -1215,7 +1220,7 @@ pub struct FunctionsSettings {
 impl Default for FunctionsSettings {
     fn default() -> Self {
         Self {
-            module:  default_functions_module(),
+            module: default_functions_module(),
             runtime: FunctionsRuntimeSettings::default(),
         }
     }
@@ -1538,10 +1543,10 @@ impl AuthOidcSettings {
 impl Default for AuthLocalSettings {
     fn default() -> Self {
         Self {
-            enabled:                     default_auth_local_enabled(),
-            bcrypt_cost:                 default_auth_bcrypt_cost(),
-            min_password_length:         default_auth_min_password_length(),
-            max_password_length:         default_auth_max_password_length(),
+            enabled: default_auth_local_enabled(),
+            bcrypt_cost: default_auth_bcrypt_cost(),
+            min_password_length: default_auth_min_password_length(),
+            max_password_length: default_auth_max_password_length(),
             enforce_password_complexity: default_auth_enforce_password_complexity(),
         }
     }
@@ -1568,15 +1573,15 @@ impl Default for AuthOidcSettings {
 impl Default for AuthSettings {
     fn default() -> Self {
         Self {
-            root_password:       None,
-            jwt_secret:          default_auth_jwt_secret(),
+            root_password: None,
+            jwt_secret: default_auth_jwt_secret(),
             jwt_trusted_issuers: default_auth_jwt_trusted_issuers(),
-            jwt_expiry_hours:    default_auth_jwt_expiry_hours(),
-            cookie_secure:       default_auth_cookie_secure(),
-            allow_remote_setup:  default_auth_allow_remote_setup(),
-            pg_auth_token:       None,
-            local:               AuthLocalSettings::default(),
-            oidc:                AuthOidcSettings::default(),
+            jwt_expiry_hours: default_auth_jwt_expiry_hours(),
+            cookie_secure: default_auth_cookie_secure(),
+            allow_remote_setup: default_auth_allow_remote_setup(),
+            pg_auth_token: None,
+            local: AuthLocalSettings::default(),
+            oidc: AuthOidcSettings::default(),
         }
     }
 }
@@ -1584,10 +1589,10 @@ impl Default for AuthSettings {
 impl Default for DataFusionSettings {
     fn default() -> Self {
         Self {
-            memory_limit:      default_datafusion_memory_limit(),
+            memory_limit: default_datafusion_memory_limit(),
             query_parallelism: default_datafusion_parallelism(),
-            max_partitions:    default_datafusion_max_partitions(),
-            batch_size:        default_datafusion_batch_size(),
+            max_partitions: default_datafusion_max_partitions(),
+            batch_size: default_datafusion_batch_size(),
         }
     }
 }
@@ -1595,10 +1600,10 @@ impl Default for DataFusionSettings {
 impl Default for FlushSettings {
     fn default() -> Self {
         Self {
-            flush_batch_size:       default_flush_batch_size(),
+            flush_batch_size: default_flush_batch_size(),
             check_interval_seconds: default_flush_check_interval(),
-            retain_latest_hot:      false,
-            compaction:             FlushCompactionSettings::default(),
+            retain_latest_hot: false,
+            compaction: FlushCompactionSettings::default(),
         }
     }
 }
@@ -1614,17 +1619,17 @@ impl Default for StreamSettings {
 impl Default for RateLimitSettings {
     fn default() -> Self {
         Self {
-            max_queries_per_sec:              default_rate_limit_queries_per_sec(),
-            max_messages_per_sec:             default_rate_limit_messages_per_sec(),
-            max_subscriptions_per_user:       default_rate_limit_max_subscriptions(),
+            max_queries_per_sec: default_rate_limit_queries_per_sec(),
+            max_messages_per_sec: default_rate_limit_messages_per_sec(),
+            max_subscriptions_per_user: default_rate_limit_max_subscriptions(),
             max_auth_requests_per_ip_per_sec: default_rate_limit_auth_requests_per_ip_per_sec(),
-            max_connections_per_ip:           default_max_connections_per_ip(),
-            max_requests_per_ip_per_sec:      default_max_requests_per_ip_per_sec(),
-            request_body_limit_bytes:         default_request_body_limit_bytes(),
-            ban_duration_seconds:             default_ban_duration_seconds(),
-            enable_connection_protection:     default_enable_connection_protection(),
-            cache_max_entries:                default_rate_limit_cache_max_entries(),
-            cache_ttl_seconds:                default_rate_limit_cache_ttl_seconds(),
+            max_connections_per_ip: default_max_connections_per_ip(),
+            max_requests_per_ip_per_sec: default_max_requests_per_ip_per_sec(),
+            request_body_limit_bytes: default_request_body_limit_bytes(),
+            ban_duration_seconds: default_ban_duration_seconds(),
+            enable_connection_protection: default_enable_connection_protection(),
+            cache_max_entries: default_rate_limit_cache_max_entries(),
+            cache_ttl_seconds: default_rate_limit_cache_ttl_seconds(),
         }
     }
 }
@@ -1632,11 +1637,11 @@ impl Default for RateLimitSettings {
 impl Default for JobsSettings {
     fn default() -> Self {
         Self {
-            max_concurrent:                   default_jobs_max_concurrent(),
-            wal_cleanup_interval_seconds:     default_jobs_wal_cleanup_interval(),
+            max_concurrent: default_jobs_max_concurrent(),
+            wal_cleanup_interval_seconds: default_jobs_wal_cleanup_interval(),
             history_cleanup_interval_seconds: default_jobs_history_cleanup_interval(),
-            history_retention_days:           default_jobs_history_retention_days(),
-            max_runtime_seconds:              default_jobs_max_runtime_seconds(),
+            history_retention_days: default_jobs_history_retention_days(),
+            max_runtime_seconds: default_jobs_max_runtime_seconds(),
         }
     }
 }
@@ -1665,20 +1670,20 @@ impl Default for ServerConfig {
     fn default() -> Self {
         ServerConfig {
             server: ServerSettings {
-                host:          "127.0.0.1".to_string(),
-                port:          2900,
+                host: "127.0.0.1".to_string(),
+                port: 2900,
                 public_origin: None,
-                workers:       0,
-                enable_http2:  default_enable_http2(),
-                ui_path:       default_ui_path(),
+                workers: 0,
+                enable_http2: default_enable_http2(),
+                ui_path: default_ui_path(),
             },
             storage: StorageSettings {
-                data_path:              default_data_path(),
+                data_path: default_data_path(),
                 shared_tables_template: default_shared_tables_template(),
-                user_tables_template:   default_user_tables_template(),
-                rocksdb:                RocksDbSettings::default(),
-                remote_timeouts:        RemoteStorageTimeouts::default(),
-                parquet:                ParquetWriteSettings::default(),
+                user_tables_template: default_user_tables_template(),
+                rocksdb: RocksDbSettings::default(),
+                remote_timeouts: RemoteStorageTimeouts::default(),
+                parquet: ParquetWriteSettings::default(),
             },
             limits: LimitsSettings::default(),
             logging: LoggingSettings::default(),

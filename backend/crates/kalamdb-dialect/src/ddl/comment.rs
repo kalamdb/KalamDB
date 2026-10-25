@@ -17,7 +17,7 @@ use crate::{
 pub enum CommentOnTarget {
     Type {
         namespace_id: SchemaId,
-        name:         String,
+        name: String,
     },
     Procedure(RoutineId),
     Function(RoutineId),
@@ -26,8 +26,8 @@ pub enum CommentOnTarget {
 /// Parsed `COMMENT ON TYPE|DOMAIN|FUNCTION|PROCEDURE ... IS ...` statement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommentOnStatement {
-    pub target:    CommentOnTarget,
-    pub comment:   Option<String>,
+    pub target: CommentOnTarget,
+    pub comment: Option<String>,
     pub if_exists: bool,
 }
 

@@ -36,8 +36,8 @@ impl JobsManager {
     async fn mark_job_running(&self, job_id: &JobId) -> Result<(), KalamDbError> {
         let app_ctx = self.get_attached_app_context();
         let cmd = MetaCommand::ClaimJob {
-            job_id:     job_id.clone(),
-            node_id:    self.node_id,
+            job_id: job_id.clone(),
+            node_id: self.node_id,
             claimed_at: chrono::Utc::now(),
         };
         app_ctx
@@ -52,8 +52,8 @@ impl JobsManager {
     async fn claim_job_node(&self, job_id: &JobId) -> Result<(), KalamDbError> {
         let app_ctx = self.get_attached_app_context();
         let cmd = MetaCommand::ClaimJobNode {
-            job_id:     job_id.clone(),
-            node_id:    self.node_id,
+            job_id: job_id.clone(),
+            node_id: self.node_id,
             claimed_at: chrono::Utc::now(),
         };
 
@@ -94,8 +94,8 @@ impl JobsManager {
         let app_ctx = self.get_attached_app_context();
         let success_message = message.unwrap_or_else(|| "Job completed successfully".to_string());
         let cmd = MetaCommand::CompleteJob {
-            job_id:       job_id.clone(),
-            result:       Some(serde_json::json!({ "message": success_message }).to_string()),
+            job_id: job_id.clone(),
+            result: Some(serde_json::json!({ "message": success_message }).to_string()),
             completed_at: chrono::Utc::now(),
         };
         app_ctx
@@ -116,9 +116,9 @@ impl JobsManager {
     ) -> Result<(), KalamDbError> {
         let app_ctx = self.get_attached_app_context();
         let cmd = MetaCommand::FailJob {
-            job_id:        job_id.clone(),
+            job_id: job_id.clone(),
             error_message: error_message.clone(),
-            failed_at:     chrono::Utc::now(),
+            failed_at: chrono::Utc::now(),
         };
         app_ctx.executor().execute_meta(cmd).await.map_err(|e| {
             KalamDbError::Other(format!("Failed to mark job as failed via Raft: {}", e))
@@ -135,8 +135,8 @@ impl JobsManager {
     ) -> Result<(), KalamDbError> {
         let app_ctx = self.get_attached_app_context();
         let cmd = MetaCommand::CompleteJob {
-            job_id:       job_id.clone(),
-            result:       Some(
+            job_id: job_id.clone(),
+            result: Some(
                 serde_json::json!({ "message": skip_message, "skipped": true }).to_string(),
             ),
             completed_at: chrono::Utc::now(),
@@ -147,8 +147,8 @@ impl JobsManager {
 
         // Mark job as skipped in the jobs table
         let cmd_status = MetaCommand::UpdateJobStatus {
-            job_id:     job_id.clone(),
-            status:     JobStatus::Skipped,
+            job_id: job_id.clone(),
+            status: JobStatus::Skipped,
             updated_at: chrono::Utc::now(),
         };
         app_ctx.executor().execute_meta(cmd_status).await.map_err(|e| {

@@ -70,9 +70,7 @@ pub(super) fn validate_origin(
     Ok(())
 }
 
-pub(super) fn parse_upgrade_auth(
-    req: &HttpRequest,
-) -> Result<Option<UpgradeAuth>, &'static str> {
+pub(super) fn parse_upgrade_auth(req: &HttpRequest) -> Result<Option<UpgradeAuth>, &'static str> {
     let protocol = parse_protocol_from_query(req.query_string())?;
     if let Some(token) = bearer_from_authorization(req) {
         return Ok(Some(UpgradeAuth {
@@ -83,7 +81,7 @@ pub(super) fn parse_upgrade_auth(
     }
 
     Ok(jwt_from_sec_websocket_protocol(req).map(|(token, offered)| UpgradeAuth {
-        auth_request:     AuthRequest::Jwt { token },
+        auth_request: AuthRequest::Jwt { token },
         protocol,
         echo_subprotocol: Some(offered),
     }))

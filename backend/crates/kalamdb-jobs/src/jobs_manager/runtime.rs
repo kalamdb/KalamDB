@@ -17,7 +17,7 @@ pub enum JobsShutdownStatus {
 /// Owns the jobs manager run loop so callers can stop and join it deterministically.
 pub struct JobsManagerRuntime {
     manager: Arc<JobsManager>,
-    task:    JoinHandle<Result<(), KalamDbError>>,
+    task: JoinHandle<Result<(), KalamDbError>>,
 }
 
 impl JobsManagerRuntime {

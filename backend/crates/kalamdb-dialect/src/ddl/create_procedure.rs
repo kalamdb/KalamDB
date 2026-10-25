@@ -20,9 +20,9 @@ use crate::ddl::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcedureParameter {
-    pub name:         String,
-    pub type_ref:     TypeReference,
-    pub mode:         RoutineParameterMode,
+    pub name: String,
+    pub type_ref: TypeReference,
+    pub mode: RoutineParameterMode,
     pub default_expr: Option<String>,
 }
 
@@ -36,25 +36,25 @@ pub enum RoutineConfigChange {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateProcedureStatement {
-    pub routine_id:      RoutineId,
-    pub namespace_id:    SchemaId,
-    pub name:            String,
-    pub kind:            RoutineKind,
-    pub or_replace:      bool,
-    pub parameters:      Vec<ProcedureParameter>,
-    pub return_type:     Option<TypeReference>,
-    pub returns_setof:   bool,
-    pub returns_table:   Vec<(String, TypeReference)>,
-    pub language:        Option<String>,
-    pub security:        RoutineSecurityMode,
-    pub volatility:      RoutineVolatility,
-    pub null_safety:     RoutineNullSafety,
+    pub routine_id: RoutineId,
+    pub namespace_id: SchemaId,
+    pub name: String,
+    pub kind: RoutineKind,
+    pub or_replace: bool,
+    pub parameters: Vec<ProcedureParameter>,
+    pub return_type: Option<TypeReference>,
+    pub returns_setof: bool,
+    pub returns_table: Vec<(String, TypeReference)>,
+    pub language: Option<String>,
+    pub security: RoutineSecurityMode,
+    pub volatility: RoutineVolatility,
+    pub null_safety: RoutineNullSafety,
     pub parallel_safety: RoutineParallelSafety,
-    pub cost:            Option<f64>,
-    pub rows:            Option<i64>,
-    pub config_changes:  Vec<RoutineConfigChange>,
-    pub body:            Option<String>,
-    pub comment:         Option<String>,
+    pub cost: Option<f64>,
+    pub rows: Option<i64>,
+    pub config_changes: Vec<RoutineConfigChange>,
+    pub body: Option<String>,
+    pub comment: Option<String>,
 }
 
 impl Eq for CreateProcedureStatement {}
@@ -475,13 +475,13 @@ impl CreateProcedureStatement {
                     return_type = Some(out_params[0].type_ref.clone());
                 } else if out_params.len() > 1 {
                     return_type = Some(TypeReference {
-                        namespace_id:       None,
-                        name:               "jsonb".to_string(),
-                        data_type:          Some(kalamdb_commons::KalamDataType::Json),
+                        namespace_id: None,
+                        name: "jsonb".to_string(),
+                        data_type: Some(kalamdb_commons::KalamDataType::Json),
                         syntactic_modifier: None,
-                        is_array:           false,
-                        not_null:           false,
-                        nonempty:           false,
+                        is_array: false,
+                        not_null: false,
+                        nonempty: false,
                     });
                 } else {
                     return Err("CREATE FUNCTION requires a RETURNS <type> clause (or OUT \
@@ -905,10 +905,10 @@ fn parse_procedure_body(input: &str) -> DdlResult<(String, &str)> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropProcedureStatement {
-    pub routine_id:    RoutineId,
+    pub routine_id: RoutineId,
     pub expected_kind: RoutineKind,
-    pub if_exists:     bool,
-    pub cascade:       bool,
+    pub if_exists: bool,
+    pub cascade: bool,
 }
 
 impl DropProcedureStatement {
@@ -964,17 +964,17 @@ pub enum AlterRoutineAction {
         new_namespace_id: SchemaId,
     },
     Options {
-        security:        Option<RoutineSecurityMode>,
-        volatility:      Option<RoutineVolatility>,
-        null_safety:     Option<RoutineNullSafety>,
+        security: Option<RoutineSecurityMode>,
+        volatility: Option<RoutineVolatility>,
+        null_safety: Option<RoutineNullSafety>,
         parallel_safety: Option<RoutineParallelSafety>,
-        cost:            Option<f64>,
-        rows:            Option<i64>,
-        config_changes:  Vec<RoutineConfigChange>,
+        cost: Option<f64>,
+        rows: Option<i64>,
+        config_changes: Vec<RoutineConfigChange>,
     },
     DependsOnExtension {
         extension_name: String,
-        no_depends:     bool,
+        no_depends: bool,
     },
 }
 
@@ -982,11 +982,11 @@ impl Eq for AlterRoutineAction {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlterRoutineStatement {
-    pub routine_id:    RoutineId,
-    pub namespace_id:  SchemaId,
-    pub name:          String,
+    pub routine_id: RoutineId,
+    pub namespace_id: SchemaId,
+    pub name: String,
     pub expected_kind: RoutineKind,
-    pub action:        AlterRoutineAction,
+    pub action: AlterRoutineAction,
 }
 
 impl AlterRoutineStatement {
@@ -1050,7 +1050,7 @@ impl AlterRoutineStatement {
             }
             AlterRoutineAction::DependsOnExtension {
                 extension_name: ext,
-                no_depends:     true,
+                no_depends: true,
             }
         } else if take_keyword_ci(&mut after, "DEPENDS ON EXTENSION") {
             let (ext, leftover) = take_ident(after)?;
@@ -1062,7 +1062,7 @@ impl AlterRoutineStatement {
             }
             AlterRoutineAction::DependsOnExtension {
                 extension_name: ext,
-                no_depends:     false,
+                no_depends: false,
             }
         } else {
             let mut security = None;

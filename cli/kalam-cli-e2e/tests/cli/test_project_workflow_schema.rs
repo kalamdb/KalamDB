@@ -11,7 +11,7 @@ use crate::common::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RecordedSqlRequest {
-    sql:          String,
+    sql: String,
     namespace_id: Option<String>,
 }
 
@@ -82,7 +82,7 @@ fn start_recording_sql_server(
                     .unwrap_or_default()
                     .to_string();
                 requests_handle.lock().expect("lock requests").push(RecordedSqlRequest {
-                    sql:          sql.clone(),
+                    sql: sql.clone(),
                     namespace_id: payload
                         .get("namespace_id")
                         .and_then(|value| value.as_str())

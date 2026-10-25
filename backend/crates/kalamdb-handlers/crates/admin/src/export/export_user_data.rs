@@ -43,7 +43,7 @@ impl TypedStatementHandler<ExportUserDataStatement> for ExportUserDataHandler {
         let export_id = generate_user_export_id(&user_id);
 
         let params = UserExportParams {
-            user_id:   user_id.clone(),
+            user_id: user_id.clone(),
             export_id: export_id.clone(),
         };
 

@@ -315,9 +315,9 @@ mod tests {
     fn test_session_error_display() {
         let err = SessionError::AccessDenied {
             namespace_id: SchemaId::system(),
-            table_name:   TableName::new("users"),
-            role:         Role::User,
-            reason:       "Test reason".to_string(),
+            table_name: TableName::new("users"),
+            role: Role::User,
+            reason: "Test reason".to_string(),
         };
         let display = format!("{}", err);
         assert!(display.contains("Access denied"));

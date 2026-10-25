@@ -219,11 +219,11 @@ mod tests {
             _versions: &[VersionId],
         ) -> Result<TransactionApplyResult, RaftError> {
             Ok(TransactionApplyResult {
-                rows_affected:      mutations.len(),
-                log_index:          1,
+                rows_affected: mutations.len(),
+                log_index: 1,
                 notifications_sent: 0,
-                manifest_updates:   0,
-                publisher_events:   0,
+                manifest_updates: 0,
+                publisher_events: 0,
             })
         }
     }

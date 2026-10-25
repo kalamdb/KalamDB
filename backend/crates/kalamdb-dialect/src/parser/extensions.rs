@@ -104,7 +104,7 @@ pub enum ExtensionStatement {
     ClusterTransferLeader { node_id: u64 },
     /// CLUSTER JOIN command
     ClusterJoin {
-        node_id:  u64,
+        node_id: u64,
         rpc_addr: String,
         api_addr: String,
     },

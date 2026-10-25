@@ -481,11 +481,11 @@ impl StorageBackend for RocksDBBackend {
         let inner = self.db.iterator_cf_opt(&cf, readopts, iter_mode);
 
         struct SnapshotScanIter<'a, D: rocksdb::DBAccess> {
-            _snapshot:        rocksdb::SnapshotWithThreadMode<'a, D>,
-            inner:            rocksdb::DBIteratorWithThreadMode<'a, D>,
+            _snapshot: rocksdb::SnapshotWithThreadMode<'a, D>,
+            inner: rocksdb::DBIteratorWithThreadMode<'a, D>,
             partition_prefix: Vec<u8>,
-            user_prefix:      Option<Vec<u8>>,
-            remaining:        Option<usize>,
+            user_prefix: Option<Vec<u8>>,
+            remaining: Option<usize>,
         }
 
         impl<'a, D: rocksdb::DBAccess> Iterator for SnapshotScanIter<'a, D> {
@@ -575,11 +575,11 @@ impl StorageBackend for RocksDBBackend {
         let inner = self.db.iterator_cf_opt(&cf, readopts, iter_mode);
 
         struct SnapshotReverseScanIter<'a, D: rocksdb::DBAccess> {
-            _snapshot:        rocksdb::SnapshotWithThreadMode<'a, D>,
-            inner:            rocksdb::DBIteratorWithThreadMode<'a, D>,
+            _snapshot: rocksdb::SnapshotWithThreadMode<'a, D>,
+            inner: rocksdb::DBIteratorWithThreadMode<'a, D>,
             partition_prefix: Vec<u8>,
-            user_prefix:      Option<Vec<u8>>,
-            remaining:        Option<usize>,
+            user_prefix: Option<Vec<u8>>,
+            remaining: Option<usize>,
         }
 
         impl<'a, D: rocksdb::DBAccess> Iterator for SnapshotReverseScanIter<'a, D> {
@@ -1013,17 +1013,17 @@ mod tests {
         let ops = vec![
             Operation::Put {
                 partition: partition.clone(),
-                key:       b"key1".to_vec(),
-                value:     b"value1".to_vec(),
+                key: b"key1".to_vec(),
+                value: b"value1".to_vec(),
             },
             Operation::Put {
                 partition: partition.clone(),
-                key:       b"key2".to_vec(),
-                value:     b"value2".to_vec(),
+                key: b"key2".to_vec(),
+                value: b"value2".to_vec(),
             },
             Operation::Delete {
                 partition: partition.clone(),
-                key:       b"key1".to_vec(),
+                key: b"key1".to_vec(),
             },
         ];
 

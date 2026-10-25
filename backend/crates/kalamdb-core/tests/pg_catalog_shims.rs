@@ -175,15 +175,13 @@ async fn pg_catalog_shim_pg_type_lists_column_types_for_namespace() {
     assert!(typnames.contains(&"text".to_string()));
 }
 
-const DBEAVER_PG_TYPE_SQL: &str =
-    "\
+const DBEAVER_PG_TYPE_SQL: &str = "\
 SELECT n.nspname as schema, t.typname as typename, t.oid::integer as typeid FROM pg_type t LEFT \
      JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace WHERE (t.typrelid = 0 OR (SELECT \
      c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid)) AND n.nspname NOT IN \
      ('pg_catalog', 'information_schema') AND t.typname !~ '^_';";
 
-const BEEKEEPER_COLUMNS_SQL: &str =
-    "\
+const BEEKEEPER_COLUMNS_SQL: &str = "\
 SELECT a.attname, a.attnum, a.attnotnull, a.atttypid, a.atttypmod, a.attidentity, a.attgenerated, \
      a.attisdropped, pg_catalog.format_type(a.atttypid, a.atttypmod) AS formatted_type, \
      pg_catalog.col_description(c.oid, a.attnum) AS column_comment, \
@@ -194,8 +192,7 @@ SELECT a.attname, a.attnum, a.attnotnull, a.atttypid, a.atttypmod, a.attidentity
      WHERE n.nspname = $1 AND c.relname = $2 AND a.attnum > 0 AND NOT a.attisdropped ORDER BY \
      a.attnum";
 
-const BEEKEEPER_INFORMATION_SCHEMA_COLUMNS_SQL: &str =
-    "\
+const BEEKEEPER_INFORMATION_SCHEMA_COLUMNS_SQL: &str = "\
 SELECT table_schema, table_name, column_name, is_nullable, is_generated, ordinal_position, \
      column_default, CASE WHEN character_maximum_length is not null and udt_name != 'text' THEN \
      udt_name || '(' || character_maximum_length::varchar(255) || ')' WHEN numeric_precision is \
@@ -209,8 +206,7 @@ SELECT table_schema, table_name, column_name, is_nullable, is_generated, ordinal
      ordinal_position ) as column_comment FROM information_schema.columns WHERE table_schema = $1 \
      AND table_name = $2 ORDER BY table_schema, table_name, ordinal_position";
 
-const BEEKEEPER_LIST_TABLE_COLUMNS_BULK_SQL: &str =
-    "\
+const BEEKEEPER_LIST_TABLE_COLUMNS_BULK_SQL: &str = "\
 SELECT table_schema, table_name, column_name, is_nullable, ordinal_position, column_default, CASE \
      WHEN character_maximum_length is not null and udt_name != 'text' THEN udt_name || '(' || \
      character_maximum_length::varchar(255) || ')' WHEN numeric_precision is not null and \
@@ -1344,28 +1340,28 @@ fn insert_catalog_procedure(
     let routine_id = RoutineId::from_parts(Some(namespace), name);
     stores
         .upsert_routine(CatalogRoutine {
-            routine_id:         routine_id.clone(),
-            namespace_id:       namespace.clone(),
-            name:               name.to_string(),
-            owner:              UserId::new("root"),
-            security:           RoutineSecurityMode::Invoker,
-            language:           Some("sql".to_string()),
-            body:               None,
-            return_type_id:     None,
-            return_type_name:   Some("TEXT".to_string()),
-            return_is_array:    false,
-            return_not_null:    false,
-            comment:            Some("liveness probe".to_string()),
-            return_data_type:   Some(KalamDataType::Text),
+            routine_id: routine_id.clone(),
+            namespace_id: namespace.clone(),
+            name: name.to_string(),
+            owner: UserId::new("root"),
+            security: RoutineSecurityMode::Invoker,
+            language: Some("sql".to_string()),
+            body: None,
+            return_type_id: None,
+            return_type_name: Some("TEXT".to_string()),
+            return_is_array: false,
+            return_not_null: false,
+            comment: Some("liveness probe".to_string()),
+            return_data_type: Some(KalamDataType::Text),
             inline_source_hash: None,
             inline_artifact_id: None,
-            kind:               kalamdb_commons::models::RoutineKind::default(),
-            volatility:         kalamdb_commons::models::RoutineVolatility::default(),
-            null_safety:        kalamdb_commons::models::RoutineNullSafety::default(),
-            parallel_safety:    kalamdb_commons::models::RoutineParallelSafety::default(),
-            cost:               None,
-            rows:               None,
-            config_params:      None,
+            kind: kalamdb_commons::models::RoutineKind::default(),
+            volatility: kalamdb_commons::models::RoutineVolatility::default(),
+            null_safety: kalamdb_commons::models::RoutineNullSafety::default(),
+            parallel_safety: kalamdb_commons::models::RoutineParallelSafety::default(),
+            cost: None,
+            rows: None,
+            config_params: None,
         })
         .expect("upsert catalog routine");
     stores

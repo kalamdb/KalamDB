@@ -289,17 +289,15 @@ mod tests {
         let app_ctx = init_app_context();
         let handler = CreateStorageHandler::new(app_ctx);
         let stmt = CreateStorageStatement {
-            storage_id:             StorageId::new("test_storage"),
-            storage_name:           "Test Storage".to_string(),
-            description:            None,
-            storage_type:           kalamdb_system::providers::storages::models::StorageType::from(
-                "local",
-            ),
-            base_directory:         "/tmp/storage".to_string(),
-            credentials:            None,
-            config_json:            None,
+            storage_id: StorageId::new("test_storage"),
+            storage_name: "Test Storage".to_string(),
+            description: None,
+            storage_type: kalamdb_system::providers::storages::models::StorageType::from("local"),
+            base_directory: "/tmp/storage".to_string(),
+            credentials: None,
+            config_json: None,
             shared_tables_template: String::new(),
-            user_tables_template:   String::new(),
+            user_tables_template: String::new(),
         };
 
         // User role should be denied
@@ -320,17 +318,15 @@ mod tests {
         let handler = CreateStorageHandler::new(app_ctx);
         let storage_id = format!("test_storage_{}", chrono::Utc::now().timestamp_millis());
         let stmt = CreateStorageStatement {
-            storage_id:             StorageId::from(storage_id.as_str()),
-            storage_name:           "Test Storage".to_string(),
-            description:            Some("Test description".to_string()),
-            storage_type:           kalamdb_system::providers::storages::models::StorageType::from(
-                "local",
-            ),
-            base_directory:         "/tmp/test".to_string(),
-            credentials:            None,
-            config_json:            None,
+            storage_id: StorageId::from(storage_id.as_str()),
+            storage_name: "Test Storage".to_string(),
+            description: Some("Test description".to_string()),
+            storage_type: kalamdb_system::providers::storages::models::StorageType::from("local"),
+            base_directory: "/tmp/test".to_string(),
+            credentials: None,
+            config_json: None,
             shared_tables_template: String::new(),
-            user_tables_template:   String::new(),
+            user_tables_template: String::new(),
         };
         let ctx = create_test_context(Role::System);
 
@@ -349,17 +345,15 @@ mod tests {
         let handler = CreateStorageHandler::new(app_ctx);
         let storage_id = format!("test_dup_{}", chrono::Utc::now().timestamp_millis());
         let stmt = CreateStorageStatement {
-            storage_id:             StorageId::from(storage_id.as_str()),
-            storage_name:           "Test Duplicate".to_string(),
-            description:            None,
-            storage_type:           kalamdb_system::providers::storages::models::StorageType::from(
-                "local",
-            ),
-            base_directory:         "/tmp/test".to_string(),
-            credentials:            None,
-            config_json:            None,
+            storage_id: StorageId::from(storage_id.as_str()),
+            storage_name: "Test Duplicate".to_string(),
+            description: None,
+            storage_type: kalamdb_system::providers::storages::models::StorageType::from("local"),
+            base_directory: "/tmp/test".to_string(),
+            credentials: None,
+            config_json: None,
             shared_tables_template: String::new(),
-            user_tables_template:   String::new(),
+            user_tables_template: String::new(),
         };
         let ctx = create_test_context(Role::System);
 

@@ -39,7 +39,7 @@ use crate::{
 #[derive(Debug, Clone, Copy)]
 pub struct ContractSource<'a> {
     pub path: &'a str,
-    pub sql:  &'a str,
+    pub sql: &'a str,
 }
 
 pub fn compile_contract_sql(
@@ -175,35 +175,35 @@ pub fn compile_contract(
 
 struct RawTable {
     schema: String,
-    name:   String,
-    kind:   ContractTableKind,
+    name: String,
+    kind: ContractTableKind,
     fields: Vec<ContractField>,
 }
 
 enum RawType {
     Composite {
-        schema:  String,
-        fields:  Vec<ContractField>,
+        schema: String,
+        fields: Vec<ContractField>,
         comment: Option<String>,
     },
     Enum {
-        schema:  String,
-        labels:  Vec<String>,
+        schema: String,
+        labels: Vec<String>,
         comment: Option<String>,
     },
     Domain {
-        schema:       String,
-        base_type:    ContractField,
-        collation:    Option<String>,
+        schema: String,
+        base_type: ContractField,
+        collation: Option<String>,
         default_expr: Option<String>,
-        not_null:     bool,
-        checks:       Vec<DomainCheckClause>,
-        comment:      Option<String>,
+        not_null: bool,
+        checks: Vec<DomainCheckClause>,
+        comment: Option<String>,
     },
     Alias {
-        schema:   String,
+        schema: String,
         table_id: String,
-        comment:  Option<String>,
+        comment: Option<String>,
     },
 }
 
@@ -321,14 +321,14 @@ fn apply_statement(
         triggers.insert(
             key,
             ContractTrigger {
-                trigger_id:       stmt.trigger_id.as_str().to_string(),
-                topic_id:         stmt.topic_id.as_str().to_string(),
-                routine_id:       stmt.routine_id.as_str().to_string(),
-                principal:        stmt.principal,
-                start_from:       stmt.start_from,
-                retries:          stmt.retries,
+                trigger_id: stmt.trigger_id.as_str().to_string(),
+                topic_id: stmt.topic_id.as_str().to_string(),
+                routine_id: stmt.routine_id.as_str().to_string(),
+                principal: stmt.principal,
+                start_from: stmt.start_from,
+                retries: stmt.retries,
                 retry_backoff_ms: stmt.retry_backoff_ms,
-                concurrency:      stmt.concurrency,
+                concurrency: stmt.concurrency,
             },
         );
         return Ok(());
@@ -594,9 +594,9 @@ fn ingest_table(
         types.insert(
             alias_key,
             RawType::Alias {
-                schema:   schema.clone(),
+                schema: schema.clone(),
                 table_id: table_id.clone(),
-                comment:  None,
+                comment: None,
             },
         );
     }
@@ -1294,7 +1294,7 @@ fn assert_named_type_graphs(types: &BTreeMap<String, ContractType>) -> Result<()
                 TypeGraphNode::from_type_refs(&refs)
             },
             ContractTypeKind::RowAlias { source } => TypeGraphNode {
-                children:    vec![source.clone()],
+                children: vec![source.clone()],
                 field_count: 1,
             },
             ContractTypeKind::Domain { base_type, .. } => {
@@ -1373,7 +1373,7 @@ fn resolve_snapshot(
             (
                 ContractTypeKind::ImplicitTableRow {
                     table_id: table_id.clone(),
-                    fields:   table.fields.clone(),
+                    fields: table.fields.clone(),
                 },
                 None,
             ),
@@ -1398,11 +1398,11 @@ fn resolve_snapshot(
                 checks,
                 ..
             } => ContractTypeKind::Domain {
-                base_type:    base_type.clone(),
-                collation:    collation.clone(),
+                base_type: base_type.clone(),
+                collation: collation.clone(),
                 default_expr: default_expr.clone(),
-                not_null:     *not_null,
-                checks:       checks.clone(),
+                not_null: *not_null,
+                checks: checks.clone(),
             },
             RawType::Alias { table_id, .. } => {
                 if !snapshot_tables.contains_key(table_id) {
@@ -1432,7 +1432,7 @@ fn resolve_snapshot(
             (
                 ContractTypeKind::TopicPayload {
                     topic_id: topic_id.clone(),
-                    sources:  topic.sources.iter().cloned().collect(),
+                    sources: topic.sources.iter().cloned().collect(),
                 },
                 None,
             ),
@@ -1444,13 +1444,13 @@ fn resolve_snapshot(
     for type_id in kind_map.keys().cloned().collect::<Vec<_>>() {
         let mut visiting = Vec::new();
         let type_ref = TypeReference {
-            namespace_id:       None,
-            name:               type_id.clone(),
-            data_type:          None,
+            namespace_id: None,
+            name: type_id.clone(),
+            data_type: None,
             syntactic_modifier: None,
-            is_array:           false,
-            not_null:           true,
-            nonempty:           false,
+            is_array: false,
+            not_null: true,
+            nonempty: false,
         };
         let arrow = resolve_arrow_type(&type_ref, &kind_map, &mut visiting)?;
         if let Some(entry) = kind_map.get_mut(&type_id) {
@@ -1562,11 +1562,11 @@ mod tests {
             &[
                 ContractSource {
                     path: "a.sql",
-                    sql:  table_sql,
+                    sql: table_sql,
                 },
                 ContractSource {
                     path: "b.sql",
-                    sql:  type_sql,
+                    sql: type_sql,
                 },
             ],
             "public",
@@ -1576,11 +1576,11 @@ mod tests {
             &[
                 ContractSource {
                     path: "b.sql",
-                    sql:  type_sql,
+                    sql: type_sql,
                 },
                 ContractSource {
                     path: "a.sql",
-                    sql:  table_sql,
+                    sql: table_sql,
                 },
             ],
             "public",

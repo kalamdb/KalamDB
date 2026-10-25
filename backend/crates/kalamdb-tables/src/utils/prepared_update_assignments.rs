@@ -16,7 +16,7 @@ use kalamdb_commons::{
 };
 
 pub(crate) struct PreparedUpdateAssignments {
-    schema:      SchemaRef,
+    schema: SchemaRef,
     expressions: Vec<(String, Arc<dyn PhysicalExpr>)>,
 }
 

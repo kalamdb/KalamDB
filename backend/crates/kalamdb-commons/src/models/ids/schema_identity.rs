@@ -192,7 +192,7 @@ impl SchemaIdentity {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchemaRecord {
     identity: SchemaIdentity,
-    name:     SqlIdent,
+    name: SqlIdent,
 }
 
 impl SchemaRecord {
@@ -307,7 +307,7 @@ pub enum TableIdentity {
     /// Existing `(namespace, table)` storage key.
     Legacy {
         namespace_key: String,
-        table_key:     String,
+        table_key: String,
     },
     /// Identity allocated independently of the name and schema.
     Allocated(u128),
@@ -335,9 +335,9 @@ impl TableIdentity {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableRecord {
     identity: TableIdentity,
-    schema:   SchemaIdentity,
-    name:     SqlIdent,
-    kind:     TableKind,
+    schema: SchemaIdentity,
+    name: SqlIdent,
+    kind: TableKind,
 }
 
 impl TableRecord {
@@ -384,7 +384,7 @@ impl TableRecord {
         Ok(Self {
             identity: TableIdentity::Legacy {
                 namespace_key: namespace_key.to_string(),
-                table_key:     table_key.to_string(),
+                table_key: table_key.to_string(),
             },
             schema: SchemaIdentity::Legacy(namespace_key.to_string()),
             name,
@@ -617,7 +617,7 @@ fn read_table_identity(cursor: &mut Cursor<'_>) -> Result<TableIdentity, IdentEr
     match cursor.u8()? {
         LEGACY_TAG => Ok(TableIdentity::Legacy {
             namespace_key: cursor.str()?.to_string(),
-            table_key:     cursor.str()?.to_string(),
+            table_key: cursor.str()?.to_string(),
         }),
         ALLOCATED_TAG => {
             let bytes = cursor.bytes(16)?;

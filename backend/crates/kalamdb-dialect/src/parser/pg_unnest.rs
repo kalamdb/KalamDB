@@ -184,7 +184,7 @@ fn rewrite_pg_pk_exists(expr: &Expr) -> Option<Expr> {
     };
     if *negated {
         Some(Expr::UnaryOp {
-            op:   UnaryOperator::Not,
+            op: UnaryOperator::Not,
             expr: Box::new(pk_column),
         })
     } else {

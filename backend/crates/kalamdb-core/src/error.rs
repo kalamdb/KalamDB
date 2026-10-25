@@ -64,7 +64,7 @@ pub enum KalamDbError {
         message: String,
         /// Optional source context (e.g., file path, operation)
         #[source]
-        source:  Option<Box<dyn std::error::Error + Send + Sync>>,
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
 
     #[error("Invalid SQL: {0}")]
@@ -139,8 +139,8 @@ pub enum KalamDbError {
          {max_bytes} bytes)"
     )]
     ParamSizeExceeded {
-        index:        usize,
-        max_bytes:    usize,
+        index: usize,
+        max_bytes: usize,
         actual_bytes: usize,
     },
 
@@ -161,7 +161,7 @@ pub enum KalamDbError {
 
     #[error("[{code}] {message}")]
     Function {
-        code:    kalamdb_functions::FunctionErrorCode,
+        code: kalamdb_functions::FunctionErrorCode,
         message: String,
     },
 
@@ -179,7 +179,7 @@ impl From<kalamdb_functions::FunctionsError> for KalamDbError {
             return KalamDbError::Coded(kalamdb_commons::CodedError::pre_rendered(code, message));
         }
         KalamDbError::Function {
-            code:    error.code(),
+            code: error.code(),
             message: error.to_string(),
         }
     }
@@ -742,7 +742,7 @@ impl KalamDbError {
     pub fn io_message<S: Into<String>>(message: S) -> Self {
         KalamDbError::IoMessage {
             message: message.into(),
-            source:  None,
+            source: None,
         }
     }
 
@@ -756,7 +756,7 @@ impl KalamDbError {
     {
         KalamDbError::IoMessage {
             message: message.into(),
-            source:  Some(Box::new(source)),
+            source: Some(Box::new(source)),
         }
     }
 }
@@ -899,7 +899,7 @@ mod tests {
     fn test_api_error_display() {
         let err = ApiError::MessageTooLarge {
             size: 2_000_000,
-            max:  1_048_576,
+            max: 1_048_576,
         };
         assert_eq!(err.to_string(), "Message too large: 2000000 bytes (max: 1048576 bytes)");
     }
@@ -964,7 +964,7 @@ mod tests {
     fn test_backup_checksum_mismatch() {
         let err = BackupError::ChecksumMismatch {
             expected: "abc123".to_string(),
-            actual:   "def456".to_string(),
+            actual: "def456".to_string(),
         };
         assert_eq!(err.to_string(), "Checksum mismatch: expected=abc123, actual=def456");
     }

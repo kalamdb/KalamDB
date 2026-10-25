@@ -27,19 +27,19 @@ crate::memoized_view_schema!(sessions_schema, SessionsView);
 /// Serializable snapshot of a live connection session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionSessionSnapshot {
-    pub session_id:             String,
-    pub origin:                 String,
-    pub backend_pid:            Option<i64>,
-    pub authenticated_user_id:  Option<String>,
-    pub current_schema:         Option<String>,
-    pub state:                  String,
-    pub transaction_id:         Option<String>,
-    pub transaction_state:      Option<String>,
+    pub session_id: String,
+    pub origin: String,
+    pub backend_pid: Option<i64>,
+    pub authenticated_user_id: Option<String>,
+    pub current_schema: Option<String>,
+    pub state: String,
+    pub transaction_id: Option<String>,
+    pub transaction_state: Option<String>,
     pub transaction_has_writes: bool,
-    pub client_addr:            Option<String>,
-    pub opened_at_ms:           i64,
-    pub last_seen_at_ms:        i64,
-    pub last_method:            Option<String>,
+    pub client_addr: Option<String>,
+    pub opened_at_ms: i64,
+    pub last_seen_at_ms: i64,
+    pub last_method: Option<String>,
 }
 
 /// Active-session snapshot callback type.
@@ -379,19 +379,19 @@ mod tests {
         let view = SessionsView::new();
         let callback: SessionsSnapshotCallback = Arc::new(|| {
             vec![ConnectionSessionSnapshot {
-                session_id:             "pg-321-deadbeef".to_string(),
-                origin:                 "extension_bridge".to_string(),
-                backend_pid:            Some(321),
-                authenticated_user_id:  Some("bridge-user".to_string()),
-                current_schema:         Some("app".to_string()),
-                state:                  "idle in transaction".to_string(),
-                transaction_id:         Some("tx-pg-321-0".to_string()),
-                transaction_state:      Some("active".to_string()),
+                session_id: "pg-321-deadbeef".to_string(),
+                origin: "extension_bridge".to_string(),
+                backend_pid: Some(321),
+                authenticated_user_id: Some("bridge-user".to_string()),
+                current_schema: Some("app".to_string()),
+                state: "idle in transaction".to_string(),
+                transaction_id: Some("tx-pg-321-0".to_string()),
+                transaction_state: Some("active".to_string()),
                 transaction_has_writes: true,
-                client_addr:            Some("127.0.0.1:40000".to_string()),
-                opened_at_ms:           1,
-                last_seen_at_ms:        2,
-                last_method:            Some("ExecuteQuery".to_string()),
+                client_addr: Some("127.0.0.1:40000".to_string()),
+                opened_at_ms: 1,
+                last_seen_at_ms: 2,
+                last_method: Some("ExecuteQuery".to_string()),
             }]
         });
         view.set_snapshot_callback(callback);

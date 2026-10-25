@@ -97,15 +97,15 @@ fn in_subquery_normalizes_to_authorization_relation() {
     assert_eq!(
         program,
         PolicyProgram::AuthorizationRelation(AuthorizationRelation {
-            protected_table:   table_id(&messages),
-            protected_keys:    vec![2],
-            relation_table:    TableId::from_strings("chat", "group_members"),
-            relation_keys:     vec![2],
-            principal_column:  1,
-            principal:         PrincipalExpr::CurrentUser,
+            protected_table: table_id(&messages),
+            protected_keys: vec![2],
+            relation_table: TableId::from_strings("chat", "group_members"),
+            relation_keys: vec![2],
+            principal_column: 1,
+            principal: PrincipalExpr::CurrentUser,
             static_predicates: Vec::new(),
-            dependencies:      vec![TableId::from_strings("chat", "group_members")],
-            invalidation:      InvalidationStrategy::TargetedPrincipal,
+            dependencies: vec![TableId::from_strings("chat", "group_members")],
+            invalidation: InvalidationStrategy::TargetedPrincipal,
         })
     );
 }

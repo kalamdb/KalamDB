@@ -45,11 +45,11 @@ const SERVER_LOG_MAX_LINE_BYTES: usize = LOG_TAIL.max_line_bytes;
 #[derive(Debug)]
 struct JsonLogEntry {
     timestamp: String,
-    level:     String,
-    thread:    Option<String>,
-    target:    Option<String>,
-    line:      Option<i64>,
-    message:   String,
+    level: String,
+    thread: Option<String>,
+    target: Option<String>,
+    line: Option<i64>,
+    message: String,
 }
 
 /// Raw JSON log entry structure.
@@ -59,13 +59,13 @@ struct JsonLogEntry {
 #[derive(Debug, serde::Deserialize)]
 struct RawJsonLogEntry {
     timestamp: Option<String>,
-    level:     Option<String>,
+    level: Option<String>,
     #[serde(alias = "threadName")]
-    thread:    Option<String>,
-    target:    Option<String>,
-    line:      Option<i64>,
-    message:   Option<String>,
-    fields:    Option<RawJsonLogFields>,
+    thread: Option<String>,
+    target: Option<String>,
+    line: Option<i64>,
+    message: Option<String>,
+    fields: Option<RawJsonLogFields>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -77,11 +77,11 @@ impl RawJsonLogEntry {
     fn into_entry(self) -> Option<JsonLogEntry> {
         Some(JsonLogEntry {
             timestamp: self.timestamp?,
-            level:     self.level?,
-            thread:    self.thread,
-            target:    self.target,
-            line:      self.line,
-            message:   self.message.or_else(|| self.fields.and_then(|fields| fields.message))?,
+            level: self.level?,
+            thread: self.thread,
+            target: self.target,
+            line: self.line,
+            message: self.message.or_else(|| self.fields.and_then(|fields| fields.message))?,
         })
     }
 }

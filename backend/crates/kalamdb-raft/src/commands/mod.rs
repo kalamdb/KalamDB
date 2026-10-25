@@ -42,8 +42,8 @@ pub enum RaftCommand {
     TransactionCommit {
         #[serde(default)]
         required_meta_index: u64,
-        transaction_id:      TransactionId,
-        mutations:           Vec<StagedMutation>,
+        transaction_id: TransactionId,
+        mutations: Vec<StagedMutation>,
     },
 }
 

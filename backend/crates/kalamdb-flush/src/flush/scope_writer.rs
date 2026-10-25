@@ -8,18 +8,18 @@ use super::base::{helpers, FlushScopeHook, FlushTableMetadata};
 use crate::{error::FlushResultExt, FlushError, FlushManifestHelper, Result};
 
 pub(crate) struct FlushScopeWriteResult {
-    pub rows_count:       usize,
+    pub rows_count: usize,
     pub destination_path: String,
 }
 
 pub(crate) struct FlushScopeWriter<'a> {
-    table_id:        &'a TableId,
-    table_type:      TableType,
-    schema:          &'a SchemaRef,
-    storage_cached:  &'a Arc<StorageCached>,
+    table_id: &'a TableId,
+    table_type: TableType,
+    schema: &'a SchemaRef,
+    storage_cached: &'a Arc<StorageCached>,
     manifest_helper: &'a FlushManifestHelper,
-    metadata:        &'a FlushTableMetadata,
-    scope_hook:      &'a dyn FlushScopeHook,
+    metadata: &'a FlushTableMetadata,
+    scope_hook: &'a dyn FlushScopeHook,
 }
 
 impl<'a> FlushScopeWriter<'a> {

@@ -39,14 +39,14 @@ pub struct BatchControl {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version_domain: Option<VersionDomain>,
     /// Current batch number (0-indexed).
-    pub batch_num:      u32,
+    pub batch_num: u32,
     /// Whether more batches are available to fetch.
-    pub has_more:       bool,
+    pub has_more: bool,
     /// Loading status for the subscription.
-    pub status:         BatchStatus,
+    pub status: BatchStatus,
     /// The version of the last row in this batch (used for subsequent requests).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_seq_id:    Option<VersionId>,
+    pub last_seq_id: Option<VersionId>,
 }
 
 impl BatchControl {
@@ -109,16 +109,16 @@ impl BatchControl {
 pub struct SubscriptionOptions {
     /// Required with `from` for SHARED tables; copied from the subscription ack.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version_domain:     Option<VersionDomain>,
+    pub version_domain: Option<VersionDomain>,
     /// Hint for server-side batch sizing during initial data load.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub batch_size:         Option<usize>,
+    pub batch_size: Option<usize>,
     /// Number of last (newest) rows to fetch for initial data.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_rows:          Option<u32>,
+    pub last_rows: Option<u32>,
     /// Resume subscription from a specific row version.
     #[serde(skip_serializing_if = "Option::is_none", alias = "from_seq_id")]
-    pub from:               Option<VersionId>,
+    pub from: Option<VersionId>,
     /// Client-side control for automatically requesting subsequent initial data batches.
     #[serde(default, skip_serializing, alias = "autoFetchBatches")]
     pub auto_fetch_batches: Option<bool>,
@@ -175,9 +175,9 @@ impl SubscriptionOptions {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SubscriptionRequest {
     /// Unique subscription identifier (client-generated).
-    pub id:      String,
+    pub id: String,
     /// SQL query for live updates (must be a SELECT statement).
-    pub sql:     String,
+    pub sql: String,
     /// Optional subscription options.
     #[serde(default)]
     pub options: Option<SubscriptionOptions>,
@@ -189,8 +189,8 @@ pub struct SubscriptionRequest {
 pub enum ServerMessage {
     /// Authentication successful response (browser clients only).
     AuthSuccess {
-        user:     UserId,
-        role:     Role,
+        user: UserId,
+        role: Role,
         protocol: ProtocolOptions,
     },
     /// Authentication failed response (browser clients only).
@@ -198,30 +198,30 @@ pub enum ServerMessage {
     /// Acknowledgement of successful subscription registration.
     SubscriptionAck {
         subscription_id: String,
-        total_rows:      u32,
-        batch_control:   BatchControl,
-        schema:          Vec<SchemaField>,
+        total_rows: u32,
+        batch_control: BatchControl,
+        schema: Vec<SchemaField>,
     },
     /// Initial data batch sent after subscription or on client request.
     InitialDataBatch {
         subscription_id: String,
-        rows:            Vec<HashMap<String, KalamCellValue>>,
-        batch_control:   BatchControl,
+        rows: Vec<HashMap<String, KalamCellValue>>,
+        batch_control: BatchControl,
     },
     /// Change notification for INSERT/UPDATE/DELETE operations.
     Change {
         subscription_id: String,
-        change_type:     ChangeTypeRaw,
+        change_type: ChangeTypeRaw,
         #[serde(skip_serializing_if = "Option::is_none")]
-        rows:            Option<Vec<HashMap<String, KalamCellValue>>>,
+        rows: Option<Vec<HashMap<String, KalamCellValue>>>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        old_values:      Option<Vec<HashMap<String, KalamCellValue>>>,
+        old_values: Option<Vec<HashMap<String, KalamCellValue>>>,
     },
     /// Error notification.
     Error {
         subscription_id: String,
-        code:            String,
-        message:         String,
+        code: String,
+        message: String,
     },
 }
 
@@ -234,7 +234,7 @@ pub enum ClientMessage {
     Authenticate {
         #[serde(flatten)]
         credentials: crate::websocket_auth::WsAuthCredentials,
-        protocol:    ProtocolOptions,
+        protocol: ProtocolOptions,
     },
     /// Subscribe to live query updates.
     Subscribe { subscription: SubscriptionRequest },
@@ -242,7 +242,7 @@ pub enum ClientMessage {
     NextBatch {
         subscription_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        last_seq_id:     Option<VersionId>,
+        last_seq_id: Option<VersionId>,
     },
     /// Unsubscribe from live query.
     Unsubscribe { subscription_id: String },

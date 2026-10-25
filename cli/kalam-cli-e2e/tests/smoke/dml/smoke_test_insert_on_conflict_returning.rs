@@ -11,7 +11,7 @@ use serde_json::Value;
 use crate::common::*;
 
 struct UsersFixture {
-    namespace:  String,
+    namespace: String,
     full_table: String,
 }
 

@@ -216,17 +216,17 @@ mod tests {
 
     fn sample_failed_record() -> MigrationRecord {
         MigrationRecord {
-            migration_id:  "0001_auto.sql".into(),
-            namespace:     SchemaId::new("dev"),
+            migration_id: "0001_auto.sql".into(),
+            namespace: SchemaId::new("dev"),
             migration_key: Some("dev:0001_auto.sql".into()),
-            name:          "auto".into(),
-            checksum:      "abc".into(),
-            status:        MigrationStatus::Failed,
-            started_at:    None,
-            finished_at:   None,
+            name: "auto".into(),
+            checksum: "abc".into(),
+            status: MigrationStatus::Failed,
+            started_at: None,
+            finished_at: None,
             error_message: Some("table already exists".into()),
-            sql:           None,
-            source:        Some("0001_auto.sql".into()),
+            sql: None,
+            source: Some("0001_auto.sql".into()),
             kalam_version: None,
         }
     }

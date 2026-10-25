@@ -14,20 +14,20 @@ use crate::{commit_sequence::SNAPSHOT_UNSET, ExecutionOwnerKey, TransactionRaftB
 /// Hot transaction metadata kept separate from the staged write buffer.
 #[derive(Debug, Clone)]
 pub struct TransactionHandle {
-    pub transaction_id:     TransactionId,
-    pub owner_key:          ExecutionOwnerKey,
-    pub owner_id:           Arc<str>,
-    pub origin:             TransactionOrigin,
-    pub state:              TransactionState,
-    pub raft_binding:       TransactionRaftBinding,
+    pub transaction_id: TransactionId,
+    pub owner_key: ExecutionOwnerKey,
+    pub owner_id: Arc<str>,
+    pub origin: TransactionOrigin,
+    pub state: TransactionState,
+    pub raft_binding: TransactionRaftBinding,
     /// Pinned group frontier (`SNAPSHOT_UNSET` until first data access).
     pub snapshot_log_index: Arc<AtomicU64>,
-    pub started_at:         Instant,
-    pub last_activity_at:   Instant,
-    pub write_count:        usize,
-    pub write_bytes:        usize,
-    pub touched_tables:     HashSet<TableId>,
-    pub has_write_set:      bool,
+    pub started_at: Instant,
+    pub last_activity_at: Instant,
+    pub write_count: usize,
+    pub write_bytes: usize,
+    pub touched_tables: HashSet<TableId>,
+    pub has_write_set: bool,
 }
 
 impl TransactionHandle {

@@ -27,13 +27,13 @@ const STOP_POLL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DevSession {
-    pub pid:          u32,
-    pub started_at:   String,
+    pub pid: u32,
+    pub started_at: String,
     pub project_root: PathBuf,
-    pub log_path:     PathBuf,
-    pub exe:          PathBuf,
+    pub log_path: PathBuf,
+    pub exe: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url:          Option<String>,
+    pub url: Option<String>,
 }
 
 pub async fn start_background_session(ctx: &WorkflowContext, force: bool) -> Result<()> {
@@ -571,7 +571,8 @@ mod tests {
 
     #[test]
     fn agent_error_ignores_stale_error_before_session_marker() {
-        let log = "KALAM_ERROR code=SCHEMA_FAILED object=\"old\"\n--- kalam dev start ---\nstarting\n\
+        let log =
+            "KALAM_ERROR code=SCHEMA_FAILED object=\"old\"\n--- kalam dev start ---\nstarting\n\
                    KALAM_READY url=http://127.0.0.1:2900\n";
         assert!(agent_error_from_log(current_session_log(log)).is_none());
         assert!(last_matching_line(current_session_log(log), "KALAM_READY").is_some());
@@ -586,12 +587,12 @@ mod tests {
     #[test]
     fn session_json_roundtrip() {
         let session = DevSession {
-            pid:          42,
-            started_at:   "2026-08-28T00:00:00Z".into(),
+            pid: 42,
+            started_at: "2026-08-28T00:00:00Z".into(),
             project_root: PathBuf::from("/tmp/app"),
-            log_path:     PathBuf::from("/tmp/app/kalam/cli/logs/kalam.log"),
-            exe:          PathBuf::from("/usr/bin/kalam"),
-            url:          Some("http://127.0.0.1:2900".into()),
+            log_path: PathBuf::from("/tmp/app/kalam/cli/logs/kalam.log"),
+            exe: PathBuf::from("/usr/bin/kalam"),
+            url: Some("http://127.0.0.1:2900".into()),
         };
         let encoded = serde_json::to_string(&session).unwrap();
         let decoded: DevSession = serde_json::from_str(&encoded).unwrap();

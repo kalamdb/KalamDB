@@ -21,17 +21,17 @@ pub enum SharedDataCommand {
         /// Watermark: Meta group's last_applied_index at proposal time
         required_meta_index: u64,
         #[serde(default)]
-        transaction_id:      Option<TransactionId>,
+        transaction_id: Option<TransactionId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        actor_user_id:       Option<UserId>,
-        table_id:            TableId,
+        actor_user_id: Option<UserId>,
+        table_id: TableId,
         /// Rows to insert. Empty when [`Self::Insert::encoded_fields`] is set.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        rows:                Vec<kalamdb_commons::models::rows::Row>,
+        rows: Vec<kalamdb_commons::models::rows::Row>,
         /// Ordinal KOBJ field payloads (same codec as RocksDB rows).
         /// Avoids FlexBuffering DataFusion `ScalarValue` maps on the Raft log.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        encoded_fields:      Vec<Vec<u8>>,
+        encoded_fields: Vec<Vec<u8>>,
     },
 
     /// Update rows in a shared table
@@ -39,17 +39,17 @@ pub enum SharedDataCommand {
         /// Watermark: Meta group's last_applied_index at proposal time
         required_meta_index: u64,
         #[serde(default)]
-        transaction_id:      Option<TransactionId>,
+        transaction_id: Option<TransactionId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        actor_user_id:       Option<UserId>,
-        table_id:            TableId,
+        actor_user_id: Option<UserId>,
+        table_id: TableId,
         /// One replacement row per final primary key.
-        updates:             Vec<kalamdb_commons::models::rows::Row>,
+        updates: Vec<kalamdb_commons::models::rows::Row>,
         /// Primary keys for a multi-row update. When set, this is the final-row list.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        pk_values:           Option<Vec<String>>,
+        pk_values: Option<Vec<String>>,
         /// Single primary key used when `pk_values` is absent.
-        filter:              Option<String>,
+        filter: Option<String>,
     },
 
     /// Delete rows from a shared table
@@ -57,12 +57,12 @@ pub enum SharedDataCommand {
         /// Watermark: Meta group's last_applied_index at proposal time
         required_meta_index: u64,
         #[serde(default)]
-        transaction_id:      Option<TransactionId>,
+        transaction_id: Option<TransactionId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        actor_user_id:       Option<UserId>,
-        table_id:            TableId,
+        actor_user_id: Option<UserId>,
+        table_id: TableId,
         /// Primary keys to delete
-        pk_values:           Option<Vec<String>>,
+        pk_values: Option<Vec<String>>,
     },
 }
 
@@ -161,15 +161,12 @@ mod tests {
     fn test_shared_data_command_watermark() {
         let mut cmd = SharedDataCommand::Update {
             required_meta_index: 300,
-            transaction_id:      None,
-            actor_user_id:       None,
-            table_id:            TableId::new(
-                SchemaId::from("ns"),
-                TableName::from("shared_table"),
-            ),
-            updates:             vec![],
-            pk_values:           None,
-            filter:              None,
+            transaction_id: None,
+            actor_user_id: None,
+            table_id: TableId::new(SchemaId::from("ns"), TableName::from("shared_table")),
+            updates: vec![],
+            pk_values: None,
+            filter: None,
         };
 
         assert_eq!(cmd.required_meta_index(), 300);
@@ -182,11 +179,11 @@ mod tests {
         let table_id = TableId::new(SchemaId::from("shared_ns"), TableName::from("shared_t"));
         let cmd = SharedDataCommand::Insert {
             required_meta_index: 10,
-            transaction_id:      None,
-            actor_user_id:       None,
-            table_id:            table_id.clone(),
-            rows:                vec![],
-            encoded_fields:      Vec::new(),
+            transaction_id: None,
+            actor_user_id: None,
+            table_id: table_id.clone(),
+            rows: vec![],
+            encoded_fields: Vec::new(),
         };
 
         assert_eq!(cmd.table_id(), &table_id);
@@ -196,10 +193,10 @@ mod tests {
     fn test_shared_command_serialization() {
         let cmd = SharedDataCommand::Delete {
             required_meta_index: 999,
-            transaction_id:      None,
-            actor_user_id:       None,
-            table_id:            TableId::new(SchemaId::from("shared"), TableName::from("data")),
-            pk_values:           None,
+            transaction_id: None,
+            actor_user_id: None,
+            table_id: TableId::new(SchemaId::from("shared"), TableName::from("data")),
+            pk_values: None,
         };
 
         assert_eq!(cmd.required_meta_index(), 999);
@@ -212,27 +209,27 @@ mod tests {
         let commands = vec![
             SharedDataCommand::Insert {
                 required_meta_index: 10,
-                transaction_id:      None,
-                actor_user_id:       None,
-                table_id:            table_id.clone(),
-                rows:                vec![],
-                encoded_fields:      Vec::new(),
+                transaction_id: None,
+                actor_user_id: None,
+                table_id: table_id.clone(),
+                rows: vec![],
+                encoded_fields: Vec::new(),
             },
             SharedDataCommand::Update {
                 required_meta_index: 20,
-                transaction_id:      None,
-                actor_user_id:       None,
-                table_id:            table_id.clone(),
-                updates:             vec![],
-                pk_values:           None,
-                filter:              None,
+                transaction_id: None,
+                actor_user_id: None,
+                table_id: table_id.clone(),
+                updates: vec![],
+                pk_values: None,
+                filter: None,
             },
             SharedDataCommand::Delete {
                 required_meta_index: 30,
-                transaction_id:      None,
-                actor_user_id:       None,
-                table_id:            table_id.clone(),
-                pk_values:           None,
+                transaction_id: None,
+                actor_user_id: None,
+                table_id: table_id.clone(),
+                pk_values: None,
             },
         ];
 
@@ -248,29 +245,29 @@ mod tests {
 
         let mut insert = SharedDataCommand::Insert {
             required_meta_index: 100,
-            transaction_id:      None,
-            actor_user_id:       None,
-            table_id:            table_id.clone(),
-            rows:                vec![],
-            encoded_fields:      Vec::new(),
+            transaction_id: None,
+            actor_user_id: None,
+            table_id: table_id.clone(),
+            rows: vec![],
+            encoded_fields: Vec::new(),
         };
 
         let mut update = SharedDataCommand::Update {
             required_meta_index: 100,
-            transaction_id:      None,
-            actor_user_id:       None,
-            table_id:            table_id.clone(),
-            updates:             vec![],
-            pk_values:           None,
-            filter:              None,
+            transaction_id: None,
+            actor_user_id: None,
+            table_id: table_id.clone(),
+            updates: vec![],
+            pk_values: None,
+            filter: None,
         };
 
         let mut delete = SharedDataCommand::Delete {
             required_meta_index: 100,
-            transaction_id:      None,
-            actor_user_id:       None,
-            table_id:            table_id.clone(),
-            pk_values:           None,
+            transaction_id: None,
+            actor_user_id: None,
+            table_id: table_id.clone(),
+            pk_values: None,
         };
 
         insert.set_required_meta_index(0);
@@ -287,11 +284,11 @@ mod tests {
         let actor_user_id = UserId::from("actor_1");
         let cmd = SharedDataCommand::Insert {
             required_meta_index: 10,
-            transaction_id:      None,
-            actor_user_id:       Some(actor_user_id.clone()),
-            table_id:            TableId::new(SchemaId::from("shared"), TableName::from("data")),
-            rows:                vec![],
-            encoded_fields:      Vec::new(),
+            transaction_id: None,
+            actor_user_id: Some(actor_user_id.clone()),
+            table_id: TableId::new(SchemaId::from("shared"), TableName::from("data")),
+            rows: vec![],
+            encoded_fields: Vec::new(),
         };
 
         assert_eq!(cmd.actor_user_id(), Some(&actor_user_id));
@@ -302,33 +299,33 @@ mod tests {
         let table_id = TableId::new(SchemaId::from("n"), TableName::from("t"));
         let insert = SharedDataCommand::Insert {
             required_meta_index: 0,
-            transaction_id:      None,
-            actor_user_id:       None,
-            table_id:            table_id.clone(),
-            rows:                vec![],
-            encoded_fields:      vec![vec![1], vec![2], vec![3]],
+            transaction_id: None,
+            actor_user_id: None,
+            table_id: table_id.clone(),
+            rows: vec![],
+            encoded_fields: vec![vec![1], vec![2], vec![3]],
         };
         assert_eq!(insert.row_slot_count(), 3);
 
         let update = SharedDataCommand::Update {
             required_meta_index: 0,
-            transaction_id:      None,
-            actor_user_id:       None,
-            table_id:            table_id.clone(),
-            updates:             vec![],
-            pk_values:           Some(vec!["a".into(), "b".into()]),
-            filter:              None,
+            transaction_id: None,
+            actor_user_id: None,
+            table_id: table_id.clone(),
+            updates: vec![],
+            pk_values: Some(vec!["a".into(), "b".into()]),
+            filter: None,
         };
         assert_eq!(update.row_slot_count(), 2);
 
         let single = SharedDataCommand::Update {
             required_meta_index: 0,
-            transaction_id:      None,
-            actor_user_id:       None,
-            table_id:            table_id.clone(),
-            updates:             vec![],
-            pk_values:           None,
-            filter:              Some("a".into()),
+            transaction_id: None,
+            actor_user_id: None,
+            table_id: table_id.clone(),
+            updates: vec![],
+            pk_values: None,
+            filter: Some("a".into()),
         };
         assert_eq!(single.row_slot_count(), 1);
 

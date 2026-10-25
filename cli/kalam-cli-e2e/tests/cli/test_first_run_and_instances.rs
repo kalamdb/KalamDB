@@ -28,12 +28,12 @@ const LONG_AGO: &str = "2000-01-01T00:00:00Z";
 #[derive(Clone)]
 struct ServerMode {
     local_enabled: bool,
-    password:      String,
+    password: String,
 }
 
 struct Hit {
-    request:       String,
-    body:          String,
+    request: String,
+    body: String,
     authorization: String,
 }
 
@@ -150,10 +150,10 @@ fn http(status: &str, body: &str) -> Vec<u8> {
 }
 
 struct IsolatedProject {
-    dir:              PathBuf,
-    home:             PathBuf,
+    dir: PathBuf,
+    home: PathBuf,
     credentials_path: PathBuf,
-    namespace:        String,
+    namespace: String,
 }
 
 fn init_project(home: &Path, root: &Path, name: &str, template: Option<&str>) -> IsolatedProject {
@@ -329,7 +329,7 @@ fn first_run_sql_uses_the_project_namespace_password_and_generated_names() {
     let project = init_project(&home, root.path(), "shop-live", None);
     let (server_url, _mode, hits) = start_mock_server(ServerMode {
         local_enabled: true,
-        password:      "project-root-secret".into(),
+        password: "project-root-secret".into(),
     });
     point_project_at(&project, &server_url, "project-root-secret");
     write_owned_instance(&project.dir, &server_url);
@@ -444,11 +444,11 @@ fn cloud_oidc_login_stays_separate_from_the_project_database() {
     let project = init_project(&home, root.path(), "shop-cloud", None);
     let (project_url, project_mode, project_hits) = start_mock_server(ServerMode {
         local_enabled: true,
-        password:      "project-root-secret".into(),
+        password: "project-root-secret".into(),
     });
     let (cloud_url, cloud_mode, cloud_hits) = start_mock_server(ServerMode {
         local_enabled: true,
-        password:      "cloud-password".into(),
+        password: "cloud-password".into(),
     });
     point_project_at(&project, &project_url, "project-root-secret");
     write_owned_instance(&project.dir, &project_url);
@@ -679,11 +679,11 @@ fn several_local_servers_do_not_share_a_port_namespace_or_password() {
     let east = init_project(&home, root.path(), "shop-east", None);
     let (live_url, _, live_hits) = start_mock_server(ServerMode {
         local_enabled: true,
-        password:      "live-root-secret".into(),
+        password: "live-root-secret".into(),
     });
     let (east_url, _, east_hits) = start_mock_server(ServerMode {
         local_enabled: true,
-        password:      "east-root-secret".into(),
+        password: "east-root-secret".into(),
     });
     point_project_at(&live, &live_url, "live-root-secret");
     point_project_at(&paused, &live_url, "paused-root-secret");

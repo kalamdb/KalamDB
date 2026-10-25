@@ -32,100 +32,97 @@ fn chat_ns() -> SchemaId {
 
 fn implicit_row_type() -> CatalogType {
     CatalogType {
-        type_id:        TypeId::from_parts(Some(&chat_ns()), "message"),
-        namespace_id:   chat_ns(),
-        name:           "message".to_string(),
-        kind:           CatalogTypeKind::ImplicitTableRow,
-        table_id:       Some(TableId::from_strings("chat", "messages")),
+        type_id: TypeId::from_parts(Some(&chat_ns()), "message"),
+        namespace_id: chat_ns(),
+        name: "message".to_string(),
+        kind: CatalogTypeKind::ImplicitTableRow,
+        table_id: Some(TableId::from_strings("chat", "messages")),
         source_type_id: None,
-        comment:        Some("implicit row".to_string()),
-        type_revision:  1,
-        next_slot:      1,
+        comment: Some("implicit row".to_string()),
+        type_revision: 1,
+        next_slot: 1,
     }
 }
 
 fn address_type() -> CatalogType {
     CatalogType {
-        type_id:        TypeId::from_parts(Some(&chat_ns()), "address"),
-        namespace_id:   chat_ns(),
-        name:           "address".to_string(),
-        kind:           CatalogTypeKind::Composite,
-        table_id:       None,
+        type_id: TypeId::from_parts(Some(&chat_ns()), "address"),
+        namespace_id: chat_ns(),
+        name: "address".to_string(),
+        kind: CatalogTypeKind::Composite,
+        table_id: None,
         source_type_id: None,
-        comment:        None,
-        type_revision:  1,
-        next_slot:      1,
+        comment: None,
+        type_revision: 1,
+        next_slot: 1,
     }
 }
 
 fn street_field() -> CatalogTypeField {
     CatalogTypeField {
-        type_field_id:    TypeFieldId::new(
-            &TypeId::from_parts(Some(&chat_ns()), "address"),
-            "street",
-        )
-        .unwrap(),
-        type_id:          TypeId::from_parts(Some(&chat_ns()), "address"),
-        name:             "street".to_string(),
-        ordinal:          0,
-        field_type_id:    None,
-        type_name:        "text".to_string(),
-        is_array:         false,
-        not_null:         true,
-        nonempty:         false,
-        data_type:        Some(kalamdb_commons::KalamDataType::Text),
-        slot:             1,
-        dropped:          false,
+        type_field_id: TypeFieldId::new(&TypeId::from_parts(Some(&chat_ns()), "address"), "street")
+            .unwrap(),
+        type_id: TypeId::from_parts(Some(&chat_ns()), "address"),
+        name: "street".to_string(),
+        ordinal: 0,
+        field_type_id: None,
+        type_name: "text".to_string(),
+        is_array: false,
+        not_null: true,
+        nonempty: false,
+        data_type: Some(kalamdb_commons::KalamDataType::Text),
+        slot: 1,
+        dropped: false,
         element_nullable: true,
     }
 }
 
 fn nested_location_field() -> CatalogTypeField {
     CatalogTypeField {
-        type_field_id:    TypeFieldId::new(
+        type_field_id: TypeFieldId::new(
             &TypeId::from_parts(Some(&chat_ns()), "message"),
             "location",
         )
         .unwrap(),
-        type_id:          TypeId::from_parts(Some(&chat_ns()), "message"),
-        name:             "location".to_string(),
-        ordinal:          0,
-        field_type_id:    Some(TypeId::from_parts(Some(&chat_ns()), "address")),
-        type_name:        "chat.address".to_string(),
-        is_array:         false,
-        not_null:         false,
-        nonempty:         false,
-        data_type:        None,
-        slot:             1,
-        dropped:          false,
+        type_id: TypeId::from_parts(Some(&chat_ns()), "message"),
+        name: "location".to_string(),
+        ordinal: 0,
+        field_type_id: Some(TypeId::from_parts(Some(&chat_ns()), "address")),
+        type_name: "chat.address".to_string(),
+        is_array: false,
+        not_null: false,
+        nonempty: false,
+        data_type: None,
+        slot: 1,
+        dropped: false,
         element_nullable: true,
     }
 }
 
 fn create_message_routine() -> CatalogRoutine {
     CatalogRoutine {
-        routine_id:         RoutineId::from_parts(Some(&chat_ns()), "create_message"),
-        namespace_id:       chat_ns(),
-        name:               "create_message".to_string(),
-        owner:              UserId::new("root"),
-        security:           RoutineSecurityMode::Definer,
-        language:           Some("typescript".to_string()),
-        body:               None,
-        return_type_id:     Some(TypeId::from_parts(Some(&chat_ns()), "message")),
-        return_type_name:   Some("chat.message".to_string()),
-        return_is_array:    false,
-        return_not_null:    true,
-        comment:            None,
-        return_data_type:   None,
+        routine_id: RoutineId::from_parts(Some(&chat_ns()), "create_message"),
+        namespace_id: chat_ns(),
+        name: "create_message".to_string(),
+        owner: UserId::new("root"),
+        security: RoutineSecurityMode::Definer,
+        language: Some("typescript".to_string()),
+        body: None,
+        return_type_id: Some(TypeId::from_parts(Some(&chat_ns()), "message")),
+        return_type_name: Some("chat.message".to_string()),
+        return_is_array: false,
+        return_not_null: true,
+        comment: None,
+        return_data_type: None,
         inline_source_hash: None,
         inline_artifact_id: None,
-        kind:               kalamdb_commons::models::RoutineKind::default(),
-        volatility:         kalamdb_commons::models::RoutineVolatility::default(),
-        null_safety:        kalamdb_commons::models::RoutineNullSafety::default(),
-        parallel_safety:    kalamdb_commons::models::RoutineParallelSafety::default(),
-        cost:               None,
-        rows:               None,
-        config_params:      None,
+        kind: kalamdb_commons::models::RoutineKind::default(),
+        volatility: kalamdb_commons::models::RoutineVolatility::default(),
+        null_safety: kalamdb_commons::models::RoutineNullSafety::default(),
+        parallel_safety: kalamdb_commons::models::RoutineParallelSafety::default(),
+        cost: None,
+        rows: None,
+        config_params: None,
     }
 }
 
@@ -153,15 +150,15 @@ fn implicit_row_type_and_alias_have_catalog_relationships() {
     stores.upsert_type(implicit_row_type()).unwrap();
 
     let alias = CatalogType {
-        type_id:        TypeId::from_parts(Some(&chat_ns()), "Message"),
-        namespace_id:   chat_ns(),
-        name:           "Message".to_string(),
-        kind:           CatalogTypeKind::RowAlias,
-        table_id:       None,
+        type_id: TypeId::from_parts(Some(&chat_ns()), "Message"),
+        namespace_id: chat_ns(),
+        name: "Message".to_string(),
+        kind: CatalogTypeKind::RowAlias,
+        table_id: None,
         source_type_id: Some(TypeId::from_parts(Some(&chat_ns()), "message")),
-        comment:        None,
-        type_revision:  1,
-        next_slot:      1,
+        comment: None,
+        type_revision: 1,
+        next_slot: 1,
     };
     stores.upsert_type(alias.clone()).unwrap();
 
@@ -230,27 +227,27 @@ fn routine_owner_security_and_grants_are_queryable() {
             0,
         )
         .unwrap(),
-        routine_id:   RoutineId::from_parts(Some(&chat_ns()), "create_message"),
-        name:         "payload".to_string(),
-        ordinal:      0,
-        type_id:      Some(TypeId::from_parts(Some(&chat_ns()), "message")),
-        type_name:    "chat.message".to_string(),
-        is_array:     false,
-        not_null:     true,
-        nonempty:     false,
-        data_type:    None,
-        mode:         kalamdb_commons::models::RoutineParameterMode::default(),
+        routine_id: RoutineId::from_parts(Some(&chat_ns()), "create_message"),
+        name: "payload".to_string(),
+        ordinal: 0,
+        type_id: Some(TypeId::from_parts(Some(&chat_ns()), "message")),
+        type_name: "chat.message".to_string(),
+        is_array: false,
+        not_null: true,
+        nonempty: false,
+        data_type: None,
+        mode: kalamdb_commons::models::RoutineParameterMode::default(),
         default_expr: None,
     };
     stores.upsert_parameter(param.clone()).unwrap();
 
     let grant = CatalogRoutineGrant {
-        grant_id:   RoutineGrantId::new(
+        grant_id: RoutineGrantId::new(
             &RoutineId::from_parts(Some(&chat_ns()), "create_message"),
             &RoutineGrantee::User,
         ),
         routine_id: RoutineId::from_parts(Some(&chat_ns()), "create_message"),
-        grantee:    RoutineGrantee::User,
+        grantee: RoutineGrantee::User,
     };
     stores.upsert_grant(grant.clone()).unwrap();
 
@@ -274,9 +271,9 @@ fn anonymous_grant_and_inline_artifact_fields_round_trip() {
     stores.upsert_routine(routine.clone()).unwrap();
 
     let grant = CatalogRoutineGrant {
-        grant_id:   RoutineGrantId::new(&routine.routine_id, &RoutineGrantee::Anonymous),
+        grant_id: RoutineGrantId::new(&routine.routine_id, &RoutineGrantee::Anonymous),
         routine_id: routine.routine_id.clone(),
-        grantee:    RoutineGrantee::Anonymous,
+        grantee: RoutineGrantee::Anonymous,
     };
     stores.upsert_grant(grant.clone()).unwrap();
 
@@ -322,54 +319,54 @@ fn drop_namespace_catalog_removes_routines_types_schedules_and_spares_other_sche
                 0,
             )
             .unwrap(),
-            routine_id:   RoutineId::from_parts(Some(&chat_ns()), "create_message"),
-            name:         "payload".to_string(),
-            ordinal:      0,
-            type_id:      Some(TypeId::from_parts(Some(&chat_ns()), "message")),
-            type_name:    "chat.message".to_string(),
-            is_array:     false,
-            not_null:     true,
-            nonempty:     false,
-            data_type:    None,
-            mode:         kalamdb_commons::models::RoutineParameterMode::default(),
+            routine_id: RoutineId::from_parts(Some(&chat_ns()), "create_message"),
+            name: "payload".to_string(),
+            ordinal: 0,
+            type_id: Some(TypeId::from_parts(Some(&chat_ns()), "message")),
+            type_name: "chat.message".to_string(),
+            is_array: false,
+            not_null: true,
+            nonempty: false,
+            data_type: None,
+            mode: kalamdb_commons::models::RoutineParameterMode::default(),
             default_expr: None,
         })
         .unwrap();
 
     let other_ns = SchemaId::new("other");
     let other_type = CatalogType {
-        type_id:        TypeId::from_parts(Some(&other_ns), "keep"),
-        namespace_id:   other_ns.clone(),
-        name:           "keep".to_string(),
-        kind:           CatalogTypeKind::Composite,
-        table_id:       None,
+        type_id: TypeId::from_parts(Some(&other_ns), "keep"),
+        namespace_id: other_ns.clone(),
+        name: "keep".to_string(),
+        kind: CatalogTypeKind::Composite,
+        table_id: None,
         source_type_id: None,
-        comment:        None,
-        type_revision:  1,
-        next_slot:      1,
+        comment: None,
+        type_revision: 1,
+        next_slot: 1,
     };
     stores.upsert_type(other_type.clone()).unwrap();
 
     let chat_schedule = CatalogSchedule {
-        schedule_id:       ScheduleId::from_parts(Some(&chat_ns()), "hourly"),
-        namespace_id:      chat_ns(),
-        name:              "hourly".into(),
-        routine_id:        RoutineId::from_parts(Some(&chat_ns()), "create_message"),
+        schedule_id: ScheduleId::from_parts(Some(&chat_ns()), "hourly"),
+        namespace_id: chat_ns(),
+        name: "hourly".into(),
+        routine_id: RoutineId::from_parts(Some(&chat_ns()), "create_message"),
         principal_user_id: UserId::new("root"),
-        cron:              None,
-        interval_ms:       Some(1000),
-        timezone:          "UTC".into(),
-        enabled:           true,
-        next_run_at:       1000,
-        run_id:            None,
-        owner:             None,
-        running_until:     None,
-        last_started_at:   None,
-        last_finished_at:  None,
-        last_error:        None,
-        run_count:         0,
-        skip_count:        0,
-        version:           "created".into(),
+        cron: None,
+        interval_ms: Some(1000),
+        timezone: "UTC".into(),
+        enabled: true,
+        next_run_at: 1000,
+        run_id: None,
+        owner: None,
+        running_until: None,
+        last_started_at: None,
+        last_finished_at: None,
+        last_error: None,
+        run_count: 0,
+        skip_count: 0,
+        version: "created".into(),
     };
     assert!(stores
         .compare_exchange_schedule(&chat_schedule.schedule_id, None, Some(&chat_schedule))
@@ -424,15 +421,15 @@ fn drop_type_is_blocked_by_alias_nested_field_and_routine() {
         .unwrap();
 
     let alias = CatalogType {
-        type_id:        TypeId::from_parts(Some(&chat_ns()), "Message"),
-        namespace_id:   chat_ns(),
-        name:           "Message".to_string(),
-        kind:           CatalogTypeKind::RowAlias,
-        table_id:       None,
+        type_id: TypeId::from_parts(Some(&chat_ns()), "Message"),
+        namespace_id: chat_ns(),
+        name: "Message".to_string(),
+        kind: CatalogTypeKind::RowAlias,
+        table_id: None,
         source_type_id: Some(TypeId::from_parts(Some(&chat_ns()), "message")),
-        comment:        None,
-        type_revision:  1,
-        next_slot:      1,
+        comment: None,
+        type_revision: 1,
+        next_slot: 1,
     };
     stores.upsert_type(alias).unwrap();
     let err = stores.drop_type(&TypeId::from_parts(Some(&chat_ns()), "message")).unwrap_err();
@@ -479,9 +476,9 @@ fn function_rows(
     let revision_id = FunctionRevisionId::from_module_artifact(&module_id, &artifact_id);
     let artifact = CatalogFunctionArtifact {
         artifact_id: artifact_id.clone(),
-        size_bytes:  12,
-        runtime:     FunctionRuntime::Typescript,
-        created_at:  1,
+        size_bytes: 12,
+        runtime: FunctionRuntime::Typescript,
+        created_at: 1,
     };
     let revision = CatalogFunctionRevision {
         revision_id: revision_id.clone(),
@@ -571,34 +568,34 @@ fn dropping_a_trigger_clears_its_delivery_attempts() {
     let other_trigger_id = TriggerId::from("chat.other");
     let topic_id = TopicId::new("chat.events");
     let kept = CatalogTriggerAttempt {
-        attempt_id:       TriggerAttemptId::from("chat.other:0:1:1"),
-        trigger_id:       other_trigger_id,
-        topic_id:         topic_id.clone(),
-        partition_id:     0,
-        offset:           1,
-        event_id:         "chat.events:0:1".to_string(),
-        attempt:          1,
-        status:           "succeeded".to_string(),
-        lease_owner:      None,
+        attempt_id: TriggerAttemptId::from("chat.other:0:1:1"),
+        trigger_id: other_trigger_id,
+        topic_id: topic_id.clone(),
+        partition_id: 0,
+        offset: 1,
+        event_id: "chat.events:0:1".to_string(),
+        attempt: 1,
+        status: "succeeded".to_string(),
+        lease_owner: None,
         lease_expires_at: None,
-        error:            None,
-        created_at:       1,
-        updated_at:       1,
+        error: None,
+        created_at: 1,
+        updated_at: 1,
     };
     let stale = CatalogTriggerAttempt {
-        attempt_id:       TriggerAttemptId::from("chat.process:0:0:1"),
-        trigger_id:       trigger_id.clone(),
-        topic_id:         topic_id.clone(),
-        partition_id:     0,
-        offset:           0,
-        event_id:         "chat.events:0:0".to_string(),
-        attempt:          1,
-        status:           "succeeded".to_string(),
-        lease_owner:      None,
+        attempt_id: TriggerAttemptId::from("chat.process:0:0:1"),
+        trigger_id: trigger_id.clone(),
+        topic_id: topic_id.clone(),
+        partition_id: 0,
+        offset: 0,
+        event_id: "chat.events:0:0".to_string(),
+        attempt: 1,
+        status: "succeeded".to_string(),
+        lease_owner: None,
         lease_expires_at: None,
-        error:            None,
-        created_at:       1,
-        updated_at:       1,
+        error: None,
+        created_at: 1,
+        updated_at: 1,
     };
     stores.upsert_trigger_attempt(stale).unwrap();
     stores.upsert_trigger_attempt(kept.clone()).unwrap();

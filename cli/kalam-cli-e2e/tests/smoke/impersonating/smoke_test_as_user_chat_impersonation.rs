@@ -5,12 +5,12 @@ use std::time::Duration;
 use crate::common::*;
 
 struct ChatFixture {
-    namespace:      String,
+    namespace: String,
     messages_table: String,
-    service_user:   String,
-    regular_user:   String,
-    other_user:     String,
-    password:       String,
+    service_user: String,
+    regular_user: String,
+    other_user: String,
+    password: String,
 }
 
 impl ChatFixture {

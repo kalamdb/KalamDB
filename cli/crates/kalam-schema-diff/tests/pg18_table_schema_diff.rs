@@ -92,7 +92,7 @@ fn pg18_table_schema_diff_orders_schemas_types_tables_routines_and_drops() {
         "",
         &DiffOptions {
             allow_destructive: true,
-            default_schema:    None,
+            default_schema: None,
         },
     )
     .expect("reverse destructive diff");

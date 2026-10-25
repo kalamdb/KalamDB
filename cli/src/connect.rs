@@ -132,15 +132,15 @@ fn session_namespace(cli: &Cli, store: &FileCredentialStore) -> Option<kalamdb_c
             }
             let folder = summary.folder?;
             let selector = TargetSelector {
-                start_dir:   folder.clone(),
+                start_dir: folder.clone(),
                 project_dir: Some(folder),
-                global:      false,
-                env:         None,
-                url:         None,
-                host:        None,
-                port:        None,
-                namespace:   None,
-                instance:    None,
+                global: false,
+                env: None,
+                url: None,
+                host: None,
+                port: None,
+                namespace: None,
+                instance: None,
             };
             return resolve_target(&selector).ok().map(|target| target.namespace);
         }
@@ -209,7 +209,7 @@ impl ServerUrlSource {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ResolvedServerUrl {
-    value:  String,
+    value: String,
     source: ServerUrlSource,
 }
 
@@ -489,7 +489,7 @@ fn named_instance_url(name: &str, store: &FileCredentialStore) -> Result<Resolve
         )));
     };
     Ok(ResolvedServerUrl {
-        value:  normalize_and_validate_server_url(&url)?,
+        value: normalize_and_validate_server_url(&url)?,
         source: ServerUrlSource::StoredCredentials,
     })
 }
@@ -1808,7 +1808,7 @@ mod tests {
     }
 
     struct UnsetEnv {
-        key:      &'static str,
+        key: &'static str,
         previous: Option<String>,
     }
 

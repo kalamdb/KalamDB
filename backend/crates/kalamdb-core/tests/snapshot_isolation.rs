@@ -24,13 +24,13 @@ async fn scan_names(
 ) -> Vec<String> {
     let result = service
         .execute_scan(ScanRequest {
-            table_id:   table_id.clone(),
+            table_id: table_id.clone(),
             table_type: TableType::Shared,
             session_id: Some(session_id.to_string()),
-            columns:    vec![],
-            limit:      None,
-            user_id:    Some(user_id.clone()),
-            filters:    vec![],
+            columns: vec![],
+            limit: None,
+            user_id: Some(user_id.clone()),
+            filters: vec![],
         })
         .await
         .expect("scan succeeds");
@@ -74,11 +74,11 @@ async fn snapshot_isolation_hides_later_commits_from_open_transaction() {
 
     service
         .execute_insert(InsertRequest {
-            table_id:   table_id.clone(),
+            table_id: table_id.clone(),
             table_type: TableType::Shared,
             session_id: Some(session_a.to_string()),
-            user_id:    Some(user_id.clone()),
-            rows:       vec![row(1, "later")],
+            user_id: Some(user_id.clone()),
+            rows: vec![row(1, "later")],
         })
         .await
         .expect("autocommit insert succeeds");

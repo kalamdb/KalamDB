@@ -7,7 +7,7 @@ use crate::parser::KalamParser;
 #[derive(Debug, Clone)]
 pub enum PostgresSetting {
     Set {
-        name:  String,
+        name: String,
         value: Option<String>,
         local: bool,
     },
@@ -54,14 +54,14 @@ impl PostgresSetting {
                 }
             },
             Statement::Set(Set::SetTimeZone { local, value }) => Self::Set {
-                name:  "timezone".into(),
+                name: "timezone".into(),
                 value: Some(setting_value(value, false)?),
                 local: *local,
             },
             Statement::Reset(reset) => match &reset.reset {
                 Reset::ALL => Self::ResetAll,
                 Reset::ConfigurationParameter(name) => Self::Set {
-                    name:  canonical_name(&name.to_string()),
+                    name: canonical_name(&name.to_string()),
                     value: None,
                     local: false,
                 },

@@ -86,7 +86,7 @@ const ERR_EXPECTED_NAMESPACE: &str = "Expected STORAGE FLUSH ALL IN namespace";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlushTableStatement {
     /// Namespace containing the table
-    pub namespace:  SchemaId,
+    pub namespace: SchemaId,
     /// Table name to flush
     pub table_name: TableName,
 }
@@ -131,7 +131,7 @@ impl FlushTableStatement {
         parsing::validate_no_extra_tokens(&normalized, 4, "STORAGE FLUSH TABLE")?;
 
         Ok(Self {
-            namespace:  SchemaId::from(namespace),
+            namespace: SchemaId::from(namespace),
             table_name: TableName::from(table_name),
         })
     }

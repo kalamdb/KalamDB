@@ -6,7 +6,7 @@ use crate::common::*;
 
 struct CleanupGuard {
     namespace: String,
-    user:      String,
+    user: String,
 }
 
 impl Drop for CleanupGuard {
@@ -54,7 +54,7 @@ fn smoke_test_filter_pushdown() {
     let full_stream_table = format!("{}.{}", namespace, stream_table);
     let _cleanup = CleanupGuard {
         namespace: namespace.clone(),
-        user:      user.clone(),
+        user: user.clone(),
     };
 
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user));

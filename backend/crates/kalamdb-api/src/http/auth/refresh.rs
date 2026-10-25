@@ -132,16 +132,16 @@ mod tests {
     fn refresh_endpoint_only_accepts_refresh_token_type() {
         let now = chrono::Utc::now().timestamp() as usize;
         let refresh_claims = JwtClaims {
-            sub:            "u_1".to_string(),
-            iss:            "kalamdb".to_string(),
-            exp:            now + 3600,
-            iat:            now,
-            name:           None,
-            email:          None,
+            sub: "u_1".to_string(),
+            iss: "kalamdb".to_string(),
+            exp: now + 3600,
+            iat: now,
+            name: None,
+            email: None,
             email_verified: None,
-            role:           None,
-            auth_type:      None,
-            token_type:     Some(TokenType::Refresh),
+            role: None,
+            auth_type: None,
+            token_type: Some(TokenType::Refresh),
         };
         let access_claims = JwtClaims {
             token_type: Some(TokenType::Access),

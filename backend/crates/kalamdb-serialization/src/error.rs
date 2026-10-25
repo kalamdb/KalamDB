@@ -29,7 +29,7 @@ pub enum SerializationError {
     #[error("wrong object kind: expected {expected:?}, found {found:?}")]
     WrongObjectKind {
         expected: ObjectKind,
-        found:    ObjectKind,
+        found: ObjectKind,
     },
     /// Payload could not be encoded.
     #[error("encode failed: {0}")]

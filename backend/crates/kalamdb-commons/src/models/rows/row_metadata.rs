@@ -8,7 +8,7 @@ use crate::{ids::VersionId, PkBucketKey};
 /// (PK dedup + tombstone filtering) does not need the full row map.
 #[derive(Debug, Clone)]
 pub struct RowMetadata {
-    pub version:   VersionId,
-    pub deleted:   bool,
+    pub version: VersionId,
+    pub deleted: bool,
     pub pk_bucket: PkBucketKey,
 }

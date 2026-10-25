@@ -48,13 +48,13 @@ type PersistentGroupSet = (MetaGroup, Vec<UserDataGroup>, Vec<SharedDataGroup>);
 #[derive(Debug, Clone)]
 pub struct SnapshotInfo {
     /// The Raft group ID
-    pub group_id:       GroupId,
+    pub group_id: GroupId,
     /// The snapshot index (if available)
     pub snapshot_index: Option<u64>,
     /// Whether the snapshot was triggered successfully
-    pub success:        bool,
+    pub success: bool,
     /// Error message if the snapshot failed
-    pub error:          Option<String>,
+    pub error: Option<String>,
 }
 
 /// Information about a cluster action result
@@ -63,22 +63,22 @@ pub struct ClusterActionResult {
     /// The Raft group ID
     pub group_id: GroupId,
     /// Whether the action was successful
-    pub success:  bool,
+    pub success: bool,
     /// Error message if the action failed
-    pub error:    Option<String>,
+    pub error: Option<String>,
 }
 
 /// Summary of all snapshots in the cluster
 #[derive(Debug, Clone)]
 pub struct SnapshotsSummary {
     /// Total number of Raft groups
-    pub total_groups:          usize,
+    pub total_groups: usize,
     /// Number of groups with snapshots
     pub groups_with_snapshots: usize,
     /// Directory where snapshots are stored
-    pub snapshots_dir:         String,
+    pub snapshots_dir: String,
     /// Details for each group
-    pub group_details:         Vec<(GroupId, Option<u64>)>,
+    pub group_details: Vec<(GroupId, Option<u64>)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1773,20 +1773,20 @@ impl RaftManager {
             Ok(()) => {
                 let snapshot_idx = self.meta.snapshot_index();
                 results.push(SnapshotInfo {
-                    group_id:       GroupId::Meta,
+                    group_id: GroupId::Meta,
                     snapshot_index: snapshot_idx,
-                    success:        true,
-                    error:          None,
+                    success: true,
+                    error: None,
                 });
                 log::info!("[SNAPSHOT] ✓ Meta snapshot triggered (index: {:?})", snapshot_idx);
             },
             Err(e) => {
                 errors.push(format!("Meta: {}", e));
                 results.push(SnapshotInfo {
-                    group_id:       GroupId::Meta,
+                    group_id: GroupId::Meta,
                     snapshot_index: None,
-                    success:        false,
-                    error:          Some(e.to_string()),
+                    success: false,
+                    error: Some(e.to_string()),
                 });
             },
         }

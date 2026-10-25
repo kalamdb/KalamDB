@@ -12,9 +12,9 @@ use serde_json::{json, Value};
 use crate::{common::*, kobj_helpers::*};
 
 struct RestOutcome {
-    status:  u16,
+    status: u16,
     headers: reqwest::header::HeaderMap,
-    body:    String,
+    body: String,
 }
 
 fn create_json_procedure(ns: &str, name: &str, params: &str, extras: &str, body: &str) {
@@ -76,9 +76,9 @@ fn rest_invoke(
         }
         let response = request.send().await.expect("HTTP POST");
         RestOutcome {
-            status:  response.status().as_u16(),
+            status: response.status().as_u16(),
             headers: response.headers().clone(),
-            body:    response.text().await.expect("HTTP body"),
+            body: response.text().await.expect("HTTP body"),
         }
     })
 }

@@ -17,18 +17,18 @@ use crate::error::{CLIError, Result};
 /// (`T004`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CurrentEpochManifest {
-    pub epoch:                  u16,
-    pub scoped_hashes:          ScopedContractHashes,
-    pub sql_to_public_types:    BTreeMap<String, String>,
+    pub epoch: u16,
+    pub scoped_hashes: ScopedContractHashes,
+    pub sql_to_public_types: BTreeMap<String, String>,
     pub sql_to_public_routines: BTreeMap<String, String>,
 }
 
 impl CurrentEpochManifest {
     pub fn from_snapshot(snapshot: &ContractSnapshot, names: &AssignedNames) -> Self {
         Self {
-            epoch:                  CURRENT_CONTRACT_EPOCH,
-            scoped_hashes:          scoped_contract_hashes(snapshot),
-            sql_to_public_types:    names.types.clone(),
+            epoch: CURRENT_CONTRACT_EPOCH,
+            scoped_hashes: scoped_contract_hashes(snapshot),
+            sql_to_public_types: names.types.clone(),
             sql_to_public_routines: names.routines.clone(),
         }
     }
@@ -42,9 +42,9 @@ pub struct NamingOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssignedNames {
     /// Qualified type id (`chat.user`) → generated type ident (`ChatUser` / `User`).
-    pub types:       BTreeMap<String, String>,
+    pub types: BTreeMap<String, String>,
     /// Qualified routine id → generated procedure contract ident.
-    pub routines:    BTreeMap<String, String>,
+    pub routines: BTreeMap<String, String>,
     /// Project connection namespace. Names in this schema stay short.
     pub home_schema: Option<String>,
 }

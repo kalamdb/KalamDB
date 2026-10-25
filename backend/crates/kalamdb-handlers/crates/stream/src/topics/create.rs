@@ -188,10 +188,10 @@ mod tests {
         handler
             .execute(
                 CreateTopicStatement {
-                    topic_name:          "app.inbox".to_string(),
-                    if_not_exists:       false,
-                    partitions:          Some(1),
-                    retention_seconds:   None,
+                    topic_name: "app.inbox".to_string(),
+                    if_not_exists: false,
+                    partitions: Some(1),
+                    retention_seconds: None,
                     retention_max_bytes: None,
                 },
                 vec![],
@@ -217,27 +217,25 @@ mod tests {
         app.system_tables()
             .catalog_stores()
             .upsert_type(kalamdb_system::CatalogType {
-                type_id:        TypeId::new("app.inbox"),
-                namespace_id:   SchemaId::new("app"),
-                name:           "inbox".to_string(),
-                kind:           CatalogTypeKind::ImplicitTableRow,
-                table_id:       Some(kalamdb_commons::models::TableId::from_strings(
-                    "app", "inbox",
-                )),
+                type_id: TypeId::new("app.inbox"),
+                namespace_id: SchemaId::new("app"),
+                name: "inbox".to_string(),
+                kind: CatalogTypeKind::ImplicitTableRow,
+                table_id: Some(kalamdb_commons::models::TableId::from_strings("app", "inbox")),
                 source_type_id: None,
-                comment:        None,
-                type_revision:  1,
-                next_slot:      1,
+                comment: None,
+                type_revision: 1,
+                next_slot: 1,
             })
             .unwrap();
         let handler = CreateTopicHandler::new(Arc::clone(&app));
         let error = handler
             .execute(
                 CreateTopicStatement {
-                    topic_name:          "app.inbox".to_string(),
-                    if_not_exists:       false,
-                    partitions:          Some(1),
-                    retention_seconds:   None,
+                    topic_name: "app.inbox".to_string(),
+                    if_not_exists: false,
+                    partitions: Some(1),
+                    retention_seconds: None,
                     retention_max_bytes: None,
                 },
                 vec![],
@@ -256,25 +254,25 @@ mod tests {
         app.system_tables()
             .catalog_stores()
             .upsert_type(kalamdb_system::CatalogType {
-                type_id:        TypeId::new("app.inbox"),
-                namespace_id:   SchemaId::new("app"),
-                name:           "inbox".to_string(),
-                kind:           CatalogTypeKind::Composite,
-                table_id:       None,
+                type_id: TypeId::new("app.inbox"),
+                namespace_id: SchemaId::new("app"),
+                name: "inbox".to_string(),
+                kind: CatalogTypeKind::Composite,
+                table_id: None,
                 source_type_id: None,
-                comment:        None,
-                type_revision:  1,
-                next_slot:      1,
+                comment: None,
+                type_revision: 1,
+                next_slot: 1,
             })
             .unwrap();
         let handler = CreateTopicHandler::new(Arc::clone(&app));
         let error = handler
             .execute(
                 CreateTopicStatement {
-                    topic_name:          "app.inbox".to_string(),
-                    if_not_exists:       false,
-                    partitions:          Some(1),
-                    retention_seconds:   None,
+                    topic_name: "app.inbox".to_string(),
+                    if_not_exists: false,
+                    partitions: Some(1),
+                    retention_seconds: None,
                     retention_max_bytes: None,
                 },
                 vec![],
@@ -293,10 +291,10 @@ mod tests {
         CreateTopicHandler::new(Arc::clone(&app))
             .execute(
                 CreateTopicStatement {
-                    topic_name:          "app.inbox".to_string(),
-                    if_not_exists:       false,
-                    partitions:          Some(1),
-                    retention_seconds:   None,
+                    topic_name: "app.inbox".to_string(),
+                    if_not_exists: false,
+                    partitions: Some(1),
+                    retention_seconds: None,
                     retention_max_bytes: None,
                 },
                 vec![],
@@ -308,7 +306,7 @@ mod tests {
             .execute(
                 DropTopicStatement {
                     topic_name: "app.inbox".to_string(),
-                    if_exists:  false,
+                    if_exists: false,
                 },
                 vec![],
                 &ctx,

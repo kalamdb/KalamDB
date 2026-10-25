@@ -13,7 +13,7 @@ use kalamdb_commons::{
 use kalamdb_core::{
     app_context::AppContext,
     functions::{
-        bind_domain_call_arguments, json_to_routine_value, resolve_pinned_descriptor,
+        bind_domain_call_arguments_typed, json_to_routine_value, resolve_pinned_descriptor,
         routine_value_as_json, routine_value_to_domain_value, FunctionCallOrigin, FunctionService,
         HttpResponseOverrides, RoutineValue,
     },
@@ -21,7 +21,7 @@ use kalamdb_core::{
 };
 use kalamdb_serialization::{
     decode_domain_frame_for_surface, encode_domain_frame, DomainDecodeBudget, DomainMessageKind,
-    EndpointSurface, SerializationError, DOMAIN_EPOCH, DOMAIN_MAGIC,
+    EndpointSurface, SerializationError, DOMAIN_EPOCH,
 };
 use kalamdb_session::AuthSession;
 use parking_lot::Mutex;
@@ -60,14 +60,56 @@ pub async fn invoke_function_v1(
         .get(actix_web::http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("application/json");
-    let is_binary = content_type.eq_ignore_ascii_case(CONTENT_TYPE_KALAM_DOMAIN)
-        || content_type.eq_ignore_ascii_case("application/octet-stream")
-        || body.starts_with(&DOMAIN_MAGIC);
+    let request_binary = content_type_is_domain(content_type);
+    let response_binary = accept_prefers_domain(&http_req).unwrap_or(request_binary);
+
+    let idempotency_key = http_req
+        .headers()
+        .get("idempotency-key")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty());
+    if let Some(key) = idempotency_key {
+        match super::idempotency::lookup(
+            session.user_id().as_str(),
+            routine_id.as_str(),
+            key,
+            &body,
+        ) {
+            super::idempotency::IdempotencyLookup::Replay(stored) => {
+                return stored.into_response();
+            },
+            super::idempotency::IdempotencyLookup::Conflict => {
+                return error_response(
+                    actix_web::http::StatusCode::CONFLICT,
+                    "IDEMPOTENCY_CONFLICT",
+                    "idempotency key was already used with a different request body",
+                );
+            },
+            super::idempotency::IdempotencyLookup::Fresh => {},
+        }
+    }
 
     let stores = app_context.system_tables().catalog_stores();
-    let module_gen = app_context.function_runtime().active_set().generation;
+    let descriptor = match resolve_pinned_descriptor(&stores, &routine_id) {
+        Ok(desc) => desc,
+        Err(error) => {
+            let (status, code) = super::error::function_http_status(&error);
+            return error_response(status, code, error.user_message());
+        },
+    };
+    if let Some(response) = revision_mismatch(
+        &routine_id,
+        &descriptor.revision_hex,
+        http_req
+            .headers()
+            .get("x-kalam-descriptor-revision")
+            .and_then(|value| value.to_str().ok()),
+    ) {
+        return response;
+    }
 
-    let (args, return_data_type) = if is_binary {
+    let return_data_type = descriptor.routine.return_data_type;
+    let args = if request_binary {
         let frame = match decode_domain_frame_for_surface(
             &body,
             EndpointSurface::PublicRpc,
@@ -110,38 +152,18 @@ pub async fn invoke_function_v1(
                 format!("expected RpcRequest frame kind, got {:?}", frame.kind),
             );
         }
-        let descriptor = match resolve_pinned_descriptor(&stores, &routine_id, module_gen) {
-            Ok(desc) => desc,
-            Err(error) => {
-                let (status, code) = super::error::function_http_status(&error);
-                return error_response(status, code, error.user_message());
-            },
-        };
-        if let Some(expected_rev) = http_req
-            .headers()
-            .get("x-kalam-descriptor-revision")
-            .and_then(|v| v.to_str().ok())
-            .filter(|v| !v.is_empty())
-        {
-            if expected_rev != descriptor.revision_hex {
-                return error_response(
-                    actix_web::http::StatusCode::CONFLICT,
-                    "STALE_REVISION",
-                    format!(
-                        "descriptor revision mismatch for {}: client {}, server {}",
-                        routine_id, expected_rev, descriptor.revision_hex
-                    ),
-                );
-            }
-        }
-        let bound = match bind_domain_call_arguments(&frame.payload, &descriptor) {
+        match bind_domain_call_arguments_typed(
+            &frame.payload,
+            &descriptor,
+            app_context.schema_registry().type_registry(),
+            &stores,
+        ) {
             Ok(args) => args,
             Err(error) => {
                 let (status, code) = super::error::function_http_status(&error);
                 return error_response(status, code, error.user_message());
             },
-        };
-        (bound, descriptor.routine.return_data_type)
+        }
     } else {
         let json_body: Value = match serde_json::from_slice(&body) {
             Ok(val) => val,
@@ -153,40 +175,24 @@ pub async fn invoke_function_v1(
                 );
             },
         };
-        let unwrapped_body =
-            match unwrap_typed_json_envelope(&json_body, &stores, &routine_id, module_gen) {
-                Ok(val) => val,
-                Err(resp) => return resp,
-            };
-        let parameters = {
-            let _span = kalamdb_observability::kdb_info_span_entered!("func.http.list_params");
-            match stores.list_parameters(&routine_id) {
-                Ok(parameters) => parameters,
-                Err(error) => {
-                    return error_response(
-                        actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
-                        "INTERNAL_RUNTIME_ERROR",
-                        error,
-                    );
-                },
-            }
+        let unwrapped_body = match unwrap_typed_json_envelope(json_body, &routine_id, &descriptor) {
+            Ok(val) => val,
+            Err(resp) => return resp,
         };
-        let args = {
-            let _span = kalamdb_observability::kdb_info_span_entered!("func.http.bind_args");
-            match bind_json_args(&unwrapped_body, &parameters) {
-                Ok(args) => args,
-                Err(message) => {
-                    return error_response(
-                        actix_web::http::StatusCode::BAD_REQUEST,
-                        "INVALID_ARGUMENTS",
-                        message,
-                    );
-                },
-            }
-        };
-        (args, None)
+        match bind_json_args(unwrapped_body, &descriptor.input_parameters) {
+            Ok(args) => args,
+            Err(message) => {
+                return error_response(
+                    actix_web::http::StatusCode::BAD_REQUEST,
+                    "INVALID_ARGUMENTS",
+                    message,
+                );
+            },
+        }
     };
 
+    let user_id = session.user_id().as_str().to_string();
+    let idempotency_key = idempotency_key.map(str::to_string);
     let (origin, exec_ctx) = {
         let _span = kalamdb_observability::kdb_info_span_entered!("func.http.context");
         let mut headers = Vec::new();
@@ -198,23 +204,13 @@ pub async fn invoke_function_v1(
                 headers.push((name.as_str().to_string(), value.to_string()));
             }
         }
-        let query: Vec<(String, String)> = http_req
-            .query_string()
-            .split('&')
-            .filter_map(|pair| {
-                if pair.is_empty() {
-                    return None;
-                }
-                let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-                Some((key.to_string(), value.to_string()))
-            })
-            .collect();
+        let query = decode_query(http_req.query_string());
         let response = Arc::new(Mutex::new(HttpResponseOverrides::default()));
         let origin = FunctionCallOrigin::Http {
-            method:   http_req.method().as_str().to_string(),
-            path:     http_req.path().to_string(),
-            headers:  Arc::new(headers),
-            query:    Arc::new(query),
+            method: http_req.method().as_str().to_string(),
+            path: http_req.path().to_string(),
+            headers: Arc::new(headers),
+            query: Arc::new(query),
             response: Arc::clone(&response),
         };
 
@@ -228,18 +224,18 @@ pub async fn invoke_function_v1(
     };
 
     match kalamdb_observability::kdb_await_in_info_span!(
-        FunctionService::invoke(
+        FunctionService::invoke_pinned(
             Arc::clone(app_context.get_ref()),
             &exec_ctx,
             origin,
-            routine_id,
+            Arc::clone(&descriptor),
             args,
         ),
         "func.invoke"
     ) {
         Ok(result) => {
             let _span = kalamdb_observability::kdb_info_span_entered!("func.http.encode_response");
-            if is_binary {
+            if response_binary {
                 let domain_val =
                     match routine_value_to_domain_value(&result.value, return_data_type.as_ref()) {
                         Ok(v) => v,
@@ -273,7 +269,30 @@ pub async fn invoke_function_v1(
                     actix_web::http::header::CONTENT_TYPE,
                     CONTENT_TYPE_KALAM_DOMAIN,
                 ));
+                remember_idempotency(
+                    &user_id,
+                    routine_id.as_str(),
+                    idempotency_key.as_deref(),
+                    &body,
+                    status_code.as_u16(),
+                    CONTENT_TYPE_KALAM_DOMAIN,
+                    &frame_bytes,
+                );
                 return builder.body(frame_bytes);
+            }
+            if let Some(json_text) = result.value.json_sql_text() {
+                let bytes = json_text.as_bytes().to_vec();
+                let status = result.http_status.unwrap_or(200);
+                remember_idempotency(
+                    &user_id,
+                    routine_id.as_str(),
+                    idempotency_key.as_deref(),
+                    &body,
+                    status,
+                    "application/json",
+                    &bytes,
+                );
+                return bytes_response(status, "application/json", bytes, result.http_headers);
             }
             let payload = match function_http_payload(&result.value) {
                 Ok(value) => value,
@@ -285,13 +304,172 @@ pub async fn invoke_function_v1(
                     );
                 },
             };
-            function_success_response(payload, result.http_status, result.http_headers)
+            let bytes = match serde_json::to_vec(&payload) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    return error_response(
+                        actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "INTERNAL_RUNTIME_ERROR",
+                        error,
+                    );
+                },
+            };
+            let status = result.http_status.unwrap_or(200);
+            remember_idempotency(
+                &user_id,
+                routine_id.as_str(),
+                idempotency_key.as_deref(),
+                &body,
+                status,
+                "application/json",
+                &bytes,
+            );
+            bytes_response(status, "application/json", bytes, result.http_headers)
         },
         Err(error) => {
             let (status, code) = super::error::function_http_status(&error);
-            error_response(status, code, error.user_message())
+            let message = error.user_message();
+            let payload = serde_json::json!({
+                "status": "error",
+                "code": code,
+                "message": message,
+            });
+            let bytes = serde_json::to_vec(&payload).unwrap_or_else(|_| b"{}".to_vec());
+            remember_idempotency(
+                &user_id,
+                routine_id.as_str(),
+                idempotency_key.as_deref(),
+                &body,
+                status.as_u16(),
+                "application/json",
+                &bytes,
+            );
+            error_response(status, code, message)
         },
     }
+}
+
+fn content_type_is_domain(content_type: &str) -> bool {
+    let mime = content_type.split(';').next().unwrap_or(content_type).trim();
+    mime.eq_ignore_ascii_case(CONTENT_TYPE_KALAM_DOMAIN)
+        || mime.eq_ignore_ascii_case("application/octet-stream")
+}
+
+fn accept_prefers_domain(http_req: &HttpRequest) -> Option<bool> {
+    let accept = http_req.headers().get(actix_web::http::header::ACCEPT)?.to_str().ok()?;
+    if accept.contains(CONTENT_TYPE_KALAM_DOMAIN) {
+        Some(true)
+    } else if accept.contains("application/json") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn revision_mismatch(
+    routine_id: &RoutineId,
+    server_revision: &str,
+    client_revision: Option<&str>,
+) -> Option<HttpResponse> {
+    let client_revision = client_revision.filter(|value| !value.is_empty())?;
+    if client_revision == server_revision {
+        return None;
+    }
+    Some(error_response(
+        actix_web::http::StatusCode::CONFLICT,
+        "STALE_REVISION",
+        format!(
+            "descriptor revision mismatch for {routine_id}: client {client_revision}, server \
+             {server_revision}"
+        ),
+    ))
+}
+
+fn decode_query(query: &str) -> Vec<(String, String)> {
+    query
+        .split('&')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (percent_decode(key), percent_decode(value))
+        })
+        .collect()
+}
+
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                out.push(b' ');
+                index += 1;
+            },
+            b'%' if index + 2 < bytes.len() => {
+                let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).unwrap_or("");
+                if let Ok(byte) = u8::from_str_radix(hex, 16) {
+                    out.push(byte);
+                    index += 3;
+                } else {
+                    out.push(b'%');
+                    index += 1;
+                }
+            },
+            byte => {
+                out.push(byte);
+                index += 1;
+            },
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn remember_idempotency(
+    user_id: &str,
+    routine_id: &str,
+    key: Option<&str>,
+    request_body: &[u8],
+    status: u16,
+    content_type: &str,
+    response_body: &[u8],
+) {
+    let Some(key) = key else {
+        return;
+    };
+    super::idempotency::store(
+        user_id,
+        routine_id,
+        key,
+        request_body,
+        super::idempotency::StoredResponse {
+            status,
+            content_type: content_type.to_string(),
+            body: response_body.to_vec(),
+        },
+    );
+}
+
+fn bytes_response(
+    status: u16,
+    content_type: &str,
+    body: Vec<u8>,
+    headers: HashMap<String, String>,
+) -> HttpResponse {
+    let status_code =
+        actix_web::http::StatusCode::from_u16(status).unwrap_or(actix_web::http::StatusCode::OK);
+    let mut builder = HttpResponse::build(status_code);
+    let mut has_content_type = false;
+    for (name, value) in headers {
+        if name.eq_ignore_ascii_case("content-type") {
+            has_content_type = true;
+        }
+        builder.insert_header((name, value));
+    }
+    if !has_content_type {
+        builder.insert_header((actix_web::http::header::CONTENT_TYPE, content_type));
+    }
+    builder.body(body)
 }
 
 fn rejected_context_response(key: &str) -> HttpResponse {
@@ -310,56 +488,47 @@ fn rejected_context_key(body: &Value) -> Option<&str> {
 }
 
 fn unwrap_typed_json_envelope(
-    body: &Value,
-    stores: &kalamdb_system::CatalogStores,
+    body: Value,
     routine_id: &RoutineId,
-    module_gen: u64,
+    descriptor: &kalamdb_core::functions::PinnedRoutineDescriptor,
 ) -> Result<Value, HttpResponse> {
-    if let Value::Object(map) = body {
-        if map.contains_key("epoch") && map.contains_key("arguments") {
-            let epoch = map.get("epoch").and_then(Value::as_u64);
-            if epoch != Some(u64::from(DOMAIN_EPOCH)) {
-                return Err(error_response(
-                    actix_web::http::StatusCode::CONFLICT,
-                    "EPOCH_MISMATCH",
-                    format!(
-                        "unsupported envelope epoch {:?}; current server epoch is {DOMAIN_EPOCH}",
-                        map.get("epoch")
-                    ),
-                ));
-            }
-            if let Some(key) =
-                REJECTED_CONTEXT_KEYS.iter().copied().find(|key| map.contains_key(*key))
-            {
-                return Err(rejected_context_response(key));
-            }
-            if let Some(rev) = map.get("revision").and_then(Value::as_str).filter(|s| !s.is_empty())
-            {
-                if let Ok(desc) = resolve_pinned_descriptor(stores, routine_id, module_gen) {
-                    if desc.revision_hex != rev {
-                        return Err(error_response(
-                            actix_web::http::StatusCode::CONFLICT,
-                            "STALE_REVISION",
-                            format!(
-                                "descriptor revision mismatch for {routine_id}: client {rev}, \
-                                 server {}",
-                                desc.revision_hex
-                            ),
-                        ));
-                    }
-                }
-            }
-            return Ok(map.get("arguments").cloned().unwrap_or(Value::Null));
+    let Value::Object(mut map) = body else {
+        return Ok(body);
+    };
+    if map.contains_key("epoch") && map.contains_key("arguments") {
+        let epoch = map.get("epoch").and_then(Value::as_u64);
+        if epoch != Some(u64::from(DOMAIN_EPOCH)) {
+            return Err(error_response(
+                actix_web::http::StatusCode::CONFLICT,
+                "EPOCH_MISMATCH",
+                format!(
+                    "unsupported envelope epoch {:?}; current server epoch is {DOMAIN_EPOCH}",
+                    map.get("epoch")
+                ),
+            ));
         }
+        if let Some(key) = REJECTED_CONTEXT_KEYS.iter().copied().find(|key| map.contains_key(*key))
+        {
+            return Err(rejected_context_response(key));
+        }
+        if let Some(response) = revision_mismatch(
+            routine_id,
+            &descriptor.revision_hex,
+            map.get("revision").and_then(Value::as_str),
+        ) {
+            return Err(response);
+        }
+        return Ok(map.remove("arguments").unwrap_or(Value::Null));
     }
-    if let Some(key) = rejected_context_key(body) {
+    let body = Value::Object(map);
+    if let Some(key) = rejected_context_key(&body) {
         return Err(rejected_context_response(key));
     }
-    Ok(body.clone())
+    Ok(body)
 }
 
 fn bind_json_args(
-    body: &Value,
+    body: Value,
     parameters: &[kalamdb_system::CatalogRoutineParameter],
 ) -> Result<Vec<RoutineValue>, String> {
     match body {
@@ -373,9 +542,8 @@ fn bind_json_args(
             if parameters.is_empty() {
                 return Ok(Vec::new());
             }
-            if is_whole_body_json(map, parameters) {
-                let body = Value::Object(map.clone());
-                return Ok(vec![bind_json_value(&body, Some(&parameters[0]))?]);
+            if is_whole_body_json(&map, parameters) {
+                return Ok(vec![bind_json_value(&Value::Object(map), Some(&parameters[0]))?]);
             }
             let mut args = Vec::with_capacity(parameters.len());
             for parameter in parameters {
@@ -401,37 +569,6 @@ fn is_whole_body_json(
         return false;
     }
     parameter.builtin_data_type() == Some(KalamDataType::Json) && !map.contains_key(&parameter.name)
-}
-
-fn function_success_response(
-    payload: Value,
-    status: Option<u16>,
-    headers: HashMap<String, String>,
-) -> HttpResponse {
-    let body = match serde_json::to_vec(&payload) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            return error_response(
-                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "INTERNAL_RUNTIME_ERROR",
-                error,
-            );
-        },
-    };
-    let status_code = actix_web::http::StatusCode::from_u16(status.unwrap_or(200))
-        .unwrap_or(actix_web::http::StatusCode::OK);
-    let mut builder = HttpResponse::build(status_code);
-    let mut has_content_type = false;
-    for (name, value) in headers {
-        if name.eq_ignore_ascii_case("content-type") {
-            has_content_type = true;
-        }
-        builder.insert_header((name, value));
-    }
-    if !has_content_type {
-        builder.insert_header((actix_web::http::header::CONTENT_TYPE, "application/json"));
-    }
-    builder.body(body)
 }
 
 fn function_http_payload(value: &RoutineValue) -> Result<Value, String> {
@@ -481,7 +618,7 @@ mod tests {
     use kalamdb_system::CatalogRoutineParameter;
     use serde_json::json;
 
-    use super::{bind_json_args, function_http_payload, function_success_response};
+    use super::{bind_json_args, bytes_response, function_http_payload};
 
     fn json_parameter(name: &str) -> CatalogRoutineParameter {
         let namespace = SchemaId::new("app");
@@ -506,7 +643,6 @@ mod tests {
     fn rest_json_reaches_v8_as_json_sql() {
         let value = serde_json::json!(7);
         let routine = super::bind_json_value(&value, None).unwrap();
-        assert!(routine.transfer.is_none());
         assert_eq!(routine_value_as_json(&routine), Some(value));
     }
 
@@ -526,7 +662,7 @@ mod tests {
             "conversationId": "c1",
             "text": "hello"
         });
-        let args = bind_json_args(&payload, &parameters).expect("whole-body JSON bind");
+        let args = bind_json_args(payload, &parameters).expect("whole-body JSON bind");
         assert_eq!(args.len(), 1);
         assert!(args[0].json_sql);
         let decoded = routine_value_as_json(&args[0]).expect("json body");
@@ -540,7 +676,7 @@ mod tests {
         let payload = json!({
             "body": { "conversationId": "c1", "text": "hello" }
         });
-        let args = bind_json_args(&payload, &parameters).expect("named JSON bind");
+        let args = bind_json_args(payload, &parameters).expect("named JSON bind");
         let decoded = routine_value_as_json(&args[0]).expect("named json body");
         assert_eq!(decoded["conversationId"], "c1");
     }
@@ -566,7 +702,12 @@ mod tests {
         headers.insert("x-kalam-trace".into(), "ok".into());
         headers.insert("location".into(), "/created".into());
         headers.insert("content-type".into(), "application/json".into());
-        let response = function_success_response(json!({"ok": true}), Some(201), headers);
+        let response = bytes_response(
+            201,
+            "application/json",
+            serde_json::to_vec(&json!({"ok": true})).expect("json"),
+            headers,
+        );
         assert_eq!(response.status(), actix_web::http::StatusCode::CREATED);
         assert_eq!(
             response.headers().get("x-kalam-trace").and_then(|value| value.to_str().ok()),
@@ -586,7 +727,12 @@ mod tests {
     fn rest_success_defaults_json_content_type() {
         use actix_web::http::header::CONTENT_TYPE;
 
-        let response = function_success_response(json!("echo"), None, HashMap::new());
+        let response = bytes_response(
+            200,
+            "application/json",
+            serde_json::to_vec(&json!("echo")).expect("json"),
+            HashMap::new(),
+        );
         assert_eq!(response.status(), actix_web::http::StatusCode::OK);
         assert_eq!(
             response.headers().get(CONTENT_TYPE).and_then(|value| value.to_str().ok()),

@@ -25,25 +25,25 @@ pub enum ObjectClass {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchemaEntry {
     /// Name a path entry matches. This is the display name, not always the stored key.
-    pub name:       String,
+    pub name: String,
     /// Catalog key written for this schema. Equals [`Self::name`] except for the
     /// legacy `default` key, which is also visible as `public`.
     pub stored_key: String,
     /// `false` when the session lacks `USAGE`.
     pub accessible: bool,
     /// Objects in this schema.
-    pub objects:    Vec<(ObjectClass, String)>,
+    pub objects: Vec<(ObjectClass, String)>,
 }
 
 /// Schemas visible to one resolution.
 #[derive(Debug, Clone, Copy)]
 pub struct Catalog<'a> {
     /// Session user, used by `"$user"`.
-    pub user:        &'a str,
+    pub user: &'a str,
     /// Session temporary schema, such as `pg_temp_1`.
     pub temp_schema: Option<&'a str>,
     /// Existing schemas. Missing path entries are simply absent.
-    pub schemas:     &'a [SchemaEntry],
+    pub schemas: &'a [SchemaEntry],
 }
 
 /// An object found in one schema.
@@ -244,8 +244,8 @@ impl SearchPath {
 /// Session path plus at most one `SET LOCAL` override.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionSearchPath {
-    session:  SearchPath,
-    local:    Option<SearchPath>,
+    session: SearchPath,
+    local: Option<SearchPath>,
     revision: u64,
 }
 
@@ -369,17 +369,17 @@ pub fn catalog_entries_for_stored_keys(stored_keys: &[(&str, bool)]) -> Vec<Sche
     for (key, accessible) in stored_keys {
         if *key == "default" && !has_public_key {
             entries.push(SchemaEntry {
-                name:       "public".to_string(),
+                name: "public".to_string(),
                 stored_key: "default".to_string(),
                 accessible: *accessible,
-                objects:    Vec::new(),
+                objects: Vec::new(),
             });
         }
         entries.push(SchemaEntry {
-            name:       (*key).to_string(),
+            name: (*key).to_string(),
             stored_key: (*key).to_string(),
             accessible: *accessible,
-            objects:    Vec::new(),
+            objects: Vec::new(),
         });
     }
     entries

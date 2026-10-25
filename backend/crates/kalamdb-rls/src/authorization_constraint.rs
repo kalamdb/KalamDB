@@ -9,7 +9,7 @@ use crate::AuthorizationStrategy;
 #[derive(Debug, Clone, PartialEq)]
 pub struct AuthorizationConstraint {
     pub strategy: AuthorizationStrategy,
-    pub values:   Vec<ScalarValue>,
+    pub values: Vec<ScalarValue>,
 }
 
 pub fn extract_authorization_constraint(

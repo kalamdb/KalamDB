@@ -40,12 +40,12 @@ pub(super) const TEST_OIDC_CLIENT_ID: &str = "oidc-test-client";
 
 #[derive(Clone)]
 struct DexProviderInfo {
-    issuer:        String,
-    token_url:     String,
-    client_id:     String,
+    issuer: String,
+    token_url: String,
+    client_id: String,
     client_secret: Option<String>,
-    username:      String,
-    password:      String,
+    username: String,
+    password: String,
 }
 
 #[derive(Clone)]
@@ -60,12 +60,12 @@ pub(super) struct TestOidcProvider {
 struct DexTokenResponse {
     access_token: String,
     #[serde(default)]
-    id_token:     Option<String>,
+    id_token: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct JwtPayloadView {
-    sub:   String,
+    sub: String,
     #[serde(default)]
     #[allow(dead_code)]
     email: Option<String>,
@@ -83,12 +83,12 @@ struct CurrentUserInfoView {
 
 #[derive(Deserialize)]
 struct LoginResponseView {
-    access_token:  String,
+    access_token: String,
     refresh_token: String,
 }
 
 struct PasswordLoginArtifacts {
-    access_token:  String,
+    access_token: String,
     refresh_token: String,
     cookie_header: String,
 }
@@ -96,16 +96,16 @@ struct PasswordLoginArtifacts {
 #[derive(Serialize)]
 struct TestJwtClaims {
     #[serde(skip_serializing_if = "Option::is_none")]
-    sub:   Option<String>,
-    iss:   String,
-    aud:   String,
-    exp:   usize,
-    iat:   usize,
-    nbf:   usize,
+    sub: Option<String>,
+    iss: String,
+    aud: String,
+    exp: usize,
+    iat: usize,
+    nbf: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     email: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    role:  Option<Role>,
+    role: Option<Role>,
 }
 
 impl Drop for TestOidcProvider {
@@ -351,12 +351,12 @@ where
     let port = container.get_host_port_ipv4(5556).await.context("Failed to resolve Dex port")?;
 
     let provider = DexProviderInfo {
-        issuer:        format!("http://{host}:{port}"),
-        token_url:     format!("http://{host}:{port}/token"),
-        client_id:     DEX_CLIENT_ID.to_string(),
+        issuer: format!("http://{host}:{port}"),
+        token_url: format!("http://{host}:{port}/token"),
+        client_id: DEX_CLIENT_ID.to_string(),
         client_secret: Some(DEX_FALLBACK_CLIENT_SECRET.to_string()),
-        username:      DEX_FALLBACK_USERNAME.to_string(),
-        password:      DEX_FALLBACK_PASSWORD.to_string(),
+        username: DEX_FALLBACK_USERNAME.to_string(),
+        password: DEX_FALLBACK_PASSWORD.to_string(),
     };
 
     let result = test_fn(provider).await;
@@ -1186,7 +1186,7 @@ async fn test_dex_jwt_authenticates_websocket() -> Result<()> {
 
                 let auth_message = ClientMessage::Authenticate {
                     credentials: WsAuthCredentials::Jwt { token },
-                    protocol:    ProtocolOptions::default(),
+                    protocol: ProtocolOptions::default(),
                 };
                 socket
                     .send(Message::Text(serde_json::to_string(&auth_message)?.into()))
@@ -1651,7 +1651,7 @@ async fn test_websocket_invalid_auth_message_returns_error_and_disconnects() -> 
                 credentials: WsAuthCredentials::Jwt {
                     token: "not-a-valid-jwt".to_string(),
                 },
-                protocol:    ProtocolOptions::default(),
+                protocol: ProtocolOptions::default(),
             };
             socket
                 .send(Message::Text(serde_json::to_string(&auth_message)?.into()))

@@ -34,7 +34,7 @@ use kalamdb_transactions::{
 
 pub struct OverlayScanProjection {
     pub effective_projection: Option<Vec<usize>>,
-    pub final_projection:     Option<Vec<usize>>,
+    pub final_projection: Option<Vec<usize>>,
 }
 
 #[derive(Debug)]
@@ -1101,13 +1101,13 @@ mod tests {
     #[test]
     fn foreign_key_violation_message_names_the_missing_key() {
         let foreign_key = ForeignKeyDefinition {
-            name:                 "posts_author_fkey".to_string(),
-            columns:              vec!["author".to_string()],
+            name: "posts_author_fkey".to_string(),
+            columns: vec!["author".to_string()],
             referenced_namespace: SchemaId::new("public"),
-            referenced_table:     TableName::new("authors"),
-            referenced_columns:   vec!["id".to_string()],
-            on_update:            ForeignKeyAction::NoAction,
-            on_delete:            ForeignKeyAction::NoAction,
+            referenced_table: TableName::new("authors"),
+            referenced_columns: vec!["id".to_string()],
+            on_update: ForeignKeyAction::NoAction,
+            on_delete: ForeignKeyAction::NoAction,
         };
         let row = Row::from_vec(vec![("author".to_string(), ScalarValue::Int64(Some(999)))]);
 

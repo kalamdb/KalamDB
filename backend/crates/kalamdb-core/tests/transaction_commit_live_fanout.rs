@@ -21,13 +21,13 @@ fn make_shared_handle(
     flow_control: Arc<SubscriptionFlowControl>,
 ) -> SubscriptionHandle {
     SubscriptionHandle {
-        subscription_id:  Arc::from(subscription_id),
-        filter_expr:      None,
-        authorization:    None,
-        projections:      None,
-        notification_tx:  tx,
-        event_tx:         mpsc::channel(1).0,
-        flow_control:     Some(flow_control),
+        subscription_id: Arc::from(subscription_id),
+        filter_expr: None,
+        authorization: None,
+        projections: None,
+        notification_tx: tx,
+        event_tx: mpsc::channel(1).0,
+        flow_control: Some(flow_control),
         runtime_metadata: Arc::new(SubscriptionRuntimeMetadata::new(
             "SELECT * FROM shared.items",
             None,

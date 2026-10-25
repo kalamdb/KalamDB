@@ -10,7 +10,7 @@ use crate::helpers::initial_data::InitialDataResult;
 pub struct SubscriptionResult {
     pub version_domain: Option<VersionDomain>,
     /// The generated LiveId for the subscription
-    pub live_id:        LiveQueryId,
+    pub live_id: LiveQueryId,
 
     /// Initial data returned with the subscription (if requested)
     pub initial_data: Option<InitialDataResult>,

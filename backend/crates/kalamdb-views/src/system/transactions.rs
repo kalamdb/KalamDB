@@ -26,16 +26,16 @@ crate::memoized_view_schema!(transactions_schema, TransactionsView);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransactionSnapshot {
-    pub transaction_id:       String,
-    pub owner_id:             String,
-    pub origin:               String,
-    pub state:                String,
-    pub age_ms:               i64,
-    pub idle_ms:              i64,
-    pub write_count:          i64,
-    pub write_bytes:          i64,
+    pub transaction_id: String,
+    pub owner_id: String,
+    pub origin: String,
+    pub state: String,
+    pub age_ms: i64,
+    pub idle_ms: i64,
+    pub write_count: i64,
+    pub write_bytes: i64,
     pub touched_tables_count: i64,
-    pub snapshot_commit_seq:  i64,
+    pub snapshot_commit_seq: i64,
 }
 
 /// Active-transaction snapshot callback type.

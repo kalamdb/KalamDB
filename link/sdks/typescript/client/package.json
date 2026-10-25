@@ -45,7 +45,7 @@
     "test:types": "tsc -p tsconfig.test.json",
     "test:browser": "npm run build && playwright test --config playwright.config.js",
     "test:browser:install": "playwright install chromium",
-    "test": "npm run build && npm run test:types && NO_SERVER=true node --test tests/basic.test.mjs tests/normalize.test.mjs tests/auth-provider-retry.test.mjs tests/cell-value.test.mjs tests/live-controller.test.mjs tests/live-query-typed.test.mjs tests/live-sql-descriptor.test.mjs tests/single-socket-subscriptions.test.mjs tests/readme-examples.test.mjs tests/sdk-runtime-coverage.test.mjs",
+    "test": "npm run build && npm run test:types && NO_SERVER=true node --test tests/routine-invoke.test.ts tests/basic.test.mjs tests/normalize.test.mjs tests/auth-provider-retry.test.mjs tests/cell-value.test.mjs tests/live-controller.test.mjs tests/live-query-typed.test.mjs tests/live-sql-descriptor.test.mjs tests/single-socket-subscriptions.test.mjs tests/readme-examples.test.mjs tests/sdk-runtime-coverage.test.mjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

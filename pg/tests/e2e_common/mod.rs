@@ -80,12 +80,12 @@ const DEFAULT_KALAMDB_PASSWORD: &str = "kalamdb123";
 const DEFAULT_SETUP_USER: &str = "admin";
 
 struct KalamDbAuthConfig {
-    base_url:       String,
+    base_url: String,
     login_username: String,
     login_password: String,
     setup_username: String,
     setup_password: String,
-    root_password:  String,
+    root_password: String,
 }
 
 impl fmt::Display for KalamDbAuthConfig {
@@ -249,19 +249,19 @@ fn pg_password_from_env() -> Option<String> {
 
 pub struct TestEnv {
     pub bearer_token: String,
-    http_client:      TestHttpClient,
-    pg_user:          String,
+    http_client: TestHttpClient,
+    pg_user: String,
 }
 
 pub struct OwnedPgClient {
-    client:          Option<tokio_postgres::Client>,
+    client: Option<tokio_postgres::Client>,
     connection_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl OwnedPgClient {
     fn new(client: tokio_postgres::Client, connection_task: tokio::task::JoinHandle<()>) -> Self {
         Self {
-            client:          Some(client),
+            client: Some(client),
             connection_task: Some(connection_task),
         }
     }

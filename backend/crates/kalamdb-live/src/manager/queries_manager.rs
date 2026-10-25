@@ -37,12 +37,12 @@ use crate::{
 /// Live query manager
 pub struct LiveQueryManager {
     /// Unified connections manager using DashMap for lock-free concurrent access
-    registry:             Arc<ConnectionsManager>,
+    registry: Arc<ConnectionsManager>,
     initial_data_fetcher: Arc<InitialDataFetcher>,
-    schema_lookup:        Arc<dyn LiveSchemaLookup>,
-    apply_barrier:        OnceCell<Arc<dyn LiveApplyBarrier>>,
+    schema_lookup: Arc<dyn LiveSchemaLookup>,
+    apply_barrier: OnceCell<Arc<dyn LiveApplyBarrier>>,
     authorization_binder: OnceCell<Arc<dyn LiveAuthorizationBinder>>,
-    node_id:              NodeId,
+    node_id: NodeId,
 
     // Delegated services
     subscription_service: Arc<SubscriptionService>,
@@ -503,11 +503,11 @@ impl LiveQueryManager {
         }
 
         Ok(InitialDataResult {
-            rows:                    Vec::new(),
-            last_seq:                Some(from),
-            last_commit_seq:         None,
-            has_more:                false,
-            snapshot_end_seq:        Some(from),
+            rows: Vec::new(),
+            last_seq: Some(from),
+            last_commit_seq: None,
+            has_more: false,
+            snapshot_end_seq: Some(from),
             snapshot_end_commit_seq: None,
         })
     }
@@ -684,47 +684,47 @@ mod tests {
 
     fn shared_table_def() -> TableDefinition {
         TableDefinition {
-            namespace_id:   SchemaId::from("shared"),
-            table_name:     TableName::from("events"),
-            table_type:     TableType::Shared,
-            columns:        vec![],
+            namespace_id: SchemaId::from("shared"),
+            table_name: TableName::from("events"),
+            table_type: TableType::Shared,
+            columns: vec![],
             schema_version: 1,
             next_column_id: 1,
-            table_options:  TableOptions::Shared(SharedTableOptions {
-                shared_shard_id:     0,
+            table_options: TableOptions::Shared(SharedTableOptions {
+                shared_shard_id: 0,
                 history_incarnation: String::new(),
-                storage_id:          kalamdb_commons::StorageId::from("default"),
-                access_level:        None,
-                flush_policy:        None,
-                compression:         TableCompression::Snappy,
+                storage_id: kalamdb_commons::StorageId::from("default"),
+                access_level: None,
+                flush_policy: None,
+                compression: TableCompression::Snappy,
             }),
-            table_comment:  None,
+            table_comment: None,
             scalar_indexes: Vec::new(),
-            foreign_keys:   Vec::new(),
-            created_at:     chrono::Utc::now(),
-            updated_at:     chrono::Utc::now(),
+            foreign_keys: Vec::new(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
         }
     }
 
     fn system_table_def() -> TableDefinition {
         TableDefinition {
-            namespace_id:   SchemaId::system(),
-            table_name:     TableName::from("users"),
-            table_type:     TableType::System,
-            columns:        vec![],
+            namespace_id: SchemaId::system(),
+            table_name: TableName::from("users"),
+            table_type: TableType::System,
+            columns: vec![],
             schema_version: 1,
             next_column_id: 1,
-            table_options:  TableOptions::System(SystemTableOptions {
-                read_only:         true,
-                enable_cache:      true,
+            table_options: TableOptions::System(SystemTableOptions {
+                read_only: true,
+                enable_cache: true,
                 cache_ttl_seconds: 60,
-                localhost_only:    false,
+                localhost_only: false,
             }),
-            table_comment:  None,
+            table_comment: None,
             scalar_indexes: Vec::new(),
-            foreign_keys:   Vec::new(),
-            created_at:     chrono::Utc::now(),
-            updated_at:     chrono::Utc::now(),
+            foreign_keys: Vec::new(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
         }
     }
 

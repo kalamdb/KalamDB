@@ -21,13 +21,13 @@ use crate::{
 };
 
 pub(crate) struct ResolvedMvccScan<K, V> {
-    pub rows:               Vec<(K, V)>,
-    pub hot_rows_scanned:   usize,
-    pub cold_rows_scanned:  usize,
-    pub cold_files_total:   usize,
+    pub rows: Vec<(K, V)>,
+    pub hot_rows_scanned: usize,
+    pub cold_rows_scanned: usize,
+    pub cold_files_total: usize,
     pub cold_files_skipped: usize,
     pub cold_files_scanned: usize,
-    pub cold_files:         Vec<String>,
+    pub cold_files: Vec<String>,
 }
 
 pub(crate) async fn resolve_latest_scan_from_futures<K, R, HotFuture, ColdFuture, Build>(

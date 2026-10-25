@@ -30,8 +30,8 @@ enum FileFunctionKind {
 /// `file_delete(file)`.
 #[derive(Clone)]
 pub struct FileStorageFunction {
-    name:    &'static str,
-    kind:    FileFunctionKind,
+    name: &'static str,
+    kind: FileFunctionKind,
     service: Option<Arc<FileStorageService>>,
 }
 

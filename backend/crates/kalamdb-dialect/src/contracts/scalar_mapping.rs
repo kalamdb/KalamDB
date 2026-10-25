@@ -51,9 +51,9 @@ pub enum CheckedContractScalar {
     Float64(f64),
     /// Exact fixed-point decimal with validated precision and scale (`i128` unscaled value).
     Decimal {
-        unscaled:  i128,
+        unscaled: i128,
         precision: u8,
-        scale:     i8,
+        scale: i8,
     },
     Text(String),
     Uuid([u8; 16]),
@@ -73,38 +73,38 @@ pub enum CheckedContractScalar {
 /// Structured validation / boundary error with exact nested field path (`FR-006`, `FR-069`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContractFieldError {
-    pub code:       String,
+    pub code: String,
     pub field_path: String,
-    pub message:    String,
-    pub retryable:  bool,
+    pub message: String,
+    pub retryable: bool,
 }
 
 impl ContractFieldError {
     pub fn invalid(field_path: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
-            code:       "INVALID_FIELD_VALUE".to_string(),
+            code: "INVALID_FIELD_VALUE".to_string(),
             field_path: field_path.into(),
-            message:    message.into(),
-            retryable:  false,
+            message: message.into(),
+            retryable: false,
         }
     }
 
     pub fn out_of_range(field_path: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
-            code:       "NUMERIC_VALUE_OUT_OF_RANGE".to_string(),
+            code: "NUMERIC_VALUE_OUT_OF_RANGE".to_string(),
             field_path: field_path.into(),
-            message:    message.into(),
-            retryable:  false,
+            message: message.into(),
+            retryable: false,
         }
     }
 
     pub fn null_violation(field_path: impl Into<String>) -> Self {
         let path = field_path.into();
         Self {
-            code:       "NOT_NULL_VIOLATION".to_string(),
-            message:    format!("field '{path}' cannot be SQL NULL"),
+            code: "NOT_NULL_VIOLATION".to_string(),
+            message: format!("field '{path}' cannot be SQL NULL"),
             field_path: path,
-            retryable:  false,
+            retryable: false,
         }
     }
 }
@@ -124,10 +124,10 @@ pub fn check_json_scalar(
         }
         if not_null {
             return Err(ContractFieldError {
-                code:       "MISSING_REQUIRED_FIELD".to_string(),
+                code: "MISSING_REQUIRED_FIELD".to_string(),
                 field_path: field_path.to_string(),
-                message:    format!("required field '{field_path}' is missing"),
-                retryable:  false,
+                message: format!("required field '{field_path}' is missing"),
+                retryable: false,
             });
         }
         return Ok(ValuePresence::SqlNull);
@@ -625,16 +625,16 @@ mod tests {
 
         let dec_ty = KalamDataType::Decimal {
             precision: 10,
-            scale:     2,
+            scale: 2,
         };
         let valid_dec =
             check_json_scalar(Some(&json!("-12345678.95")), &dec_ty, true, false, "price").unwrap();
         assert_eq!(
             valid_dec,
             ValuePresence::Value(CheckedContractScalar::Decimal {
-                unscaled:  -1_234_567_895,
+                unscaled: -1_234_567_895,
                 precision: 10,
-                scale:     2,
+                scale: 2,
             })
         );
 

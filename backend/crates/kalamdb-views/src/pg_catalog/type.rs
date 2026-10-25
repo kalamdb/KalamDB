@@ -51,29 +51,29 @@ impl PgTypeView {
 }
 
 struct TypeRowBuilders {
-    oids:          Int64Builder,
-    typnames:      StringBuilder,
+    oids: Int64Builder,
+    typnames: StringBuilder,
     typnamespaces: Int64Builder,
-    typrelids:     Int64Builder,
-    typtypes:      StringBuilder,
-    typnotnulls:   BooleanBuilder,
-    typtypmods:    Int64Builder,
-    typbasetypes:  Int64Builder,
-    typlens:       Int64Builder,
+    typrelids: Int64Builder,
+    typtypes: StringBuilder,
+    typnotnulls: BooleanBuilder,
+    typtypmods: Int64Builder,
+    typbasetypes: Int64Builder,
+    typlens: Int64Builder,
 }
 
 impl TypeRowBuilders {
     fn new() -> Self {
         Self {
-            oids:          Int64Builder::new(),
-            typnames:      StringBuilder::new(),
+            oids: Int64Builder::new(),
+            typnames: StringBuilder::new(),
             typnamespaces: Int64Builder::new(),
-            typrelids:     Int64Builder::new(),
-            typtypes:      StringBuilder::new(),
-            typnotnulls:   BooleanBuilder::new(),
-            typtypmods:    Int64Builder::new(),
-            typbasetypes:  Int64Builder::new(),
-            typlens:       Int64Builder::new(),
+            typrelids: Int64Builder::new(),
+            typtypes: StringBuilder::new(),
+            typnotnulls: BooleanBuilder::new(),
+            typtypmods: Int64Builder::new(),
+            typbasetypes: Int64Builder::new(),
+            typlens: Int64Builder::new(),
         }
     }
 

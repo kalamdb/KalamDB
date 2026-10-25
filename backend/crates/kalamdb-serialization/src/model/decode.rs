@@ -76,8 +76,8 @@ impl serde::de::Error for DeError {
 }
 
 struct RowDeserializer<'a> {
-    row:                &'a Row,
-    table_def:          &'a TableDefinition,
+    row: &'a Row,
+    table_def: &'a TableDefinition,
     scale_timestamp_ms: bool,
 }
 
@@ -132,10 +132,10 @@ impl<'de> Deserializer<'de> for RowDeserializer<'_> {
         V: Visitor<'de>,
     {
         visitor.visit_map(RowMapAccess {
-            row:                self.row,
-            columns:            &self.table_def.columns,
+            row: self.row,
+            columns: &self.table_def.columns,
             scale_timestamp_ms: self.scale_timestamp_ms,
-            index:              0,
+            index: 0,
         })
     }
 
@@ -165,10 +165,10 @@ impl<'de> Deserializer<'de> for RowDeserializer<'_> {
 }
 
 struct RowMapAccess<'a> {
-    row:                &'a Row,
-    columns:            &'a [ColumnDefinition],
+    row: &'a Row,
+    columns: &'a [ColumnDefinition],
     scale_timestamp_ms: bool,
-    index:              usize,
+    index: usize,
 }
 
 impl<'de> MapAccess<'de> for RowMapAccess<'_> {
@@ -202,8 +202,8 @@ impl<'de> MapAccess<'de> for RowMapAccess<'_> {
 }
 
 struct FieldDeserializer<'a> {
-    scalar:             &'a ScalarValue,
-    data_type:          &'a KalamDataType,
+    scalar: &'a ScalarValue,
+    data_type: &'a KalamDataType,
     scale_timestamp_ms: bool,
 }
 

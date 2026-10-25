@@ -37,7 +37,7 @@ use crate::{
 };
 
 pub struct MvccScanResult<K, V> {
-    pub rows:        Vec<(K, V)>,
+    pub rows: Vec<(K, V)>,
     pub diagnostics: DeferredScanDiagnostics,
 }
 
@@ -259,7 +259,7 @@ where
             .await?
         } else {
             MvccScanResult {
-                rows:        self
+                rows: self
                     .scan_kvs_with_context(
                         scan_context,
                         filter,
@@ -373,7 +373,7 @@ where
             .await?
         } else {
             MvccScanResult {
-                rows:        self
+                rows: self
                     .scan_kvs_with_context(
                         scan_context,
                         filter,
@@ -403,16 +403,16 @@ where
     K: StorageKey + Clone + Send + Sync + 'static,
     V: ScanRow + Send + Sync + 'static,
 {
-    pub(super) provider:             P,
-    pub(super) scan_context:         P::ScanContext,
-    pub(super) projection:           Option<Vec<usize>>,
-    pub(super) filter:               Option<Expr>,
+    pub(super) provider: P,
+    pub(super) scan_context: P::ScanContext,
+    pub(super) projection: Option<Vec<usize>>,
+    pub(super) filter: Option<Expr>,
     pub(super) authorization_filter: Option<Expr>,
-    pub(super) physical_filter:      Option<Arc<dyn PhysicalExpr>>,
-    pub(super) output_projection:    Option<Vec<usize>>,
-    pub(super) limit:                Option<usize>,
-    pub(super) output_schema:        SchemaRef,
-    pub(super) _marker:              std::marker::PhantomData<(K, V)>,
+    pub(super) physical_filter: Option<Arc<dyn PhysicalExpr>>,
+    pub(super) output_projection: Option<Vec<usize>>,
+    pub(super) limit: Option<usize>,
+    pub(super) output_schema: SchemaRef,
+    pub(super) _marker: std::marker::PhantomData<(K, V)>,
 }
 
 impl<P, K, V> std::fmt::Debug for DeferredMvccScanSource<P, K, V>
@@ -883,7 +883,7 @@ mod tests {
 
     #[derive(Clone)]
     struct TestScanRow {
-        row:     Row,
+        row: Row,
         deleted: bool,
     }
 
@@ -932,7 +932,7 @@ mod tests {
     #[test]
     fn visible_hot_entry_hides_latest_tombstone() {
         let tombstone = TestScanRow {
-            row:     Row::from_vec(vec![]),
+            row: Row::from_vec(vec![]),
             deleted: true,
         };
 
@@ -942,7 +942,7 @@ mod tests {
     #[test]
     fn visible_hot_entry_keeps_latest_live_row() {
         let live = TestScanRow {
-            row:     Row::from_vec(vec![]),
+            row: Row::from_vec(vec![]),
             deleted: false,
         };
 

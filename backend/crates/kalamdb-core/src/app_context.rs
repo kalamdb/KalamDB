@@ -106,7 +106,7 @@ pub struct AppContext {
     schema_registry: Arc<SchemaRegistry>,
 
     // ===== Stores =====
-    user_table_store:   Arc<UserTableStore>,
+    user_table_store: Arc<UserTableStore>,
     shared_table_store: Arc<SharedTableStore>,
 
     // ===== Core Infrastructure =====
@@ -115,9 +115,9 @@ pub struct AppContext {
     // ===== Managers =====
     /// Type-erased job manager (concrete type is `kalamdb_jobs::JobsManager`).
     /// Consumers downcast via the `kalamdb_jobs::AppContextJobsExt` trait.
-    job_manager:        OnceCell<Arc<dyn std::any::Any + Send + Sync>>,
+    job_manager: OnceCell<Arc<dyn std::any::Any + Send + Sync>>,
     /// Lightweight waker so the Raft applier can notify the job loop.
-    job_waker:          OnceCell<Arc<dyn JobWaker>>,
+    job_waker: OnceCell<Arc<dyn JobWaker>>,
     live_query_manager: OnceCell<Arc<LiveQueryManager>>,
 
     // ===== Notification Service =====
@@ -130,7 +130,7 @@ pub struct AppContext {
     storage_registry: Arc<StorageRegistry>,
 
     // ===== DataFusion Session Management =====
-    session_factory:      Arc<DataFusionSessionFactory>,
+    session_factory: Arc<DataFusionSessionFactory>,
     base_session_context: Arc<SessionContext>,
 
     // ===== System Tables Registry =====
@@ -739,17 +739,17 @@ impl AppContext {
                         .active_metrics()
                         .into_iter()
                         .map(|metric| TransactionSnapshot {
-                            transaction_id:       metric.transaction_id.to_string(),
-                            owner_id:             metric.owner_id.to_string(),
-                            origin:               metric.origin.as_str().to_string(),
-                            state:                metric.state.lifecycle_str().to_string(),
-                            age_ms:               metric.age_ms.min(i64::MAX as u64) as i64,
-                            idle_ms:              metric.idle_ms.min(i64::MAX as u64) as i64,
-                            write_count:          metric.write_count.min(i64::MAX as usize) as i64,
-                            write_bytes:          metric.write_bytes.min(i64::MAX as usize) as i64,
+                            transaction_id: metric.transaction_id.to_string(),
+                            owner_id: metric.owner_id.to_string(),
+                            origin: metric.origin.as_str().to_string(),
+                            state: metric.state.lifecycle_str().to_string(),
+                            age_ms: metric.age_ms.min(i64::MAX as u64) as i64,
+                            idle_ms: metric.idle_ms.min(i64::MAX as u64) as i64,
+                            write_count: metric.write_count.min(i64::MAX as usize) as i64,
+                            write_bytes: metric.write_bytes.min(i64::MAX as usize) as i64,
                             touched_tables_count: metric.touched_tables_count.min(i64::MAX as usize)
                                 as i64,
-                            snapshot_commit_seq:  metric.snapshot_commit_seq.min(i64::MAX as u64)
+                            snapshot_commit_seq: metric.snapshot_commit_seq.min(i64::MAX as u64)
                                 as i64,
                         })
                         .collect()
@@ -1493,7 +1493,7 @@ impl AppContext {
         let state = Arc::clone(self.function_runtime.get().expect("function runtime initialized"));
         state.ensure_lifecycle_observer(|| {
             Arc::new(crate::functions::lifecycle::FunctionRuntimeLogObserver {
-                logger:  self.procedure_log_logger(),
+                logger: self.procedure_log_logger(),
                 node_id: Arc::from(self.node_id().as_ref().to_string()),
             })
         });

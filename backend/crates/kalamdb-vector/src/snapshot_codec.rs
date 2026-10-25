@@ -18,23 +18,23 @@ mod tests {
     #[test]
     fn test_snapshot_codec_roundtrip() {
         let snapshot = VixSnapshotFile {
-            table_id:         TableId::from_strings("app", "docs"),
-            dimensions:       3,
-            metric:           VectorMetric::Cosine,
-            generated_at:     12345,
+            table_id: TableId::from_strings("app", "docs"),
+            dimensions: 3,
+            metric: VectorMetric::Cosine,
+            generated_at: 12345,
             last_applied_seq: 99,
-            next_key:         1000,
-            entries:          vec![
+            next_key: 1000,
+            entries: vec![
                 VixSnapshotEntry {
                     key: 1,
-                    pk:  "a".to_string(),
+                    pk: "a".to_string(),
                 },
                 VixSnapshotEntry {
                     key: 2,
-                    pk:  "b".to_string(),
+                    pk: "b".to_string(),
                 },
             ],
-            index_blob:       vec![10, 20, 30, 40],
+            index_blob: vec![10, 20, 30, 40],
         };
 
         let encoded = encode_snapshot(&snapshot).expect("encode");

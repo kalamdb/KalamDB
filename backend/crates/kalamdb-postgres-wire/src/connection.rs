@@ -13,12 +13,12 @@ pub const DEFAULT_PREPARED_STATEMENT_TOTAL_BYTES_LIMIT: usize = 8 * 1_048_576; /
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WirePreparedStatement {
     pub name: String,
-    pub sql:  String,
+    pub sql: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WirePortal {
-    pub name:           String,
+    pub name: String,
     pub statement_name: String,
 }
 
@@ -177,7 +177,7 @@ impl WireConnectionState {
     pub fn ensure_statement_sql_bytes(&self, sql: &str) -> Result<(), WireConnectionStateError> {
         if sql.len() > self.statement_sql_bytes_limit {
             return Err(WireConnectionStateError::StatementSqlBytesExceeded {
-                limit:  self.statement_sql_bytes_limit,
+                limit: self.statement_sql_bytes_limit,
                 actual: sql.len(),
             });
         }
@@ -234,7 +234,7 @@ impl WireConnectionState {
         let requested_total = current_bytes.saturating_add(new_entry_bytes);
         if requested_total > self.prepared_statement_total_bytes_limit {
             return Err(WireConnectionStateError::PreparedStatementBytesExceeded {
-                limit:     self.prepared_statement_total_bytes_limit,
+                limit: self.prepared_statement_total_bytes_limit,
                 requested: requested_total,
             });
         }
@@ -280,14 +280,14 @@ mod tests {
         state
             .put_prepared_statement(WirePreparedStatement {
                 name: "one".to_string(),
-                sql:  "SELECT 1".to_string(),
+                sql: "SELECT 1".to_string(),
             })
             .expect("first statement fits");
 
         let error = state
             .put_prepared_statement(WirePreparedStatement {
                 name: "two".to_string(),
-                sql:  "SELECT 2".to_string(),
+                sql: "SELECT 2".to_string(),
             })
             .expect_err("second statement exceeds cap");
 
@@ -299,14 +299,14 @@ mod tests {
         let state = WireConnectionState::with_limits("session", auth(), SchemaId::default(), 1, 1);
         state
             .put_portal(WirePortal {
-                name:           "portal_one".to_string(),
+                name: "portal_one".to_string(),
                 statement_name: "stmt".to_string(),
             })
             .expect("first portal fits");
 
         let error = state
             .put_portal(WirePortal {
-                name:           "portal_two".to_string(),
+                name: "portal_two".to_string(),
                 statement_name: "stmt".to_string(),
             })
             .expect_err("second portal exceeds cap");

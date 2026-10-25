@@ -54,9 +54,9 @@ pub enum SchemaPipelineState {
 }
 
 pub struct DevSessionOptions {
-    pub force:        bool,
+    pub force: bool,
     pub display_mode: WorkflowDisplayMode,
-    pub agent:        bool,
+    pub agent: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,10 +67,10 @@ enum DevLoopAction {
 
 #[derive(Debug)]
 struct DevSchemaLoop {
-    force:           bool,
-    schema_mtime:    Option<SystemTime>,
+    force: bool,
+    schema_mtime: Option<SystemTime>,
     functions_stamp: Option<SystemTime>,
-    last_state:      SchemaPipelineState,
+    last_state: SchemaPipelineState,
 }
 
 impl DevSchemaLoop {

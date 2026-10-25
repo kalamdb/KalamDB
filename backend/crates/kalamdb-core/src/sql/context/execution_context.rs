@@ -15,27 +15,27 @@ use once_cell::sync::OnceCell;
 #[derive(Clone)]
 pub struct ExecutionContext {
     /// Authenticated session with user identity and metadata
-    auth_session:            AuthSession,
+    auth_session: AuthSession,
     /// Optional namespace for this query execution
-    namespace_id:            Option<SchemaId>,
+    namespace_id: Option<SchemaId>,
     /// Optional existing transaction supplied by a connection-scoped caller.
-    transaction_id:          Option<TransactionId>,
+    transaction_id: Option<TransactionId>,
     /// When true, STREAM DML from this context autocommits instead of joining
     /// the wrapping request transaction (procedure CALL / topic trigger).
     allow_stream_autocommit: bool,
     /// Base SessionContext from AppContext (tables already registered)
     /// We extract SessionState from this and inject user_id to create per-request SessionContext
-    base_session_context:    Arc<SessionContext>,
+    base_session_context: Arc<SessionContext>,
     /// Connection-scoped GUC values shared by `set_config` and `current_setting`.
-    session_config:          Option<SessionConfigValues>,
+    session_config: Option<SessionConfigValues>,
     /// When true, `SELECT *` omits storage columns. PostgreSQL clients set this.
-    hide_storage_star:       bool,
+    hide_storage_star: bool,
     /// Cached per-request SessionState with user context injected
     ///
     /// This avoids repeated allocations when a single request needs multiple
     /// SessionContext instances (retries, planning fallbacks) while keeping
     /// user isolation intact.
-    session_context_cache:   Arc<OnceCell<SessionContext>>,
+    session_context_cache: Arc<OnceCell<SessionContext>>,
 }
 
 impl ExecutionContext {

@@ -22,10 +22,10 @@ const NO_SCOPES: &[&str] = &[];
 /// One input parameter published on a routine operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenApiInput {
-    pub name:         String,
-    pub sql_type:     String,
-    pub is_array:     bool,
-    pub not_null:     bool,
+    pub name: String,
+    pub sql_type: String,
+    pub is_array: bool,
+    pub not_null: bool,
     pub default_expr: Option<String>,
 }
 
@@ -39,18 +39,18 @@ impl OpenApiInput {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenApiRoutineSpec {
     pub routine_id: String,
-    pub namespace:  String,
-    pub name:       String,
-    pub summary:    String,
-    pub inputs:     Vec<OpenApiInput>,
+    pub namespace: String,
+    pub name: String,
+    pub summary: String,
+    pub inputs: Vec<OpenApiInput>,
 }
 
 /// OpenAPI 3.1 document for the routine HTTP API.
 #[derive(Debug, Serialize)]
 pub struct OpenApiDocument {
-    pub openapi:    &'static str,
-    pub info:       OpenApiInfo,
-    pub paths:      BTreeMap<String, OpenApiPathItem>,
+    pub openapi: &'static str,
+    pub info: OpenApiInfo,
+    pub paths: BTreeMap<String, OpenApiPathItem>,
     pub components: OpenApiComponents,
 }
 
@@ -68,7 +68,7 @@ impl OpenApiDocument {
         Self {
             openapi: "3.1.0",
             info: OpenApiInfo {
-                title:   "KalamDB Routine & Contract API",
+                title: "KalamDB Routine & Contract API",
                 version: format!("epoch-{DOMAIN_EPOCH}"),
             },
             paths,
@@ -79,7 +79,7 @@ impl OpenApiDocument {
 
 #[derive(Debug, Serialize)]
 pub struct OpenApiInfo {
-    pub title:   &'static str,
+    pub title: &'static str,
     pub version: String,
 }
 
@@ -92,11 +92,11 @@ pub struct OpenApiPathItem {
 pub struct OpenApiOperation {
     #[serde(rename = "operationId")]
     pub operation_id: String,
-    pub summary:      String,
-    pub security:     Vec<BearerAuthRequirement>,
+    pub summary: String,
+    pub security: Vec<BearerAuthRequirement>,
     #[serde(rename = "requestBody")]
     pub request_body: OpenApiRequestBody,
-    pub responses:    RoutineResponses,
+    pub responses: RoutineResponses,
 }
 
 impl OpenApiOperation {
@@ -111,14 +111,14 @@ impl OpenApiOperation {
         }
         Self {
             operation_id: routine.routine_id.clone(),
-            summary:      routine.summary.clone(),
-            security:     vec![BearerAuthRequirement {
+            summary: routine.summary.clone(),
+            security: vec![BearerAuthRequirement {
                 bearer_auth: NO_SCOPES,
             }],
             request_body: OpenApiRequestBody {
                 required: !required.is_empty(),
-                content:  RoutineRequestContent {
-                    json:   OpenApiMediaType {
+                content: RoutineRequestContent {
+                    json: OpenApiMediaType {
                         schema: object_schema(properties, required),
                     },
                     domain: OpenApiMediaType {
@@ -126,7 +126,7 @@ impl OpenApiOperation {
                     },
                 },
             },
-            responses:    RoutineResponses::standard(),
+            responses: RoutineResponses::standard(),
         }
     }
 }
@@ -140,13 +140,13 @@ pub struct BearerAuthRequirement {
 #[derive(Debug, Serialize)]
 pub struct OpenApiRequestBody {
     pub required: bool,
-    pub content:  RoutineRequestContent,
+    pub content: RoutineRequestContent,
 }
 
 #[derive(Debug, Serialize)]
 pub struct RoutineRequestContent {
     #[serde(rename = "application/json")]
-    pub json:   OpenApiMediaType,
+    pub json: OpenApiMediaType,
     #[serde(rename = "application/x-kalam-domain")]
     pub domain: OpenApiMediaType,
 }
@@ -159,21 +159,21 @@ pub struct OpenApiMediaType {
 #[derive(Debug, Serialize)]
 pub struct RoutineResponses {
     #[serde(rename = "200")]
-    pub ok:              OpenApiDescription,
+    pub ok: OpenApiDescription,
     #[serde(rename = "400")]
-    pub bad_request:     OpenApiReference,
+    pub bad_request: OpenApiReference,
     #[serde(rename = "401")]
-    pub unauthorized:    OpenApiReference,
+    pub unauthorized: OpenApiReference,
     #[serde(rename = "403")]
-    pub forbidden:       OpenApiReference,
+    pub forbidden: OpenApiReference,
     #[serde(rename = "404")]
-    pub not_found:       OpenApiReference,
+    pub not_found: OpenApiReference,
     #[serde(rename = "409")]
-    pub conflict:        OpenApiReference,
+    pub conflict: OpenApiReference,
     #[serde(rename = "429")]
-    pub too_many:        OpenApiReference,
+    pub too_many: OpenApiReference,
     #[serde(rename = "500")]
-    pub internal:        OpenApiReference,
+    pub internal: OpenApiReference,
     #[serde(rename = "504")]
     pub gateway_timeout: OpenApiReference,
 }
@@ -184,16 +184,16 @@ impl RoutineResponses {
             reference: STRUCTURED_ERROR_REF,
         };
         Self {
-            ok:              OpenApiDescription {
+            ok: OpenApiDescription {
                 description: "Validated routine result",
             },
-            bad_request:     error.clone(),
-            unauthorized:    error.clone(),
-            forbidden:       error.clone(),
-            not_found:       error.clone(),
-            conflict:        error.clone(),
-            too_many:        error.clone(),
-            internal:        error.clone(),
+            bad_request: error.clone(),
+            unauthorized: error.clone(),
+            forbidden: error.clone(),
+            not_found: error.clone(),
+            conflict: error.clone(),
+            too_many: error.clone(),
+            internal: error.clone(),
             gateway_timeout: error,
         }
     }
@@ -214,7 +214,7 @@ pub struct OpenApiDescription {
 pub struct OpenApiComponents {
     #[serde(rename = "securitySchemes")]
     pub security_schemes: OpenApiSecuritySchemes,
-    pub responses:        OpenApiComponentResponses,
+    pub responses: OpenApiComponentResponses,
 }
 
 impl OpenApiComponents {
@@ -222,15 +222,15 @@ impl OpenApiComponents {
         Self {
             security_schemes: OpenApiSecuritySchemes {
                 bearer_auth: OpenApiHttpSecurity {
-                    scheme_type:   "http",
-                    scheme:        "bearer",
+                    scheme_type: "http",
+                    scheme: "bearer",
                     bearer_format: "JWT",
                 },
             },
-            responses:        OpenApiComponentResponses {
+            responses: OpenApiComponentResponses {
                 structured_error: StructuredErrorResponse {
                     description: "Structured KalamDB error response",
-                    content:     StructuredErrorContent {
+                    content: StructuredErrorContent {
                         json: OpenApiMediaType {
                             schema: structured_error_schema(),
                         },
@@ -250,8 +250,8 @@ pub struct OpenApiSecuritySchemes {
 #[derive(Debug, Serialize)]
 pub struct OpenApiHttpSecurity {
     #[serde(rename = "type")]
-    pub scheme_type:   &'static str,
-    pub scheme:        &'static str,
+    pub scheme_type: &'static str,
+    pub scheme: &'static str,
     #[serde(rename = "bearerFormat")]
     pub bearer_format: &'static str,
 }
@@ -265,7 +265,7 @@ pub struct OpenApiComponentResponses {
 #[derive(Debug, Serialize)]
 pub struct StructuredErrorResponse {
     pub description: &'static str,
-    pub content:     StructuredErrorContent,
+    pub content: StructuredErrorContent,
 }
 
 #[derive(Debug, Serialize)]
@@ -280,17 +280,17 @@ pub struct OpenApiSchema {
     #[serde(rename = "type")]
     pub schema_type: OpenApiType,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub format:      Option<&'static str>,
+    pub format: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub items:       Option<Box<OpenApiSchema>>,
+    pub items: Option<Box<OpenApiSchema>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub nullable:    Option<bool>,
+    pub nullable: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub default:     Option<String>,
+    pub default: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub properties:  Option<BTreeMap<String, OpenApiSchema>>,
+    pub properties: Option<BTreeMap<String, OpenApiSchema>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub required:    Option<Vec<String>>,
+    pub required: Option<Vec<String>>,
     #[serde(rename = "const", skip_serializing_if = "Option::is_none")]
     pub const_value: Option<&'static str>,
 }
@@ -432,10 +432,10 @@ pub async fn openapi_v1(
             .into_iter()
             .filter(|parameter| parameter.mode.is_input())
             .map(|parameter| OpenApiInput {
-                name:         parameter.name,
-                sql_type:     parameter.type_name,
-                is_array:     parameter.is_array,
-                not_null:     parameter.not_null,
+                name: parameter.name,
+                sql_type: parameter.type_name,
+                is_array: parameter.is_array,
+                not_null: parameter.not_null,
                 default_expr: parameter.default_expr,
             })
             .collect();
@@ -464,29 +464,29 @@ mod tests {
     fn routine_document_serializes_typed_schemas() {
         let spec = OpenApiRoutineSpec {
             routine_id: "chat.send".to_string(),
-            namespace:  "chat".to_string(),
-            name:       "send".to_string(),
-            summary:    "Send a message".to_string(),
-            inputs:     vec![
+            namespace: "chat".to_string(),
+            name: "send".to_string(),
+            summary: "Send a message".to_string(),
+            inputs: vec![
                 OpenApiInput {
-                    name:         "body".to_string(),
-                    sql_type:     "JSON".to_string(),
-                    is_array:     false,
-                    not_null:     true,
+                    name: "body".to_string(),
+                    sql_type: "JSON".to_string(),
+                    is_array: false,
+                    not_null: true,
                     default_expr: None,
                 },
                 OpenApiInput {
-                    name:         "tags".to_string(),
-                    sql_type:     "TEXT".to_string(),
-                    is_array:     true,
-                    not_null:     false,
+                    name: "tags".to_string(),
+                    sql_type: "TEXT".to_string(),
+                    is_array: true,
+                    not_null: false,
                     default_expr: Some("'[]'".to_string()),
                 },
                 OpenApiInput {
-                    name:         "amount".to_string(),
-                    sql_type:     "NUMERIC(12, 2)".to_string(),
-                    is_array:     false,
-                    not_null:     true,
+                    name: "amount".to_string(),
+                    sql_type: "NUMERIC(12, 2)".to_string(),
+                    is_array: false,
+                    not_null: true,
                     default_expr: Some("0.00".to_string()),
                 },
             ],

@@ -5,9 +5,8 @@
 //! FlexBuffers, JSON, or MessagePack for RocksDB payloads.
 
 pub mod domain;
-mod ws_domain;
+mod domain_json;
 mod error;
-mod function_value;
 #[cfg(feature = "backend-adapters")]
 mod model;
 mod object;
@@ -17,22 +16,18 @@ pub mod row;
 mod stream_frame;
 mod version;
 mod vix_snapshot;
+mod ws_domain;
 
 pub use domain::{
     canonical_invocation_digest, decode_domain_frame_for_surface, decode_domain_value,
     digest_to_hex, encode_domain_frame, encode_domain_frame_from_payload, encode_domain_value,
-    sha256_digest, sha256_hex,
-    DomainDecodeBudget, DomainFileRef, DomainFrame, DomainMessageKind, DomainValue,
-    EndpointSurface, DEFAULT_MAX_DOMAIN_DECODED_BYTES, DEFAULT_MAX_DOMAIN_DEPTH,
+    sha256_digest, sha256_hex, DomainDecodeBudget, DomainFileRef, DomainFrame, DomainMessageKind,
+    DomainValue, EndpointSurface, DEFAULT_MAX_DOMAIN_DECODED_BYTES, DEFAULT_MAX_DOMAIN_DEPTH,
     DEFAULT_MAX_DOMAIN_ELEMENTS, DEFAULT_MAX_DOMAIN_WORK, DEFAULT_MAX_FRAME_WIRE_BYTES,
     DOMAIN_CODEC_VERSION, DOMAIN_EPOCH, DOMAIN_FRAME_HEADER_LEN, DOMAIN_MAGIC,
 };
+pub use domain_json::{domain_value_to_json, json_to_domain_value};
 pub use error::{Result, SerializationError};
-pub use ws_domain::{
-    decode_client_message, decode_server_message, encode_change_frame, encode_client_message,
-    encode_named_rows, encode_server_message, WS_CONTRACT_DESCRIPTOR_ID,
-};
-pub use function_value::{decode_function_value, encode_function_value, FunctionValueEncoder};
 #[cfg(feature = "backend-adapters")]
 pub use model::{model_ms_to_row, model_to_row, row_to_model, row_to_model_ms};
 pub use object::{
@@ -66,4 +61,8 @@ pub use stream_frame::{
 pub use version::{MAGIC, PROTOCOL_VERSION};
 pub use vix_snapshot::{
     decode_vix_snapshot, encode_vix_snapshot, VixSnapshotEntry, VixSnapshotFile,
+};
+pub use ws_domain::{
+    decode_client_message, decode_server_message, encode_change_frame, encode_client_message,
+    encode_named_rows, encode_server_message, WS_CONTRACT_DESCRIPTOR_ID,
 };

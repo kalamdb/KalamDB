@@ -100,9 +100,9 @@ pub enum FunctionsError {
     /// A catalog error. `message` is the user sentence. `detail` is the debug chain.
     #[error("{message}")]
     Catalog {
-        code:    kalamdb_commons::ErrorCode,
+        code: kalamdb_commons::ErrorCode,
         message: String,
-        detail:  String,
+        detail: String,
     },
 }
 
@@ -157,11 +157,11 @@ impl FunctionsError {
             },
             FunctionErrorCode::AbiMismatch => Self::AbiMismatch {
                 artifact: 0,
-                runtime:  0,
+                runtime: 0,
             },
             FunctionErrorCode::StaleRevision => Self::StaleRevision {
                 expected: message,
-                actual:   String::new(),
+                actual: String::new(),
             },
         }
     }
@@ -210,7 +210,7 @@ mod tests {
         assert_eq!(
             FunctionsError::AbiMismatch {
                 artifact: 1,
-                runtime:  2,
+                runtime: 2,
             }
             .code(),
             FunctionErrorCode::AbiMismatch

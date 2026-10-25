@@ -23,16 +23,16 @@ pub enum AlterDomainOperation {
     },
     AddNotNull {
         constraint_name: Option<String>,
-        validated:       bool,
+        validated: bool,
     },
     DropConstraint {
-        name:      String,
+        name: String,
         if_exists: bool,
-        cascade:   bool,
+        cascade: bool,
     },
     RenameConstraint {
         from: String,
-        to:   String,
+        to: String,
     },
     ValidateConstraint {
         name: String,
@@ -52,8 +52,8 @@ pub enum AlterDomainOperation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlterDomainStatement {
     pub namespace_id: SchemaId,
-    pub name:         String,
-    pub operation:    AlterDomainOperation,
+    pub name: String,
+    pub operation: AlterDomainOperation,
 }
 
 impl AlterDomainStatement {
@@ -122,9 +122,9 @@ impl AlterDomainStatement {
                 }
                 AlterDomainOperation::AddCheck {
                     clause: DomainCheckClause {
-                        name:       constraint_name,
+                        name: constraint_name,
                         expression: expr,
-                        validated:  !not_valid,
+                        validated: !not_valid,
                     },
                 }
             } else {

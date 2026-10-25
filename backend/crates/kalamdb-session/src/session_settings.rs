@@ -12,8 +12,8 @@ use crate::{
 /// One `pg_settings` row: the effective value and where it came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingEntry {
-    pub name:   String,
-    pub value:  String,
+    pub name: String,
+    pub value: String,
     pub source: &'static str,
 }
 
@@ -138,8 +138,8 @@ impl SessionSettings {
         for (name, value) in state.local.iter() {
             if seen.insert(name.clone()) {
                 rows.push(SettingEntry {
-                    name:   name.clone(),
-                    value:  value.clone(),
+                    name: name.clone(),
+                    value: value.clone(),
                     source: "override",
                 });
             }
@@ -147,8 +147,8 @@ impl SessionSettings {
         for (name, value) in state.session.iter() {
             if seen.insert(name.clone()) {
                 rows.push(SettingEntry {
-                    name:   name.clone(),
-                    value:  value.clone(),
+                    name: name.clone(),
+                    value: value.clone(),
                     source: "session",
                 });
             }

@@ -47,7 +47,7 @@ impl serde::ser::Error for SerError {
 }
 
 struct RowSerializer<'a> {
-    table_def:          &'a TableDefinition,
+    table_def: &'a TableDefinition,
     scale_timestamp_ms: bool,
 }
 
@@ -206,9 +206,9 @@ impl<'a> Serializer for RowSerializer<'a> {
         _len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
         Ok(StructFields {
-            table_def:          self.table_def,
+            table_def: self.table_def,
             scale_timestamp_ms: self.scale_timestamp_ms,
-            fields:             BTreeMap::new(),
+            fields: BTreeMap::new(),
         })
     }
 
@@ -224,9 +224,9 @@ impl<'a> Serializer for RowSerializer<'a> {
 }
 
 struct StructFields<'a> {
-    table_def:          &'a TableDefinition,
+    table_def: &'a TableDefinition,
     scale_timestamp_ms: bool,
-    fields:             BTreeMap<String, ScalarValue>,
+    fields: BTreeMap<String, ScalarValue>,
 }
 
 impl SerializeStruct for StructFields<'_> {
@@ -248,7 +248,7 @@ impl SerializeStruct for StructFields<'_> {
                 .map_err(|error| SerError(format!("json->scalar conversion failed: {error}")))?
         } else {
             value.serialize(ScalarSerializer {
-                data_type:          &data_type,
+                data_type: &data_type,
                 scale_timestamp_ms: self.scale_timestamp_ms,
             })?
         };
@@ -266,7 +266,7 @@ impl SerializeStruct for StructFields<'_> {
 }
 
 struct ScalarSerializer<'a> {
-    data_type:          &'a KalamDataType,
+    data_type: &'a KalamDataType,
     scale_timestamp_ms: bool,
 }
 
@@ -426,7 +426,7 @@ impl<'a> Serializer for ScalarSerializer<'a> {
         if matches!(self.data_type, KalamDataType::Bytes) {
             Ok(BytesSeq {
                 data_type: self.data_type,
-                bytes:     Vec::new(),
+                bytes: Vec::new(),
             })
         } else {
             Err(SerError(format!(
@@ -484,7 +484,7 @@ impl<'a> Serializer for ScalarSerializer<'a> {
 
 struct BytesSeq<'a> {
     data_type: &'a KalamDataType,
-    bytes:     Vec<u8>,
+    bytes: Vec<u8>,
 }
 
 impl SerializeSeq for BytesSeq<'_> {

@@ -31,14 +31,14 @@ use crate::{error::FlushResultExt, FlushError, FlushManifestHelper, ManifestServ
 /// separate Parquet file for RLS isolation. Uses Bloom filters on primary key columns
 /// columns for efficient query pruning.
 pub struct UserTableFlushJob {
-    store:             Arc<UserTableIndexedStore>,
-    table_id:          Arc<TableId>,
-    schema:            SchemaRef,
-    storage_cached:    Arc<StorageCached>,
-    manifest_helper:   FlushManifestHelper,
-    metadata:          FlushTableMetadata,
-    scan_batch_size:   usize,
-    scope_hook:        Arc<dyn FlushScopeHook>,
+    store: Arc<UserTableIndexedStore>,
+    table_id: Arc<TableId>,
+    schema: SchemaRef,
+    storage_cached: Arc<StorageCached>,
+    manifest_helper: FlushManifestHelper,
+    metadata: FlushTableMetadata,
+    scan_batch_size: usize,
+    scope_hook: Arc<dyn FlushScopeHook>,
     retain_latest_hot: bool,
 }
 
@@ -316,10 +316,10 @@ impl TableFlush for UserTableFlushJob {
                 self.table_id
             );
             return Ok(FlushJobResult {
-                rows_flushed:  0,
+                rows_flushed: 0,
                 parquet_files: vec![],
-                scope_hints:   vec![],
-                metadata:      FlushMetadata::user_table(0, vec![]),
+                scope_hints: vec![],
+                metadata: FlushMetadata::user_table(0, vec![]),
             });
         }
 

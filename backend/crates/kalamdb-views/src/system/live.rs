@@ -33,7 +33,7 @@ pub type LiveSnapshotCallback = Arc<dyn Fn() -> Vec<LiveQuery> + Send + Sync>;
 
 /// Virtual view that snapshots active subscriptions from memory.
 pub struct LiveView {
-    system_table:      SystemTable,
+    system_table: SystemTable,
     snapshot_callback: Arc<RwLock<Option<LiveSnapshotCallback>>>,
 }
 

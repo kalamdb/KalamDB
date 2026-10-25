@@ -40,23 +40,23 @@ fn ensure_v8() {
 
 /// Pinned V8 session for one module revision.
 pub struct V8Session {
-    pub(crate) isolate:       v8::OwnedIsolate,
-    pub(crate) context:       v8::Global<v8::Context>,
-    pub(crate) revision:      ModuleRevision,
-    pub(crate) limits:        RuntimeLimits,
-    heap_watch:               *mut HeapWatch,
-    pub(crate) detached:      bool,
-    compiled:                 CompiledScripts,
+    pub(crate) isolate: v8::OwnedIsolate,
+    pub(crate) context: v8::Global<v8::Context>,
+    pub(crate) revision: ModuleRevision,
+    pub(crate) limits: RuntimeLimits,
+    heap_watch: *mut HeapWatch,
+    pub(crate) detached: bool,
+    compiled: CompiledScripts,
     pub(crate) context_fresh: bool,
-    can_fast_reuse:           bool,
-    baseline_global_props:    u32,
+    can_fast_reuse: bool,
+    baseline_global_props: u32,
 }
 
 struct HeapWatch {
-    handle:      v8::IsolateHandle,
-    hit:         AtomicBool,
+    handle: v8::IsolateHandle,
+    hit: AtomicBool,
     max_managed: usize,
-    unwind:      usize,
+    unwind: usize,
 }
 
 impl V8Session {
@@ -65,7 +65,7 @@ impl V8Session {
         if revision.abi_version != ABI_VERSION {
             return Err(FunctionsError::AbiMismatch {
                 artifact: revision.abi_version,
-                runtime:  ABI_VERSION,
+                runtime: ABI_VERSION,
             });
         }
 
@@ -80,10 +80,10 @@ impl V8Session {
         isolate.set_allow_atomics_wait(false);
         isolate.set_promise_reject_callback(super::rejections::rejected);
         let heap_watch = Box::into_raw(Box::new(HeapWatch {
-            handle:      isolate.thread_safe_handle(),
-            hit:         AtomicBool::new(false),
+            handle: isolate.thread_safe_handle(),
+            hit: AtomicBool::new(false),
             max_managed: parts.max_managed,
-            unwind:      parts.unwind,
+            unwind: parts.unwind,
         }));
         isolate.add_near_heap_limit_callback(near_heap_limit, heap_watch.cast());
 
@@ -1157,8 +1157,8 @@ mod tests {
             args: Vec::new(),
             scope: InvocationScope {
                 deadline: Instant::now() + Duration::from_secs(5),
-                cancel:   CancellationToken::new(),
-                depth:    0,
+                cancel: CancellationToken::new(),
+                depth: 0,
             },
             return_template: None,
         };
@@ -1171,7 +1171,7 @@ mod tests {
     }
 
     struct CaptureSqlHost {
-        sql:    std::sync::Mutex<Option<String>>,
+        sql: std::sync::Mutex<Option<String>>,
         params: std::sync::Mutex<Vec<ScalarValue>>,
     }
 
@@ -1211,7 +1211,7 @@ mod tests {
         let revision = Arc::new(ModuleRevision::typescript_fixture(source));
         let mut session = V8Session::load((*revision).clone(), RuntimeLimits::default()).unwrap();
         let host = Arc::new(CaptureSqlHost {
-            sql:    std::sync::Mutex::new(None),
+            sql: std::sync::Mutex::new(None),
             params: std::sync::Mutex::new(Vec::new()),
         });
         let host_trait: Arc<dyn crate::FunctionHost> = host.clone();
@@ -1223,8 +1223,8 @@ mod tests {
             args: vec![id, name],
             scope: InvocationScope {
                 deadline: Instant::now() + Duration::from_secs(5),
-                cancel:   CancellationToken::new(),
-                depth:    0,
+                cancel: CancellationToken::new(),
+                depth: 0,
             },
             return_template: None,
         };
@@ -1341,15 +1341,15 @@ function kalamInvoke(name, args) {
         }
         fn metadata(&self) -> Option<crate::InvocationMetadata> {
             Some(crate::InvocationMetadata {
-                actor:      crate::ActorMeta {
-                    id:   kalamdb_commons::UserId::new("alice"),
+                actor: crate::ActorMeta {
+                    id: kalamdb_commons::UserId::new("alice"),
                     role: kalamdb_commons::Role::User,
                 },
-                principal:  crate::ActorMeta {
-                    id:   kalamdb_commons::UserId::new("alice"),
+                principal: crate::ActorMeta {
+                    id: kalamdb_commons::UserId::new("alice"),
                     role: kalamdb_commons::Role::User,
                 },
-                namespace:  kalamdb_commons::SchemaId::new("api"),
+                namespace: kalamdb_commons::SchemaId::new("api"),
                 request_id: "req-1".into(),
             })
         }
@@ -1404,8 +1404,8 @@ function kalamInvoke(name, args) {
             args: Vec::new(),
             scope: InvocationScope {
                 deadline: Instant::now() + Duration::from_secs(5),
-                cancel:   CancellationToken::new(),
-                depth:    0,
+                cancel: CancellationToken::new(),
+                depth: 0,
             },
             return_template: None,
         };

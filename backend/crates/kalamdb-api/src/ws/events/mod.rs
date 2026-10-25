@@ -10,7 +10,7 @@
 //! eliminating the need to pass connection_id as a separate parameter.
 //!
 //! Messages are compressed with gzip when they exceed 512 bytes.
-//! When the client negotiates MessagePack, payloads are sent as binary frames.
+//! Binary frames use the current-epoch domain codec. JSON remains the text representation.
 
 pub mod auth;
 pub mod batch;
@@ -41,7 +41,7 @@ pub async fn send_auth_error(mut session: Session, message: &str) -> Result<(), 
     }
     session
         .close(Some(CloseReason {
-            code:        CloseCode::Policy,
+            code: CloseCode::Policy,
             description: Some("Authentication failed".into()),
         }))
         .await
@@ -78,8 +78,8 @@ pub async fn send_json<T: serde::Serialize>(
 
 /// Protocol-aware message sender for `WireNotification`.
 ///
-/// Uses pre-serialised and cached bytes from `WireNotification::to_msgpack()`
-/// / `to_json()` so row data is encoded exactly **once** regardless of how many
+/// Uses pre-serialised and cached bytes from `WireNotification::to_json()`
+/// and `SharedChangePayload::domain_row_bytes` so row data is encoded exactly **once** regardless of how many
 /// subscribers share the same `Arc<SharedChangePayload>`.
 pub async fn send_wire_notification(
     session: &mut Session,
@@ -92,7 +92,8 @@ pub async fn send_wire_notification(
             let cached = notif
                 .payload
                 .domain_row_bytes(|rows, old_values| {
-                    let encode = |rows: &Vec<RowData>| kalamdb_serialization::encode_named_rows(rows);
+                    let encode =
+                        |rows: &Vec<RowData>| kalamdb_serialization::encode_named_rows(rows);
                     Ok::<_, kalamdb_serialization::SerializationError>((
                         match rows {
                             Some(rows) => Some(encode(rows)?),

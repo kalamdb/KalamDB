@@ -32,7 +32,7 @@ const ERR_EXPECTED_NAMESPACE: &str = "Expected STORAGE COMPACT ALL IN namespace"
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompactTableStatement {
     /// Namespace containing the table
-    pub namespace:  SchemaId,
+    pub namespace: SchemaId,
     /// Table name to compact
     pub table_name: TableName,
 }
@@ -58,7 +58,7 @@ impl CompactTableStatement {
         parsing::validate_no_extra_tokens(&normalized, 4, "STORAGE COMPACT TABLE")?;
 
         Ok(Self {
-            namespace:  SchemaId::from(namespace),
+            namespace: SchemaId::from(namespace),
             table_name: TableName::from(table_name),
         })
     }

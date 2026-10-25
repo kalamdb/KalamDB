@@ -18,17 +18,17 @@ pub struct ProcedureCatalog<'a> {
 
 #[derive(Debug, Clone)]
 pub struct ProcedureNamespace<'a> {
-    pub schema:       &'a str,
+    pub schema: &'a str,
     pub object_ident: String,
-    pub procedures:   Vec<ProcedureSpec<'a>>,
+    pub procedures: Vec<ProcedureSpec<'a>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ProcedureSpec<'a> {
-    pub routine:      &'a ContractRoutine,
-    pub type_ident:   &'a str,
+    pub routine: &'a ContractRoutine,
+    pub type_ident: &'a str,
     pub method_ident: String,
-    pub call_sql:     String,
+    pub call_sql: String,
 }
 
 impl<'a> ProcedureCatalog<'a> {

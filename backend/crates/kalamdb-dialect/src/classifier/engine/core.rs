@@ -39,7 +39,7 @@ impl SqlStatement {
     {
         parser().map(|kind| Self::new(sql.to_string(), kind)).map_err(|err| {
             StatementClassificationError::InvalidSql {
-                sql:     sql.to_string(),
+                sql: sql.to_string(),
                 message: err.to_string(),
             }
         })
@@ -192,7 +192,7 @@ impl SqlStatement {
                 })
             },
             ["CREATE", "NAMESPACE", ..] => Err(StatementClassificationError::InvalidSql {
-                sql:     sql.to_string(),
+                sql: sql.to_string(),
                 message: "CREATE NAMESPACE is not valid PostgreSQL; use CREATE SCHEMA".to_string(),
             }),
             ["CREATE", "SCHEMA", ..] => {
@@ -376,7 +376,7 @@ impl SqlStatement {
                             e
                         );
                         Err(StatementClassificationError::InvalidSql {
-                            sql:     sql.to_string(),
+                            sql: sql.to_string(),
                             message: format!("Invalid CREATE VIEW statement: {}", e),
                         })
                     },
@@ -384,7 +384,7 @@ impl SqlStatement {
             },
 
             ["CREATE", "USER", "TABLE", ..] => Err(StatementClassificationError::InvalidSql {
-                sql:     sql.to_string(),
+                sql: sql.to_string(),
                 message: "CREATE USER TABLE is not valid PostgreSQL; use CREATE TABLE ... WITH \
                           (TYPE = 'USER')"
                     .to_string(),
@@ -406,7 +406,7 @@ impl SqlStatement {
                         );
                         // Return the error to the user instead of Unknown
                         Err(StatementClassificationError::InvalidSql {
-                            sql:     sql.to_string(),
+                            sql: sql.to_string(),
                             message: format!("Invalid CREATE TABLE statement: {}", e),
                         })
                     },
@@ -560,7 +560,7 @@ impl SqlStatement {
 
                 let Some(upto) = upto else {
                     return Err(StatementClassificationError::InvalidSql {
-                        sql:     sql.to_string(),
+                        sql: sql.to_string(),
                         message: "CLUSTER PURGE requires --upto <index> or a numeric index"
                             .to_string(),
                     });
@@ -587,7 +587,7 @@ impl SqlStatement {
                 }
                 let node_id = node_id.parse::<u64>().map_err(|_| {
                     StatementClassificationError::InvalidSql {
-                        sql:     sql.to_string(),
+                        sql: sql.to_string(),
                         message: "CLUSTER TRANSFER-LEADER requires a numeric node id".to_string(),
                     }
                 })?;
@@ -603,7 +603,7 @@ impl SqlStatement {
 
                 let node_id = node_id.parse::<u64>().map_err(|_| {
                     StatementClassificationError::InvalidSql {
-                        sql:     sql.to_string(),
+                        sql: sql.to_string(),
                         message: "CLUSTER JOIN requires a numeric node id".to_string(),
                     }
                 })?;
@@ -614,19 +614,19 @@ impl SqlStatement {
                 {
                     let rpc_addr = original_parts.get(4).ok_or_else(|| {
                         StatementClassificationError::InvalidSql {
-                            sql:     sql.to_string(),
+                            sql: sql.to_string(),
                             message: "CLUSTER JOIN requires RPC address".to_string(),
                         }
                     })?;
                     if upper_parts.get(5).map(String::as_str) != Some("API") {
                         return Err(StatementClassificationError::InvalidSql {
-                            sql:     sql.to_string(),
+                            sql: sql.to_string(),
                             message: "CLUSTER JOIN requires API address".to_string(),
                         });
                     }
                     let api_addr = original_parts.get(6).ok_or_else(|| {
                         StatementClassificationError::InvalidSql {
-                            sql:     sql.to_string(),
+                            sql: sql.to_string(),
                             message: "CLUSTER JOIN requires API address".to_string(),
                         }
                     })?;
@@ -634,13 +634,13 @@ impl SqlStatement {
                 } else {
                     let rpc_addr = original_parts.get(3).ok_or_else(|| {
                         StatementClassificationError::InvalidSql {
-                            sql:     sql.to_string(),
+                            sql: sql.to_string(),
                             message: "CLUSTER JOIN requires RPC address".to_string(),
                         }
                     })?;
                     let api_addr = original_parts.get(4).ok_or_else(|| {
                         StatementClassificationError::InvalidSql {
-                            sql:     sql.to_string(),
+                            sql: sql.to_string(),
                             message: "CLUSTER JOIN requires API address".to_string(),
                         }
                     })?;
@@ -685,14 +685,14 @@ impl SqlStatement {
             },
             ["CLUSTER", "LIST", ..] | ["CLUSTER", "STATUS", ..] | ["CLUSTER", "LS", ..] => {
                 Err(StatementClassificationError::InvalidSql {
-                    sql:     sql.to_string(),
+                    sql: sql.to_string(),
                     message: "CLUSTER LIST is a CLI-only command. Use \\cluster list in kalam, or \
                               query system.cluster and system.cluster_groups directly."
                         .to_string(),
                 })
             },
             ["CLUSTER", "LEAVE", ..] => Err(StatementClassificationError::InvalidSql {
-                sql:     sql.to_string(),
+                sql: sql.to_string(),
                 message: "CLUSTER LEAVE is not supported yet".to_string(),
             }),
 
@@ -968,7 +968,7 @@ impl SqlStatement {
                 Ok(statements) => {
                     if let Some(statement) = statements.first() {
                         Err(StatementClassificationError::InvalidSql {
-                            sql:     sql.to_string(),
+                            sql: sql.to_string(),
                             message: format!("Unsupported statement type: {}", statement),
                         })
                     } else {
@@ -976,7 +976,7 @@ impl SqlStatement {
                     }
                 },
                 Err(err) => Err(StatementClassificationError::InvalidSql {
-                    sql:     sql.to_string(),
+                    sql: sql.to_string(),
                     message: err.to_string(),
                 }),
             },
@@ -1019,14 +1019,14 @@ impl SqlStatement {
         };
         let Some(raw_name) = name else {
             return Err(StatementClassificationError::InvalidSql {
-                sql:     sql.to_string(),
+                sql: sql.to_string(),
                 message: format!("Missing savepoint name in {} statement", keyword),
             });
         };
         let clean = raw_name.trim_matches('"').trim();
         if clean.is_empty() {
             return Err(StatementClassificationError::InvalidSql {
-                sql:     sql.to_string(),
+                sql: sql.to_string(),
                 message: format!("Empty savepoint name in {} statement", keyword),
             });
         }
@@ -1044,7 +1044,7 @@ impl SqlStatement {
 
         if upper.contains("ISOLATION LEVEL SERIALIZABLE") {
             return Err(StatementClassificationError::InvalidSql {
-                sql:     sql.to_string(),
+                sql: sql.to_string(),
                 message: "SQLSTATE 0A000: transaction isolation level SERIALIZABLE is not \
                           supported; KalamDB supports SNAPSHOT / REPEATABLE READ / READ COMMITTED"
                     .to_string(),
@@ -1052,7 +1052,7 @@ impl SqlStatement {
         }
         if upper.contains("ISOLATION LEVEL READ UNCOMMITTED") {
             return Err(StatementClassificationError::InvalidSql {
-                sql:     sql.to_string(),
+                sql: sql.to_string(),
                 message: "SQLSTATE 0A000: transaction isolation level READ UNCOMMITTED is not \
                           supported; KalamDB supports SNAPSHOT / REPEATABLE READ / READ COMMITTED"
                     .to_string(),

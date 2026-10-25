@@ -24,19 +24,19 @@ const VIX_CODEC_VERSION: u8 = 3;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VixSnapshotEntry {
     pub key: u64,
-    pub pk:  String,
+    pub pk: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VixSnapshotFile {
-    pub table_id:         TableId,
-    pub dimensions:       u32,
-    pub metric:           VectorMetric,
-    pub generated_at:     i64,
+    pub table_id: TableId,
+    pub dimensions: u32,
+    pub metric: VectorMetric,
+    pub generated_at: i64,
     pub last_applied_seq: i64,
-    pub next_key:         u64,
-    pub entries:          Vec<VixSnapshotEntry>,
-    pub index_blob:       Vec<u8>,
+    pub next_key: u64,
+    pub entries: Vec<VixSnapshotEntry>,
+    pub index_blob: Vec<u8>,
 }
 
 /// Encode a `.vix` vector index snapshot payload.
@@ -85,7 +85,7 @@ pub fn decode_vix_snapshot(input: &[u8]) -> Result<VixSnapshotFile> {
     let version = read_u8(input, &mut cursor)?;
     if version != VIX_CODEC_VERSION {
         return Err(SerializationError::UnsupportedProtocolVersion {
-            found:     u16::from(version),
+            found: u16::from(version),
             supported: u16::from(VIX_CODEC_VERSION),
         });
     }
@@ -213,23 +213,23 @@ mod tests {
     #[test]
     fn vix_snapshot_roundtrips_typed_table_id_without_column_name() {
         let snapshot = VixSnapshotFile {
-            table_id:         TableId::from_strings("app", "docs"),
-            dimensions:       3,
-            metric:           VectorMetric::Cosine,
-            generated_at:     12_345,
+            table_id: TableId::from_strings("app", "docs"),
+            dimensions: 3,
+            metric: VectorMetric::Cosine,
+            generated_at: 12_345,
             last_applied_seq: 99,
-            next_key:         1000,
-            entries:          vec![
+            next_key: 1000,
+            entries: vec![
                 VixSnapshotEntry {
                     key: 1,
-                    pk:  "row-a".to_string(),
+                    pk: "row-a".to_string(),
                 },
                 VixSnapshotEntry {
                     key: 2,
-                    pk:  "row-b".to_string(),
+                    pk: "row-b".to_string(),
                 },
             ],
-            index_blob:       vec![10, 20, 30, 40],
+            index_blob: vec![10, 20, 30, 40],
         };
 
         let encoded = encode_vix_snapshot(&snapshot).expect("encode vix snapshot");
@@ -244,14 +244,14 @@ mod tests {
         assert_eq!(decode_vix_snapshot(b"BAD00"), Err(SerializationError::InvalidMagic));
 
         let snapshot = VixSnapshotFile {
-            table_id:         TableId::from_strings("app", "docs"),
-            dimensions:       2,
-            metric:           VectorMetric::Dot,
-            generated_at:     1,
+            table_id: TableId::from_strings("app", "docs"),
+            dimensions: 2,
+            metric: VectorMetric::Dot,
+            generated_at: 1,
             last_applied_seq: 2,
-            next_key:         3,
-            entries:          Vec::new(),
-            index_blob:       vec![1],
+            next_key: 3,
+            entries: Vec::new(),
+            index_blob: vec![1],
         };
         let mut encoded = encode_vix_snapshot(&snapshot).expect("encode");
         encoded.push(0xFF);

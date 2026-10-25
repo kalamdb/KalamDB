@@ -18,7 +18,7 @@ pub struct CatalogTrigger {
         default = "None",
         comment = "Schema-qualified trigger identity"
     )]
-    pub trigger_id:        TriggerId,
+    pub trigger_id: TriggerId,
     #[column(
         id = 2,
         ordinal = 2,
@@ -28,7 +28,7 @@ pub struct CatalogTrigger {
         default = "None",
         comment = "Owning schema"
     )]
-    pub namespace_id:      SchemaId,
+    pub namespace_id: SchemaId,
     #[column(
         id = 3,
         ordinal = 3,
@@ -38,7 +38,7 @@ pub struct CatalogTrigger {
         default = "None",
         comment = "Unqualified trigger name"
     )]
-    pub name:              String,
+    pub name: String,
     #[column(
         id = 4,
         ordinal = 4,
@@ -48,7 +48,7 @@ pub struct CatalogTrigger {
         default = "None",
         comment = "Source topic"
     )]
-    pub topic_id:          TopicId,
+    pub topic_id: TopicId,
     #[column(
         id = 5,
         ordinal = 5,
@@ -58,7 +58,7 @@ pub struct CatalogTrigger {
         default = "None",
         comment = "Target procedure"
     )]
-    pub routine_id:        RoutineId,
+    pub routine_id: RoutineId,
     #[column(
         id = 6,
         ordinal = 6,
@@ -78,7 +78,7 @@ pub struct CatalogTrigger {
         default = "None",
         comment = "latest or earliest start offset"
     )]
-    pub start_from:        String,
+    pub start_from: String,
     #[column(
         id = 8,
         ordinal = 8,
@@ -88,7 +88,7 @@ pub struct CatalogTrigger {
         default = "None",
         comment = "Max delivery attempts before DLQ"
     )]
-    pub retries:           i32,
+    pub retries: i32,
     #[column(
         id = 9,
         ordinal = 9,
@@ -98,7 +98,7 @@ pub struct CatalogTrigger {
         default = "None",
         comment = "Retry backoff in milliseconds"
     )]
-    pub retry_backoff_ms:  i64,
+    pub retry_backoff_ms: i64,
     #[column(
         id = 10,
         ordinal = 10,
@@ -108,7 +108,7 @@ pub struct CatalogTrigger {
         default = "None",
         comment = "Per-trigger partition concurrency"
     )]
-    pub concurrency:       i32,
+    pub concurrency: i32,
     #[column(
         id = 11,
         ordinal = 11,
@@ -118,7 +118,7 @@ pub struct CatalogTrigger {
         default = "None",
         comment = "Whether the trigger is enabled"
     )]
-    pub enabled:           bool,
+    pub enabled: bool,
 }
 
 impl kalamdb_commons::KSerializable for CatalogTrigger {}

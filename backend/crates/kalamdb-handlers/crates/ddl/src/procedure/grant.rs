@@ -91,9 +91,9 @@ impl TypedStatementHandler<GrantExecuteStatement> for GrantExecuteHandler {
                             && routine.language.as_deref() != Some("INTERNAL")
                         {
                             let grant = CatalogRoutineGrant {
-                                grant_id:   RoutineGrantId::new(&routine.routine_id, &grantee),
+                                grant_id: RoutineGrantId::new(&routine.routine_id, &grantee),
                                 routine_id: routine.routine_id.clone(),
-                                grantee:    grantee.clone(),
+                                grantee: grantee.clone(),
                             };
                             stores
                                 .upsert_grant(grant)

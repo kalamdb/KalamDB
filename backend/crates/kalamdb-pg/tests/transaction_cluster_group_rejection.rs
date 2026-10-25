@@ -51,12 +51,12 @@ async fn pg_transaction_rejects_cross_group_access_without_losing_existing_overl
 
     let status = service
         .insert(request(InsertRpcRequest {
-            namespace:  shared_table.namespace_id().to_string(),
+            namespace: shared_table.namespace_id().to_string(),
             table_name: shared_table.table_name().to_string(),
             table_type: "shared".to_string(),
             session_id: session_id.to_string(),
-            user_id:    None,
-            rows_json:  vec![row_json],
+            user_id: None,
+            rows_json: vec![row_json],
         }))
         .await
         .expect_err("typed shared insert into a different raft group must fail");

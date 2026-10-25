@@ -262,11 +262,11 @@ fn standalone_index_name(
     match idents.as_slice() {
         [index] => Ok(StandaloneIndexName {
             namespace_id: current_namespace.clone(),
-            name:         (*index).to_string(),
+            name: (*index).to_string(),
         }),
         [schema, index] => Ok(StandaloneIndexName {
             namespace_id: SchemaId::from(*schema),
-            name:         (*index).to_string(),
+            name: (*index).to_string(),
         }),
         _ => Err("DROP INDEX name must be index_name or schema.index_name".to_string()),
     }
@@ -372,9 +372,9 @@ pub fn parse_alter_index(
         return Err("ALTER INDEX requires a new name".to_string());
     }
     Ok(AlterTableStatement {
-        table_name:   TableName::new("alter_index"),
+        table_name: TableName::new("alter_index"),
         namespace_id: index.namespace_id.clone(),
-        operation:    ColumnOperation::RenameStandaloneIndex {
+        operation: ColumnOperation::RenameStandaloneIndex {
             index,
             new_name,
             if_exists,

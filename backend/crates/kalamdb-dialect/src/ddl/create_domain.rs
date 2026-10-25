@@ -15,21 +15,21 @@ use crate::ddl::{
 /// One `CHECK (...)` constraint attached to a domain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DomainCheckClause {
-    pub name:       Option<String>,
+    pub name: Option<String>,
     pub expression: String,
-    pub validated:  bool,
+    pub validated: bool,
 }
 
 /// Parsed `CREATE DOMAIN` statement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateDomainStatement {
     pub namespace_id: SchemaId,
-    pub name:         String,
-    pub base_type:    TypeReference,
-    pub collation:    Option<String>,
+    pub name: String,
+    pub base_type: TypeReference,
+    pub collation: Option<String>,
     pub default_expr: Option<String>,
-    pub not_null:     bool,
-    pub checks:       Vec<DomainCheckClause>,
+    pub not_null: bool,
+    pub checks: Vec<DomainCheckClause>,
 }
 
 impl CreateDomainStatement {
@@ -146,9 +146,9 @@ impl CreateDomainStatement {
                 rest = rest[close + 1..].trim_start();
                 let not_valid = take_keyword_ci(&mut rest, "NOT VALID");
                 checks.push(DomainCheckClause {
-                    name:       constraint_name,
+                    name: constraint_name,
                     expression: expr,
-                    validated:  !not_valid,
+                    validated: !not_valid,
                 });
                 continue;
             }

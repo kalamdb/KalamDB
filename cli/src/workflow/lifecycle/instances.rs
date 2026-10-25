@@ -353,30 +353,30 @@ mod tests {
 
     fn local(name: &str, folder: &str) -> InstanceSummary {
         InstanceSummary {
-            name:     name.into(),
-            kind:     InstanceKind::Local,
-            state:    InstanceState::Running,
-            url:      Some("http://127.0.0.1:2900".into()),
-            folder:   Some(folder.into()),
-            global:   false,
-            user:     None,
-            auth:     None,
-            aliases:  vec![],
+            name: name.into(),
+            kind: InstanceKind::Local,
+            state: InstanceState::Running,
+            url: Some("http://127.0.0.1:2900".into()),
+            folder: Some(folder.into()),
+            global: false,
+            user: None,
+            auth: None,
+            aliases: vec![],
             identity: folder.into(),
         }
     }
 
     fn cloud(name: &str, url: &str) -> InstanceSummary {
         InstanceSummary {
-            name:     name.into(),
-            kind:     InstanceKind::Cloud,
-            state:    InstanceState::NotChecked,
-            url:      Some(url.into()),
-            folder:   None,
-            global:   false,
-            user:     Some("user".into()),
-            auth:     Some("Signed in".into()),
-            aliases:  vec![],
+            name: name.into(),
+            kind: InstanceKind::Cloud,
+            state: InstanceState::NotChecked,
+            url: Some(url.into()),
+            folder: None,
+            global: false,
+            user: Some("user".into()),
+            auth: Some("Signed in".into()),
+            aliases: vec![],
             identity: format!("credential:{name}"),
         }
     }

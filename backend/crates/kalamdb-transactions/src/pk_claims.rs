@@ -16,13 +16,13 @@ use tokio::sync::Notify;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ClaimKey {
-    table_id:    TableId,
+    table_id: TableId,
     primary_key: String,
 }
 
 #[derive(Debug)]
 struct Claim {
-    owner:  TransactionId,
+    owner: TransactionId,
     notify: Arc<Notify>,
 }
 
@@ -38,7 +38,7 @@ impl PrimaryKeyClaims {
     /// A second acquire by the same owner returns immediately.
     pub async fn acquire(&self, table_id: &TableId, primary_key: &str, owner: &TransactionId) {
         let key = ClaimKey {
-            table_id:    table_id.clone(),
+            table_id: table_id.clone(),
             primary_key: primary_key.to_string(),
         };
         loop {
@@ -51,7 +51,7 @@ impl PrimaryKeyClaims {
                         claims.insert(
                             key,
                             Claim {
-                                owner:  owner.clone(),
+                                owner: owner.clone(),
                                 notify: Arc::new(Notify::new()),
                             },
                         );
@@ -71,7 +71,7 @@ impl PrimaryKeyClaims {
     /// Drop one key when the committed row no longer matches the statement.
     pub fn release_key(&self, table_id: &TableId, primary_key: &str, owner: &TransactionId) {
         let key = ClaimKey {
-            table_id:    table_id.clone(),
+            table_id: table_id.clone(),
             primary_key: primary_key.to_string(),
         };
         let mut claims = self.lock();

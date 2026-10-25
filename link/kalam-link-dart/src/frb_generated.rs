@@ -62,8 +62,8 @@ fn wire__crate__api__dart_cancel_subscription_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_cancel_subscription",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -124,8 +124,8 @@ fn wire__crate__api__dart_connect_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_connect",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -180,8 +180,8 @@ fn wire__crate__api__dart_connection_events_enabled_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_connection_events_enabled",
-            port:       None,
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
         },
         move || {
             let message = unsafe {
@@ -230,8 +230,8 @@ fn wire__crate__api__dart_create_client_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_create_client",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -281,8 +281,8 @@ fn wire__crate__api__dart_disconnect_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_disconnect",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -338,8 +338,8 @@ fn wire__crate__api__dart_download_file_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_download_file",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -406,8 +406,8 @@ fn wire__crate__api__dart_exchange_oidc_token_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_exchange_oidc_token",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -466,8 +466,8 @@ fn wire__crate__api__dart_execute_query_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_execute_query",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -532,8 +532,8 @@ fn wire__crate__api__dart_execute_query_with_files_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_execute_query_with_files",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -599,8 +599,8 @@ fn wire__crate__api__dart_file_ref_download_url_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_file_ref_download_url",
-            port:       None,
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
         },
         move || {
             let message = unsafe {
@@ -639,8 +639,8 @@ fn wire__crate__api__dart_file_ref_relative_path_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_file_ref_relative_path",
-            port:       None,
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
         },
         move || {
             let message = unsafe {
@@ -671,8 +671,8 @@ fn wire__crate__api__dart_file_ref_relative_url_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_file_ref_relative_url",
-            port:       None,
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
         },
         move || {
             let message = unsafe {
@@ -709,8 +709,8 @@ fn wire__crate__api__dart_file_ref_stored_name_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_file_ref_stored_name",
-            port:       None,
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
         },
         move || {
             let message = unsafe {
@@ -742,8 +742,8 @@ fn wire__crate__api__dart_is_connected_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_is_connected",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -799,8 +799,8 @@ fn wire__crate__api__dart_list_subscriptions_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_list_subscriptions",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -857,8 +857,8 @@ fn wire__crate__api__dart_live_close_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_live_close",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -915,8 +915,8 @@ fn wire__crate__api__dart_live_events_ack_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_live_events_ack",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -975,8 +975,8 @@ fn wire__crate__api__dart_live_events_close_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_live_events_close",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -1032,8 +1032,8 @@ fn wire__crate__api__dart_live_events_id_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_live_events_id",
-            port:       None,
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
         },
         move || {
             let message = unsafe {
@@ -1085,8 +1085,8 @@ fn wire__crate__api__dart_live_events_next_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_live_events_next",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -1143,8 +1143,8 @@ fn wire__crate__api__dart_live_events_subscribe_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_live_events_subscribe",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -1207,8 +1207,8 @@ fn wire__crate__api__dart_live_id_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_live_id",
-            port:       None,
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
         },
         move || {
             let message = unsafe {
@@ -1259,8 +1259,8 @@ fn wire__crate__api__dart_live_next_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_live_next",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -1317,8 +1317,8 @@ fn wire__crate__api__dart_live_subscribe_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_live_subscribe",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -1385,8 +1385,8 @@ fn wire__crate__api__dart_login_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_login",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -1446,8 +1446,8 @@ fn wire__crate__api__dart_next_connection_event_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_next_connection_event",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -1503,8 +1503,8 @@ fn wire__crate__api__dart_parse_file_ref_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_parse_file_ref",
-            port:       None,
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
         },
         move || {
             let message = unsafe {
@@ -1536,8 +1536,8 @@ fn wire__crate__api__dart_refresh_token_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_refresh_token",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -1595,8 +1595,8 @@ fn wire__crate__api__dart_signal_dispose_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_signal_dispose",
-            port:       None,
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
         },
         move || {
             let message = unsafe {
@@ -1645,8 +1645,8 @@ fn wire__crate__api__dart_try_parse_file_ref_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_try_parse_file_ref",
-            port:       None,
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
         },
         move || {
             let message = unsafe {
@@ -1677,8 +1677,8 @@ fn wire__crate__api__dart_update_auth_impl(
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "dart_update_auth",
-            port:       Some(port_),
-            mode:       flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -1833,7 +1833,7 @@ impl SseDecode for crate::models::DartAuthProvider {
                 let mut var_user = <String>::sse_decode(deserializer);
                 let mut var_password = <String>::sse_decode(deserializer);
                 return crate::models::DartAuthProvider::BasicAuth {
-                    user:     var_user,
+                    user: var_user,
                     password: var_password,
                 };
             },
@@ -1866,11 +1866,11 @@ impl SseDecode for crate::models::DartChangeEvent {
                 let mut var_status = <String>::sse_decode(deserializer);
                 return crate::models::DartChangeEvent::Ack {
                     subscription_id: var_subscriptionId,
-                    total_rows:      var_totalRows,
-                    schema:          var_schema,
-                    batch_num:       var_batchNum,
-                    has_more:        var_hasMore,
-                    status:          var_status,
+                    total_rows: var_totalRows,
+                    schema: var_schema,
+                    batch_num: var_batchNum,
+                    has_more: var_hasMore,
+                    status: var_status,
                 };
             },
             1 => {
@@ -1881,10 +1881,10 @@ impl SseDecode for crate::models::DartChangeEvent {
                 let mut var_status = <String>::sse_decode(deserializer);
                 return crate::models::DartChangeEvent::InitialDataBatch {
                     subscription_id: var_subscriptionId,
-                    rows_json:       var_rowsJson,
-                    batch_num:       var_batchNum,
-                    has_more:        var_hasMore,
-                    status:          var_status,
+                    rows_json: var_rowsJson,
+                    batch_num: var_batchNum,
+                    has_more: var_hasMore,
+                    status: var_status,
                 };
             },
             2 => {
@@ -1892,7 +1892,7 @@ impl SseDecode for crate::models::DartChangeEvent {
                 let mut var_rowsJson = <Vec<String>>::sse_decode(deserializer);
                 return crate::models::DartChangeEvent::Insert {
                     subscription_id: var_subscriptionId,
-                    rows_json:       var_rowsJson,
+                    rows_json: var_rowsJson,
                 };
             },
             3 => {
@@ -1901,8 +1901,8 @@ impl SseDecode for crate::models::DartChangeEvent {
                 let mut var_oldRowsJson = <Vec<String>>::sse_decode(deserializer);
                 return crate::models::DartChangeEvent::Update {
                     subscription_id: var_subscriptionId,
-                    rows_json:       var_rowsJson,
-                    old_rows_json:   var_oldRowsJson,
+                    rows_json: var_rowsJson,
+                    old_rows_json: var_oldRowsJson,
                 };
             },
             4 => {
@@ -1910,7 +1910,7 @@ impl SseDecode for crate::models::DartChangeEvent {
                 let mut var_oldRowsJson = <Vec<String>>::sse_decode(deserializer);
                 return crate::models::DartChangeEvent::Delete {
                     subscription_id: var_subscriptionId,
-                    old_rows_json:   var_oldRowsJson,
+                    old_rows_json: var_oldRowsJson,
                 };
             },
             5 => {
@@ -1919,8 +1919,8 @@ impl SseDecode for crate::models::DartChangeEvent {
                 let mut var_message = <String>::sse_decode(deserializer);
                 return crate::models::DartChangeEvent::Error {
                     subscription_id: var_subscriptionId,
-                    code:            var_code,
-                    message:         var_message,
+                    code: var_code,
+                    message: var_message,
                 };
             },
             _ => {
@@ -1936,7 +1936,7 @@ impl SseDecode for crate::models::DartConnectionError {
         let mut var_message = <String>::sse_decode(deserializer);
         let mut var_recoverable = <bool>::sse_decode(deserializer);
         return crate::models::DartConnectionError {
-            message:     var_message,
+            message: var_message,
             recoverable: var_recoverable,
         };
     }
@@ -1985,7 +1985,7 @@ impl SseDecode for crate::models::DartDisconnectReason {
         let mut var_code = <Option<i32>>::sse_decode(deserializer);
         return crate::models::DartDisconnectReason {
             message: var_message,
-            code:    var_code,
+            code: var_code,
         };
     }
 }
@@ -1997,7 +1997,7 @@ impl SseDecode for crate::models::DartErrorDetail {
         let mut var_message = <String>::sse_decode(deserializer);
         let mut var_details = <Option<String>>::sse_decode(deserializer);
         return crate::models::DartErrorDetail {
-            code:    var_code,
+            code: var_code,
             message: var_message,
             details: var_details,
         };
@@ -2011,8 +2011,8 @@ impl SseDecode for crate::models::DartFileDownload {
         let mut var_contentType = <Option<String>>::sse_decode(deserializer);
         let mut var_contentDisposition = <Option<String>>::sse_decode(deserializer);
         return crate::models::DartFileDownload {
-            bytes:               var_bytes,
-            content_type:        var_contentType,
+            bytes: var_bytes,
+            content_type: var_contentType,
             content_disposition: var_contentDisposition,
         };
     }
@@ -2029,13 +2029,13 @@ impl SseDecode for crate::models::DartFileRef {
         let mut var_sha256 = <String>::sse_decode(deserializer);
         let mut var_shard = <Option<u32>>::sse_decode(deserializer);
         return crate::models::DartFileRef {
-            id:     var_id,
-            sub:    var_sub,
-            name:   var_name,
-            size:   var_size,
-            mime:   var_mime,
+            id: var_id,
+            sub: var_sub,
+            name: var_name,
+            size: var_size,
+            mime: var_mime,
             sha256: var_sha256,
-            shard:  var_shard,
+            shard: var_shard,
         };
     }
 }
@@ -2049,9 +2049,9 @@ impl SseDecode for crate::models::DartFileUpload {
         let mut var_mime = <Option<String>>::sse_decode(deserializer);
         return crate::models::DartFileUpload {
             placeholder: var_placeholder,
-            filename:    var_filename,
-            data:        var_data,
-            mime:        var_mime,
+            filename: var_filename,
+            data: var_data,
+            mime: var_mime,
         };
     }
 }
@@ -2062,7 +2062,7 @@ impl SseDecode for crate::models::DartLiveRowsConfig {
         let mut var_limit = <Option<i32>>::sse_decode(deserializer);
         let mut var_keyColumns = <Option<Vec<String>>>::sse_decode(deserializer);
         return crate::models::DartLiveRowsConfig {
-            limit:       var_limit,
+            limit: var_limit,
             key_columns: var_keyColumns,
         };
     }
@@ -2079,8 +2079,8 @@ impl SseDecode for crate::models::DartLiveRowsEvent {
                 let mut var_lastSeqId = <Option<i64>>::sse_decode(deserializer);
                 return crate::models::DartLiveRowsEvent::Rows {
                     subscription_id: var_subscriptionId,
-                    rows_json:       var_rowsJson,
-                    last_seq_id:     var_lastSeqId,
+                    rows_json: var_rowsJson,
+                    last_seq_id: var_lastSeqId,
                 };
             },
             1 => {
@@ -2089,8 +2089,8 @@ impl SseDecode for crate::models::DartLiveRowsEvent {
                 let mut var_message = <String>::sse_decode(deserializer);
                 return crate::models::DartLiveRowsEvent::Error {
                     subscription_id: var_subscriptionId,
-                    code:            var_code,
-                    message:         var_message,
+                    code: var_code,
+                    message: var_message,
                 };
             },
             _ => {
@@ -2110,12 +2110,12 @@ impl SseDecode for crate::models::DartLoginResponse {
         let mut var_adminUiAccess = <bool>::sse_decode(deserializer);
         let mut var_user = <crate::models::DartLoginUserInfo>::sse_decode(deserializer);
         return crate::models::DartLoginResponse {
-            access_token:       var_accessToken,
-            refresh_token:      var_refreshToken,
-            expires_at:         var_expiresAt,
+            access_token: var_accessToken,
+            refresh_token: var_refreshToken,
+            expires_at: var_expiresAt,
             refresh_expires_at: var_refreshExpiresAt,
-            admin_ui_access:    var_adminUiAccess,
-            user:               var_user,
+            admin_ui_access: var_adminUiAccess,
+            user: var_user,
         };
     }
 }
@@ -2129,9 +2129,9 @@ impl SseDecode for crate::models::DartLoginUserInfo {
         let mut var_createdAt = <String>::sse_decode(deserializer);
         let mut var_updatedAt = <String>::sse_decode(deserializer);
         return crate::models::DartLoginUserInfo {
-            id:         var_id,
-            role:       var_role,
-            email:      var_email,
+            id: var_id,
+            role: var_role,
+            email: var_email,
             created_at: var_createdAt,
             updated_at: var_updatedAt,
         };
@@ -2149,7 +2149,7 @@ impl SseDecode for crate::models::DartQueryResponse {
             success: var_success,
             results: var_results,
             took_ms: var_tookMs,
-            error:   var_error,
+            error: var_error,
         };
     }
 }
@@ -2163,11 +2163,11 @@ impl SseDecode for crate::models::DartQueryResult {
         let mut var_rowCount = <i64>::sse_decode(deserializer);
         let mut var_message = <Option<String>>::sse_decode(deserializer);
         return crate::models::DartQueryResult {
-            columns:         var_columns,
-            rows_json:       var_rowsJson,
+            columns: var_columns,
+            rows_json: var_rowsJson,
             named_rows_json: var_namedRowsJson,
-            row_count:       var_rowCount,
-            message:         var_message,
+            row_count: var_rowCount,
+            message: var_message,
         };
     }
 }
@@ -2195,10 +2195,10 @@ impl SseDecode for crate::models::DartSchemaField {
         let mut var_index = <i32>::sse_decode(deserializer);
         let mut var_flags = <Option<String>>::sse_decode(deserializer);
         return crate::models::DartSchemaField {
-            name:      var_name,
+            name: var_name,
             data_type: var_dataType,
-            index:     var_index,
-            flags:     var_flags,
+            index: var_index,
+            flags: var_flags,
         };
     }
 }
@@ -2213,11 +2213,11 @@ impl SseDecode for crate::models::DartSubscriptionConfig {
         let mut var_from = <Option<i64>>::sse_decode(deserializer);
         let mut var_explicitAck = <bool>::sse_decode(deserializer);
         return crate::models::DartSubscriptionConfig {
-            sql:          var_sql,
-            id:           var_id,
-            batch_size:   var_batchSize,
-            last_rows:    var_lastRows,
-            from:         var_from,
+            sql: var_sql,
+            id: var_id,
+            batch_size: var_batchSize,
+            last_rows: var_lastRows,
+            from: var_from,
             explicit_ack: var_explicitAck,
         };
     }
@@ -2233,12 +2233,12 @@ impl SseDecode for crate::models::DartSubscriptionInfo {
         let mut var_createdAtMs = <i64>::sse_decode(deserializer);
         let mut var_closed = <bool>::sse_decode(deserializer);
         return crate::models::DartSubscriptionInfo {
-            id:                 var_id,
-            query:              var_query,
-            last_seq_id:        var_lastSeqId,
+            id: var_id,
+            query: var_query,
+            last_seq_id: var_lastSeqId,
             last_event_time_ms: var_lastEventTimeMs,
-            created_at_ms:      var_createdAtMs,
-            closed:             var_closed,
+            created_at_ms: var_createdAtMs,
+            closed: var_closed,
         };
     }
 }
@@ -2559,6 +2559,76 @@ fn pde_ffi_dispatcher_primary_impl(
     }
 }
 
+fn wire__crate__api__dart_encode_routine_request_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "dart_encode_routine_request",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_arguments_json = <String>::sse_decode(&mut deserializer);
+            let api_params_json = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                (move || {
+                    let output_ok = crate::api::dart_encode_routine_request(
+                        api_arguments_json,
+                        api_params_json,
+                    )?;
+                    std::result::Result::Ok(output_ok)
+                })(),
+            )
+        },
+    )
+}
+
+fn wire__crate__api__dart_decode_routine_result_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "dart_decode_routine_result",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_frame = <Vec<u8>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                (move || {
+                    let output_ok = crate::api::dart_decode_routine_result(api_frame)?;
+                    std::result::Result::Ok(output_ok)
+                })(),
+            )
+        },
+    )
+}
+
 fn pde_ffi_dispatcher_sync_impl(
     func_id: i32,
     ptr: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -2577,6 +2647,8 @@ fn pde_ffi_dispatcher_sync_impl(
         27 => wire__crate__api__dart_parse_file_ref_impl(ptr, rust_vec_len, data_len),
         29 => wire__crate__api__dart_signal_dispose_impl(ptr, rust_vec_len, data_len),
         30 => wire__crate__api__dart_try_parse_file_ref_impl(ptr, rust_vec_len, data_len),
+        32 => wire__crate__api__dart_encode_routine_request_impl(ptr, rust_vec_len, data_len),
+        33 => wire__crate__api__dart_decode_routine_result_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }

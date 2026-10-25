@@ -38,7 +38,7 @@ pub enum MetaCommand {
     /// Create a new namespace
     CreateNamespace {
         namespace_id: SchemaId,
-        created_by:   Option<UserId>,
+        created_by: Option<UserId>,
     },
 
     /// Delete a namespace
@@ -49,15 +49,15 @@ pub enum MetaCommand {
     // =========================================================================
     /// Create a new table
     CreateTable {
-        table_id:   TableId,
+        table_id: TableId,
         table_type: TableType,
         /// Table schema definition
-        table_def:  TableDefinition,
+        table_def: TableDefinition,
     },
 
     /// Alter an existing table
     AlterTable {
-        table_id:  TableId,
+        table_id: TableId,
         /// Updated table schema definition
         table_def: TableDefinition,
     },
@@ -72,7 +72,7 @@ pub enum MetaCommand {
     RegisterStorage {
         storage_id: StorageId,
         /// Storage configuration
-        storage:    Storage,
+        storage: Storage,
     },
 
     /// Unregister a storage backend
@@ -89,21 +89,21 @@ pub enum MetaCommand {
 
     /// Soft-delete a user
     DeleteUser {
-        user_id:    UserId,
+        user_id: UserId,
         deleted_at: DateTime<Utc>,
     },
 
     /// Update last login timestamp
     RecordLogin {
-        user_id:      UserId,
+        user_id: UserId,
         logged_in_at: DateTime<Utc>,
     },
 
     /// Lock/unlock a user account
     SetUserLocked {
-        user_id:      UserId,
+        user_id: UserId,
         locked_until: Option<i64>,
-        updated_at:   DateTime<Utc>,
+        updated_at: DateTime<Utc>,
     },
 
     // =========================================================================
@@ -116,68 +116,68 @@ pub enum MetaCommand {
 
     /// Create a per-node job entry
     CreateJobNode {
-        job_id:     JobId,
-        node_id:    NodeId,
-        status:     JobStatus,
+        job_id: JobId,
+        node_id: NodeId,
+        status: JobStatus,
         created_at: DateTime<Utc>,
     },
 
     /// Claim a per-node job entry
     ClaimJobNode {
-        job_id:     JobId,
-        node_id:    NodeId,
+        job_id: JobId,
+        node_id: NodeId,
         claimed_at: DateTime<Utc>,
     },
 
     /// Update per-node job status
     UpdateJobNodeStatus {
-        job_id:        JobId,
-        node_id:       NodeId,
-        status:        JobStatus,
+        job_id: JobId,
+        node_id: NodeId,
+        status: JobStatus,
         error_message: Option<String>,
-        updated_at:    DateTime<Utc>,
+        updated_at: DateTime<Utc>,
     },
 
     /// Claim a job for execution (leader-only)
     ClaimJob {
-        job_id:     JobId,
-        node_id:    NodeId,
+        job_id: JobId,
+        node_id: NodeId,
         claimed_at: DateTime<Utc>,
     },
 
     /// Update job status
     UpdateJobStatus {
-        job_id:     JobId,
-        status:     JobStatus,
+        job_id: JobId,
+        status: JobStatus,
         updated_at: DateTime<Utc>,
     },
 
     /// Complete a job successfully
     CompleteJob {
-        job_id:       JobId,
+        job_id: JobId,
         /// Job result as JSON string
-        result:       Option<String>,
+        result: Option<String>,
         completed_at: DateTime<Utc>,
     },
 
     /// Fail a job
     FailJob {
-        job_id:        JobId,
+        job_id: JobId,
         error_message: String,
-        failed_at:     DateTime<Utc>,
+        failed_at: DateTime<Utc>,
     },
 
     /// Release a claimed job (on failure or leader change)
     ReleaseJob {
-        job_id:      JobId,
-        reason:      String,
+        job_id: JobId,
+        reason: String,
         released_at: DateTime<Utc>,
     },
 
     /// Cancel a job
     CancelJob {
-        job_id:       JobId,
-        reason:       String,
+        job_id: JobId,
+        reason: String,
         cancelled_at: DateTime<Utc>,
     },
 
@@ -190,7 +190,7 @@ pub enum MetaCommand {
     /// discriminants remain stable for older variants.
     CreateNamespaceIfNotExists {
         namespace_id: SchemaId,
-        created_by:   Option<UserId>,
+        created_by: Option<UserId>,
     },
 
     /// Stage a function artifact/revision and CAS-activate it.
@@ -198,16 +198,16 @@ pub enum MetaCommand {
     /// Keep this variant at the end so existing bincode-encoded Raft log
     /// discriminants remain stable for older variants.
     ActivateFunctionRevision {
-        module:               CatalogFunctionModule,
-        revision:             CatalogFunctionRevision,
-        artifact:             CatalogFunctionArtifact,
+        module: CatalogFunctionModule,
+        revision: CatalogFunctionRevision,
+        artifact: CatalogFunctionArtifact,
         expected_revision_id: Option<FunctionRevisionId>,
     },
     /// Serialized CAS for schedule definitions, claims, and completion.
     CompareExchangeSchedule {
-        schedule_id:      kalamdb_commons::ScheduleId,
+        schedule_id: kalamdb_commons::ScheduleId,
         expected_version: Option<String>,
-        replacement:      Option<kalamdb_system::CatalogSchedule>,
+        replacement: Option<kalamdb_system::CatalogSchedule>,
     },
     /// Independent CAS results, in input order. Appended for wire compatibility.
     CompareExchangeSchedules { updates: Vec<super::ScheduleUpdate> },
@@ -216,7 +216,7 @@ pub enum MetaCommand {
     /// Appended so existing log discriminants stay stable.
     UpsertCatalogType {
         catalog_type: CatalogType,
-        fields:       Vec<CatalogTypeField>,
+        fields: Vec<CatalogTypeField>,
     },
     /// Remove a catalog type on every meta replica. Missing types are a no-op.
     DropCatalogType { type_id: TypeId },
@@ -269,13 +269,13 @@ pub enum MetaResponse {
     // === Namespace responses ===
     NamespaceCreated {
         namespace_id: SchemaId,
-        message:      String,
+        message: String,
     },
 
     // === Table responses ===
     TableCreated {
         table_id: TableId,
-        message:  String,
+        message: String,
     },
 
     // === User responses ===
@@ -286,11 +286,11 @@ pub enum MetaResponse {
 
     // === Job responses ===
     JobCreated {
-        job_id:  JobId,
+        job_id: JobId,
         message: String,
     },
     JobClaimed {
-        job_id:  JobId,
+        job_id: JobId,
         node_id: NodeId,
         message: String,
     },
@@ -349,24 +349,24 @@ mod tests {
 
     fn test_user() -> User {
         User {
-            user_id:               UserId::from("test_user"),
-            password_hash:         "hash".to_string(),
-            name:                  None,
-            email:                 None,
-            auth_type:             AuthType::Password,
-            auth_data:             None,
-            role:                  Role::User,
-            storage_id:            None,
-            storage_mode:          kalamdb_system::providers::storages::models::StorageMode::Table,
-            locked_until:          None,
+            user_id: UserId::from("test_user"),
+            password_hash: "hash".to_string(),
+            name: None,
+            email: None,
+            auth_type: AuthType::Password,
+            auth_data: None,
+            role: Role::User,
+            storage_id: None,
+            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
+            locked_until: None,
             failed_login_attempts: 0,
-            last_login_at:         None,
-            created_at:            0,
-            updated_at:            0,
-            last_seen:             None,
-            deleted_at:            None,
-            invite_expires_at:     None,
-            invited_by:            None,
+            last_login_at: None,
+            created_at: 0,
+            updated_at: 0,
+            last_seen: None,
+            deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         }
     }
 
@@ -374,7 +374,7 @@ mod tests {
     fn test_meta_command_category() {
         let cmd = MetaCommand::CreateNamespace {
             namespace_id: SchemaId::new("test".to_string()),
-            created_by:   None,
+            created_by: None,
         };
         assert_eq!(cmd.category(), "namespace");
 
@@ -385,14 +385,14 @@ mod tests {
         let artifact_id = kalamdb_commons::ArtifactId::new("abc");
         let revision_id = FunctionRevisionId::from_module_artifact(&module_id, &artifact_id);
         let cmd = MetaCommand::ActivateFunctionRevision {
-            module:               CatalogFunctionModule {
-                module_id:          module_id.clone(),
-                runtime:            kalamdb_commons::FunctionRuntime::Typescript,
+            module: CatalogFunctionModule {
+                module_id: module_id.clone(),
+                runtime: kalamdb_commons::FunctionRuntime::Typescript,
                 active_revision_id: None,
-                contract_hash:      None,
-                abi_version:        1,
+                contract_hash: None,
+                abi_version: 1,
             },
-            revision:             CatalogFunctionRevision {
+            revision: CatalogFunctionRevision {
                 revision_id,
                 module_id,
                 artifact_id: artifact_id.clone(),
@@ -402,7 +402,7 @@ mod tests {
                 created_at: 0,
                 exported_procedure_ids: vec!["chat.send_message".to_string()],
             },
-            artifact:             CatalogFunctionArtifact {
+            artifact: CatalogFunctionArtifact {
                 artifact_id,
                 size_bytes: 1,
                 runtime: kalamdb_commons::FunctionRuntime::Typescript,

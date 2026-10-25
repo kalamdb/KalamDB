@@ -30,22 +30,22 @@ use crate::{
 /// Prepared statement cached at PostgreSQL wire Parse time.
 #[derive(Debug, Clone)]
 pub struct WireCachedStatement {
-    pub metadata:        PreparedExecutionStatement,
+    pub metadata: PreparedExecutionStatement,
     pub parameter_types: Vec<Type>,
     /// Result columns resolved at Parse/Describe time (empty = NoData).
-    pub result_columns:  Vec<WireResultColumn>,
+    pub result_columns: Vec<WireResultColumn>,
 }
 
 /// Name + PostgreSQL type for one result column.
 #[derive(Debug, Clone)]
 pub struct WireResultColumn {
-    pub name:     String,
+    pub name: String,
     pub datatype: Type,
 }
 
 #[derive(Clone)]
 pub struct KalamQueryParser {
-    app_context:  Arc<AppContext>,
+    app_context: Arc<AppContext>,
     sql_executor: Arc<SqlExecutor>,
 }
 
@@ -153,7 +153,7 @@ impl KalamQueryParser {
                     .fields()
                     .iter()
                     .map(|field| WireResultColumn {
-                        name:     field.name().to_string(),
+                        name: field.name().to_string(),
                         datatype: pg_type_for_field(field).unwrap_or(Type::TEXT),
                     })
                     .collect();
@@ -210,7 +210,7 @@ impl KalamQueryParser {
                 .fields()
                 .iter()
                 .map(|field| WireResultColumn {
-                    name:     field.name().to_string(),
+                    name: field.name().to_string(),
                     datatype: pg_type_for_field(field).unwrap_or(Type::TEXT),
                 })
                 .collect()

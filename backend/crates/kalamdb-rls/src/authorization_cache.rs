@@ -12,16 +12,16 @@ use crate::{AuthorizationCacheKey, AuthorizationSet};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct AuthorizationCacheScope {
-    policy_id:      kalamdb_commons::PolicyId,
-    principal_id:   kalamdb_commons::UserId,
+    policy_id: kalamdb_commons::PolicyId,
+    principal_id: kalamdb_commons::UserId,
     relation_table: kalamdb_commons::TableId,
 }
 
 impl From<&AuthorizationCacheKey> for AuthorizationCacheScope {
     fn from(key: &AuthorizationCacheKey) -> Self {
         Self {
-            policy_id:      key.policy_id.clone(),
-            principal_id:   key.principal_id.clone(),
+            policy_id: key.policy_id.clone(),
+            principal_id: key.principal_id.clone(),
             relation_table: key.relation_table.clone(),
         }
     }
@@ -29,17 +29,17 @@ impl From<&AuthorizationCacheKey> for AuthorizationCacheScope {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AuthorizationCacheMetrics {
-    pub hits:   u64,
+    pub hits: u64,
     pub misses: u64,
 }
 
 /// Principal- and generation-scoped cache of immutable authorization sets.
 #[derive(Debug, Default)]
 pub struct AuthorizationCache {
-    sets:        DashMap<AuthorizationCacheKey, Arc<AuthorizationSet>>,
+    sets: DashMap<AuthorizationCacheKey, Arc<AuthorizationSet>>,
     latest_keys: Mutex<HashMap<AuthorizationCacheScope, AuthorizationCacheKey>>,
-    hits:        AtomicU64,
-    misses:      AtomicU64,
+    hits: AtomicU64,
+    misses: AtomicU64,
 }
 
 impl AuthorizationCache {
@@ -71,7 +71,7 @@ impl AuthorizationCache {
 
     pub fn metrics(&self) -> AuthorizationCacheMetrics {
         AuthorizationCacheMetrics {
-            hits:   self.hits.load(Ordering::Relaxed),
+            hits: self.hits.load(Ordering::Relaxed),
             misses: self.misses.load(Ordering::Relaxed),
         }
     }

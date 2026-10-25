@@ -76,35 +76,35 @@ pub fn intern(s: &str) -> Arc<str> {
 /// ```
 pub struct SystemColumns {
     /// "_version" column (canonical row version)
-    pub version:       Arc<str>,
+    pub version: Arc<str>,
     /// "_timestamp" column (STREAM ingestion time)
-    pub timestamp:     Arc<str>,
+    pub timestamp: Arc<str>,
     /// "_deleted" column (soft delete flag)
-    pub deleted:       Arc<str>,
+    pub deleted: Arc<str>,
     /// "user_id" column (user identifier in system tables)
-    pub user_id:       Arc<str>,
+    pub user_id: Arc<str>,
     /// "namespace_id" column (namespace identifier)
-    pub namespace_id:  Arc<str>,
+    pub namespace_id: Arc<str>,
     /// "table_id" column (table identifier)
-    pub table_id:      Arc<str>,
+    pub table_id: Arc<str>,
     /// "storage_id" column (storage identifier)
-    pub storage_id:    Arc<str>,
+    pub storage_id: Arc<str>,
     /// "job_id" column (job identifier)
-    pub job_id:        Arc<str>,
+    pub job_id: Arc<str>,
     /// "live_query_id" column (live query identifier)
     pub live_query_id: Arc<str>,
 }
 
 /// Global pre-interned system column names
 pub static SYSTEM_COLUMNS: Lazy<SystemColumns> = Lazy::new(|| SystemColumns {
-    version:       intern(SystemColumnNames::VERSION),
-    timestamp:     intern(SystemColumnNames::TIMESTAMP),
-    deleted:       intern(SystemColumnNames::DELETED),
-    user_id:       intern("user_id"),
-    namespace_id:  intern("namespace_id"),
-    table_id:      intern("table_id"),
-    storage_id:    intern("storage_id"),
-    job_id:        intern("job_id"),
+    version: intern(SystemColumnNames::VERSION),
+    timestamp: intern(SystemColumnNames::TIMESTAMP),
+    deleted: intern(SystemColumnNames::DELETED),
+    user_id: intern("user_id"),
+    namespace_id: intern("namespace_id"),
+    table_id: intern("table_id"),
+    storage_id: intern("storage_id"),
+    job_id: intern("job_id"),
     live_query_id: intern("live_query_id"),
 });
 

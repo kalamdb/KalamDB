@@ -6,12 +6,12 @@ use serde::{Deserialize, Serialize};
 pub(crate) enum StreamLogRecord {
     Put {
         row_id: StreamTableRowId,
-        row:    StreamTableRow,
+        row: StreamTableRow,
     },
     /// Soft-delete of a prior put. `timestamp` is the original put's
     /// `_timestamp` so file windows can locate the same segment.
     Delete {
-        row_id:    StreamTableRowId,
+        row_id: StreamTableRowId,
         timestamp: i64,
     },
 }

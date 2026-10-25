@@ -45,7 +45,7 @@ const PRIVILEGED_ROLE_CACHE_INITIAL_CAPACITY: usize = 32;
 /// using RocksDB's atomic WriteBatch - no manual index management needed.
 #[derive(Clone)]
 pub struct UsersTableProvider {
-    store:            UsersStore,
+    store: UsersStore,
     privileged_roles: Arc<RwLock<HashMap<UserId, Role>>>,
 }
 
@@ -393,24 +393,24 @@ mod tests {
 
     fn create_test_user(id: &str) -> User {
         User {
-            user_id:               UserId::new(id),
-            password_hash:         "hashed_password".to_string(),
-            role:                  Role::User,
-            name:                  None,
-            email:                 Some(format!("{}@example.com", id)),
-            auth_type:             AuthType::Password,
-            auth_data:             None,
-            storage_mode:          crate::providers::storages::models::StorageMode::Table,
-            storage_id:            Some(StorageId::local()),
+            user_id: UserId::new(id),
+            password_hash: "hashed_password".to_string(),
+            role: Role::User,
+            name: None,
+            email: Some(format!("{}@example.com", id)),
+            auth_type: AuthType::Password,
+            auth_data: None,
+            storage_mode: crate::providers::storages::models::StorageMode::Table,
+            storage_id: Some(StorageId::local()),
             failed_login_attempts: 0,
-            locked_until:          None,
-            last_login_at:         None,
-            created_at:            1000,
-            updated_at:            1000,
-            last_seen:             None,
-            deleted_at:            None,
-            invite_expires_at:     None,
-            invited_by:            None,
+            locked_until: None,
+            last_login_at: None,
+            created_at: 1000,
+            updated_at: 1000,
+            last_seen: None,
+            deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         }
     }
 

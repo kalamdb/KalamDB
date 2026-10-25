@@ -8,14 +8,14 @@ use crate::{ddl::DdlResult, parser::KalamParser};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateScheduleStatement {
-    pub schedule_id:  ScheduleId,
+    pub schedule_id: ScheduleId,
     pub namespace_id: SchemaId,
-    pub name:         String,
-    pub routine_id:   RoutineId,
-    pub cron:         Option<String>,
-    pub interval_ms:  Option<i64>,
-    pub timezone:     String,
-    pub principal:    String,
+    pub name: String,
+    pub routine_id: RoutineId,
+    pub cron: Option<String>,
+    pub interval_ms: Option<i64>,
+    pub timezone: String,
+    pub principal: String,
 }
 
 impl CreateScheduleStatement {

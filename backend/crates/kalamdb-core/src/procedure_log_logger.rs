@@ -40,8 +40,8 @@ const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const SWEEP_INTERVAL_MS: u64 = 5_000;
 
 struct OpenLog {
-    file:      File,
-    len:       u64,
+    file: File,
+    len: u64,
     last_used: Instant,
 }
 
@@ -51,22 +51,22 @@ struct OpenLog {
 #[derive(Debug, Clone)]
 pub struct ProcedureLogRecord {
     pub execution_id: String,
-    pub request_id:   String,
+    pub request_id: String,
     pub procedure_id: String,
-    pub module_id:    Option<String>,
-    pub revision_id:  Option<String>,
-    pub actor:        Cow<'static, str>,
-    pub origin:       Cow<'static, str>,
-    pub outcome:      Cow<'static, str>,
-    pub channel:      Cow<'static, str>,
-    pub level:        Cow<'static, str>,
-    pub error_code:   Option<String>,
-    pub message:      Option<String>,
-    pub duration_ms:  i64,
-    pub timestamp:    i64,
-    pub node_id:      String,
+    pub module_id: Option<String>,
+    pub revision_id: Option<String>,
+    pub actor: Cow<'static, str>,
+    pub origin: Cow<'static, str>,
+    pub outcome: Cow<'static, str>,
+    pub channel: Cow<'static, str>,
+    pub level: Cow<'static, str>,
+    pub error_code: Option<String>,
+    pub message: Option<String>,
+    pub duration_ms: i64,
+    pub timestamp: i64,
+    pub node_id: String,
     /// Present when `origin` is `schedule`; omitted from JSONL otherwise.
-    pub schedule_id:  Option<String>,
+    pub schedule_id: Option<String>,
 }
 
 /// JSONL writer for per-procedure `procedures.jsonl` files under the runtime root.
@@ -74,9 +74,9 @@ pub struct ProcedureLogRecord {
 /// Active procedures reuse one append handle. A handle with no write for 30
 /// seconds is closed.
 pub struct ProcedureLogLogger {
-    runtime_root:  Option<PathBuf>,
-    handles:       DashMap<String, Arc<Mutex<Option<OpenLog>>>>,
-    started:       Instant,
+    runtime_root: Option<PathBuf>,
+    handles: DashMap<String, Arc<Mutex<Option<OpenLog>>>>,
+    started: Instant,
     last_sweep_ms: AtomicU64,
 }
 
@@ -287,44 +287,44 @@ pub fn procedure_log_path(runtime_root: &Path, procedure_id: &str) -> PathBuf {
 #[derive(Serialize)]
 struct LogLine<'a> {
     #[serde(serialize_with = "serialize_rfc3339_millis")]
-    timestamp:    i64,
-    node_id:      &'a str,
+    timestamp: i64,
+    node_id: &'a str,
     execution_id: &'a str,
-    request_id:   &'a str,
+    request_id: &'a str,
     procedure_id: &'a str,
-    module_id:    Option<&'a str>,
-    revision_id:  Option<&'a str>,
-    actor:        &'a str,
-    origin:       &'a str,
-    outcome:      &'a str,
-    channel:      &'a str,
-    level:        &'a str,
-    error_code:   Option<&'a str>,
-    message:      Option<&'a str>,
-    duration_ms:  i64,
+    module_id: Option<&'a str>,
+    revision_id: Option<&'a str>,
+    actor: &'a str,
+    origin: &'a str,
+    outcome: &'a str,
+    channel: &'a str,
+    level: &'a str,
+    error_code: Option<&'a str>,
+    message: Option<&'a str>,
+    duration_ms: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    schedule_id:  Option<&'a str>,
+    schedule_id: Option<&'a str>,
 }
 
 impl<'a> From<&'a ProcedureLogRecord> for LogLine<'a> {
     fn from(entry: &'a ProcedureLogRecord) -> Self {
         Self {
-            timestamp:    entry.timestamp,
-            node_id:      &entry.node_id,
+            timestamp: entry.timestamp,
+            node_id: &entry.node_id,
             execution_id: &entry.execution_id,
-            request_id:   &entry.request_id,
+            request_id: &entry.request_id,
             procedure_id: &entry.procedure_id,
-            module_id:    entry.module_id.as_deref(),
-            revision_id:  entry.revision_id.as_deref(),
-            actor:        &entry.actor,
-            origin:       &entry.origin,
-            outcome:      &entry.outcome,
-            channel:      &entry.channel,
-            level:        &entry.level,
-            error_code:   entry.error_code.as_deref(),
-            message:      entry.message.as_deref(),
-            duration_ms:  entry.duration_ms,
-            schedule_id:  entry.schedule_id.as_deref(),
+            module_id: entry.module_id.as_deref(),
+            revision_id: entry.revision_id.as_deref(),
+            actor: &entry.actor,
+            origin: &entry.origin,
+            outcome: &entry.outcome,
+            channel: &entry.channel,
+            level: &entry.level,
+            error_code: entry.error_code.as_deref(),
+            message: entry.message.as_deref(),
+            duration_ms: entry.duration_ms,
+            schedule_id: entry.schedule_id.as_deref(),
         }
     }
 }
@@ -416,21 +416,21 @@ mod tests {
     fn sample_record(procedure_id: &str, message: &str) -> ProcedureLogRecord {
         ProcedureLogRecord {
             execution_id: "e1".into(),
-            request_id:   "r1".into(),
+            request_id: "r1".into(),
             procedure_id: procedure_id.into(),
-            module_id:    Some("backend".into()),
-            revision_id:  Some("backend:abc".into()),
-            actor:        "alice".into(),
-            origin:       "sql".into(),
-            outcome:      "log".into(),
-            channel:      "console".into(),
-            level:        "info".into(),
-            error_code:   None,
-            message:      Some(message.into()),
-            duration_ms:  0,
-            timestamp:    1_700_000_000_000,
-            node_id:      "1".into(),
-            schedule_id:  None,
+            module_id: Some("backend".into()),
+            revision_id: Some("backend:abc".into()),
+            actor: "alice".into(),
+            origin: "sql".into(),
+            outcome: "log".into(),
+            channel: "console".into(),
+            level: "info".into(),
+            error_code: None,
+            message: Some(message.into()),
+            duration_ms: 0,
+            timestamp: 1_700_000_000_000,
+            node_id: "1".into(),
+            schedule_id: None,
         }
     }
 
@@ -454,21 +454,21 @@ mod tests {
         let logger = ProcedureLogLogger::new(dir.path());
         logger.record(ProcedureLogRecord {
             execution_id: "e1".into(),
-            request_id:   "r1".into(),
+            request_id: "r1".into(),
             procedure_id: "chat.send_message".into(),
-            module_id:    Some("backend".into()),
-            revision_id:  Some("backend:abc".into()),
-            actor:        "alice".into(),
-            origin:       "sql".into(),
-            outcome:      "error".into(),
-            channel:      "invocation".into(),
-            level:        "error".into(),
-            error_code:   Some("PROCEDURE_TIMEOUT".into()),
-            message:      Some("deadline exceeded".into()),
-            duration_ms:  12,
-            timestamp:    1_700_000_000_000,
-            node_id:      "1".into(),
-            schedule_id:  None,
+            module_id: Some("backend".into()),
+            revision_id: Some("backend:abc".into()),
+            actor: "alice".into(),
+            origin: "sql".into(),
+            outcome: "error".into(),
+            channel: "invocation".into(),
+            level: "error".into(),
+            error_code: Some("PROCEDURE_TIMEOUT".into()),
+            message: Some("deadline exceeded".into()),
+            duration_ms: 12,
+            timestamp: 1_700_000_000_000,
+            node_id: "1".into(),
+            schedule_id: None,
         });
         logger.record(sample_record("chat.send_message", "hello-from-v8"));
         let path = procedure_log_path(dir.path(), "chat.send_message");

@@ -28,7 +28,7 @@ pub struct CatalogRoutineParameter {
         default = "None",
         comment = "Parent routine"
     )]
-    pub routine_id:   RoutineId,
+    pub routine_id: RoutineId,
     #[column(
         id = 3,
         ordinal = 3,
@@ -38,7 +38,7 @@ pub struct CatalogRoutineParameter {
         default = "None",
         comment = "Parameter name"
     )]
-    pub name:         String,
+    pub name: String,
     #[column(
         id = 4,
         ordinal = 4,
@@ -48,7 +48,7 @@ pub struct CatalogRoutineParameter {
         default = "None",
         comment = "Declaration order"
     )]
-    pub ordinal:      i32,
+    pub ordinal: i32,
     #[column(
         id = 5,
         ordinal = 5,
@@ -59,7 +59,7 @@ pub struct CatalogRoutineParameter {
         comment = "Named type reference when the parameter is not a primitive"
     )]
     #[serde(default)]
-    pub type_id:      Option<TypeId>,
+    pub type_id: Option<TypeId>,
     #[column(
         id = 6,
         ordinal = 6,
@@ -69,7 +69,7 @@ pub struct CatalogRoutineParameter {
         default = "None",
         comment = "Resolved type name"
     )]
-    pub type_name:    String,
+    pub type_name: String,
     #[column(
         id = 7,
         ordinal = 7,
@@ -79,7 +79,7 @@ pub struct CatalogRoutineParameter {
         default = "None",
         comment = "True when the parameter is an array"
     )]
-    pub is_array:     bool,
+    pub is_array: bool,
     #[column(
         id = 8,
         ordinal = 8,
@@ -89,7 +89,7 @@ pub struct CatalogRoutineParameter {
         default = "None",
         comment = "NOT NULL"
     )]
-    pub not_null:     bool,
+    pub not_null: bool,
     #[column(
         id = 9,
         ordinal = 9,
@@ -99,7 +99,7 @@ pub struct CatalogRoutineParameter {
         default = "None",
         comment = "NONEMPTY for arrays"
     )]
-    pub nonempty:     bool,
+    pub nonempty: bool,
     #[column(
         id = 10,
         ordinal = 10,
@@ -110,7 +110,7 @@ pub struct CatalogRoutineParameter {
         comment = "Builtin KalamDataType when the parameter is not a named CREATE TYPE"
     )]
     #[serde(default)]
-    pub data_type:    Option<KalamDataType>,
+    pub data_type: Option<KalamDataType>,
     #[column(
         id = 11,
         ordinal = 11,
@@ -121,7 +121,7 @@ pub struct CatalogRoutineParameter {
         comment = "Parameter mode: IN, OUT, INOUT, or VARIADIC"
     )]
     #[serde(default)]
-    pub mode:         RoutineParameterMode,
+    pub mode: RoutineParameterMode,
     #[column(
         id = 12,
         ordinal = 12,

@@ -57,18 +57,18 @@ pub struct StoredSnapshot {
 /// Log entry stored in memory
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LogEntryData {
-    log_id:  LogId<u64>,
+    log_id: LogId<u64>,
     payload: Vec<u8>,
 }
 
 /// State machine data that gets serialized to snapshots
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct StateMachineData {
-    last_applied_log:    Option<LogId<u64>>,
-    last_membership:     StoredMembership<u64, KalamNode>,
+    last_applied_log: Option<LogId<u64>>,
+    last_membership: StoredMembership<u64, KalamNode>,
     state_applied_index: u64,
-    state_applied_term:  u64,
-    state:               Vec<u8>,
+    state_applied_term: u64,
+    state: Vec<u8>,
 }
 
 fn group_dir_name(group_id: &GroupId) -> String {
@@ -754,11 +754,11 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftSnapshotBuilder<KalamTyp
             .map_err(|e| StorageIOError::read_state_machine(&e))?;
 
         let data = StateMachineData {
-            last_applied_log:    last_applied,
-            last_membership:     last_membership.clone(),
+            last_applied_log: last_applied,
+            last_membership: last_membership.clone(),
             state_applied_index: sm_snapshot.last_applied_index,
-            state_applied_term:  sm_snapshot.last_applied_term,
-            state:               sm_snapshot.data,
+            state_applied_term: sm_snapshot.last_applied_term,
+            state: sm_snapshot.data,
         };
 
         let serialized = encode(&data).map_err(|e| StorageIOError::read_state_machine(&e))?;
@@ -789,11 +789,11 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftSnapshotBuilder<KalamTyp
 
             let raft_meta = RaftSnapshotMeta {
                 last_log_id: last_applied.map(|id| RaftLogId {
-                    term:  id.leader_id.term,
+                    term: id.leader_id.term,
                     index: id.index,
                 }),
                 snapshot_id: snapshot_id.clone(),
-                size_bytes:  serialized.len() as u64,
+                size_bytes: serialized.len() as u64,
             };
             store
                 .save_snapshot_meta(&raft_meta)
@@ -839,7 +839,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
     async fn save_vote(&self, vote: &Vote<u64>) -> Result<(), StorageError<u64>> {
         if let Some(store) = &self.persistent_store {
             let raft_vote = RaftVote {
-                term:      vote.leader_id().term,
+                term: vote.leader_id().term,
                 voted_for: vote.leader_id().voted_for(),
                 committed: vote.is_committed(),
             };
@@ -891,7 +891,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         };
 
         let applied = RaftLogId {
-            term:  last_applied.leader_id.term,
+            term: last_applied.leader_id.term,
             index: last_applied.index,
         };
 
@@ -1068,7 +1068,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
                 .map_err(|e| StorageIOError::write_logs(&e))?;
             store
                 .save_purge(Some(RaftLogId {
-                    term:  log_id.leader_id.term,
+                    term: log_id.leader_id.term,
                     index: log_id.index,
                 }))
                 .map_err(|e| StorageIOError::write(&e))?;
@@ -1262,11 +1262,11 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
 
             let raft_meta = RaftSnapshotMeta {
                 last_log_id: meta.last_log_id.map(|id| RaftLogId {
-                    term:  id.leader_id.term,
+                    term: id.leader_id.term,
                     index: id.index,
                 }),
                 snapshot_id: meta.snapshot_id.clone(),
-                size_bytes:  data.len() as u64,
+                size_bytes: data.len() as u64,
             };
             store
                 .save_snapshot_meta(&raft_meta)
@@ -1281,7 +1281,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
             if let Some(last_log_id) = meta.last_log_id {
                 store
                     .save_last_applied(Some(RaftLogId {
-                        term:  last_log_id.leader_id.term,
+                        term: last_log_id.leader_id.term,
                         index: last_log_id.index,
                     }))
                     .map_err(|e| StorageIOError::write_snapshot(Some(meta.signature()), &e))?;
@@ -1313,7 +1313,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
                     .map_err(|e| StorageIOError::write_logs(&e))?;
                 store
                     .save_purge(Some(RaftLogId {
-                        term:  last_log_id.leader_id.term,
+                        term: last_log_id.leader_id.term,
                         index: last_log_id.index,
                     }))
                     .map_err(|e| StorageIOError::write(&e))?;
@@ -1348,7 +1348,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         let current = self.current_snapshot.read();
         match current.as_ref() {
             Some(snapshot) => Ok(Some(Snapshot {
-                meta:     snapshot.meta.clone(),
+                meta: snapshot.meta.clone(),
                 snapshot: Box::new(Cursor::new((*snapshot.data).clone())),
             })),
             None => Ok(None),
@@ -1529,7 +1529,7 @@ mod tests {
         let sm = MetaStateMachine::new();
         let mut storage = std::sync::Arc::new(KalamRaftStorage::new(GroupId::Meta, sm));
         let entry = Entry {
-            log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
+            log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
             payload: EntryPayload::Blank,
         };
         storage.append_to_log(vec![entry]).await.unwrap();
@@ -1549,7 +1549,7 @@ mod tests {
 
         // Append entries
         let entry = Entry {
-            log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
+            log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
             payload: EntryPayload::Blank,
         };
         storage.append_to_log(vec![entry]).await.unwrap();
@@ -1584,7 +1584,7 @@ mod tests {
         assert!(decode_log_payload(&legacy).is_err());
 
         let stored = encode_stored_entry(Entry {
-            log_id:  LogId::new(openraft::CommittedLeaderId::new(3, 0), 7),
+            log_id: LogId::new(openraft::CommittedLeaderId::new(3, 0), 7),
             payload: EntryPayload::Normal(cmd.clone()),
         })
         .unwrap();
@@ -1598,9 +1598,9 @@ mod tests {
 
     #[derive(Debug)]
     struct TestStateMachine {
-        state:              std::sync::Arc<AtomicU64>,
+        state: std::sync::Arc<AtomicU64>,
         last_applied_index: AtomicU64,
-        last_applied_term:  AtomicU64,
+        last_applied_term: AtomicU64,
     }
 
     impl TestStateMachine {
@@ -1684,9 +1684,9 @@ mod tests {
 
     #[derive(Debug)]
     struct ProgressOnlyStateMachine {
-        apply_calls:        Arc<AtomicUsize>,
+        apply_calls: Arc<AtomicUsize>,
         last_applied_index: AtomicU64,
-        last_applied_term:  AtomicU64,
+        last_applied_term: AtomicU64,
     }
 
     impl ProgressOnlyStateMachine {
@@ -1768,11 +1768,11 @@ mod tests {
 
         let entries = vec![
             Entry {
-                log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
+                log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
                 payload: EntryPayload::Normal(1u64.to_le_bytes().to_vec()),
             },
             Entry {
-                log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 2),
+                log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 2),
                 payload: EntryPayload::Normal(2u64.to_le_bytes().to_vec()),
             },
         ];
@@ -1803,7 +1803,7 @@ mod tests {
         let mut storage = std::sync::Arc::new(KalamRaftStorage::new(GroupId::Meta, sm));
 
         let entry = Entry {
-            log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 4),
+            log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 4),
             payload: EntryPayload::Normal(5u64.to_le_bytes().to_vec()),
         };
 
@@ -1834,7 +1834,7 @@ mod tests {
         let storage = Arc::new(KalamRaftStorage::new(GroupId::Meta, sm));
 
         let entries = vec![Entry {
-            log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
+            log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
             payload: EntryPayload::Normal(vec![1, 2, 3]),
         }];
 
@@ -1881,14 +1881,14 @@ mod tests {
     }
 
     struct ScanCountingBackend {
-        inner:      InMemoryBackend,
+        inner: InMemoryBackend,
         scan_calls: AtomicUsize,
     }
 
     impl ScanCountingBackend {
         fn new() -> Self {
             Self {
-                inner:      InMemoryBackend::new(),
+                inner: InMemoryBackend::new(),
                 scan_calls: AtomicUsize::new(0),
             }
         }
@@ -1984,15 +1984,15 @@ mod tests {
 
             let entries = vec![
                 Entry {
-                    log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
+                    log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
                     payload: EntryPayload::Blank,
                 },
                 Entry {
-                    log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 2),
+                    log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 2),
                     payload: EntryPayload::Blank,
                 },
                 Entry {
-                    log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 3),
+                    log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 3),
                     payload: EntryPayload::Blank,
                 },
             ];
@@ -2065,15 +2065,15 @@ mod tests {
 
             let entries = vec![
                 Entry {
-                    log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
+                    log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
                     payload: EntryPayload::Blank,
                 },
                 Entry {
-                    log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 2),
+                    log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 2),
                     payload: EntryPayload::Normal(b"cmd".to_vec()),
                 },
                 Entry {
-                    log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 3),
+                    log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 3),
                     payload: EntryPayload::Blank,
                 },
             ];
@@ -2115,7 +2115,7 @@ mod tests {
 
         let entries: Vec<_> = (1..=entry_count)
             .map(|index| Entry {
-                log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), index),
+                log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), index),
                 payload: EntryPayload::Blank,
             })
             .collect();
@@ -2146,7 +2146,7 @@ mod tests {
 
             let entries: Vec<_> = (1..=10)
                 .map(|index| Entry {
-                    log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), index),
+                    log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), index),
                     payload: EntryPayload::Blank,
                 })
                 .collect();
@@ -2193,7 +2193,7 @@ mod tests {
             let storage = Arc::new(storage);
 
             let entry = Entry {
-                log_id:  LogId::new(openraft::CommittedLeaderId::new(3, 1), 42),
+                log_id: LogId::new(openraft::CommittedLeaderId::new(3, 1), 42),
                 payload: EntryPayload::Blank,
             };
             storage.append_to_log(vec![entry.clone()]).await.unwrap();
@@ -2236,7 +2236,7 @@ mod tests {
 
             let entries: Vec<_> = (1..=3)
                 .map(|i| Entry {
-                    log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), i),
+                    log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), i),
                     payload: EntryPayload::Blank,
                 })
                 .collect();
@@ -2278,7 +2278,7 @@ mod tests {
 
             let entries: Vec<_> = (1..=3)
                 .map(|i| Entry {
-                    log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), i),
+                    log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), i),
                     payload: EntryPayload::Blank,
                 })
                 .collect();
@@ -2325,7 +2325,7 @@ mod tests {
 
             let entries: Vec<_> = (1..=10)
                 .map(|i| Entry {
-                    log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), i),
+                    log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), i),
                     payload: EntryPayload::Blank,
                 })
                 .collect();
@@ -2371,7 +2371,7 @@ mod tests {
 
         let entries: Vec<_> = (1..=5)
             .map(|index| Entry {
-                log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), index),
+                log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), index),
                 payload: EntryPayload::Blank,
             })
             .collect();
@@ -2406,7 +2406,7 @@ mod tests {
 
             // Apply some entries
             let entries = vec![Entry {
-                log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
+                log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
                 payload: EntryPayload::Normal(10u64.to_le_bytes().to_vec()),
             }];
             let mut storage_clone = storage.clone();
@@ -2456,11 +2456,11 @@ mod tests {
 
             let first_entries = vec![
                 Entry {
-                    log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
+                    log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
                     payload: EntryPayload::Normal(Vec::new()),
                 },
                 Entry {
-                    log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 2),
+                    log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 2),
                     payload: EntryPayload::Normal(Vec::new()),
                 },
             ];
@@ -2472,11 +2472,11 @@ mod tests {
 
             let tail_entries = vec![
                 Entry {
-                    log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 3),
+                    log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 3),
                     payload: EntryPayload::Normal(Vec::new()),
                 },
                 Entry {
-                    log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 4),
+                    log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 4),
                     payload: EntryPayload::Normal(Vec::new()),
                 },
             ];
@@ -2516,7 +2516,7 @@ mod tests {
             let mut storage = Arc::new(storage);
 
             let entries = vec![Entry {
-                log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 2),
+                log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 2),
                 payload: EntryPayload::Normal(Vec::new()),
             }];
             storage.apply_to_state_machine(&entries).await.unwrap();
@@ -2556,7 +2556,7 @@ mod tests {
             storage.save_vote(&vote).await.unwrap();
 
             let entries = vec![Entry {
-                log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
+                log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
                 payload: EntryPayload::Blank,
             }];
             storage.append_to_log(entries).await.unwrap();

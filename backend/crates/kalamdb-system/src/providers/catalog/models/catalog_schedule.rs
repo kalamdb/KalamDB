@@ -21,7 +21,7 @@ pub struct CatalogSchedule {
         default = "None",
         comment = "schedule id"
     )]
-    pub schedule_id:       ScheduleId,
+    pub schedule_id: ScheduleId,
     #[column(
         id = 2,
         ordinal = 2,
@@ -31,7 +31,7 @@ pub struct CatalogSchedule {
         default = "None",
         comment = "namespace id"
     )]
-    pub namespace_id:      SchemaId,
+    pub namespace_id: SchemaId,
     #[column(
         id = 3,
         ordinal = 3,
@@ -41,7 +41,7 @@ pub struct CatalogSchedule {
         default = "None",
         comment = "name"
     )]
-    pub name:              String,
+    pub name: String,
     #[column(
         id = 4,
         ordinal = 4,
@@ -51,7 +51,7 @@ pub struct CatalogSchedule {
         default = "None",
         comment = "routine id"
     )]
-    pub routine_id:        RoutineId,
+    pub routine_id: RoutineId,
     #[column(
         id = 5,
         ordinal = 5,
@@ -71,7 +71,7 @@ pub struct CatalogSchedule {
         default = "None",
         comment = "cron"
     )]
-    pub cron:              Option<String>,
+    pub cron: Option<String>,
     #[column(
         id = 7,
         ordinal = 7,
@@ -81,7 +81,7 @@ pub struct CatalogSchedule {
         default = "None",
         comment = "interval ms"
     )]
-    pub interval_ms:       Option<i64>,
+    pub interval_ms: Option<i64>,
     #[column(
         id = 8,
         ordinal = 8,
@@ -91,7 +91,7 @@ pub struct CatalogSchedule {
         default = "None",
         comment = "timezone"
     )]
-    pub timezone:          String,
+    pub timezone: String,
     #[column(
         id = 9,
         ordinal = 9,
@@ -101,7 +101,7 @@ pub struct CatalogSchedule {
         default = "None",
         comment = "enabled"
     )]
-    pub enabled:           bool,
+    pub enabled: bool,
     #[column(
         id = 10,
         ordinal = 10,
@@ -111,7 +111,7 @@ pub struct CatalogSchedule {
         default = "None",
         comment = "next run at"
     )]
-    pub next_run_at:       i64,
+    pub next_run_at: i64,
     #[column(
         id = 11,
         ordinal = 11,
@@ -121,7 +121,7 @@ pub struct CatalogSchedule {
         default = "None",
         comment = "run id"
     )]
-    pub run_id:            Option<String>,
+    pub run_id: Option<String>,
     #[column(
         id = 12,
         ordinal = 12,
@@ -131,7 +131,7 @@ pub struct CatalogSchedule {
         default = "None",
         comment = "owner"
     )]
-    pub owner:             Option<String>,
+    pub owner: Option<String>,
     #[column(
         id = 13,
         ordinal = 13,
@@ -141,7 +141,7 @@ pub struct CatalogSchedule {
         default = "None",
         comment = "running until"
     )]
-    pub running_until:     Option<i64>,
+    pub running_until: Option<i64>,
     #[column(
         id = 14,
         ordinal = 14,
@@ -151,7 +151,7 @@ pub struct CatalogSchedule {
         default = "None",
         comment = "last started at"
     )]
-    pub last_started_at:   Option<i64>,
+    pub last_started_at: Option<i64>,
     #[column(
         id = 15,
         ordinal = 15,
@@ -161,7 +161,7 @@ pub struct CatalogSchedule {
         default = "None",
         comment = "last finished at"
     )]
-    pub last_finished_at:  Option<i64>,
+    pub last_finished_at: Option<i64>,
     #[column(
         id = 16,
         ordinal = 16,
@@ -171,7 +171,7 @@ pub struct CatalogSchedule {
         default = "None",
         comment = "last error"
     )]
-    pub last_error:        Option<String>,
+    pub last_error: Option<String>,
     #[column(
         id = 17,
         ordinal = 17,
@@ -181,7 +181,7 @@ pub struct CatalogSchedule {
         default = "None",
         comment = "run count"
     )]
-    pub run_count:         i64,
+    pub run_count: i64,
     #[column(
         id = 18,
         ordinal = 18,
@@ -191,7 +191,7 @@ pub struct CatalogSchedule {
         default = "None",
         comment = "skip count"
     )]
-    pub skip_count:        i64,
+    pub skip_count: i64,
     #[column(
         id = 19,
         ordinal = 19,
@@ -201,6 +201,6 @@ pub struct CatalogSchedule {
         default = "None",
         comment = "version"
     )]
-    pub version:           String,
+    pub version: String,
 }
 impl kalamdb_commons::KSerializable for CatalogSchedule {}

@@ -11,7 +11,7 @@ pub struct FileSubfolderState {
     /// Current subfolder index (1-based: f0001, f0002, ...).
     pub subfolder: u32,
     /// Number of files in current subfolder.
-    pub count:     u32,
+    pub count: u32,
 }
 
 impl FileSubfolderState {
@@ -19,7 +19,7 @@ impl FileSubfolderState {
     pub fn new() -> Self {
         Self {
             subfolder: 1,
-            count:     0,
+            count: 0,
         }
     }
 

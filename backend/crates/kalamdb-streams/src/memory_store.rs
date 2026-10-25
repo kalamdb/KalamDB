@@ -26,7 +26,7 @@ type RowKey = (String, u64, Vec<u8>);
 
 #[derive(Debug, Default)]
 struct MemoryStoreState {
-    data:                  BTreeMap<RowKey, StreamLogRecord>,
+    data: BTreeMap<RowKey, StreamLogRecord>,
     per_user_entry_counts: HashMap<UserId, usize>,
 }
 
@@ -34,10 +34,10 @@ struct MemoryStoreState {
 #[derive(Debug)]
 pub struct MemoryStreamLogStore {
     max_rows_per_user: usize,
-    table_id:          TableId,
+    table_id: TableId,
     /// Main storage: BTreeMap keyed by (user_id, timestamp, row_id_bytes)
     /// Stores either Put or Delete records
-    state:             RwLock<MemoryStoreState>,
+    state: RwLock<MemoryStoreState>,
 }
 
 impl MemoryStreamLogStore {
@@ -46,9 +46,9 @@ impl MemoryStreamLogStore {
     /// Create a new in-memory stream log store.
     pub fn new(config: StreamLogConfig) -> Self {
         Self {
-            table_id:          config.table_id,
+            table_id: config.table_id,
             max_rows_per_user: Self::DEFAULT_MAX_ROWS_PER_USER,
-            state:             RwLock::new(MemoryStoreState::default()),
+            state: RwLock::new(MemoryStoreState::default()),
         }
     }
 
@@ -91,7 +91,7 @@ impl MemoryStreamLogStore {
             .insert(
                 key,
                 StreamLogRecord::Delete {
-                    row_id:    row_id.clone(),
+                    row_id: row_id.clone(),
                     timestamp: timestamp_millis,
                 },
             )
@@ -123,7 +123,7 @@ impl MemoryStreamLogStore {
                 key,
                 StreamLogRecord::Put {
                     row_id: row_id.clone(),
-                    row:    row.clone(),
+                    row: row.clone(),
                 },
             )
             .is_none();
@@ -159,7 +159,7 @@ impl MemoryStreamLogStore {
                     key,
                     StreamLogRecord::Put {
                         row_id: row_id.clone(),
-                        row:    row.clone(),
+                        row: row.clone(),
                     },
                 )
                 .is_none();
@@ -464,10 +464,10 @@ mod tests {
     fn build_row(user_id: &UserId, version: VersionId, timestamp: i64) -> StreamTableRow {
         let values: BTreeMap<String, ScalarValue> = BTreeMap::new();
         StreamTableRow {
-            user_id:    user_id.clone(),
-            _version:   version,
+            user_id: user_id.clone(),
+            _version: version,
             _timestamp: timestamp,
-            fields:     Row::new(values),
+            fields: Row::new(values),
         }
     }
 

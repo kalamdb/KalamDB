@@ -17,8 +17,8 @@ use crate::storage::types::KalamTypeConfig;
 
 enum LogIoJob {
     Append {
-        store:    RaftPartitionStore,
-        records:  Vec<(u64, Vec<u8>)>,
+        store: RaftPartitionStore,
+        records: Vec<(u64, Vec<u8>)>,
         callback: LogFlushed<KalamTypeConfig>,
     },
 }

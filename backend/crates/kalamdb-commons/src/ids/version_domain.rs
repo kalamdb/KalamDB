@@ -8,10 +8,10 @@ use crate::TableId;
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct VersionDomain {
     pub history_incarnation: String,
-    pub table_id:            TableId,
-    pub scope_id:            u64,
+    pub table_id: TableId,
+    pub scope_id: u64,
     /// Reserved for future partitioned tables; currently always absent.
-    pub partition_id:        Option<u64>,
+    pub partition_id: Option<u64>,
 }
 
 impl VersionDomain {

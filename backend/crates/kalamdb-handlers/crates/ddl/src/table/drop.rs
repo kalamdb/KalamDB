@@ -79,8 +79,8 @@ pub(crate) fn capture_storage_cleanup_details(
     };
 
     Ok(StorageCleanupDetails {
-        storage_id:             storage_id.clone(),
-        base_directory:         base_dir,
+        storage_id: storage_id.clone(),
+        base_directory: base_dir,
         relative_path_template: relative_template,
     })
 }

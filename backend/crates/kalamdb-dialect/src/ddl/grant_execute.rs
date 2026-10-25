@@ -52,11 +52,11 @@ impl ExecuteGrantee {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExecuteTarget {
     Routine {
-        routine_id:    RoutineId,
+        routine_id: RoutineId,
         expected_kind: RoutineKind,
     },
     AllInSchema {
-        namespace_id:  SchemaId,
+        namespace_id: SchemaId,
         expected_kind: RoutineKind,
     },
 }
@@ -64,8 +64,8 @@ pub enum ExecuteTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrantExecuteStatement {
     pub routine_id: RoutineId,
-    pub target:     ExecuteTarget,
-    pub grantee:    ExecuteGrantee,
+    pub target: ExecuteTarget,
+    pub grantee: ExecuteGrantee,
 }
 
 impl GrantExecuteStatement {
@@ -77,8 +77,8 @@ impl GrantExecuteStatement {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RevokeExecuteStatement {
     pub routine_id: RoutineId,
-    pub target:     ExecuteTarget,
-    pub grantee:    ExecuteGrantee,
+    pub target: ExecuteTarget,
+    pub grantee: ExecuteGrantee,
 }
 
 impl RevokeExecuteStatement {
@@ -86,8 +86,8 @@ impl RevokeExecuteStatement {
         let grant = parse_execute_acl(sql, default_namespace, false)?;
         Ok(Self {
             routine_id: grant.routine_id,
-            target:     grant.target,
-            grantee:    grant.grantee,
+            target: grant.target,
+            grantee: grant.grantee,
         })
     }
 }
@@ -215,7 +215,7 @@ mod tests {
         assert_eq!(
             all_fns.target,
             ExecuteTarget::AllInSchema {
-                namespace_id:  SchemaId::new("api"),
+                namespace_id: SchemaId::new("api"),
                 expected_kind: RoutineKind::Function,
             }
         );

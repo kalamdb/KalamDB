@@ -20,9 +20,9 @@ use crate::{
 /// check: a membership change racing an evaluation invalidates the whole result.
 #[derive(Debug, Clone)]
 pub struct BoundAuthorization {
-    table:        Arc<TableDefinition>,
-    policies:     BoundTablePolicies,
-    sets:         HashMap<PolicyId, Arc<AuthorizationSet>>,
+    table: Arc<TableDefinition>,
+    policies: BoundTablePolicies,
+    sets: HashMap<PolicyId, Arc<AuthorizationSet>>,
     dependencies: Vec<AuthorizationDependencyGuard>,
 }
 

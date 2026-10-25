@@ -202,8 +202,8 @@ async fn shared_live_resume_sees_every_version_on_owner_group() {
         .unwrap();
     registration.state.mark_authenticated(UserId::new("root"), Role::Dba);
     let request = SubscriptionRequest {
-        id:      "sub-live".to_string(),
-        sql:     format!("SELECT * FROM live_ns.{table_name}"),
+        id: "sub-live".to_string(),
+        sql: format!("SELECT * FROM live_ns.{table_name}"),
         options: Some(SubscriptionOptions::default()),
     };
     let subscribed = app
@@ -289,8 +289,8 @@ async fn shared_live_resume_sees_every_version_on_owner_group() {
 
     let last = VersionId::try_from_i64(*stored.last().unwrap()).unwrap();
     let resume = SubscriptionRequest {
-        id:      "sub-resume".to_string(),
-        sql:     format!("SELECT * FROM live_ns.{table_name}"),
+        id: "sub-resume".to_string(),
+        sql: format!("SELECT * FROM live_ns.{table_name}"),
         options: Some(SubscriptionOptions {
             version_domain: Some(domain.clone()),
             from: Some(last),
@@ -309,8 +309,8 @@ async fn shared_live_resume_sees_every_version_on_owner_group() {
     let mut foreign = domain.clone();
     foreign.history_incarnation = "rotated-history".to_string();
     let rejected = SubscriptionRequest {
-        id:      "sub-foreign".to_string(),
-        sql:     format!("SELECT * FROM live_ns.{table_name}"),
+        id: "sub-foreign".to_string(),
+        sql: format!("SELECT * FROM live_ns.{table_name}"),
         options: Some(SubscriptionOptions {
             version_domain: Some(foreign),
             from: Some(last),
@@ -330,8 +330,8 @@ async fn shared_live_resume_sees_every_version_on_owner_group() {
     assert!(error.contains("domain"), "{error}");
 
     let missing_domain = SubscriptionRequest {
-        id:      "sub-bare".to_string(),
-        sql:     format!("SELECT * FROM live_ns.{table_name}"),
+        id: "sub-bare".to_string(),
+        sql: format!("SELECT * FROM live_ns.{table_name}"),
         options: Some(SubscriptionOptions {
             from: Some(last),
             ..SubscriptionOptions::default()

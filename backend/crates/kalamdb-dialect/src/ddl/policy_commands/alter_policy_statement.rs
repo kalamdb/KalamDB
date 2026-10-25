@@ -8,8 +8,8 @@ use crate::ddl::DdlResult;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlterPolicyStatement {
     pub policy_name: String,
-    pub table_id:    TableId,
-    pub operation:   AlterPolicyOperation,
+    pub table_id: TableId,
+    pub operation: AlterPolicyOperation,
 }
 
 impl AlterPolicyStatement {
@@ -32,8 +32,8 @@ impl AlterPolicyStatement {
                 using,
                 with_check,
             } => AlterPolicyOperation::Apply {
-                targets:        to.map(|owners| parse_targets(Some(owners))).transpose()?,
-                using_sql:      using.map(|expr| expr.to_string()),
+                targets: to.map(|owners| parse_targets(Some(owners))).transpose()?,
+                using_sql: using.map(|expr| expr.to_string()),
                 with_check_sql: with_check.map(|expr| expr.to_string()),
             },
         };

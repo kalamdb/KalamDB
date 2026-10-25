@@ -33,7 +33,7 @@ use crate::{
 /// direct EntityStore implementation without admin-only access control.
 #[derive(Clone)]
 pub struct SharedTableStore {
-    backend:   Arc<dyn StorageBackend>,
+    backend: Arc<dyn StorageBackend>,
     partition: Partition,
 }
 
@@ -149,7 +149,7 @@ mod tests {
         values.insert("id".to_string(), ScalarValue::Int64(Some(seq)));
         SharedTableRow {
             _version: VersionId::try_from_i64(seq).unwrap(),
-            fields:   Row::new(values),
+            fields: Row::new(values),
             _deleted: false,
         }
     }
@@ -290,7 +290,7 @@ mod tests {
                     &SharedTableRow {
                         _version: VersionId::try_from_i64(seq).unwrap(),
                         _deleted: false,
-                        fields:   Row::new(values),
+                        fields: Row::new(values),
                     },
                 )
                 .unwrap();
@@ -368,7 +368,7 @@ mod tests {
                 &SharedTableRow {
                     _version: VersionId::try_from_i64(10).unwrap(),
                     _deleted: false,
-                    fields:   Row::new(values),
+                    fields: Row::new(values),
                 },
             )
             .unwrap();
@@ -428,7 +428,7 @@ mod tests {
                     &SharedTableRow {
                         _version: VersionId::try_from_i64(seq).unwrap(),
                         _deleted: false,
-                        fields:   Row::new(values),
+                        fields: Row::new(values),
                     },
                 )
                 .unwrap();
@@ -463,7 +463,7 @@ mod tests {
             SharedTableRow {
                 _version: version,
                 _deleted: deleted,
-                fields:   Row::new(values),
+                fields: Row::new(values),
             },
         )
     }

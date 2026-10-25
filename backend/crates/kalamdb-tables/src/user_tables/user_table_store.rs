@@ -36,7 +36,7 @@ use crate::{
 /// without admin-only access control.
 #[derive(Clone)]
 pub struct UserTableStore {
-    backend:   Arc<dyn StorageBackend>,
+    backend: Arc<dyn StorageBackend>,
     partition: Partition,
 }
 
@@ -140,9 +140,9 @@ mod tests {
         values.insert("name".to_string(), ScalarValue::Utf8(Some("Alice".to_string())));
         values.insert("id".to_string(), ScalarValue::Int64(Some(1)));
         UserTableRow {
-            user_id:  user_id.clone(),
+            user_id: user_id.clone(),
             _version: VersionId::try_from_i64(seq).unwrap(),
-            fields:   Row::new(values),
+            fields: Row::new(values),
             _deleted: false,
         }
     }
@@ -374,10 +374,10 @@ mod tests {
             .insert(
                 &UserTableRowId::new(user_id.clone(), VersionId::try_from_i64(10).unwrap()),
                 &UserTableRow {
-                    user_id:  user_id.clone(),
+                    user_id: user_id.clone(),
                     _version: VersionId::try_from_i64(10).unwrap(),
                     _deleted: false,
-                    fields:   Row::new(values),
+                    fields: Row::new(values),
                 },
             )
             .unwrap();
@@ -417,10 +417,10 @@ mod tests {
         let old_version = VersionId::try_from_i64(1).unwrap();
         let old_key = UserTableRowId::new(user_id.clone(), old_version);
         let old_row = UserTableRow {
-            user_id:  user_id.clone(),
+            user_id: user_id.clone(),
             _version: old_version,
             _deleted: false,
-            fields:   Row::new(values.clone()),
+            fields: Row::new(values.clone()),
         };
         store.insert(&old_key, &old_row).unwrap();
 

@@ -30,9 +30,9 @@ use crate::sql::{
 
 /// Public facade for SQL execution routing.
 pub struct SqlExecutor {
-    app_context:              Arc<crate::app_context::AppContext>,
-    handler_registry:         Arc<HandlerRegistry>,
-    sql_cache_registry:       Arc<SqlCacheRegistry>,
+    app_context: Arc<crate::app_context::AppContext>,
+    handler_registry: Arc<HandlerRegistry>,
+    sql_cache_registry: Arc<SqlCacheRegistry>,
     prepared_statement_cache: moka::sync::Cache<(PlanCacheKey, bool), PreparedExecutionStatement>,
     point_read_session_cache: moka::sync::Cache<
         point_read_session_cache_key::PointReadSessionCacheKey,

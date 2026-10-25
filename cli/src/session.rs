@@ -53,22 +53,22 @@ pub enum OutputFormat {
 /// Cluster node information for CLI display
 #[derive(Debug, Clone)]
 struct ClusterNodeDisplay {
-    node_id:   u64,
-    role:      String,
-    status:    String,
-    api_addr:  String,
-    is_self:   bool,
+    node_id: u64,
+    role: String,
+    status: String,
+    api_addr: String,
+    is_self: bool,
     is_leader: bool,
-    version:   Option<String>,
+    version: Option<String>,
 }
 
 /// Cluster information for CLI display
 #[derive(Debug, Clone)]
 struct ClusterInfoDisplay {
     is_cluster_mode: bool,
-    cluster_name:    String,
-    current_node:    Option<ClusterNodeDisplay>,
-    nodes:           Vec<ClusterNodeDisplay>,
+    cluster_name: String,
+    current_node: Option<ClusterNodeDisplay>,
+    nodes: Vec<ClusterNodeDisplay>,
 }
 
 /// CLI session state
@@ -529,8 +529,8 @@ mod tests {
 
     struct TestServer {
         base_url: String,
-        state:    Arc<AsyncMutex<TestServerState>>,
-        task:     tokio::task::JoinHandle<()>,
+        state: Arc<AsyncMutex<TestServerState>>,
+        task: tokio::task::JoinHandle<()>,
     }
 
     impl TestServer {
@@ -738,9 +738,9 @@ mod tests {
     }
 
     struct TestHttpRequest {
-        path:    String,
+        path: String,
         headers: HashMap<String, String>,
-        body:    String,
+        body: String,
     }
 
     async fn read_http_request(stream: &mut TcpStream) -> std::io::Result<TestHttpRequest> {

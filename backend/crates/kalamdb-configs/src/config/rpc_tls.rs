@@ -167,14 +167,12 @@ mod tests {
     #[test]
     fn validate_enabled_all_present() {
         let config = RpcTlsConfig {
-            enabled:             true,
-            ca_cert:             Some(
-                "-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----".to_string(),
-            ),
-            server_cert:         Some(
+            enabled: true,
+            ca_cert: Some("-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----".to_string()),
+            server_cert: Some(
                 "-----BEGIN CERTIFICATE-----\nSRV\n-----END CERTIFICATE-----".to_string(),
             ),
-            server_key:          Some(
+            server_key: Some(
                 "-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----".to_string(),
             ),
             require_client_cert: true,
@@ -214,10 +212,10 @@ mod tests {
     #[test]
     fn serde_round_trip() {
         let config = RpcTlsConfig {
-            enabled:             true,
-            ca_cert:             Some("/path/to/ca.pem".to_string()),
-            server_cert:         Some("/path/to/node.pem".to_string()),
-            server_key:          Some("/path/to/node.key".to_string()),
+            enabled: true,
+            ca_cert: Some("/path/to/ca.pem".to_string()),
+            server_cert: Some("/path/to/node.pem".to_string()),
+            server_key: Some("/path/to/node.key".to_string()),
             require_client_cert: false,
         };
         let toml_str = toml::to_string(&config).expect("serialize");

@@ -67,25 +67,25 @@ const GROUP_FETCH_STRIPES: usize = 64;
 #[derive(Debug)]
 struct ClaimState {
     /// Next offset to hand out.
-    cursor:              u64,
+    cursor: u64,
     /// Pending (unacked) claims with their expiry information.
-    pending:             Vec<PendingClaim>,
+    pending: Vec<PendingClaim>,
     /// Monotonic reservation ids for in-flight grouped fetches.
     next_reservation_id: u64,
     /// Highest offset this group-partition has acked in-process.
-    last_acked:          Option<u64>,
+    last_acked: Option<u64>,
 }
 
 #[derive(Debug)]
 struct PendingClaim {
     reservation_id: u64,
-    start:          u64,
+    start: u64,
     /// Exclusive upper bound of the claimed range.
-    end_exclusive:  u64,
+    end_exclusive: u64,
     /// When the claim was issued to a consumer.
-    claimed_at:     Instant,
+    claimed_at: Instant,
     /// True while a storage scan is still in progress for this reservation.
-    in_flight:      bool,
+    in_flight: bool,
 }
 
 impl ClaimState {
@@ -287,14 +287,14 @@ impl ClaimState {
 
 /// Thread-safe. Wrap in `Arc` for shared ownership.
 pub struct TopicPublisherService {
-    message_store:       Arc<TopicMessageStore>,
-    offset_store:        Arc<TopicOffsetsTableProvider>,
-    route_cache:         RouteCache,
-    primary_key_lookup:  Option<Arc<dyn TopicPrimaryKeyLookup>>,
-    partitions:          DashMap<TopicPartitionKey, Arc<PartitionRuntime>>,
-    group_claim_state:   DashMap<GroupPartitionKey, ClaimState>,
+    message_store: Arc<TopicMessageStore>,
+    offset_store: Arc<TopicOffsetsTableProvider>,
+    route_cache: RouteCache,
+    primary_key_lookup: Option<Arc<dyn TopicPrimaryKeyLookup>>,
+    partitions: DashMap<TopicPartitionKey, Arc<PartitionRuntime>>,
+    group_claim_state: DashMap<GroupPartitionKey, ClaimState>,
     group_fetch_stripes: [Mutex<()>; GROUP_FETCH_STRIPES],
-    visibility_timeout:  Duration,
+    visibility_timeout: Duration,
 }
 
 impl TopicPublisherService {

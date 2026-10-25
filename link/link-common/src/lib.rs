@@ -21,6 +21,7 @@ pub mod event_handlers;
 pub mod models;
 #[cfg(feature = "client-core")]
 pub mod query;
+pub mod routine_frame;
 #[cfg(feature = "client-core")]
 pub mod seq_tracking;
 #[cfg(feature = "client-core")]
@@ -28,9 +29,9 @@ pub mod subscription;
 #[cfg(feature = "client-core")]
 pub mod timeouts;
 #[cfg(feature = "client-core")]
-pub mod ws_domain;
-#[cfg(feature = "client-core")]
 pub mod timestamp;
+#[cfg(feature = "client-core")]
+pub mod ws_domain;
 
 #[cfg(feature = "tokio-runtime")]
 pub use auth::{ArcDynAuthProvider, AuthProvider, DynamicAuthProvider, ResolvedAuth};
@@ -59,9 +60,9 @@ pub use kalamdb_commons::{TableId, UserId};
 pub use kalamdb_serialization::{
     canonical_invocation_digest, decode_client_message, decode_domain_frame_for_surface,
     decode_domain_value, decode_server_message, domain as domain_codec, encode_client_message,
-    encode_domain_frame, encode_domain_value, DomainDecodeBudget,
-    DomainFileRef, DomainFrame, DomainMessageKind, DomainValue, EndpointSurface,
-    DOMAIN_CODEC_VERSION, DOMAIN_EPOCH, DOMAIN_MAGIC,
+    encode_domain_frame, encode_domain_value, DomainDecodeBudget, DomainFileRef, DomainFrame,
+    DomainMessageKind, DomainValue, EndpointSurface, DOMAIN_CODEC_VERSION, DOMAIN_EPOCH,
+    DOMAIN_MAGIC,
 };
 pub use models::{
     parse_i64, BoundFileRef, FieldFlag, FieldFlags, FileDownload, FileRef, FileRefContext,
@@ -85,6 +86,10 @@ pub use query::AuthRefreshCallback;
 pub use query::QueryExecutor;
 #[cfg(feature = "tokio-runtime")]
 pub use query::UploadProgressCallback;
+pub use routine_frame::{
+    decode_routine_result, decode_routine_result_json, encode_routine_request,
+    encode_routine_request_json, json_number_needs_bigint, RoutineSlot,
+};
 #[cfg(feature = "tokio-runtime")]
 pub use subscription::LiveRowsSubscription;
 #[cfg(feature = "tokio-runtime")]

@@ -32,7 +32,7 @@ pub fn storage_star_table_names(statement: &mut Statement) -> Vec<ObjectName> {
     let mut seen = HashSet::new();
     let _ = statement.visit(&mut StarTableCollector {
         names: &mut names,
-        seen:  &mut seen,
+        seen: &mut seen,
     });
     names
 }
@@ -52,7 +52,7 @@ impl VisitorMut for StarExpander<'_> {
 
 struct StarTableCollector<'a> {
     names: &'a mut Vec<ObjectName>,
-    seen:  &'a mut HashSet<String>,
+    seen: &'a mut HashSet<String>,
 }
 
 impl VisitorMut for StarTableCollector<'_> {
@@ -100,7 +100,7 @@ fn collect_set_expr(expr: &SetExpr, names: &mut Vec<ObjectName>, seen: &mut Hash
 }
 
 struct BaseTable {
-    name:  ObjectName,
+    name: ObjectName,
     alias: Option<String>,
 }
 
@@ -131,7 +131,7 @@ fn single_base_table(select: &Select) -> Option<BaseTable> {
         return None;
     }
     Some(BaseTable {
-        name:  name.clone(),
+        name: name.clone(),
         alias: alias.as_ref().map(|alias| alias.name.value.clone()),
     })
 }

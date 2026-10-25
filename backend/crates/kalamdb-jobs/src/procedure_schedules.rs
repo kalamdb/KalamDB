@@ -28,7 +28,7 @@ const CLAIM_GRACE_MS: i64 = 60_000;
 
 #[derive(Default)]
 pub(crate) struct ProcedureSchedules {
-    running:      JoinSet<()>,
+    running: JoinSet<()>,
     leader_since: Option<i64>,
 }
 
@@ -72,9 +72,9 @@ impl ProcedureSchedules {
                     let id = row.schedule_id.clone();
                     pending.push((
                         ScheduleUpdate {
-                            schedule_id:      id,
+                            schedule_id: id,
                             expected_version: Some(old_version),
-                            replacement:      Some(row),
+                            replacement: Some(row),
                         },
                         None,
                     ));
@@ -118,9 +118,9 @@ impl ProcedureSchedules {
             let id = row.schedule_id.clone();
             pending.push((
                 ScheduleUpdate {
-                    schedule_id:      id,
+                    schedule_id: id,
                     expected_version: Some(old_version),
-                    replacement:      Some(row),
+                    replacement: Some(row),
                 },
                 (!skip).then_some(scheduled_at),
             ));
@@ -348,14 +348,14 @@ mod tests {
         // Exercise the real Raft codec/applier: one conflict must not cancel other CASes.
         let schedule = row();
         let update = ScheduleUpdate {
-            schedule_id:      schedule.schedule_id.clone(),
+            schedule_id: schedule.schedule_id.clone(),
             expected_version: None,
-            replacement:      Some(schedule.clone()),
+            replacement: Some(schedule.clone()),
         };
         let delete = ScheduleUpdate {
-            schedule_id:      schedule.schedule_id.clone(),
+            schedule_id: schedule.schedule_id.clone(),
             expected_version: Some(schedule.version),
-            replacement:      None,
+            replacement: None,
         };
         let executor = app.executor();
         let raft = executor.as_any().downcast_ref::<RaftExecutor>().unwrap();
@@ -443,25 +443,25 @@ mod tests {
 
     fn row() -> CatalogSchedule {
         CatalogSchedule {
-            schedule_id:       ScheduleId::new("app.clock"),
-            namespace_id:      SchemaId::new("app"),
-            name:              "clock".into(),
-            routine_id:        RoutineId::new("app.tick"),
+            schedule_id: ScheduleId::new("app.clock"),
+            namespace_id: SchemaId::new("app"),
+            name: "clock".into(),
+            routine_id: RoutineId::new("app.tick"),
             principal_user_id: UserId::system(),
-            cron:              None,
-            interval_ms:       Some(1000),
-            timezone:          "UTC".into(),
-            enabled:           true,
-            next_run_at:       1000,
-            run_id:            None,
-            owner:             None,
-            running_until:     None,
-            last_started_at:   None,
-            last_finished_at:  None,
-            last_error:        None,
-            run_count:         0,
-            skip_count:        0,
-            version:           "created".into(),
+            cron: None,
+            interval_ms: Some(1000),
+            timezone: "UTC".into(),
+            enabled: true,
+            next_run_at: 1000,
+            run_id: None,
+            owner: None,
+            running_until: None,
+            last_started_at: None,
+            last_finished_at: None,
+            last_error: None,
+            run_count: 0,
+            skip_count: 0,
+            version: "created".into(),
         }
     }
 
@@ -500,17 +500,17 @@ mod tests {
         assert!(compare_exchange_schedules(&app, Vec::new()).await.unwrap().is_empty());
         let initial = row();
         let update = ScheduleUpdate {
-            schedule_id:      initial.schedule_id.clone(),
+            schedule_id: initial.schedule_id.clone(),
             expected_version: None,
-            replacement:      Some(initial.clone()),
+            replacement: Some(initial.clone()),
         };
         assert!(compare_exchange_schedules(&app, vec![update.clone(); SCHEDULE_BATCH_SIZE + 1])
             .await
             .is_err());
         let delete = ScheduleUpdate {
-            schedule_id:      initial.schedule_id.clone(),
+            schedule_id: initial.schedule_id.clone(),
             expected_version: Some(initial.version),
-            replacement:      None,
+            replacement: None,
         };
         assert_eq!(
             compare_exchange_schedules(&app, vec![update.clone(), update, delete])

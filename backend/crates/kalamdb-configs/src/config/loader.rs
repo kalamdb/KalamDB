@@ -402,9 +402,9 @@ mod tests {
             rpc_addr: "127.0.0.1:2910".to_string(),
             api_addr: "127.0.0.1:2900".to_string(),
             peers: vec![PeerConfig {
-                node_id:         2,
-                rpc_addr:        "127.0.0.2:2910".to_string(),
-                api_addr:        "127.0.0.2:2900".to_string(),
+                node_id: 2,
+                rpc_addr: "127.0.0.2:2910".to_string(),
+                api_addr: "127.0.0.2:2900".to_string(),
                 rpc_server_name: None,
             }],
             user_shards: 8,
@@ -751,9 +751,9 @@ mod tests {
             rpc_addr: "10.0.0.1:2910".to_string(),
             api_addr: "http://10.0.0.1:2900".to_string(),
             peers: vec![PeerConfig {
-                node_id:         2,
-                rpc_addr:        "10.0.0.2:2910".to_string(),
-                api_addr:        "http://10.0.0.2:2900".to_string(),
+                node_id: 2,
+                rpc_addr: "10.0.0.2:2910".to_string(),
+                api_addr: "http://10.0.0.2:2900".to_string(),
                 rpc_server_name: None,
             }],
             ..local_cluster_config()

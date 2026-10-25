@@ -278,7 +278,7 @@ pub async fn await_shared_leader(app_ctx: &Arc<AppContext>) {
 pub async fn open_session(service: &KalamPgService, _session_id: &str) -> String {
     service
         .open_session(request(OpenSessionRequest {
-            session_id:     _session_id.to_string(),
+            session_id: _session_id.to_string(),
             current_schema: None,
         }))
         .await
@@ -305,7 +305,7 @@ pub async fn commit_transaction(
 ) -> String {
     service
         .commit_transaction(request(CommitTransactionRequest {
-            session_id:     session_id.to_string(),
+            session_id: session_id.to_string(),
             transaction_id: transaction_id.to_string(),
         }))
         .await
@@ -321,7 +321,7 @@ pub async fn rollback_transaction(
 ) -> String {
     service
         .rollback_transaction(request(RollbackTransactionRequest {
-            session_id:     session_id.to_string(),
+            session_id: session_id.to_string(),
             transaction_id: transaction_id.to_string(),
         }))
         .await
@@ -355,12 +355,12 @@ pub async fn insert_shared_row(
 
     service
         .insert(request(InsertRpcRequest {
-            namespace:  table_id.namespace_id().to_string(),
+            namespace: table_id.namespace_id().to_string(),
             table_name: table_id.table_name().to_string(),
             table_type: "shared".to_string(),
             session_id: session_id.to_string(),
-            user_id:    Some(user_id.to_string()),
-            rows_json:  vec![row_json],
+            user_id: Some(user_id.to_string()),
+            rows_json: vec![row_json],
         }))
         .await
         .expect("insert shared row");
@@ -373,14 +373,14 @@ pub async fn scan_shared_rows(
 ) -> Vec<HashMap<String, KalamCellValue>> {
     let response = service
         .scan(request(ScanRpcRequest {
-            namespace:  table_id.namespace_id().to_string(),
+            namespace: table_id.namespace_id().to_string(),
             table_name: table_id.table_name().to_string(),
             table_type: "shared".to_string(),
             session_id: session_id.to_string(),
-            user_id:    Some("pg-shared-scan".to_string()),
-            columns:    vec![],
-            filters:    vec![],
-            limit:      None,
+            user_id: Some("pg-shared-scan".to_string()),
+            columns: vec![],
+            filters: vec![],
+            limit: None,
         }))
         .await
         .expect("scan rows")
@@ -405,12 +405,12 @@ pub async fn insert_user_row(
 
     service
         .insert(request(InsertRpcRequest {
-            namespace:  table_id.namespace_id().to_string(),
+            namespace: table_id.namespace_id().to_string(),
             table_name: table_id.table_name().to_string(),
             table_type: "user".to_string(),
             session_id: session_id.to_string(),
-            user_id:    Some(user_id.to_string()),
-            rows_json:  vec![row_json],
+            user_id: Some(user_id.to_string()),
+            rows_json: vec![row_json],
         }))
         .await
         .expect("insert user row");
@@ -424,14 +424,14 @@ pub async fn scan_user_rows(
 ) -> Vec<HashMap<String, KalamCellValue>> {
     let response = service
         .scan(request(ScanRpcRequest {
-            namespace:  table_id.namespace_id().to_string(),
+            namespace: table_id.namespace_id().to_string(),
             table_name: table_id.table_name().to_string(),
             table_type: "user".to_string(),
             session_id: session_id.to_string(),
-            user_id:    Some(user_id.to_string()),
-            columns:    vec![],
-            filters:    vec![],
-            limit:      None,
+            user_id: Some(user_id.to_string()),
+            columns: vec![],
+            filters: vec![],
+            limit: None,
         }))
         .await
         .expect("scan user rows")

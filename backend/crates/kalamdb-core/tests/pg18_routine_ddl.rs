@@ -107,7 +107,7 @@ fn composite_attributes_do_not_use_the_function_signature_rule() {
         amount.data_type,
         Some(KalamDataType::Decimal {
             precision: 12,
-            scale:     2,
+            scale: 2,
         })
     );
     assert_ne!(amount, &amount.function_signature_type());

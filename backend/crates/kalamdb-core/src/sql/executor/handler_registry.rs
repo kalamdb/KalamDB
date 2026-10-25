@@ -242,7 +242,7 @@ mod tests {
         let stmt = SqlStatement::new(
             "CREATE SCHEMA test_registry_ns".to_string(),
             SqlStatementKind::CreateSchema(kalamdb_sql::ddl::CreateSchemaStatement {
-                name:          SchemaId::new("test_registry_ns"),
+                name: SchemaId::new("test_registry_ns"),
                 if_not_exists: false,
             }),
         );
@@ -338,7 +338,7 @@ mod tests {
         // Register stub handler for CreateNamespace
         let key = std::mem::discriminant(&SqlStatementKind::CreateSchema(
             kalamdb_sql::ddl::CreateSchemaStatement {
-                name:          kalamdb_commons::models::SchemaId::new("_"),
+                name: kalamdb_commons::models::SchemaId::new("_"),
                 if_not_exists: false,
             },
         ));
@@ -353,7 +353,7 @@ mod tests {
         let stmt = SqlStatement::new(
             "CREATE SCHEMA unauthorized_ns".to_string(),
             SqlStatementKind::CreateSchema(kalamdb_sql::ddl::CreateSchemaStatement {
-                name:          SchemaId::new("unauthorized_ns"),
+                name: SchemaId::new("unauthorized_ns"),
                 if_not_exists: false,
             }),
         );

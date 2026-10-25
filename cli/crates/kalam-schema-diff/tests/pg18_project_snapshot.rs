@@ -48,7 +48,7 @@ fn pg18_project_snapshot_parses_single_contract_ir_and_respects_default_schema()
         unqualified_sql,
         &DiffOptions {
             allow_destructive: false,
-            default_schema:    Some("tenant_a".to_string()),
+            default_schema: Some("tenant_a".to_string()),
         },
     )
     .expect("diff with default_schema");

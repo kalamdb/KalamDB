@@ -2,13 +2,15 @@
 
 use datafusion_common::ScalarValue;
 
+use super::fixed_value_encoding::FixedValueEncoding;
+
 /// One field in a storage schema. Ordinal is the vec index.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageField {
-    pub name:            String,
-    pub data_type:       StorageDataType,
+    pub name: String,
+    pub data_type: StorageDataType,
     /// Dropped physical slot. Encoded as NULL; decoded values are discarded.
-    pub dropped:         bool,
+    pub dropped: bool,
     /// Materialized missing-column default for rows written before `ADD COLUMN ... DEFAULT
     /// <expr>`.
     pub missing_default: Option<ScalarValue>,
@@ -32,9 +34,9 @@ impl StorageField {
     /// Placeholder for a stable column_id hole (dropped or system column).
     pub fn dropped_slot() -> Self {
         Self {
-            name:            String::new(),
-            data_type:       StorageDataType::Boolean,
-            dropped:         true,
+            name: String::new(),
+            data_type: StorageDataType::Boolean,
+            dropped: true,
             missing_default: None,
         }
     }
@@ -63,7 +65,7 @@ pub enum StorageDataType {
     TimestampNanosecond,
     Decimal {
         precision: u8,
-        scale:     i8,
+        scale: i8,
     },
     Embedding {
         dimension: i32,
@@ -104,16 +106,18 @@ impl StorageDataType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageVersionLayout {
     /// Physical ordinal span (`fields.len()`).
-    pub slot_span:                 usize,
+    pub slot_span: usize,
     /// Fixed-width ordinals ordered widest-first for compact packing.
-    pub fixed_permutation:         Vec<usize>,
+    pub fixed_permutation: Vec<usize>,
     /// For each physical ordinal `0..slot_span`: `Some((fixed_byte_offset, byte_width))` if
     /// fixed-width.
-    pub fixed_offsets:             Vec<Option<(usize, usize)>>,
+    pub fixed_offsets: Vec<Option<(usize, usize)>>,
+    /// Physical types, including decimal metadata, for decoding historical fixed slots.
+    pub(crate) fixed_encodings: Vec<Option<FixedValueEncoding>>,
     /// Total byte length of the packed fixed region.
-    pub fixed_region_len:          usize,
+    pub fixed_region_len: usize,
     /// Physical ordinals of variable-width non-dropped columns in ordinal order.
-    pub variable_ordinals:         Vec<usize>,
+    pub variable_ordinals: Vec<usize>,
     /// For each physical ordinal `0..slot_span`: `Some(var_slot_index)` if variable-width.
     pub variable_slot_for_ordinal: Vec<Option<usize>>,
 }
@@ -124,6 +128,7 @@ impl StorageVersionLayout {
         let mut fixed_candidates: Vec<(usize, usize)> = Vec::new();
         let mut variable_ordinals: Vec<usize> = Vec::new();
         let mut variable_slot_for_ordinal = vec![None; slot_span];
+        let mut fixed_encodings = vec![None; slot_span];
 
         for (ordinal, field) in fields.iter().enumerate() {
             if field.dropped {
@@ -131,6 +136,7 @@ impl StorageVersionLayout {
             }
             if let Some(width) = field.data_type.fixed_byte_width() {
                 fixed_candidates.push((ordinal, width));
+                fixed_encodings[ordinal] = FixedValueEncoding::for_type(&field.data_type);
             } else {
                 let var_idx = variable_ordinals.len();
                 variable_ordinals.push(ordinal);
@@ -156,6 +162,7 @@ impl StorageVersionLayout {
             slot_span,
             fixed_permutation,
             fixed_offsets,
+            fixed_encodings,
             fixed_region_len: offset,
             variable_ordinals,
             variable_slot_for_ordinal,
@@ -166,9 +173,9 @@ impl StorageVersionLayout {
 /// Schema used to encode/decode a table row by ordinal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageSchema {
-    pub version:            u16,
-    pub fields:             Vec<StorageField>,
-    pub layout:             StorageVersionLayout,
+    pub version: u16,
+    pub fields: Vec<StorageField>,
+    pub layout: StorageVersionLayout,
     pub historical_layouts: std::collections::BTreeMap<u16, StorageVersionLayout>,
 }
 

@@ -1,23 +1,19 @@
 # Implementation Plan: unified SDK contracts and measured serialization
 
-**Revised:** 2026-10-24. **Status:** In progress; blanket gate/task completion withdrawn. Source baseline: `81e5fb15dc600d268581c1b22ea25b74e25b77f1`. [Implementation audit](implementation-audit-2026-10-24.md) records actual callers, credited work, contradictions and missing acceptance evidence. This documentation correction runs no runtime test and performs no data reset.
+**Revised:** 2026-10-24. **Status:** Approved and ready for final task execution. All owner decisions (KDOM codec selection, unified `kalamdb-commons::conversions` scalar authority, WebSocket `KDOM` cutover, TS/Dart `invokeRoutine`, and in-repo verification gates) are resolved in [spec.md](spec.md). Remaining actionable engineering tasks are listed in [tasks.md](tasks.md).
 
-Read [spec](spec.md), [API](contracts/public-api.md), [protocol](contracts/protocol.md), [performance contract](contracts/serialization-performance.md), [research](research.md) and [tasks](tasks.md) together. The application extension is also normative: [readiness/requirements](app-readiness.md), [application contract](contracts/application-development.md), [database stability](contracts/database-stability.md), [platform research](research-app-platforms.md) and [tasks T094-T121](tasks-app-stability.md).
+Read [spec](spec.md), [API](contracts/public-api.md), [protocol](contracts/protocol.md), [performance contract](contracts/serialization-performance.md), [research](research.md) and [tasks](tasks.md) together. The application extension ([readiness/requirements](app-readiness.md), [application contract](contracts/application-development.md), [database stability](contracts/database-stability.md), [platform research](research-app-platforms.md) and [tasks-app-stability.md](tasks-app-stability.md)) is folded into the unified execution plan in [tasks.md](tasks.md).
 
-## Current implementation, not assumed completion
+## Current implementation and remaining ready work
 
-| Area | Audited state | Required continuation |
+| Area | Current state | Remaining ready task |
 | --- | --- | --- |
-| Shared codec | KDOM domain values/framing and optional backend dependencies exist; Link re-exports them | Retain this candidate; finish genuine codec comparison, runtime wiring and cross-target checks |
-| Binary routine HTTP | functions/invoke.rs calls decode_domain_frame_for_surface and FunctionService | Finish strict descriptor/type/content/error policy and actual SDK callers |
-| Generated calls | TS has optional invokeRoutine plus SQL fallback; Dart still emits _client.query | Implement mandatory native executor and regenerate both targets, with no fallback/old aliases |
-| WebSocket | Actual server/native/WASM paths still use MessagePack | Replace both directions and all message kinds with the selected shared codec; remove old runtime code |
-| Persistence/Raft | Generic FlexBuffers and StateMachine MessagePack remain | Move owned values to the selected codec for fresh stores; retain only legitimate external formats |
-| Decoder/native safety | Parsing budgets and bounded generation-fenced V8 handles were added | Preserve credited repairs; finish full-path resource/fuzz/advisory and unary-body acceptance |
-| Benchmark selection | Local Postcard/Prost-style helper functions were compared | Use actual pinned libraries with equivalent semantics/validation and integrated resource measurements |
-| APP/STABLE/R | Blanket checkmarks are not task-linked acceptance proof | Reuse existing implementations/tests, attach evidence and finish only the missing work |
-
-The audit retains 12 bounded historical/source-supported task records and reopens 109 acceptances. Open does not necessarily mean absent. Locate existing implementation before planning a rewrite. No gate is closed merely by defining an enum, exporting a helper, compiling a mock, or replacing all checkboxes.
+| Shared codec & conversions | `KDOM` (`domain.rs`, `ws_domain.rs`) and unified `DomainValue` ↔ `ScalarValue` conversions in `kalamdb-commons::conversions` are implemented and tested | Approved at Gate D; no competing serializer dependencies |
+| Binary & JSON routine HTTP | `functions/invoke.rs` dispatches `KDOM` and typed JSON envelopes to `FunctionService` | `T052`: reject duplicate/unknown composite slots and align array omission in `bind.rs` |
+| Generated TS & Dart calls | TS and Dart generators emit `invokeRoutine` with no SQL `CALL`/`SELECT` fallback | `T057`: support binary `KDOM` frame option and deadline/abort handling in TS/Dart `invokeRoutine` |
+| WebSocket | Server, native Link, WASM, and Dart bridge use `KDOM` (`ws_domain.rs`) and reject `serialization=msgpack` and stale `WS_CONTRACT_DESCRIPTOR_ID` | `T077` & `T071`: remove dead `msgpack` helpers/features in `kalamdb-commons`/`kalamdb-api` and enforce callsite ownership in `check_codec_ownership.py` |
+| UI & Guarantees | React and Flutter live/mutation hooks exist | `T098`: ref-count overlapping same-key mutations in `useMutationState.ts`; `T110`: publish guarantee matrix |
+| Verification | Unit, e2e, and `benchv2` suites exist | `T050`: run full verification suite across all affected crates and ownership scripts |
 
 ## Release policy
 

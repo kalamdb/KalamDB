@@ -14,15 +14,15 @@ use crate::workflow::schema::{
 
 #[derive(Clone)]
 pub struct DartColumn {
-    pub sql_name:   String,
+    pub sql_name: String,
     pub field_name: String,
-    pub dart_type:  String,
-    pub base_type:  String,
-    pub nullable:   bool,
-    pub is_key:     bool,
-    pub is_array:   bool,
+    pub dart_type: String,
+    pub base_type: String,
+    pub nullable: bool,
+    pub is_key: bool,
+    pub is_array: bool,
     pub named_type: Option<String>,
-    pub is_enum:    bool,
+    pub is_enum: bool,
 }
 
 impl DartColumn {
@@ -162,21 +162,21 @@ impl DartColumn {
 
 #[derive(Serialize)]
 pub struct RowClassContext {
-    pub doc:           String,
-    pub class_name:    String,
-    pub fields:        Vec<RowFieldContext>,
-    pub with_row_key:  bool,
+    pub doc: String,
+    pub class_name: String,
+    pub fields: Vec<RowFieldContext>,
+    pub with_row_key: bool,
     pub kalam_row_key: String,
 }
 
 #[derive(Serialize)]
 pub struct RowFieldContext {
-    pub sql_name:   String,
+    pub sql_name: String,
     pub field_name: String,
-    pub dart_type:  String,
-    pub required:   bool,
-    pub encode:     String,
-    pub decode:     String,
+    pub dart_type: String,
+    pub required: bool,
+    pub encode: String,
+    pub decode: String,
 }
 
 pub fn row_class_context(
@@ -192,20 +192,20 @@ pub fn row_class_context(
         .map(|field| DartColumn::from_field(field, names, snapshot))
         .collect();
     RowClassContext {
-        doc:           line_docs(comment, "/// "),
-        class_name:    class_name.to_string(),
-        fields:        columns
+        doc: line_docs(comment, "/// "),
+        class_name: class_name.to_string(),
+        fields: columns
             .iter()
             .map(|column| RowFieldContext {
-                sql_name:   escape_dart_string(&column.sql_name),
+                sql_name: escape_dart_string(&column.sql_name),
                 field_name: column.field_name.clone(),
-                dart_type:  column.dart_type.clone(),
-                required:   !column.nullable,
-                encode:     column.encode(),
-                decode:     column.decode(),
+                dart_type: column.dart_type.clone(),
+                required: !column.nullable,
+                encode: column.encode(),
+                decode: column.decode(),
             })
             .collect(),
-        with_row_key:  with_row_key && columns.iter().filter(|column| column.is_key).count() == 1,
+        with_row_key: with_row_key && columns.iter().filter(|column| column.is_key).count() == 1,
         kalam_row_key: kalam_row_key_expr(&columns),
     }
 }

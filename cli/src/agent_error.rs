@@ -53,10 +53,10 @@ impl AgentErrorCode {
 /// Compact agent-mode failure with a stable code, optional fields, and an action.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentError {
-    pub code:    AgentErrorCode,
-    pub fields:  Vec<(String, String)>,
+    pub code: AgentErrorCode,
+    pub fields: Vec<(String, String)>,
     pub message: String,
-    pub action:  Option<String>,
+    pub action: Option<String>,
 }
 
 impl AgentError {

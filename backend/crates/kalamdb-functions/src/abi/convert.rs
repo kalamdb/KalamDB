@@ -101,7 +101,7 @@ static NEXT_READ_VIEW_GENERATION: std::sync::atomic::AtomicU64 =
 
 #[derive(Clone)]
 struct NativeReadViewHandle {
-    batches:   Arc<[arrow::array::RecordBatch]>,
+    batches: Arc<[arrow::array::RecordBatch]>,
     row_index: Option<usize>,
 }
 
@@ -111,21 +111,21 @@ struct NativeReadViewHandle {
 /// creation and `.at(i)` access) with a generation-fenced, byte-budgeted slot that is dropped
 /// deterministically when the invocation finishes or cancels.
 pub(crate) struct ReadViewRegistry {
-    inner:      std::cell::RefCell<ReadViewRegistryInner>,
+    inner: std::cell::RefCell<ReadViewRegistryInner>,
     generation: u64,
 }
 
 #[derive(Default)]
 struct ReadViewRegistryInner {
-    entries:         Vec<NativeReadViewHandle>,
+    entries: Vec<NativeReadViewHandle>,
     seen_batch_ptrs: Vec<usize>,
-    pinned_bytes:    usize,
+    pinned_bytes: usize,
 }
 
 impl Default for ReadViewRegistry {
     fn default() -> Self {
         Self {
-            inner:      std::cell::RefCell::new(ReadViewRegistryInner::default()),
+            inner: std::cell::RefCell::new(ReadViewRegistryInner::default()),
             generation: NEXT_READ_VIEW_GENERATION
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
@@ -187,7 +187,7 @@ fn read_view_batches_to_v8<'s>(
         scope,
         object,
         NativeReadViewHandle {
-            batches:   Arc::clone(batches),
+            batches: Arc::clone(batches),
             row_index: None,
         },
     )?;
@@ -222,7 +222,7 @@ fn read_view_row_to_v8<'s>(
         scope,
         object,
         NativeReadViewHandle {
-            batches:   Arc::clone(batches),
+            batches: Arc::clone(batches),
             row_index: Some(row_index),
         },
     )?;
@@ -308,18 +308,11 @@ pub(crate) fn try_extract_read_view_routine_value<'s>(
     let handle = extract_read_view_handle(scope, value)?;
     match handle.row_index {
         Some(row_index) => Some(RoutineValue::from_read_view_row(handle.batches, row_index)),
-        None => Some(RoutineValue {
-            type_id:           None,
-            value:             ScalarValue::Null,
-            json_sql:          false,
-            transfer:          None,
-            contract_hash:     None,
-            named_fields:      None,
-            row_batches:       None,
-            read_view_batches: Some(handle.batches),
-            read_view_row:     None,
-            host_named_input:  false,
-        }),
+        None => {
+            let mut value = RoutineValue::new(ScalarValue::Null);
+            value.read_view_batches = Some(handle.batches);
+            Some(value)
+        },
     }
 }
 
@@ -487,18 +480,10 @@ pub fn v8_to_routine<'s>(
                                 .map_err(|error| {
                                     FunctionsError::Invalid(format!("struct slice: {error}"))
                                 })?;
-                                return Ok(RoutineValue {
-                                    type_id:           template.type_id.clone(),
-                                    value:             ScalarValue::Struct(Arc::new(struct_array)),
-                                    json_sql:          false,
-                                    transfer:          None,
-                                    contract_hash:     None,
-                                    named_fields:      None,
-                                    row_batches:       None,
-                                    read_view_batches: None,
-                                    read_view_row:     None,
-                                    host_named_input:  false,
-                                });
+                                return Ok(RoutineValue::new(ScalarValue::Struct(Arc::new(
+                                    struct_array,
+                                )))
+                                .with_type_id(template.type_id.clone()));
                             }
                         }
                     }
@@ -511,33 +496,11 @@ pub fn v8_to_routine<'s>(
     }
     if template.json_sql {
         let parsed = v8_to_json_sql(scope, value)?;
-        return Ok(RoutineValue {
-            type_id:           template.type_id.clone(),
-            value:             parsed,
-            json_sql:          true,
-            transfer:          None,
-            contract_hash:     None,
-            named_fields:      None,
-            row_batches:       None,
-            read_view_batches: None,
-            read_view_row:     None,
-            host_named_input:  false,
-        });
+        return Ok(RoutineValue::json(parsed).with_type_id(template.type_id.clone()));
     }
     let mut budget = ConversionBudget::new(scope);
     let scalar = v8_to_scalar(scope, value, &template.value.data_type(), &mut budget, 0)?;
-    Ok(RoutineValue {
-        type_id:           template.type_id.clone(),
-        value:             scalar,
-        json_sql:          false,
-        transfer:          None,
-        contract_hash:     None,
-        named_fields:      None,
-        row_batches:       None,
-        read_view_batches: None,
-        read_view_row:     None,
-        host_named_input:  false,
-    })
+    Ok(RoutineValue::new(scalar).with_type_id(template.type_id.clone()))
 }
 
 fn v8_to_json_sql<'s>(
@@ -1117,22 +1080,9 @@ fn v8_array_to_list<'s>(
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_serialization::encode_function_value;
     use serde_json::json;
 
     use super::*;
-
-    #[test]
-    fn transfer_buffer_roundtrips_through_encoder() {
-        let json = json!({"n": 7});
-        let bytes = encode_function_value("c1", &json).unwrap();
-        let decoded = kalamdb_serialization::decode_function_value(&bytes, "c1").unwrap();
-        assert_eq!(decoded, json);
-        let value = RoutineValue::new(ScalarValue::Int32(Some(7)))
-            .with_transfer(bytes::Bytes::from(bytes), "c1");
-        assert!(value.transfer.is_some());
-        assert_eq!(value.contract_hash.as_deref(), Some("c1"));
-    }
 
     #[test]
     fn js_boundary_json_keeps_safe_int64_as_number() {
@@ -1141,9 +1091,6 @@ mod tests {
         )
         .expect("js json");
         assert_eq!(encoded.0, json!(41));
-        let bytes = encode_function_value("", &encoded.0).unwrap();
-        let decoded = kalamdb_serialization::decode_function_value(&bytes, "").unwrap();
-        assert_eq!(decoded, json!(41));
     }
 
     #[test]
@@ -1180,13 +1127,13 @@ mod tests {
         let gen1 = reg1.generation;
         let (idx0, g0) = reg1
             .register(super::NativeReadViewHandle {
-                batches:   Arc::clone(&batches),
+                batches: Arc::clone(&batches),
                 row_index: None,
             })
             .unwrap();
         let (idx1, g1) = reg1
             .register(super::NativeReadViewHandle {
-                batches:   Arc::clone(&batches),
+                batches: Arc::clone(&batches),
                 row_index: Some(0),
             })
             .unwrap();

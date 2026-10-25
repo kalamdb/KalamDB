@@ -55,12 +55,12 @@ mod tests {
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
     struct Sample {
-        id:         String,
-        count:      i32,
-        flag:       bool,
+        id: String,
+        count: i32,
+        flag: bool,
         created_at: i64,
-        note:       Option<String>,
-        tags:       Vec<String>,
+        note: Option<String>,
+        tags: Vec<String>,
     }
 
     fn sample_table() -> TableDefinition {
@@ -85,12 +85,12 @@ mod tests {
     #[test]
     fn primitive_columns_roundtrip_without_document_json() {
         let model = Sample {
-            id:         "a1".to_string(),
-            count:      7,
-            flag:       true,
+            id: "a1".to_string(),
+            count: 7,
+            flag: true,
             created_at: 12_345,
-            note:       None,
-            tags:       vec!["x".to_string(), "y".to_string()],
+            note: None,
+            tags: vec!["x".to_string(), "y".to_string()],
         };
         let table = sample_table();
         let row = model_to_row(&model, &table).expect("encode");
@@ -120,7 +120,7 @@ mod tests {
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
     struct SampleEnumRow {
-        id:      String,
+        id: String,
         command: SampleCommand,
     }
 
@@ -142,7 +142,7 @@ mod tests {
     #[test]
     fn json_column_unit_enum_roundtrips() {
         let model = SampleEnumRow {
-            id:      "p1".to_string(),
+            id: "p1".to_string(),
             command: SampleCommand::Select,
         };
         let table = enum_table();
@@ -160,7 +160,7 @@ mod tests {
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
     struct SampleProgramRow {
-        id:      String,
+        id: String,
         program: SampleProgram,
     }
 
@@ -179,7 +179,7 @@ mod tests {
         )
         .expect("table definition");
         let model = SampleProgramRow {
-            id:      "p2".to_string(),
+            id: "p2".to_string(),
             program: SampleProgram::RowLocal {
                 column: "owner_id".to_string(),
             },
@@ -192,12 +192,12 @@ mod tests {
     #[test]
     fn millisecond_model_scales_inline_to_microsecond_storage_row() {
         let model = Sample {
-            id:         "a2".to_string(),
-            count:      3,
-            flag:       false,
+            id: "a2".to_string(),
+            count: 3,
+            flag: false,
             created_at: 1_700_000_000_123,
-            note:       Some("hello".to_string()),
-            tags:       vec!["t".to_string()],
+            note: Some("hello".to_string()),
+            tags: vec!["t".to_string()],
         };
         let table = sample_table();
         let row = super::model_ms_to_row(&model, &table).expect("encode ms");

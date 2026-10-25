@@ -31,6 +31,10 @@ pub use scalar::bytes as scalar_bytes;
 #[cfg(feature = "conversions")]
 pub use scalar::bytes::scalar_value_to_bytes;
 #[cfg(feature = "conversions")]
+pub use scalar::domain as scalar_domain;
+#[cfg(feature = "conversions")]
+pub use scalar::domain::{domain_value_to_scalar, scalar_to_domain_value};
+#[cfg(feature = "conversions")]
 pub use scalar::json as scalar_json;
 #[cfg(feature = "conversions")]
 pub use scalar::json::{

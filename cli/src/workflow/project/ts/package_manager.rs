@@ -189,10 +189,10 @@ pub fn default_package_manager(installed: &[PackageManager]) -> Option<PackageMa
 }
 
 pub struct PackageManagerInitOptions<'a> {
-    pub explicit:        Option<PackageManager>,
+    pub explicit: Option<PackageManager>,
     pub non_interactive: bool,
-    pub color:           bool,
-    pub detail:          &'a dyn Fn(&str),
+    pub color: bool,
+    pub detail: &'a dyn Fn(&str),
 }
 
 /// Resolve which package manager to use during `kalam init` for TypeScript projects.
@@ -325,8 +325,8 @@ mod tests {
     use super::*;
 
     struct EnvGuard {
-        _env_lock:  std::sync::MutexGuard<'static, ()>,
-        path:       Option<OsString>,
+        _env_lock: std::sync::MutexGuard<'static, ()>,
+        path: Option<OsString>,
         user_agent: Option<OsString>,
     }
 
@@ -334,8 +334,8 @@ mod tests {
         fn set_path(path: &Path) -> Self {
             let env_lock = crate::workflow::test_support::test_env_lock();
             let guard = Self {
-                _env_lock:  env_lock,
-                path:       env::var_os("PATH"),
+                _env_lock: env_lock,
+                path: env::var_os("PATH"),
                 user_agent: env::var_os("npm_config_user_agent"),
             };
             env::set_var("PATH", path);
@@ -515,10 +515,10 @@ mod tests {
         let _guard = EnvGuard::set_path(&bin_dir);
 
         let selected = resolve_package_manager_for_init(PackageManagerInitOptions {
-            explicit:        Some(PackageManager::Pnpm),
+            explicit: Some(PackageManager::Pnpm),
             non_interactive: true,
-            color:           false,
-            detail:          &|_| {},
+            color: false,
+            detail: &|_| {},
         })
         .expect("explicit manager should resolve");
         assert_eq!(selected, PackageManager::Pnpm);
@@ -541,10 +541,10 @@ mod tests {
         let _guard = EnvGuard::set_path(&bin_dir);
 
         let error = resolve_package_manager_for_init(PackageManagerInitOptions {
-            explicit:        Some(PackageManager::Npm),
+            explicit: Some(PackageManager::Npm),
             non_interactive: true,
-            color:           false,
-            detail:          &|_| {},
+            color: false,
+            detail: &|_| {},
         })
         .unwrap_err()
         .to_string();
@@ -561,10 +561,10 @@ mod tests {
         let _guard = EnvGuard::set_path(&empty_bin);
 
         let error = resolve_package_manager_for_init(PackageManagerInitOptions {
-            explicit:        None,
+            explicit: None,
             non_interactive: true,
-            color:           false,
-            detail:          &|_| {},
+            color: false,
+            detail: &|_| {},
         })
         .unwrap_err()
         .to_string();
@@ -579,10 +579,10 @@ mod tests {
         let _guard = EnvGuard::set_path(&bin_dir);
 
         let selected = resolve_package_manager_for_init(PackageManagerInitOptions {
-            explicit:        None,
+            explicit: None,
             non_interactive: false,
-            color:           false,
-            detail:          &|_| {},
+            color: false,
+            detail: &|_| {},
         })
         .expect("single installed manager should resolve");
 
@@ -599,10 +599,10 @@ mod tests {
         let _guard = EnvGuard::set_path(&bin_dir);
 
         let selected = resolve_package_manager_for_init(PackageManagerInitOptions {
-            explicit:        None,
+            explicit: None,
             non_interactive: true,
-            color:           false,
-            detail:          &|_| {},
+            color: false,
+            detail: &|_| {},
         })
         .expect("non-interactive init should pick a default");
 
@@ -616,10 +616,10 @@ mod tests {
         env::set_var("npm_config_user_agent", "pnpm/9.0.0 npm/? node/v20.0.0");
 
         let selected = resolve_package_manager_for_init(PackageManagerInitOptions {
-            explicit:        None,
+            explicit: None,
             non_interactive: true,
-            color:           false,
-            detail:          &|_| {},
+            color: false,
+            detail: &|_| {},
         })
         .expect("invoking package manager should win");
 

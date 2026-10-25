@@ -8,8 +8,8 @@ use std::{
 };
 
 pub(crate) struct BufferAllocator {
-    used:  AtomicUsize,
-    peak:  AtomicUsize,
+    used: AtomicUsize,
+    peak: AtomicUsize,
     limit: usize,
 }
 

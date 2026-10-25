@@ -45,7 +45,7 @@ async fn wait_for_backend_session_cleanup(env: &DdlTestEnv, backend_pid: i32, co
 }
 
 struct OwnedPgClient {
-    client:          tokio_postgres::Client,
+    client: tokio_postgres::Client,
     connection_task: Option<tokio::task::JoinHandle<()>>,
 }
 

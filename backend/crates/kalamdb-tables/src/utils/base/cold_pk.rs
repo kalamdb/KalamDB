@@ -169,8 +169,8 @@ enum ColdPkQuery<'a> {
 }
 
 struct ColdPkTargets {
-    storage:     Arc<StorageCached>,
-    files:       Vec<String>,
+    storage: Arc<StorageCached>,
+    files: Vec<String>,
     scope_label: String,
 }
 

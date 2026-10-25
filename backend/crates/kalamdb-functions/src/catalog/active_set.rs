@@ -13,17 +13,17 @@ use crate::revision::ModuleRevision;
 /// Immutable snapshot swapped on CAS activation.
 #[derive(Debug, Clone)]
 pub struct ActiveFunctionSet {
-    pub generation:      u64,
-    pub contract_hash:   String,
+    pub generation: u64,
+    pub contract_hash: String,
     pub module_revision: Option<Arc<ModuleRevision>>,
-    pub procedures:      HashMap<RoutineId, ImplementationRef>,
+    pub procedures: HashMap<RoutineId, ImplementationRef>,
 }
 
 /// How one catalog routine is executed in this published set.
 #[derive(Debug, Clone)]
 pub enum ImplementationRef {
     Module {
-        revision:  Arc<ModuleRevision>,
+        revision: Arc<ModuleRevision>,
         procedure: ProcedureSlot,
     },
     Inline {
@@ -42,17 +42,17 @@ pub struct ProcedureSlot {
 #[derive(Debug, Clone)]
 pub struct InlineArtifact {
     pub artifact_id: ArtifactId,
-    pub source:      Arc<str>,
-    pub language:    String,
+    pub source: Arc<str>,
+    pub language: String,
 }
 
 impl ActiveFunctionSet {
     pub fn empty() -> Self {
         Self {
-            generation:      0,
-            contract_hash:   String::new(),
+            generation: 0,
+            contract_hash: String::new(),
             module_revision: None,
-            procedures:      HashMap::new(),
+            procedures: HashMap::new(),
         }
     }
 
@@ -77,7 +77,7 @@ impl ActiveFunctionSet {
             let module_backed = has_module && module_exports.contains(export);
             let implementation = if module_backed {
                 ImplementationRef::Module {
-                    revision:  Arc::clone(module_revision.as_ref().expect("module present")),
+                    revision: Arc::clone(module_revision.as_ref().expect("module present")),
                     procedure: ProcedureSlot {
                         export_name: export.to_string(),
                     },
@@ -103,7 +103,7 @@ impl ActiveFunctionSet {
 pub struct FunctionExecutionRoot {
     pub actor_user: UserId,
     pub actor_role: Role,
-    pub origin:     crate::FunctionCallOrigin,
+    pub origin: crate::FunctionCallOrigin,
     pub deployment: Arc<ActiveFunctionSet>,
 }
 
@@ -119,48 +119,48 @@ mod tests {
     fn routine(name: &str, body: Option<&str>) -> CatalogRoutine {
         let namespace = SchemaId::new("api");
         CatalogRoutine {
-            routine_id:         RoutineId::from_parts(Some(&namespace), name),
-            namespace_id:       namespace,
-            name:               name.to_string(),
-            owner:              UserId::new("root"),
-            security:           RoutineSecurityMode::Invoker,
-            language:           body.map(|_| "JAVASCRIPT".to_string()),
-            body:               body.map(str::to_string),
-            return_type_id:     None,
-            return_type_name:   None,
-            return_is_array:    false,
-            return_not_null:    false,
-            comment:            None,
-            return_data_type:   None,
+            routine_id: RoutineId::from_parts(Some(&namespace), name),
+            namespace_id: namespace,
+            name: name.to_string(),
+            owner: UserId::new("root"),
+            security: RoutineSecurityMode::Invoker,
+            language: body.map(|_| "JAVASCRIPT".to_string()),
+            body: body.map(str::to_string),
+            return_type_id: None,
+            return_type_name: None,
+            return_is_array: false,
+            return_not_null: false,
+            comment: None,
+            return_data_type: None,
             inline_source_hash: None,
             inline_artifact_id: None,
-            kind:               kalamdb_commons::models::RoutineKind::default(),
-            volatility:         kalamdb_commons::models::RoutineVolatility::default(),
-            null_safety:        kalamdb_commons::models::RoutineNullSafety::default(),
-            parallel_safety:    kalamdb_commons::models::RoutineParallelSafety::default(),
-            cost:               None,
-            rows:               None,
-            config_params:      None,
+            kind: kalamdb_commons::models::RoutineKind::default(),
+            volatility: kalamdb_commons::models::RoutineVolatility::default(),
+            null_safety: kalamdb_commons::models::RoutineNullSafety::default(),
+            parallel_safety: kalamdb_commons::models::RoutineParallelSafety::default(),
+            cost: None,
+            rows: None,
+            config_params: None,
         }
     }
 
     fn inline(source: &str) -> Arc<InlineArtifact> {
         Arc::new(InlineArtifact {
             artifact_id: ArtifactId::new("inline"),
-            source:      source.into(),
-            language:    "JAVASCRIPT".to_string(),
+            source: source.into(),
+            language: "JAVASCRIPT".to_string(),
         })
     }
 
     fn module() -> Arc<ModuleRevision> {
         Arc::new(ModuleRevision {
-            module_id:     FunctionModuleId::new("backend"),
-            revision_id:   kalamdb_commons::FunctionRevisionId::new("backend:rev"),
-            artifact_id:   ArtifactId::new("mod"),
-            runtime:       kalamdb_commons::FunctionRuntime::Typescript,
-            abi_version:   2,
+            module_id: FunctionModuleId::new("backend"),
+            revision_id: kalamdb_commons::FunctionRevisionId::new("backend:rev"),
+            artifact_id: ArtifactId::new("mod"),
+            runtime: kalamdb_commons::FunctionRuntime::Typescript,
+            abi_version: 2,
             contract_hash: "c1".to_string(),
-            source:        "function kalamInvoke() {}".into(),
+            source: "function kalamInvoke() {}".into(),
         })
     }
 
@@ -239,21 +239,21 @@ mod tests {
     #[test]
     fn in_flight_root_stays_on_pinned_generation() {
         let set_41 = ActiveFunctionSet {
-            generation:      41,
-            contract_hash:   "rev-41".into(),
+            generation: 41,
+            contract_hash: "rev-41".into(),
             module_revision: None,
-            procedures:      HashMap::new(),
+            procedures: HashMap::new(),
         };
         let set_42 = ActiveFunctionSet {
-            generation:      42,
-            contract_hash:   "rev-42".into(),
+            generation: 42,
+            contract_hash: "rev-42".into(),
             module_revision: None,
-            procedures:      HashMap::new(),
+            procedures: HashMap::new(),
         };
         let root = FunctionExecutionRoot {
             actor_user: UserId::new("alice"),
             actor_role: Role::User,
-            origin:     crate::FunctionCallOrigin::Sql,
+            origin: crate::FunctionCallOrigin::Sql,
             deployment: Arc::new(set_41),
         };
         assert_eq!(root.deployment.generation, 41);

@@ -37,9 +37,9 @@ use crate::{
 
 #[derive(Debug, Default)]
 struct SystemSchemaReconcileStats {
-    created:   usize,
+    created: usize,
     unchanged: usize,
-    upgraded:  usize,
+    upgraded: usize,
 }
 
 /// Unified schema cache for table metadata, schemas, and providers
@@ -106,21 +106,18 @@ impl SchemaRegistry {
         // A small hint (16-64) is enough for startup; DashMap grows dynamically.
         let initial_capacity = std::cmp::min(max_size, 64);
         Self {
-            app_context:             OnceLock::new(),
-            table_cache:             DashMap::with_capacity(initial_capacity),
-            table_cache_counter:     AtomicU64::new(0),
+            app_context: OnceLock::new(),
+            table_cache: DashMap::with_capacity(initial_capacity),
+            table_cache_counter: AtomicU64::new(0),
             table_cache_max_entries: std::cmp::max(
                 1,
                 std::cmp::min(max_size, TABLE_CACHE_MAX_ENTRIES),
             ),
-            version_cache:           DashMap::with_capacity(std::cmp::min(
-                VERSION_CACHE_MAX_ENTRIES,
-                64,
-            )),
-            version_cache_counter:   AtomicU64::new(0),
-            type_registry:           TypeRegistry::new(),
-            base_session_context:    OnceLock::new(),
-            catalog_registration:    Mutex::new(()),
+            version_cache: DashMap::with_capacity(std::cmp::min(VERSION_CACHE_MAX_ENTRIES, 64)),
+            version_cache_counter: AtomicU64::new(0),
+            type_registry: TypeRegistry::new(),
+            base_session_context: OnceLock::new(),
+            catalog_registration: Mutex::new(()),
         }
     }
 

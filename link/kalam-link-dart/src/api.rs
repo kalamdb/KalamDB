@@ -21,13 +21,13 @@
 use std::{
     collections::VecDeque,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
 use flutter_rust_bridge::frb;
-use kalam_client::{query::models::query_param::params_from_json_values, FileRef, QueryParam};
+use kalam_client::{FileRef, QueryParam, query::models::query_param::params_from_json_values};
 use tokio::sync::{Mutex, Notify};
 
 use crate::models::{
@@ -50,6 +50,22 @@ fn parse_dart_query_params(params_json: Option<String>) -> anyhow::Result<Option
     };
     let values: Vec<serde_json::Value> = serde_json::from_str(&json)?;
     Ok(Some(params_from_json_values(values)))
+}
+
+/// Encode a function call with the shared Rust domain codec.
+#[frb(sync)]
+pub fn dart_encode_routine_request(
+    arguments_json: String,
+    params_json: String,
+) -> anyhow::Result<Vec<u8>> {
+    kalam_client::encode_routine_request_json(&arguments_json, &params_json)
+        .map_err(|err| anyhow::anyhow!(err))
+}
+
+/// Decode a function result frame with the shared Rust domain codec.
+#[frb(sync)]
+pub fn dart_decode_routine_result(frame: Vec<u8>) -> anyhow::Result<String> {
+    kalam_client::decode_routine_result_json(&frame).map_err(|err| anyhow::anyhow!(err))
 }
 
 /// Build a FILE download URL using the canonical `link-common` FileRef model.
@@ -105,19 +121,19 @@ pub fn dart_try_parse_file_ref(file_ref_json: String) -> Option<DartFileRef> {
 ///
 /// Create one via [`dart_create_client`] and pass it to query/subscribe helpers.
 pub struct DartKalamClient {
-    inner:          kalam_client::KalamLinkClient,
+    inner: kalam_client::KalamLinkClient,
     /// Queue of connection lifecycle events (populated when event handlers are
     /// enabled). Dart pulls from this via [`dart_next_connection_event`].
     ///
     /// Uses `std::sync::Mutex` (not tokio) because the event handler callbacks
     /// are synchronous closures; tokio Mutex requires `.await` or has borrow
     /// issues with `try_lock()` inside `#[frb(sync)]` functions.
-    event_queue:    Arc<std::sync::Mutex<VecDeque<DartConnectionEvent>>>,
+    event_queue: Arc<std::sync::Mutex<VecDeque<DartConnectionEvent>>>,
     /// Notifier so the pull-side can await without busy-looping.
-    event_notify:   Arc<Notify>,
+    event_notify: Arc<Notify>,
     /// Set to `true` when [`dart_signal_dispose`] is called, causing
     /// [`dart_next_connection_event`] to return `None` immediately.
-    disposed:       Arc<AtomicBool>,
+    disposed: Arc<AtomicBool>,
     /// Whether connection event collection is enabled.
     events_enabled: bool,
 }
@@ -277,15 +293,15 @@ mod tests {
     use tokio::sync::Notify;
 
     use super::{
-        build_dart_connection_options, dart_file_ref_download_url, dart_file_ref_relative_path,
-        dart_file_ref_relative_url, dart_file_ref_stored_name, push_connection_event,
-        push_debug_connection_event, DART_CONNECTION_EVENT_QUEUE_CAPACITY,
-        DART_INITIAL_RECONNECT_DELAY_MS, DART_MAX_RECONNECT_DELAY_MS,
+        DART_CONNECTION_EVENT_QUEUE_CAPACITY, DART_INITIAL_RECONNECT_DELAY_MS,
+        DART_MAX_RECONNECT_DELAY_MS, build_dart_connection_options, dart_file_ref_download_url,
+        dart_file_ref_relative_path, dart_file_ref_relative_url, dart_file_ref_stored_name,
+        push_connection_event, push_debug_connection_event,
     };
     use crate::models::DartConnectionEvent;
 
     #[test]
-    fn dart_connection_options_default_to_msgpack() {
+    fn dart_connection_options_default_to_domain() {
         let options = build_dart_connection_options(None, None);
 
         assert_eq!(options.protocol.serialization, SerializationType::Domain);
@@ -333,7 +349,7 @@ mod tests {
             &notify,
             DartConnectionEvent::Error {
                 error: crate::models::DartConnectionError {
-                    message:     "latest".to_string(),
+                    message: "latest".to_string(),
                     recoverable: true,
                 },
             },
@@ -403,7 +419,7 @@ fn build_event_handlers(
             let event = DartConnectionEvent::Disconnect {
                 reason: DartDisconnectReason {
                     message: reason.message,
-                    code:    reason.code.map(|c| c as i32),
+                    code: reason.code.map(|c| c as i32),
                 },
             };
             push_connection_event(&q, &n, event);
@@ -417,7 +433,7 @@ fn build_event_handlers(
         handlers = handlers.on_error(move |error| {
             let event = DartConnectionEvent::Error {
                 error: DartConnectionError {
-                    message:     error.message,
+                    message: error.message,
                     recoverable: error.recoverable,
                 },
             };
@@ -651,13 +667,13 @@ pub fn dart_connection_events_enabled(client: &DartKalamClient) -> bool {
 /// On the Dart side, call [`dart_live_events_next`] in a loop to pull events.
 /// The loop ends when `None` is returned (stream closed).
 pub struct DartLiveEventsSubscription {
-    inner:  Arc<Mutex<kalam_client::SubscriptionManager>>,
+    inner: Arc<Mutex<kalam_client::SubscriptionManager>>,
     sub_id: String,
 }
 
 /// Opaque handle to an active high-level live-row subscription.
 pub struct DartLiveRowsSubscription {
-    inner:  Arc<Mutex<kalam_client::LiveRowsSubscription>>,
+    inner: Arc<Mutex<kalam_client::LiveRowsSubscription>>,
     sub_id: String,
 }
 
@@ -789,7 +805,7 @@ pub async fn dart_live_subscribe(
 ) -> anyhow::Result<DartLiveRowsSubscription> {
     let native_live_config = live_config
         .unwrap_or(DartLiveRowsConfig {
-            limit:       None,
+            limit: None,
             key_columns: None,
         })
         .into_native();

@@ -56,7 +56,7 @@ enum ApplyBarrierOutcome {
 }
 
 struct ApplyBarrierFlight {
-    target:  u64,
+    target: u64,
     outcome: tokio::sync::watch::Sender<ApplyBarrierOutcome>,
 }
 
@@ -167,14 +167,14 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         timeout: Duration,
     ) -> RaftError {
         RaftError::ReplicationTimeout {
-            group:            self.group_id.to_string(),
+            group: self.group_id.to_string(),
             committed_log_id: committed_index.max(snapshot_index).to_string(),
-            detail:           format!(
+            detail: format!(
                 "local apply barrier did not reach the required read point: applied={}, \
                  committed={}, snapshot={}",
                 applied_index, committed_index, snapshot_index
             ),
-            timeout_ms:       timeout.as_millis() as u64,
+            timeout_ms: timeout.as_millis() as u64,
         }
     }
 
@@ -281,10 +281,10 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
                     },
                     ApplyBarrierOutcome::Failed(detail) => {
                         return Err(RaftError::ReplicationTimeout {
-                            group:            self.group_id.to_string(),
+                            group: self.group_id.to_string(),
                             committed_log_id: target_index.to_string(),
-                            detail:           detail.to_string(),
-                            timeout_ms:       timeout.as_millis() as u64,
+                            detail: detail.to_string(),
+                            timeout_ms: timeout.as_millis() as u64,
                         });
                     },
                     ApplyBarrierOutcome::Pending | ApplyBarrierOutcome::Ready(_) => {},
@@ -518,10 +518,10 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         loop {
             if start.elapsed() > timeout {
                 return Err(RaftError::ReplicationTimeout {
-                    group:            self.group_id.to_string(),
+                    group: self.group_id.to_string(),
                     committed_log_id: "catchup".to_string(),
-                    detail:           format!("learner {} did not catch up to the leader", node_id),
-                    timeout_ms:       timeout.as_millis() as u64,
+                    detail: format!("learner {} did not catch up to the leader", node_id),
+                    timeout_ms: timeout.as_millis() as u64,
                 });
             }
 

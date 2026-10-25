@@ -48,8 +48,8 @@ pub(crate) fn execution_context_for_wire(
 
 #[derive(Clone)]
 pub struct WireSqlExecutor {
-    app_context:     Arc<AppContext>,
-    sql_executor:    Arc<SqlExecutor>,
+    app_context: Arc<AppContext>,
+    sql_executor: Arc<SqlExecutor>,
     session_manager: Arc<BackendSessionManager>,
 }
 

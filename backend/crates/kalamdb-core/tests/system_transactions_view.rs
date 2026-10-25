@@ -31,7 +31,7 @@ use support::{
 use tonic::Request;
 
 struct PgBridgeSession {
-    id:    String,
+    id: String,
     token: String,
 }
 
@@ -88,12 +88,12 @@ fn user_insert_request(
     .expect("serialize typed row");
 
     InsertRpcRequest {
-        namespace:  table_id.namespace_id().to_string(),
+        namespace: table_id.namespace_id().to_string(),
         table_name: table_id.table_name().to_string(),
         table_type: "user".to_string(),
         session_id: session_id.to_string(),
-        user_id:    Some(user_id.to_string()),
-        rows_json:  vec![row_json],
+        user_id: Some(user_id.to_string()),
+        rows_json: vec![row_json],
     }
 }
 
@@ -106,25 +106,24 @@ async fn open_session(
 
     let bridge_user_id = UserId::new(format!("{}_bridge_dba", session_label.replace('-', "_")));
     let bridge_user = User {
-        user_id:               bridge_user_id.clone(),
-        password_hash:         "$2b$12$unusedhashunusedhashunusedhashunusedhashunusedhashu"
-            .to_string(),
-        role:                  Role::Dba,
-        name:                  None,
-        email:                 Some(format!("{}@example.com", bridge_user_id.as_str())),
-        auth_type:             AuthType::Password,
-        auth_data:             None,
-        storage_mode:          StorageMode::Table,
-        storage_id:            None,
+        user_id: bridge_user_id.clone(),
+        password_hash: "$2b$12$unusedhashunusedhashunusedhashunusedhashunusedhashu".to_string(),
+        role: Role::Dba,
+        name: None,
+        email: Some(format!("{}@example.com", bridge_user_id.as_str())),
+        auth_type: AuthType::Password,
+        auth_data: None,
+        storage_mode: StorageMode::Table,
+        storage_id: None,
         failed_login_attempts: 0,
-        locked_until:          None,
-        last_login_at:         None,
-        created_at:            0,
-        updated_at:            0,
-        last_seen:             None,
-        deleted_at:            None,
-        invite_expires_at:     None,
-        invited_by:            None,
+        locked_until: None,
+        last_login_at: None,
+        created_at: 0,
+        updated_at: 0,
+        last_seen: None,
+        deleted_at: None,
+        invite_expires_at: None,
+        invited_by: None,
     };
     app_ctx
         .system_tables()
@@ -142,7 +141,7 @@ async fn open_session(
     .expect("create bridge bearer token");
 
     let mut request = Request::new(OpenSessionRequest {
-        session_id:     session_label.to_string(),
+        session_id: session_label.to_string(),
         current_schema: None,
     });
     request.metadata_mut().insert(
@@ -152,7 +151,7 @@ async fn open_session(
 
     let opened = service.open_session(request).await.expect("open session succeeds").into_inner();
     PgBridgeSession {
-        id:    opened.session_id,
+        id: opened.session_id,
         token: opened.session_token,
     }
 }
@@ -232,7 +231,7 @@ async fn rollback_transaction(
         .rollback_transaction(with_session_token(
             &session.token,
             RollbackTransactionRequest {
-                session_id:     session.id.clone(),
+                session_id: session.id.clone(),
                 transaction_id: transaction_id.to_string(),
             },
         ))
@@ -259,11 +258,11 @@ async fn system_transactions_shows_active_pg_and_sql_transactions_while_sessions
     let pg_user_id = UserId::new("pg-txn-view-user");
     operation_service
         .execute_insert(InsertRequest {
-            table_id:   table_id.clone(),
+            table_id: table_id.clone(),
             table_type: TableType::User,
             session_id: Some(session_id.to_string()),
-            user_id:    Some(pg_user_id),
-            rows:       vec![row(1, "from-pg")],
+            user_id: Some(pg_user_id),
+            rows: vec![row(1, "from-pg")],
         })
         .await
         .expect("pg-origin write stages successfully");
@@ -655,14 +654,14 @@ async fn pg_timeout_after_read_clears_sessions_and_transactions_views() {
         .scan(with_session_token(
             &session.token,
             ScanRpcRequest {
-                namespace:  table_id.namespace_id().to_string(),
+                namespace: table_id.namespace_id().to_string(),
                 table_name: table_id.table_name().to_string(),
                 table_type: "shared".to_string(),
                 session_id: session_id.to_string(),
-                user_id:    Some("pg-timeout-read-user".to_string()),
-                columns:    vec![],
-                filters:    vec![],
-                limit:      None,
+                user_id: Some("pg-timeout-read-user".to_string()),
+                columns: vec![],
+                filters: vec![],
+                limit: None,
             },
         ))
         .await

@@ -215,7 +215,7 @@ impl ExtendedQueryHandler for KalamQueryHandler {
                 state
                     .put_prepared_statement(WirePreparedStatement {
                         name: stmt.id.clone(),
-                        sql:  message.query,
+                        sql: message.query,
                     })
                     .map_err(limit_error_to_pg)?;
                 client.portal_store().put_statement(Arc::new(stmt));
@@ -247,7 +247,7 @@ impl ExtendedQueryHandler for KalamQueryHandler {
                 let portal = Portal::try_new(&message, statement)?;
                 state
                     .put_portal(WirePortal {
-                        name:           portal.name.clone(),
+                        name: portal.name.clone(),
                         statement_name: statement_name.to_string(),
                     })
                     .map_err(limit_error_to_pg)?;

@@ -16,12 +16,12 @@ use crate::{query::KalamQueryHandler, startup::KalamStartupHandler};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PostgresWireListenerConfig {
-    pub enabled:       bool,
-    pub host:          String,
-    pub port:          u16,
-    pub tls_enabled:   bool,
+    pub enabled: bool,
+    pub host: String,
+    pub port: u16,
+    pub tls_enabled: bool,
     pub tls_cert_path: Option<String>,
-    pub tls_key_path:  Option<String>,
+    pub tls_key_path: Option<String>,
 }
 
 impl PostgresWireListenerConfig {
@@ -32,7 +32,7 @@ impl PostgresWireListenerConfig {
 
 pub struct KalamWireHandlers {
     startup_handler: Arc<KalamStartupHandler>,
-    query_handler:   Arc<KalamQueryHandler>,
+    query_handler: Arc<KalamQueryHandler>,
 }
 
 impl KalamWireHandlers {

@@ -147,7 +147,7 @@ impl LiveAuthorizationBinder for LiveAuthorizationBinderAdapter {
 
 /// Adapts [`SqlExecutor`] to the [`LiveSqlExecutor`] trait.
 pub struct SqlExecutorAdapter {
-    executor:             Arc<SqlExecutor>,
+    executor: Arc<SqlExecutor>,
     base_session_context: Arc<SessionContext>,
 }
 

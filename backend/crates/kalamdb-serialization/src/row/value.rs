@@ -62,28 +62,28 @@ pub const MAX_DECODED_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_PREALLOC_ELEMENTS: usize = 1_024;
 
 pub(crate) struct Reader<'a> {
-    origin:        &'a [u8],
-    rest:          &'a [u8],
-    depth:         usize,
-    max_depth:     usize,
-    work:          usize,
-    max_work:      usize,
+    origin: &'a [u8],
+    rest: &'a [u8],
+    depth: usize,
+    max_depth: usize,
+    work: usize,
+    max_work: usize,
     decoded_bytes: usize,
-    max_bytes:     usize,
+    max_bytes: usize,
 }
 
 impl<'a> Reader<'a> {
     #[inline]
     pub(crate) fn new(bytes: &'a [u8]) -> Self {
         Self {
-            origin:        bytes,
-            rest:          bytes,
-            depth:         0,
-            max_depth:     MAX_NESTING,
-            work:          0,
-            max_work:      MAX_DECODE_WORK,
+            origin: bytes,
+            rest: bytes,
+            depth: 0,
+            max_depth: MAX_NESTING,
+            work: 0,
+            max_work: MAX_DECODE_WORK,
             decoded_bytes: 0,
-            max_bytes:     MAX_DECODED_BYTES,
+            max_bytes: MAX_DECODED_BYTES,
         }
     }
 

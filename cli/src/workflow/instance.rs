@@ -41,47 +41,47 @@ pub fn shared_server_root() -> PathBuf {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagedLayout {
-    pub root:          PathBuf,
-    pub working_dir:   PathBuf,
-    pub data_dir:      PathBuf,
-    pub logs_dir:      PathBuf,
-    pub run_dir:       PathBuf,
-    pub config_path:   PathBuf,
-    pub log_file:      PathBuf,
+    pub root: PathBuf,
+    pub working_dir: PathBuf,
+    pub data_dir: PathBuf,
+    pub logs_dir: PathBuf,
+    pub run_dir: PathBuf,
+    pub config_path: PathBuf,
+    pub log_file: PathBuf,
     pub instance_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstanceRecord {
-    pub schema_version:   u32,
-    pub kind:             TargetKind,
-    pub url:              String,
-    pub http_port:        u16,
+    pub schema_version: u32,
+    pub kind: TargetKind,
+    pub url: String,
+    pub http_port: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub postgres_port:    Option<u16>,
+    pub postgres_port: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub namespace:        Option<String>,
+    pub namespace: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pid:              Option<u32>,
+    pub pid: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dev_pid:          Option<u32>,
+    pub dev_pid: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exe:              Option<PathBuf>,
-    pub data_dir:         PathBuf,
-    pub log_path:         PathBuf,
-    pub config_path:      PathBuf,
+    pub exe: Option<PathBuf>,
+    pub data_dir: PathBuf,
+    pub log_path: PathBuf,
+    pub config_path: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project_root:     Option<PathBuf>,
+    pub project_root: Option<PathBuf>,
     #[serde(default)]
-    pub started_by:       StartedBy,
+    pub started_by: StartedBy,
     #[serde(default)]
     pub keep_on_dev_exit: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub server_version:   Option<String>,
+    pub server_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed_sql_hash:    Option<String>,
+    pub seed_sql_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub started_at:       Option<String>,
+    pub started_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -114,30 +114,30 @@ pub fn project_layout(project_root: &Path) -> ManagedLayout {
     let legacy = project_root.join("kalam").join("server");
     if legacy.exists() {
         return ManagedLayout {
-            root:          legacy.clone(),
-            working_dir:   project_root.to_path_buf(),
-            data_dir:      legacy.join("data"),
-            logs_dir:      legacy.join("logs"),
-            run_dir:       run_dir.clone(),
-            config_path:   legacy.join("server.toml"),
-            log_file:      legacy.join("logs").join("console.log"),
+            root: legacy.clone(),
+            working_dir: project_root.to_path_buf(),
+            data_dir: legacy.join("data"),
+            logs_dir: legacy.join("logs"),
+            run_dir: run_dir.clone(),
+            config_path: legacy.join("server.toml"),
+            log_file: legacy.join("logs").join("console.log"),
             instance_path: run_dir.join("instance.json"),
         };
     }
 
     let tracked_config = project_root.join("kalam").join("server.toml");
     ManagedLayout {
-        root:          runtime.clone(),
-        working_dir:   project_root.to_path_buf(),
-        data_dir:      runtime.join("data"),
-        logs_dir:      runtime.join("logs"),
-        run_dir:       run_dir.clone(),
-        config_path:   if tracked_config.exists() {
+        root: runtime.clone(),
+        working_dir: project_root.to_path_buf(),
+        data_dir: runtime.join("data"),
+        logs_dir: runtime.join("logs"),
+        run_dir: run_dir.clone(),
+        config_path: if tracked_config.exists() {
             tracked_config
         } else {
             runtime.join("server.toml")
         },
-        log_file:      runtime.join("logs").join("console.log"),
+        log_file: runtime.join("logs").join("console.log"),
         instance_path: run_dir.join("instance.json"),
     }
 }
@@ -146,13 +146,13 @@ pub fn shared_layout() -> ManagedLayout {
     let root = shared_server_root();
     let run_dir = root.join("run");
     ManagedLayout {
-        root:          root.clone(),
-        working_dir:   root.clone(),
-        data_dir:      root.join("data"),
-        logs_dir:      root.join("logs"),
-        run_dir:       run_dir.clone(),
-        config_path:   root.join("server.toml"),
-        log_file:      root.join("logs").join("console.log"),
+        root: root.clone(),
+        working_dir: root.clone(),
+        data_dir: root.join("data"),
+        logs_dir: root.join("logs"),
+        run_dir: run_dir.clone(),
+        config_path: root.join("server.toml"),
+        log_file: root.join("logs").join("console.log"),
         instance_path: run_dir.join("instance.json"),
     }
 }

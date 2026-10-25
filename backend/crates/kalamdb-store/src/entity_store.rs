@@ -737,7 +737,7 @@ where
             .iter()
             .map(|key| Operation::Delete {
                 partition: partition.clone(),
-                key:       key.storage_key(),
+                key: key.storage_key(),
             })
             .collect();
 
@@ -956,7 +956,7 @@ mod tests {
     // Mock implementation for testing
     struct MockStore {
         backend: Arc<dyn StorageBackend>,
-        access:  Option<TableAccess>,
+        access: Option<TableAccess>,
     }
 
     impl EntityStore<UserId, String> for MockStore {
@@ -976,7 +976,7 @@ mod tests {
     }
 
     struct BinaryStore {
-        backend:   Arc<dyn StorageBackend>,
+        backend: Arc<dyn StorageBackend>,
         partition: String,
     }
 
@@ -995,7 +995,7 @@ mod tests {
         // System table (table_access = None)
         let store = MockStore {
             backend: Arc::new(crate::test_utils::InMemoryBackend::new()),
-            access:  None,
+            access: None,
         };
 
         assert!(!store.can_read(&Role::User)); // Regular users cannot read system tables
@@ -1008,7 +1008,7 @@ mod tests {
     fn test_public_table_access() {
         let store = MockStore {
             backend: Arc::new(crate::test_utils::InMemoryBackend::new()),
-            access:  Some(TableAccess::Public),
+            access: Some(TableAccess::Public),
         };
 
         assert!(store.can_read(&Role::User));
@@ -1021,7 +1021,7 @@ mod tests {
     fn test_private_table_access() {
         let store = MockStore {
             backend: Arc::new(crate::test_utils::InMemoryBackend::new()),
-            access:  Some(TableAccess::Private),
+            access: Some(TableAccess::Private),
         };
 
         assert!(!store.can_read(&Role::User));
@@ -1034,7 +1034,7 @@ mod tests {
     fn test_restricted_table_access() {
         let store = MockStore {
             backend: Arc::new(crate::test_utils::InMemoryBackend::new()),
-            access:  Some(TableAccess::Restricted),
+            access: Some(TableAccess::Restricted),
         };
 
         assert!(!store.can_read(&Role::User));

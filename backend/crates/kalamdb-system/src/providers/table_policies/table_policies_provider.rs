@@ -31,18 +31,18 @@ impl KSerializable for PolicyGenerationRecord {}
 
 #[derive(Clone)]
 pub struct TablePoliciesTableProvider {
-    store:                TablePoliciesStore,
-    generations:          PolicyGenerationsStore,
+    store: TablePoliciesStore,
+    generations: PolicyGenerationsStore,
     /// Per-table generation + compiled bundle (same key, one map).
-    runtime:              Arc<DashMap<TableId, TablePolicyRuntime>>,
+    runtime: Arc<DashMap<TableId, TablePolicyRuntime>>,
     reverse_dependencies: Arc<DashMap<TableId, HashSet<PolicyId>>>,
-    mutation_lock:        Arc<Mutex<()>>,
+    mutation_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Clone)]
 struct TablePolicyRuntime {
     generation: u64,
-    compiled:   Option<Arc<CompiledTablePolicies>>,
+    compiled: Option<Arc<CompiledTablePolicies>>,
 }
 
 impl TablePoliciesTableProvider {
@@ -180,7 +180,7 @@ impl TablePoliciesTableProvider {
             table_id.clone(),
             TablePolicyRuntime {
                 generation: policy_generation,
-                compiled:   Some(Arc::clone(&compiled)),
+                compiled: Some(Arc::clone(&compiled)),
             },
         );
         Ok(compiled)

@@ -10,6 +10,8 @@ import 'logger.dart';
 import 'live_event_delivery.dart';
 import 'models.dart';
 import 'version_id.dart';
+import 'invoke_routine_io.dart'
+    if (dart.library.html) 'invoke_routine_stub.dart';
 import 'generated/api.dart' as bridge;
 import 'generated/models.dart' as gen;
 import 'generated/frb_generated.dart';
@@ -39,6 +41,7 @@ class KalamClient {
   static Future<void>? _rustRuntimeInitInFlight;
 
   final bridge.DartKalamClient _handle;
+  final String _baseUrl;
   final ConnectionHandlers? _connectionHandlers;
   final AuthProvider _authProvider;
   Auth _auth;
@@ -49,7 +52,7 @@ class KalamClient {
   bool _skipNextAutoRefreshAuth = false;
   int _subscriptionIdCounter = 0;
 
-  KalamClient._(this._handle, this._connectionHandlers,
+  KalamClient._(this._handle, this._baseUrl, this._connectionHandlers,
       {required Auth initialAuth, required AuthProvider authProvider})
       : _authProvider = authProvider,
         _auth = initialAuth;
@@ -223,6 +226,7 @@ class KalamClient {
     );
     final client = KalamClient._(
       handle,
+      url,
       connectionHandlers,
       initialAuth: effectiveAuth,
       authProvider: authProvider,
@@ -423,6 +427,32 @@ class KalamClient {
       return _fromBridgeQueryResponse(retryResp);
     }
     return result;
+  }
+
+  /// Invoke a generated routine on the existing function HTTP route.
+  ///
+  /// JSON is the explicit external representation. The call uses this client's
+  /// server URL and current auth. It does not build SQL.
+  Future<Object?> invokeRoutine({
+    required String schema,
+    required String name,
+    required int epoch,
+    String? descriptorRevision,
+    String format = 'binary',
+    Map<String, Object?>? arguments,
+  }) async {
+    await _ensureJwtForBasicAuth();
+    final auth = _auth;
+    return postFunctionEnvelope(
+      baseUrl: _baseUrl,
+      schema: schema,
+      name: name,
+      epoch: epoch,
+      descriptorRevision: descriptorRevision,
+      format: format,
+      bearerToken: auth is JwtAuth ? auth.token : null,
+      arguments: arguments,
+    );
   }
 
   /// Execute a SQL query with multipart file uploads.

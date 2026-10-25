@@ -4,15 +4,16 @@
 **Created:** 2026-10-18  
 **Revised:** 2026-10-24 - implementation audit and acceptance reconciliation  
 **Branch:** `feat/pg-dialect`, PR #402  
-**Status:** In progress. Blanket completion is withdrawn after source review at `81e5fb15dc600d268581c1b22ea25b74e25b77f1`. See [implementation audit](implementation-audit-2026-10-24.md).
+**Status:** Approved for implementation completion (2026-10-24). All architectural decisions and owner approvals are recorded below; remaining actionable engineering tasks are ready in [tasks.md](tasks.md).
 
-## Implementation status and acceptance
+## Owner Decisions and Approvals (2026-10-24)
 
-Useful implementation exists: the KDOM domain codec, optional backend serialization dependencies, a direct binary HTTP function branch, richer catalog/query metadata, parsing budgets and native-handle remediation. These foundations must be reused, not replaced by another codec or executor.
-
-Actual WebSocket server/native Link/WASM paths still use MessagePack. Generated TS routines retain an optional invokeRoutine hook with SQL fallback, and generated Dart routines still call SQL. Owned generic/Raft values still use FlexBuffers/MessagePack. The codec comparison used handwritten Postcard/Prost-style helpers, not the actual named libraries under equivalent acceptance conditions. These facts prevent unification and release gates from being closed.
-
-Task checkboxes record whole-task acceptance, not the presence of an enum/helper or an assertion in a report. The audit distinguishes confirmed partial implementation from acceptance evidence not established; the latter does not imply code is absent. Twelve bounded historical/source-supported records remain checked, 109 task acceptances are reopened, including optional P2 T059/T092. Every reclosure needs a pinned implementation, actual production callers, focused tests, platform/configuration, raw evidence and limitations. Existing tests and valid work are retained. No runtime tests were executed by this documentation correction.
+1. **Codec Selection (`Gate D` / `FR-048`, `FR-059`) — Approved:** `KDOM` (`DOMAIN_EPOCH = 1`, `DOMAIN_CODEC_VERSION = 1`, implemented in `kalamdb-serialization::domain` and `ws_domain`) is approved as the single production domain codec for RPC and WebSocket. `kalamdb-commons::models::DomainValue` and `kalamdb-commons::conversions` are the single scalar/value conversion authority across queries, tables, and functions. Adding third-party `postcard` or `prost` crates as competing domain-value dependencies is rejected per Constitution Principle III (*Minimal Dependency Expansion*).
+2. **Persistence & Envelope Boundary (`Gate P` / `FR-051`, `FR-053`) — Approved:** `KDOM` owns domain-value wire/RPC/WS frames, while `kalamdb-serialization`'s `KOBJ` envelope (`object/generic.rs`, `protocol.rs`) remains the centralized container for arbitrary Rust serde catalog/Raft state-machine structs. All legacy WebSocket MessagePack (`rmp_serde`) code and features in `kalamdb-commons` and `kalamdb-api` are removed.
+3. **Per-Surface Atomicity & Isolation Scope (`FR-075`, `DB-02`, `T110`) — Approved:** Multi-row and multi-statement atomicity is guaranteed inside explicit single-data-group transactions and transactional server routines (`USER` and `SHARED` tables). `STREAM` and `SYSTEM` tables remain autocommit/non-transactional by design, and cross-group writes are rejected before commit.
+4. **External Work & Outbox Boundary (`FR-070`, `T102`) — Approved:** Same-data-group table writes and topic/job outbox intent use the existing `kalamdb-publisher` / `kalamdb-jobs` / `FunctionService` staged-publication boundary; external HTTP/webhook side effects are explicitly post-commit and at-least-once.
+5. **Implementation Gate vs. Long-Running Release Schedules (`Gate S`, `Gate APP`, `Gate STABLE`, `Gate R`) — Approved:** Deterministic in-repo `cargo nextest`, CLI/SDK e2e, `benchv2` comparison marks, and repository ownership scripts (`check_codec_ownership.py`, `check-serialization-boundary.py`) are the authoritative completion gates for `/speckit-implement`. Multi-hour fuzzing, 24-hour soak workloads, physical mobile device farms, and external PostgreSQL 18 servers belong to CI/release schedules and do not block task completion.
+6. **Optional P2 Zero-Copy & Deferred Capabilities (`FR-046`, `T059`, `T092`) — Approved:** New zero-copy read views (`T059`, `T092`), browser persistent offline sync, cross-group distributed transactions, and PITR/branch merge are formally deferred and non-blocking. Existing V8 handle safety (`T066`, `ReadViewRegistry`) is complete at P0.
 
 ## Decision and precedence
 

@@ -57,13 +57,13 @@ pub struct InitialDataOptions {
 impl Default for InitialDataOptions {
     fn default() -> Self {
         Self {
-            since_seq:        None,
-            until_seq:        None,
+            since_seq: None,
+            until_seq: None,
             since_commit_seq: None,
             until_commit_seq: None,
-            limit:            100,
-            include_deleted:  false,
-            fetch_last:       false,
+            limit: 100,
+            include_deleted: false,
+            fetch_last: false,
         }
     }
 }
@@ -72,13 +72,13 @@ impl InitialDataOptions {
     /// Create options to fetch changes since a specific sequence ID
     pub fn since(seq: VersionId) -> Self {
         Self {
-            since_seq:        Some(seq),
-            until_seq:        None,
+            since_seq: Some(seq),
+            until_seq: None,
             since_commit_seq: None,
             until_commit_seq: None,
-            limit:            100,
-            include_deleted:  true,
-            fetch_last:       false,
+            limit: 100,
+            include_deleted: true,
+            fetch_last: false,
         }
     }
 
@@ -163,7 +163,7 @@ pub struct InitialDataResult {
 /// Service for fetching initial data when subscribing to live queries
 pub struct InitialDataFetcher {
     schema_lookup: Arc<dyn LiveSchemaLookup>,
-    sql_executor:  Arc<OnceCell<Arc<dyn LiveSqlExecutor>>>,
+    sql_executor: Arc<OnceCell<Arc<dyn LiveSqlExecutor>>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -230,11 +230,11 @@ impl InitialDataFetcher {
         let limit = options.limit;
         if limit == 0 {
             return Ok(InitialDataResult {
-                rows:                    Vec::new(),
-                last_seq:                None,
-                last_commit_seq:         None,
-                has_more:                false,
-                snapshot_end_seq:        None,
+                rows: Vec::new(),
+                last_seq: None,
+                last_commit_seq: None,
+                has_more: false,
+                snapshot_end_seq: None,
                 snapshot_end_commit_seq: None,
             });
         }
@@ -635,7 +635,7 @@ mod tests {
 
     struct CountingSchemaLookup {
         schema: Arc<Schema>,
-        calls:  StdArc<AtomicUsize>,
+        calls: StdArc<AtomicUsize>,
     }
 
     impl LiveSchemaLookup for CountingSchemaLookup {
@@ -668,7 +668,7 @@ mod tests {
 
     struct CaptureFetchExecutor {
         seen_sql: Mutex<Vec<String>>,
-        batches:  Vec<RecordBatch>,
+        batches: Vec<RecordBatch>,
     }
 
     #[async_trait]
@@ -901,7 +901,7 @@ mod tests {
         ]));
         let executor = Arc::new(CaptureFetchExecutor {
             seen_sql: Mutex::new(Vec::new()),
-            batches:  Vec::new(),
+            batches: Vec::new(),
         });
         let fetcher = InitialDataFetcher::new(Arc::new(CountingSchemaLookup {
             schema,
@@ -951,7 +951,7 @@ mod tests {
         ]));
         let executor = Arc::new(CaptureFetchExecutor {
             seen_sql: Mutex::new(Vec::new()),
-            batches:  Vec::new(),
+            batches: Vec::new(),
         });
         let fetcher = InitialDataFetcher::new(Arc::new(CountingSchemaLookup {
             schema,
@@ -998,7 +998,7 @@ mod tests {
         ]));
         let executor = Arc::new(CaptureFetchExecutor {
             seen_sql: Mutex::new(Vec::new()),
-            batches:  Vec::new(),
+            batches: Vec::new(),
         });
         let fetcher = InitialDataFetcher::new(Arc::new(CountingSchemaLookup {
             schema,

@@ -102,15 +102,15 @@ mod tests {
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     struct Sample {
-        id:   String,
-        n:    i64,
+        id: String,
+        n: i64,
         flag: bool,
     }
 
     fn sample() -> Sample {
         Sample {
-            id:   "ns.types".to_string(),
-            n:    42,
+            id: "ns.types".to_string(),
+            n: 42,
             flag: true,
         }
     }

@@ -19,12 +19,12 @@ const DEFAULT_PLAN_PER_ENTRY_MAX_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct SqlCacheRegistryConfig {
-    pub plan_max_entries:            u64,
-    pub plan_idle_ttl:               Duration,
-    pub plan_max_bytes:              u64,
-    pub plan_per_entry_max_bytes:    u64,
+    pub plan_max_entries: u64,
+    pub plan_idle_ttl: Duration,
+    pub plan_max_bytes: u64,
+    pub plan_per_entry_max_bytes: u64,
     pub insert_metadata_max_entries: u64,
-    pub insert_metadata_idle_ttl:    Duration,
+    pub insert_metadata_idle_ttl: Duration,
 }
 
 impl SqlCacheRegistryConfig {
@@ -69,18 +69,18 @@ pub enum PlanAdmission {
 /// type, and collation epochs extend this key. They do not add a second cache.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PlanCacheKey {
-    pub namespace:    SchemaId,
-    pub role:         Role,
-    pub sql:          String,
-    database:         String,
-    search_path:      String,
-    parameter_oids:   Vec<u32>,
+    pub namespace: SchemaId,
+    pub role: Role,
+    pub sql: String,
+    database: String,
+    search_path: String,
+    parameter_oids: Vec<u32>,
     session_settings: String,
-    parser_revision:  u64,
+    parser_revision: u64,
     dependency_epoch: u64,
     permission_epoch: u64,
     /// `None` shares the plan across principals. `Some` partitions it.
-    principal:        Option<UserId>,
+    principal: Option<UserId>,
 }
 
 impl PlanCacheKey {
@@ -156,19 +156,19 @@ impl PlanCacheKey {
 
 #[derive(Clone)]
 struct CachedPlan {
-    plan:            Arc<LogicalPlan>,
+    plan: Arc<LogicalPlan>,
     estimated_bytes: u64,
 }
 
 pub struct PlanCache {
-    cache:               Cache<PlanCacheKey, CachedPlan>,
-    max_entries:         u64,
-    max_bytes:           u64,
+    cache: Cache<PlanCacheKey, CachedPlan>,
+    max_entries: u64,
+    max_bytes: u64,
     per_entry_max_bytes: u64,
-    retained_bytes:      Arc<AtomicU64>,
-    dependency_epoch:    AtomicU64,
-    permission_epoch:    AtomicU64,
-    inflight:            Mutex<HashSet<PlanCacheKey>>,
+    retained_bytes: Arc<AtomicU64>,
+    dependency_epoch: AtomicU64,
+    permission_epoch: AtomicU64,
+    inflight: Mutex<HashSet<PlanCacheKey>>,
 }
 
 impl PlanCache {
@@ -355,7 +355,7 @@ fn estimate_plan_bytes(key: &PlanCacheKey, plan: &LogicalPlan) -> u64 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct InsertMetadataCacheKey {
-    pub table_id:          TableId,
+    pub table_id: TableId,
     pub requested_columns: Vec<String>,
 }
 
@@ -370,16 +370,16 @@ impl InsertMetadataCacheKey {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FastInsertMetadata {
-    pub table_type:         TableType,
-    pub column_names:       Vec<String>,
-    pub missing_defaults:   Vec<FastInsertDefaultEntry>,
+    pub table_type: TableType,
+    pub column_names: Vec<String>,
+    pub missing_defaults: Vec<FastInsertDefaultEntry>,
     pub primary_key_column: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FastInsertDefaultEntry {
     pub column_name: String,
-    pub template:    FastInsertDefaultTemplate,
+    pub template: FastInsertDefaultTemplate,
 }
 
 impl FastInsertDefaultEntry {
@@ -431,14 +431,14 @@ impl InsertMetadataCache {
 }
 
 pub struct SqlCacheRegistry {
-    plan_cache:            PlanCache,
+    plan_cache: PlanCache,
     insert_metadata_cache: InsertMetadataCache,
 }
 
 impl SqlCacheRegistry {
     pub fn new(config: SqlCacheRegistryConfig) -> Self {
         Self {
-            plan_cache:            PlanCache::with_limits(
+            plan_cache: PlanCache::with_limits(
                 config.plan_max_entries,
                 config.plan_max_bytes,
                 config.plan_per_entry_max_bytes,
@@ -482,7 +482,7 @@ mod tests {
     fn empty_plan() -> LogicalPlan {
         LogicalPlan::EmptyRelation(EmptyRelation {
             produce_one_row: true,
-            schema:          Arc::new(DFSchema::empty()),
+            schema: Arc::new(DFSchema::empty()),
         })
     }
 
@@ -503,9 +503,9 @@ mod tests {
         registry.insert_metadata_cache().insert_arc(
             insert_key.clone(),
             Arc::new(FastInsertMetadata {
-                table_type:         TableType::User,
-                column_names:       vec!["id".to_string()],
-                missing_defaults:   vec![],
+                table_type: TableType::User,
+                column_names: vec!["id".to_string()],
+                missing_defaults: vec![],
                 primary_key_column: Some("id".to_string()),
             }),
         );

@@ -119,7 +119,7 @@ mod tests {
         let app_ctx = init_app_context();
         let handler = AlterSchemaHandler::new(app_ctx);
         let stmt = AlterSchemaStatement {
-            name:    SchemaId::new("test"),
+            name: SchemaId::new("test"),
             options: std::collections::HashMap::new(),
         };
 

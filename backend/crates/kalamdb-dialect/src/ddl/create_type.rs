@@ -19,18 +19,18 @@ pub(crate) const ENUM_LABEL_MAX_LEN: usize = PG_NAMEDATALEN_MAX_BYTES;
 /// SQL type reference used in composite fields, domains, and routine signatures.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeReference {
-    pub namespace_id:       Option<SchemaId>,
-    pub name:               String,
+    pub namespace_id: Option<SchemaId>,
+    pub name: String,
     /// Parsed builtin, including `DECIMAL(p,s)` / `EMBEDDING(n)` parameters.
-    pub data_type:          Option<KalamDataType>,
+    pub data_type: Option<KalamDataType>,
     /// Parenthesized modifier text from the AST, such as `12,2` or `10`.
     ///
     /// Composite attributes and domains keep this. Function and procedure
     /// signatures discard it when computing the effective type.
     pub syntactic_modifier: Option<String>,
-    pub is_array:           bool,
-    pub not_null:           bool,
-    pub nonempty:           bool,
+    pub is_array: bool,
+    pub not_null: bool,
+    pub nonempty: bool,
 }
 
 impl TypeReference {
@@ -95,8 +95,8 @@ impl TypeReference {
 /// One field of `CREATE TYPE name AS (...)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompositeTypeField {
-    pub name:      String,
-    pub type_ref:  TypeReference,
+    pub name: String,
+    pub type_ref: TypeReference,
     pub collation: Option<String>,
 }
 
@@ -111,18 +111,18 @@ pub enum CreateTypeBody {
     },
     FromTable {
         table_namespace_id: Option<SchemaId>,
-        table_name:         String,
+        table_name: String,
     },
 }
 
 /// CREATE TYPE statement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateTypeStatement {
-    pub namespace_id:  SchemaId,
-    pub name:          String,
+    pub namespace_id: SchemaId,
+    pub name: String,
     pub if_not_exists: bool,
-    pub body:          CreateTypeBody,
-    pub comment:       Option<String>,
+    pub body: CreateTypeBody,
+    pub comment: Option<String>,
 }
 
 const UNION_RESERVED: &str = "UNION types are reserved and not supported in V1";
@@ -179,10 +179,10 @@ impl CreateTypeStatement {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropTypeStatement {
     pub namespace_id: SchemaId,
-    pub name:         String,
-    pub targets:      Vec<(SchemaId, String)>,
-    pub if_exists:    bool,
-    pub cascade:      bool,
+    pub name: String,
+    pub targets: Vec<(SchemaId, String)>,
+    pub if_exists: bool,
+    pub cascade: bool,
 }
 
 impl DropTypeStatement {
@@ -271,8 +271,8 @@ fn parse_type_body(mut rest: &str) -> DdlResult<(CreateTypeBody, &str)> {
 #[derive(Debug, Clone)]
 pub(crate) struct QualifiedIdent {
     pub namespace_id: Option<SchemaId>,
-    pub name:         String,
-    pub name_quoted:  bool,
+    pub name: String,
+    pub name_quoted: bool,
 }
 
 impl QualifiedIdent {
@@ -290,8 +290,8 @@ pub(crate) fn split_qualified_ident(input: &str) -> DdlResult<(QualifiedIdent, &
         Ok((
             QualifiedIdent {
                 namespace_id: Some(parse_namespace_id(&first, first_quoted)?),
-                name:         second,
-                name_quoted:  second_quoted,
+                name: second,
+                name_quoted: second_quoted,
             },
             rest2,
         ))
@@ -299,8 +299,8 @@ pub(crate) fn split_qualified_ident(input: &str) -> DdlResult<(QualifiedIdent, &
         Ok((
             QualifiedIdent {
                 namespace_id: None,
-                name:         first,
-                name_quoted:  first_quoted,
+                name: first,
+                name_quoted: first_quoted,
             },
             rest,
         ))
@@ -949,7 +949,7 @@ mod tests {
                     fields[0].type_ref.data_type,
                     Some(KalamDataType::Decimal {
                         precision: 10,
-                        scale:     2,
+                        scale: 2,
                     })
                 );
                 assert_eq!(fields[1].type_ref.data_type, Some(KalamDataType::Embedding(384)));

@@ -258,9 +258,9 @@ async fn handle_test_request(
 }
 
 struct TestRequest {
-    target:  String,
+    target: String,
     headers: HashMap<String, String>,
-    body:    String,
+    body: String,
 }
 
 async fn read_test_request(stream: &mut TcpStream) -> std::io::Result<TestRequest> {

@@ -20,24 +20,26 @@
 - [x] Task IDs and FR/SC acceptance remain intact. Core tasks T001-T093 plus T094-T121 continuation retain 12 historical/narrow-supported records and reopen 109 acceptance records.
 - [x] Reopened records distinguish source-contradicted/partial, evidence-pending and optional P2; missing evidence is not a claim that all related implementation is absent.
 - [x] The audit credits KDOM/HTTP progress, optional backend dependencies, parsing-budget fixes and the generation-fenced native-handle registry instead of erasing that work.
-- [x] Concrete blockers include actual MessagePack WS callers, generated SQL fallback/Dart calls, separate FlexBuffers/MessagePack owned persistence, incomplete exact-value binding and dependency-only ownership checks.
+- [x] Concrete blockers are named in the audit and tasks: MessagePack leftovers, owned FlexBuffers persistence, exact-value binding, and dependency-only ownership checks. Generated TS/Dart SQL fallback is no longer the stated blocker.
 - [x] Preliminary codec-report closure conclusions are withdrawn by the audit; existing observations are retained as attributed history, not silently treated as real-library benchmarks.
-- [ ] Run automated Markdown/link/fence/unique-task/reference validation against the final repository checkout and attach command/output. Earlier reports are historical; this correction does not claim to rerun them.
-- [ ] Compile and execute all public examples against actual generated clients and a real server. Model-only/typecheck fixtures do not establish RPC/WS or application integration.
-- [ ] Complete T119 runtime/SDK/external docs reconciliation when actual implementation lands. A specification correction does not update inaccessible external destinations or make proposed code real.
+- [x] The spec and tasks require automated Markdown/link/task-reference validation and name the command that must be recorded. Execution of that command stays on the task list, not this requirements checklist.
+- [x] The spec requires public examples to compile and run against generated clients and a real server, and says typecheck fixtures are not that proof. That execution stays on T044/T117.
+- [x] The spec requires runtime, SDK, and external docs to match shipped behavior, and says inaccessible external destinations must be recorded rather than claimed. That reconciliation stays on T119.
 
-## Release gates - open until acceptance evidence exists
+## Release gates specified, not executed here
 
-- [ ] A: full catalog/type/naming semantics and paired generation coverage; existing metadata work retained.
-- [ ] S: actual unary/body and aggregate parsing/conversion/decompression bounds, full-path fuzz/property/advisory evidence and native ownership acceptance. Narrow T064/T066 repairs remain credited.
-- [ ] D: actual pinned candidate libraries, equivalent semantics/framing/validation and reproducible results; no production-winner conclusion from handwritten proxies.
-- [ ] C0: lean dependencies plus real native/WASM/FRB conformance and effective production-callsite ownership CI with failing negative controls.
-- [ ] B2: mandatory generated TS/Dart native calls through actual SDK bridges; no SQL fallback, exact descriptors/values/errors, permission/transaction parity and measured resource evidence.
-- [ ] W: actual server and all maintained clients use the common binary live/control/ack/replay codec; all production MessagePack paths removed, with real socket/platform tests.
-- [ ] P: one selected codec for fresh owned persistence/Raft values, old epoch rejection and unchanged-durability crash/corruption/restore evidence. External ecosystem formats remain narrow exceptions.
-- [ ] APP: real DX-01..04 school/helpdesk/setup/testkit workflows and equivalent-scope developer/resource measurements.
-- [ ] STABLE: DB-01..20 evidence, including statement rollback, concurrency histories, leader/storage faults, hot/cold invariants, RLS, replay, SDK lifecycle and independent restore.
-- [ ] R: pre-registered CPU/allocated/retained-memory/throughput/p99 targets, APP/STABLE acceptance and no unresolved wrong-result/data-loss/security/false-atomicity failure or hidden skipped test.
+These items check that each gate is written as an acceptance requirement. They do not record that the gate has run. Open tasks own the execution evidence.
+
+- [x] A: the spec requires one catalog/type/naming authority and paired generation coverage.
+- [x] S: the spec requires bounded parsing, decompression, fuzz/property tests, and native-handle ownership, and it credits only the narrow repairs already named.
+- [x] D: the spec requires actual pinned Postcard and Prost comparisons with equal semantics, and it rejects a winner claim from handwritten proxies.
+- [x] C0: the spec requires a lean codec, native/WASM/FRB conformance, and a production-callsite ownership check with a failing negative control.
+- [x] B2: the spec requires generated TS/Dart calls through the function route, exact values and errors, and permission parity. It does not treat a template string as that proof.
+- [x] W: the spec requires one binary live path and removal of production MessagePack, with socket tests. A frame unit test is not defined as the whole gate.
+- [x] P: the spec requires one fresh owned persistence/Raft codec, old-epoch rejection, and unchanged durability. External formats stay named exceptions.
+- [x] APP: the spec requires DX-01..04 on the school and helpdesk paths, with equivalent-scope measurements.
+- [x] STABLE: the spec requires DB-01..20, including statement rollback, faults, RLS, replay, and independent restore.
+- [x] R: the spec requires pre-registered CPU, memory, throughput, and p99 targets after APP/STABLE, and it forbids hidden skipped tests.
 
 ## Proof required to close a task or gate
 

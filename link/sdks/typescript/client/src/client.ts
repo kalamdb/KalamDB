@@ -6,10 +6,20 @@
  * fetch() + FormData for better browser compatibility.
  */
 
-import init, { KalamClient as WasmClient } from '../wasm/kalam_client.js';
+import init, {
+  decodeRoutineResult,
+  encodeRoutineRequest,
+  KalamClient as WasmClient,
+} from '../wasm/kalam_client.js';
 
 import type { AuthCredentials, AuthProvider } from './auth.js';
 import { buildAuthHeader } from './auth.js';
+import {
+  routineArgumentsJson,
+  routineErrorFromPayload,
+  routineInvokeHeaders,
+  routineRequestBody,
+} from './routine_codec.js';
 import { resolveAuthProviderWithRetry } from './helpers/auth_provider_retry.js';
 import {
   defaultRowKey,
@@ -207,6 +217,9 @@ const BUNDLED_BROWSER_WASM_URL = new URL('../wasm/kalam_client_bg.wasm', import.
  * await client.disconnect();
  * ```
  */
+
+export { KalamRoutineError } from './routine_codec.js';
+
 export class KalamDBClient {
   private wasmClient: WasmClient | null = null;
   private initialized = false;
@@ -797,6 +810,8 @@ export class KalamDBClient {
       readonly epoch: number;
       readonly schema: string;
       readonly name: string;
+      readonly revision?: string;
+      readonly params?: readonly { readonly name: string; readonly slot: number; readonly json?: boolean }[];
     },
     input: I,
     options?: {
@@ -808,17 +823,15 @@ export class KalamDBClient {
   ): Promise<O> {
     await this.initialize();
     await this.ensureJwtForBasicAuth();
-    if (options?.format === 'binary') {
-      throw new Error('binary function invocation is not implemented in the TypeScript client');
-    }
-
-    const headers: Record<string, string> = {
-      'content-type': 'application/json',
-      'x-kalam-epoch': String(descriptor.epoch),
-    };
+    const binary = options?.format !== 'json';
+    const headers = routineInvokeHeaders({
+      epoch: descriptor.epoch,
+      revision: descriptor.revision,
+      idempotencyKey: options?.idempotencyKey,
+      binary,
+    });
     const authHeader = buildAuthHeader(this.auth);
     if (authHeader) headers.Authorization = authHeader;
-    if (options?.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
 
     const controller = new AbortController();
     if (options?.signal) {
@@ -835,22 +848,35 @@ export class KalamDBClient {
         {
           method: 'POST',
           headers,
-          body: JSON.stringify({
-            epoch: descriptor.epoch,
-            arguments: input ?? null,
-          }),
+          body: binary
+            ? routineRequestBody(encodeRoutineRequest(
+              routineArgumentsJson(input),
+              JSON.stringify(descriptor.params ?? []),
+            ))
+            : JSON.stringify({
+              epoch: descriptor.epoch,
+              arguments: input ?? null,
+            }),
           signal: controller.signal,
         },
       );
-      const text = await response.text();
-      const payload: unknown = text.length === 0 ? null : JSON.parse(text);
       if (!response.ok) {
-        const message = payload && typeof payload === 'object' && 'message' in payload
-          ? String((payload as { message?: unknown }).message)
-          : `function invoke failed: ${response.status}`;
-        throw new Error(message);
+        const text = await response.text();
+        let payload: unknown = null;
+        if (text.length > 0) {
+          try {
+            payload = JSON.parse(text) as unknown;
+          } catch {
+            payload = { message: text };
+          }
+        }
+        throw routineErrorFromPayload(response.status, payload);
       }
-      return payload as O;
+      if (binary) {
+        return decodeRoutineResult(new Uint8Array(await response.arrayBuffer())) as O;
+      }
+      const text = await response.text();
+      return (text.length === 0 ? null : JSON.parse(text)) as O;
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }

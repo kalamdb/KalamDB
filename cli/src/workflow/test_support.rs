@@ -20,63 +20,63 @@ use crate::{
 
 pub fn test_workflow_context(project_root: &Path) -> WorkflowContext {
     WorkflowContext {
-        project_root:       project_root.to_path_buf(),
-        config:             minimal_sql_project_config(),
-        cli_config:         CLIConfiguration::default(),
-        use_color:          false,
-        animations:         true,
-        agent:              false,
-        json:               false,
-        project_dir:        None,
-        env_override:       None,
+        project_root: project_root.to_path_buf(),
+        config: minimal_sql_project_config(),
+        cli_config: CLIConfiguration::default(),
+        use_color: false,
+        animations: true,
+        agent: false,
+        json: false,
+        project_dir: None,
+        env_override: None,
         namespace_override: None,
-        url_override:       None,
-        global:             false,
-        host:               None,
-        port:               None,
-        instance:           None,
+        url_override: None,
+        global: false,
+        host: None,
+        port: None,
+        instance: None,
     }
 }
 
 pub fn test_environment(name: &str) -> ResolvedEnvironment {
     ResolvedEnvironment {
-        name:             name.into(),
-        url:              "http://localhost:2900".into(),
-        namespace:        SchemaId::new("demo"),
-        env_source:       ResolutionSource::ProjectConfig,
-        url_source:       ResolutionSource::ProjectConfig,
+        name: name.into(),
+        url: "http://localhost:2900".into(),
+        namespace: SchemaId::new("demo"),
+        env_source: ResolutionSource::ProjectConfig,
+        url_source: ResolutionSource::ProjectConfig,
         namespace_source: ResolutionSource::ProjectConfig,
     }
 }
 
 pub fn minimal_sql_project_config() -> KalamProjectConfig {
     KalamProjectConfig {
-        project:    ProjectSection {
-            name:            "demo".into(),
-            default_env:     "dev".into(),
+        project: ProjectSection {
+            name: "demo".into(),
+            default_env: "dev".into(),
             package_manager: None,
-            kalam_dir:       "kalam".into(),
-            server_version:  None,
+            kalam_dir: "kalam".into(),
+            server_version: None,
         },
         connection: HashMap::from([(
             "dev".into(),
             ConnectionEnv {
-                url:       "http://localhost:2900".into(),
+                url: "http://localhost:2900".into(),
                 namespace: SchemaId::new("demo"),
-                purpose:   None,
+                purpose: None,
             },
         )]),
-        schema:     SchemaSection {
-            mode:      SchemaMode::Sql,
-            path:      Some("schema.sql".into()),
-            watch:     false,
+        schema: SchemaSection {
+            mode: SchemaMode::Sql,
+            path: Some("schema.sql".into()),
+            watch: false,
             languages: Vec::new(),
-            targets:   HashMap::new(),
+            targets: HashMap::new(),
         },
         migrations: MigrationsSection::default(),
-        dev:        DevSection::default(),
-        logging:    LoggingSection::default(),
-        functions:  FunctionsSection::default(),
+        dev: DevSection::default(),
+        logging: LoggingSection::default(),
+        functions: FunctionsSection::default(),
     }
 }
 
@@ -86,7 +86,7 @@ pub fn sql_project_config_with_typescript_target() -> KalamProjectConfig {
     config.schema.targets = HashMap::from([(
         "typescript".into(),
         SchemaTarget {
-            output:            "src/generated/kalam.ts".into(),
+            output: "src/generated/kalam.ts".into(),
             unqualified_names: false,
         },
     )]);
@@ -110,9 +110,9 @@ pub fn prod_deploy_test_config() -> KalamProjectConfig {
     config.connection = HashMap::from([(
         "prod".into(),
         ConnectionEnv {
-            url:       "https://db.example.com".into(),
+            url: "https://db.example.com".into(),
             namespace: SchemaId::new("app"),
-            purpose:   None,
+            purpose: None,
         },
     )]);
     config.migrations.auto_create = true;
@@ -126,17 +126,17 @@ pub fn multi_env_resolve_test_config() -> KalamProjectConfig {
         (
             "dev".into(),
             ConnectionEnv {
-                url:       "http://localhost:2900".into(),
+                url: "http://localhost:2900".into(),
                 namespace: SchemaId::new("app"),
-                purpose:   None,
+                purpose: None,
             },
         ),
         (
             "prod".into(),
             ConnectionEnv {
-                url:       "https://db.example.com".into(),
+                url: "https://db.example.com".into(),
                 namespace: SchemaId::new("app"),
-                purpose:   None,
+                purpose: None,
             },
         ),
     ]);
@@ -204,7 +204,7 @@ pub mod env_lock {
     }
 
     pub struct UnsetGuard {
-        key:      &'static str,
+        key: &'static str,
         previous: Option<String>,
     }
 

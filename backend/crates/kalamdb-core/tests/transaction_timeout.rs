@@ -38,11 +38,11 @@ async fn transaction_timeout_aborts_staged_writes_and_blocks_follow_up_operation
 
     service
         .execute_insert(InsertRequest {
-            table_id:   table_id.clone(),
+            table_id: table_id.clone(),
             table_type: TableType::Shared,
             session_id: Some(session_id.to_string()),
-            user_id:    Some(user_id.clone()),
-            rows:       vec![row(1, "pending")],
+            user_id: Some(user_id.clone()),
+            rows: vec![row(1, "pending")],
         })
         .await
         .expect("initial staged write succeeds");
@@ -51,11 +51,11 @@ async fn transaction_timeout_aborts_staged_writes_and_blocks_follow_up_operation
 
     let timeout_error = service
         .execute_insert(InsertRequest {
-            table_id:   table_id.clone(),
+            table_id: table_id.clone(),
             table_type: TableType::Shared,
             session_id: Some(session_id.to_string()),
-            user_id:    Some(user_id.clone()),
-            rows:       vec![row(2, "late")],
+            user_id: Some(user_id.clone()),
+            rows: vec![row(2, "late")],
         })
         .await
         .expect_err("follow-up write should fail after timeout");

@@ -823,11 +823,11 @@ mod tests {
         use crate::models::{CompressionType, ProtocolOptions, SerializationType};
 
         let msg = CommonsServerMessage::AuthSuccess {
-            user:     UserId::from("user-1"),
-            role:     Role::Dba,
+            user: UserId::from("user-1"),
+            role: Role::Dba,
             protocol: ProtocolOptions {
                 serialization: SerializationType::Domain,
-                compression:   CompressionType::Gzip,
+                compression: CompressionType::Gzip,
             },
         };
         let bytes = kalamdb_serialization::encode_server_message(&msg).unwrap();
@@ -843,8 +843,8 @@ mod tests {
 
         let msg = ClientMessage::Subscribe {
             subscription: SubscriptionRequest {
-                id:      "sub-1".to_string(),
-                sql:     "SELECT * FROM test".to_string(),
+                id: "sub-1".to_string(),
+                sql: "SELECT * FROM test".to_string(),
                 options: Some(SubscriptionOptions::default()),
             },
         };

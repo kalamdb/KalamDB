@@ -14,9 +14,9 @@ const TAIL_MAX_BYTES: usize = 1024 * 1024;
 /// a durable write. `None` from [`PartitionTail::fetch`] means read the store.
 #[derive(Debug, Default)]
 pub(crate) struct PartitionTail {
-    start:    u64,
-    end:      u64,
-    bytes:    usize,
+    start: u64,
+    end: u64,
+    bytes: usize,
     messages: VecDeque<TopicMessage>,
 }
 
@@ -106,9 +106,9 @@ impl PartitionTail {
 
 #[derive(Debug, Default)]
 pub(crate) struct PartitionWriteState {
-    next_offset:    Option<u64>,
+    next_offset: Option<u64>,
     retained_bytes: Option<u64>,
-    log_start:      u64,
+    log_start: u64,
 }
 
 impl PartitionWriteState {
@@ -166,14 +166,14 @@ impl PartitionWriteState {
 /// separate so a consumer at the watermark does not wait on RocksDB.
 pub(crate) struct PartitionRuntime {
     write: Mutex<PartitionWriteState>,
-    tail:  Mutex<PartitionTail>,
+    tail: Mutex<PartitionTail>,
 }
 
 impl PartitionRuntime {
     pub(crate) fn new() -> Self {
         Self {
             write: Mutex::new(PartitionWriteState::default()),
-            tail:  Mutex::new(PartitionTail::default()),
+            tail: Mutex::new(PartitionTail::default()),
         }
     }
 

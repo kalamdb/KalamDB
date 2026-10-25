@@ -7,17 +7,17 @@ use crate::error::{FunctionsError, Result};
 /// Memory, deadline, and ABI settings for one loaded revision.
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeLimits {
-    pub timeout:        Duration,
+    pub timeout: Duration,
     pub max_heap_bytes: usize,
-    pub abi_version:    u32,
+    pub abi_version: u32,
 }
 
 impl Default for RuntimeLimits {
     fn default() -> Self {
         Self {
-            timeout:        Duration::from_millis(5_000),
+            timeout: Duration::from_millis(5_000),
             max_heap_bytes: 64 * 1024 * 1024,
-            abi_version:    ABI_VERSION,
+            abi_version: ABI_VERSION,
         }
     }
 }
@@ -33,9 +33,9 @@ pub const ABI_VERSION: u32 = 2;
 /// reserve 1.5× `max_heap_bytes`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeapLimitParts {
-    pub managed:     usize,
-    pub buffers:     usize,
-    pub unwind:      usize,
+    pub managed: usize,
+    pub buffers: usize,
+    pub unwind: usize,
     pub max_managed: usize,
 }
 

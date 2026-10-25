@@ -37,12 +37,12 @@ use tempfile::TempDir;
 
 fn make_project_config(env_name: &str, purpose: Option<EnvironmentPurpose>) -> KalamProjectConfig {
     KalamProjectConfig {
-        project:    ProjectSection {
-            name:            "pg18_demo".into(),
-            default_env:     env_name.into(),
+        project: ProjectSection {
+            name: "pg18_demo".into(),
+            default_env: env_name.into(),
             package_manager: None,
-            kalam_dir:       "kalam".into(),
-            server_version:  None,
+            kalam_dir: "kalam".into(),
+            server_version: None,
         },
         connection: HashMap::from([(
             env_name.into(),
@@ -52,31 +52,31 @@ fn make_project_config(env_name: &str, purpose: Option<EnvironmentPurpose>) -> K
                 purpose,
             },
         )]),
-        schema:     SchemaSection {
-            mode:      SchemaMode::Sql,
-            path:      Some("schema.sql".into()),
-            watch:     true,
+        schema: SchemaSection {
+            mode: SchemaMode::Sql,
+            path: Some("schema.sql".into()),
+            watch: true,
             languages: vec!["typescript".into()],
-            targets:   HashMap::from([(
+            targets: HashMap::from([(
                 "typescript".into(),
                 SchemaTarget {
-                    output:            "src/generated/kalam.ts".into(),
+                    output: "src/generated/kalam.ts".into(),
                     unqualified_names: false,
                 },
             )]),
         },
         migrations: MigrationsSection {
-            dir:         "kalam/migrations".into(),
+            dir: "kalam/migrations".into(),
             auto_create: true,
         },
-        dev:        DevSection {
+        dev: DevSection {
             apply_schema: true,
             generate_types: true,
             watch: true,
             ..DevSection::default()
         },
-        logging:    LoggingSection::default(),
-        functions:  FunctionsSection::default(),
+        logging: LoggingSection::default(),
+        functions: FunctionsSection::default(),
     }
 }
 
@@ -319,12 +319,12 @@ fn stale_pid_in_instance_json_and_dev_session_json_is_not_treated_as_live() {
 
     let session_path = root.join(".kalam/dev-session.json");
     let stale_session = DevSession {
-        pid:          1_999_999_999,
-        started_at:   "2026-10-15T00:00:00Z".into(),
+        pid: 1_999_999_999,
+        started_at: "2026-10-15T00:00:00Z".into(),
         project_root: root.to_path_buf(),
-        log_path:     root.join(".kalam/logs/kalam.log"),
-        exe:          PathBuf::from("/nonexistent/kalam"),
-        url:          Some("http://127.0.0.1:2900".into()),
+        log_path: root.join(".kalam/logs/kalam.log"),
+        exe: PathBuf::from("/nonexistent/kalam"),
+        url: Some("http://127.0.0.1:2900".into()),
     };
     fs::create_dir_all(session_path.parent().unwrap()).unwrap();
     fs::write(&session_path, serde_json::to_vec_pretty(&stale_session).unwrap()).unwrap();
@@ -336,27 +336,27 @@ fn stale_pid_in_instance_json_and_dev_session_json_is_not_treated_as_live() {
 #[test]
 fn stopped_instance_with_port_reused_by_another_live_server_is_detected() {
     let stopped = InstanceSummary {
-        name:     "old-project".into(),
-        kind:     InstanceKind::Local,
-        state:    InstanceState::Stopped,
-        url:      Some("http://127.0.0.1:2900".into()),
-        folder:   Some(PathBuf::from("/tmp/old-project")),
-        global:   false,
-        user:     None,
-        auth:     None,
-        aliases:  Vec::new(),
+        name: "old-project".into(),
+        kind: InstanceKind::Local,
+        state: InstanceState::Stopped,
+        url: Some("http://127.0.0.1:2900".into()),
+        folder: Some(PathBuf::from("/tmp/old-project")),
+        global: false,
+        user: None,
+        auth: None,
+        aliases: Vec::new(),
         identity: "/tmp/old-project/.kalam/run/instance.json".into(),
     };
     let live_other = InstanceSummary {
-        name:     "active-project".into(),
-        kind:     InstanceKind::Local,
-        state:    InstanceState::Running,
-        url:      Some("http://localhost:2900".into()),
-        folder:   Some(PathBuf::from("/tmp/active-project")),
-        global:   false,
-        user:     None,
-        auth:     None,
-        aliases:  Vec::new(),
+        name: "active-project".into(),
+        kind: InstanceKind::Local,
+        state: InstanceState::Running,
+        url: Some("http://localhost:2900".into()),
+        folder: Some(PathBuf::from("/tmp/active-project")),
+        global: false,
+        user: None,
+        auth: None,
+        aliases: Vec::new(),
         identity: "/tmp/active-project/.kalam/run/instance.json".into(),
     };
     let catalog = vec![stopped.clone(), live_other];

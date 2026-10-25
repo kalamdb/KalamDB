@@ -1,3 +1,4 @@
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
 use datafusion_common::ScalarValue;
 use serde_json::{Number, Value};
 
@@ -35,32 +36,44 @@ pub fn json_value_to_scalar_for_column(
             ScalarValue::Int64(Some(num))
         },
         KalamDataType::Timestamp => {
-            let num = value
-                .as_i64()
-                .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
-                .unwrap_or(0);
+            let num = match value {
+                Value::String(text) => parse_timestamp_micros(text)?,
+                _ => value
+                    .as_i64()
+                    .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
+                    .unwrap_or(0),
+            };
             ScalarValue::TimestampMicrosecond(Some(num), None)
         },
         KalamDataType::DateTime => {
-            let num = value
-                .as_i64()
-                .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
-                .unwrap_or(0);
+            let num = match value {
+                Value::String(text) => parse_timestamp_micros(text)?,
+                _ => value
+                    .as_i64()
+                    .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
+                    .unwrap_or(0),
+            };
             ScalarValue::TimestampMicrosecond(Some(num), Some("UTC".into()))
         },
         KalamDataType::Time => {
-            let num = value
-                .as_i64()
-                .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
-                .unwrap_or(0);
+            let num = match value {
+                Value::String(text) => parse_time_micros(text)?,
+                _ => value
+                    .as_i64()
+                    .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
+                    .unwrap_or(0),
+            };
             ScalarValue::Time64Microsecond(Some(num))
         },
         KalamDataType::Date => {
-            let num = value
-                .as_i64()
-                .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
-                .unwrap_or(0);
-            ScalarValue::Date32(Some(num as i32))
+            let num = match value {
+                Value::String(text) => parse_date_days(text)?,
+                _ => value
+                    .as_i64()
+                    .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
+                    .unwrap_or(0) as i32,
+            };
+            ScalarValue::Date32(Some(num))
         },
         KalamDataType::Double => ScalarValue::Float64(Some(value.as_f64().unwrap_or(0.0))),
         KalamDataType::Float => ScalarValue::Float32(Some(value.as_f64().unwrap_or(0.0) as f32)),
@@ -105,6 +118,34 @@ pub fn json_value_to_scalar_for_column(
     };
 
     Ok(scalar)
+}
+
+fn parse_date_days(text: &str) -> Result<i32, String> {
+    let date = NaiveDate::parse_from_str(text, "%Y-%m-%d")
+        .map_err(|error| format!("invalid DATE argument '{text}': {error}"))?;
+    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).expect("unix epoch");
+    Ok((date - epoch).num_days() as i32)
+}
+
+fn parse_time_micros(text: &str) -> Result<i64, String> {
+    let time = NaiveTime::parse_from_str(text, "%H:%M:%S")
+        .or_else(|_| NaiveTime::parse_from_str(text, "%H:%M:%S%.f"))
+        .map_err(|error| format!("invalid TIME argument '{text}': {error}"))?;
+    Ok(i64::from(time.num_seconds_from_midnight()) * 1_000_000
+        + i64::from(time.nanosecond() / 1000))
+}
+
+fn parse_timestamp_micros(text: &str) -> Result<i64, String> {
+    if let Ok(parsed) = DateTime::parse_from_rfc3339(text) {
+        return Ok(parsed.timestamp_micros());
+    }
+    if let Ok(parsed) = text.parse::<DateTime<Utc>>() {
+        return Ok(parsed.timestamp_micros());
+    }
+    let naive = NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S")
+        .or_else(|_| NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S"))
+        .map_err(|error| format!("invalid TIMESTAMP argument '{text}': {error}"))?;
+    Ok(naive.and_utc().timestamp_micros())
 }
 
 pub fn scalar_to_json_for_column(
@@ -427,7 +468,7 @@ mod tests {
         let value = json!("200.75");
         let dtype = KalamDataType::Decimal {
             precision: 10,
-            scale:     2,
+            scale: 2,
         };
 
         let scalar = json_value_to_scalar_for_column(&value, &dtype).expect("decimal to scalar");

@@ -184,19 +184,19 @@ fn put_primary_only_message(
 }
 
 struct PausingScanBackend {
-    inner:           InMemoryBackend,
+    inner: InMemoryBackend,
     pause_next_scan: AtomicBool,
-    scan_started:    (StdMutex<bool>, Condvar),
-    release_scan:    (StdMutex<bool>, Condvar),
+    scan_started: (StdMutex<bool>, Condvar),
+    release_scan: (StdMutex<bool>, Condvar),
 }
 
 impl PausingScanBackend {
     fn new() -> Self {
         Self {
-            inner:           InMemoryBackend::new(),
+            inner: InMemoryBackend::new(),
             pause_next_scan: AtomicBool::new(false),
-            scan_started:    (StdMutex::new(false), Condvar::new()),
-            release_scan:    (StdMutex::new(false), Condvar::new()),
+            scan_started: (StdMutex::new(false), Condvar::new()),
+            release_scan: (StdMutex::new(false), Condvar::new()),
         }
     }
 

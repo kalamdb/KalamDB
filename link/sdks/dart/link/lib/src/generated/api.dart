@@ -9,6 +9,16 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `build_dart_connection_options`, `build_event_handlers`, `create_client_inner`, `parse_dart_file_ref`, `parse_dart_query_params`, `push_connection_event`, `push_debug_connection_event`
 
+/// Encode a function call with the shared Rust domain codec.
+Uint8List dartEncodeRoutineRequest(
+        {required String argumentsJson, required String paramsJson}) =>
+    RustLib.instance.api.crateApiDartEncodeRoutineRequest(
+        argumentsJson: argumentsJson, paramsJson: paramsJson);
+
+/// Decode a function result frame with the shared Rust domain codec.
+String dartDecodeRoutineResult({required Uint8List frame}) =>
+    RustLib.instance.api.crateApiDartDecodeRoutineResult(frame: frame);
+
 /// Build a FILE download URL using the canonical `link-common` FileRef model.
 String dartFileRefDownloadUrl(
         {required String fileRefJson,

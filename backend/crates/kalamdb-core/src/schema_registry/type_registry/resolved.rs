@@ -15,15 +15,15 @@ use kalamdb_commons::{
 /// Shared layout for one TypeId revision. Nested children are interned.
 #[derive(Debug, Clone)]
 pub struct ResolvedType {
-    pub type_id:      TypeId,
-    pub revision:     TypeRevision,
+    pub type_id: TypeId,
+    pub revision: TypeRevision,
     pub namespace_id: SchemaId,
-    pub name:         String,
-    pub kind:         CatalogTypeKind,
-    pub fields:       Arc<[ResolvedTypeField]>,
+    pub name: String,
+    pub kind: CatalogTypeKind,
+    pub fields: Arc<[ResolvedTypeField]>,
     /// Interned Arrow children for this type. Occurrence FieldRefs are built per column.
     pub arrow_fields: Arc<Fields>,
-    pub arrow_type:   DataType,
+    pub arrow_type: DataType,
 }
 
 impl ResolvedType {
@@ -98,8 +98,8 @@ impl ResolvedType {
             .iter()
             .filter(|field| field.name != "__base" && field.name != "__default" && !field.dropped)
             .map(|field| DomainCheckSpec {
-                name:      field.name.clone(),
-                expr:      field.constraint_expr.clone().unwrap_or_default(),
+                name: field.name.clone(),
+                expr: field.constraint_expr.clone().unwrap_or_default(),
                 validated: field.not_null,
             })
             .collect();
@@ -140,20 +140,20 @@ impl ResolvedType {
 /// `type_ref`; Arrow does not have a separate jsonb or timestamptz type.
 #[derive(Debug, Clone)]
 pub struct ResolvedLayout {
-    pub type_ref:   LogicalTypeRef,
+    pub type_ref: LogicalTypeRef,
     pub arrow_type: DataType,
-    pub nested:     Option<Arc<ResolvedType>>,
+    pub nested: Option<Arc<ResolvedType>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ResolvedTypeField {
-    pub name:              String,
-    pub slot:              i32,
-    pub ordinal:           i32,
-    pub type_ref:          LogicalTypeRef,
-    pub not_null:          bool,
-    pub dropped:           bool,
-    pub nested:            Option<Arc<ResolvedType>>,
+    pub name: String,
+    pub slot: i32,
+    pub ordinal: i32,
+    pub type_ref: LogicalTypeRef,
+    pub not_null: bool,
+    pub dropped: bool,
+    pub nested: Option<Arc<ResolvedType>>,
     pub arrow_child_index: usize,
-    pub constraint_expr:   Option<String>,
+    pub constraint_expr: Option<String>,
 }

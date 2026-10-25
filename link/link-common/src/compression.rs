@@ -36,7 +36,7 @@ pub fn decompress_gzip_with_limit(
     if data.len() > DEFAULT_MAX_COMPRESSED_BYTES {
         return Err(DecompressError::InputTooLarge {
             actual: data.len(),
-            limit:  DEFAULT_MAX_COMPRESSED_BYTES,
+            limit: DEFAULT_MAX_COMPRESSED_BYTES,
         });
     }
 
@@ -111,7 +111,7 @@ pub fn decompress_gzip_with_limit(
     if advertised_size > effective_limit {
         return Err(DecompressError::OutputTooLarge {
             advertised: advertised_size,
-            limit:      effective_limit,
+            limit: effective_limit,
         });
     }
 
@@ -140,7 +140,7 @@ pub fn decompress_frame_checked(
         if data.len() > max_output_bytes.min(DEFAULT_MAX_DECOMPRESSED_BYTES) {
             return Err(DecompressError::OutputTooLarge {
                 advertised: data.len(),
-                limit:      max_output_bytes.min(DEFAULT_MAX_DECOMPRESSED_BYTES),
+                limit: max_output_bytes.min(DEFAULT_MAX_DECOMPRESSED_BYTES),
             });
         }
         Ok(std::borrow::Cow::Borrowed(data))
@@ -172,10 +172,7 @@ pub enum DecompressError {
     /// Compressed input exceeds configured limit
     InputTooLarge { actual: usize, limit: usize },
     /// Advertised decompressed payload exceeds configured limit
-    OutputTooLarge {
-        advertised: usize,
-        limit:      usize,
-    },
+    OutputTooLarge { advertised: usize, limit: usize },
 }
 
 impl std::fmt::Display for DecompressError {
@@ -249,7 +246,7 @@ mod tests {
             err,
             DecompressError::OutputTooLarge {
                 advertised: 1024,
-                limit:      16,
+                limit: 16,
             }
         ));
     }

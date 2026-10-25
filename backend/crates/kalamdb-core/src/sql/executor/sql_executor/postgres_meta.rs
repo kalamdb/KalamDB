@@ -47,9 +47,9 @@ impl SqlExecutor {
                 )
                 .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
                 Ok(ExecutionResult::Rows {
-                    batches:   vec![batch],
+                    batches: vec![batch],
                     row_count: 1,
-                    schema:    Some(schema),
+                    schema: Some(schema),
                 })
             },
         }

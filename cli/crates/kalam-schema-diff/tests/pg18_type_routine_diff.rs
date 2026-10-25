@@ -72,7 +72,7 @@ fn pg18_type_and_routine_diff_emits_alter_and_respects_destructive_flag() {
         after,
         &DiffOptions {
             allow_destructive: true,
-            default_schema:    None,
+            default_schema: None,
         },
     )
     .expect("destructive diff");

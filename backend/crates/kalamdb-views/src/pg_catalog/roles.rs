@@ -35,7 +35,7 @@ fn schema() -> SchemaRef {
 
 #[derive(Debug)]
 pub struct PgRolesView {
-    name:            &'static str,
+    name: &'static str,
     system_registry: Arc<SystemTablesRegistry>,
 }
 

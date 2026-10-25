@@ -1195,10 +1195,10 @@ impl DmlExecutor {
                         (
                             row_key.clone(),
                             UserTableRow {
-                                user_id:  user_id.clone(),
+                                user_id: user_id.clone(),
                                 _version: version,
                                 _deleted: false,
-                                fields:   mutation.payload.clone(),
+                                fields: mutation.payload.clone(),
                             },
                         ),
                     );
@@ -1463,7 +1463,7 @@ impl DmlExecutor {
                             SharedTableRow {
                                 _version: version,
                                 _deleted: false,
-                                fields:   mutation.payload.clone(),
+                                fields: mutation.payload.clone(),
                             },
                         ),
                     );

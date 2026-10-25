@@ -39,42 +39,42 @@ const LOG_TAIL: JsonlTailLimits = JsonlTailLimits::DEFAULT;
 
 #[derive(Debug)]
 struct ProcedureLogEntry {
-    timestamp:    String,
-    node_id:      String,
+    timestamp: String,
+    node_id: String,
     execution_id: String,
-    request_id:   String,
+    request_id: String,
     procedure_id: String,
-    module_id:    Option<String>,
-    revision_id:  Option<String>,
-    actor:        String,
-    origin:       String,
-    outcome:      String,
-    channel:      String,
-    level:        String,
-    error_code:   Option<String>,
-    message:      Option<String>,
-    duration_ms:  i64,
-    schedule_id:  Option<String>,
+    module_id: Option<String>,
+    revision_id: Option<String>,
+    actor: String,
+    origin: String,
+    outcome: String,
+    channel: String,
+    level: String,
+    error_code: Option<String>,
+    message: Option<String>,
+    duration_ms: i64,
+    schedule_id: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
 struct RawProcedureLogEntry {
-    timestamp:    Option<String>,
-    node_id:      Option<String>,
+    timestamp: Option<String>,
+    node_id: Option<String>,
     execution_id: Option<String>,
-    request_id:   Option<String>,
+    request_id: Option<String>,
     procedure_id: Option<String>,
-    module_id:    Option<String>,
-    revision_id:  Option<String>,
-    actor:        Option<String>,
-    origin:       Option<String>,
-    outcome:      Option<String>,
-    channel:      Option<String>,
-    level:        Option<String>,
-    error_code:   Option<String>,
-    message:      Option<String>,
-    duration_ms:  Option<i64>,
-    schedule_id:  Option<String>,
+    module_id: Option<String>,
+    revision_id: Option<String>,
+    actor: Option<String>,
+    origin: Option<String>,
+    outcome: Option<String>,
+    channel: Option<String>,
+    level: Option<String>,
+    error_code: Option<String>,
+    message: Option<String>,
+    duration_ms: Option<i64>,
+    schedule_id: Option<String>,
 }
 
 impl RawProcedureLogEntry {
@@ -117,7 +117,7 @@ impl RawProcedureLogEntry {
 
 #[derive(Debug)]
 pub struct ProcedureLogsView {
-    runtime_path:     PathBuf,
+    runtime_path: PathBuf,
     legacy_logs_path: PathBuf,
 }
 

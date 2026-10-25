@@ -25,11 +25,11 @@ pub(crate) fn classify_hot_pk<K, V>(
 
 /// One applied hot mutation, including the prior row for file cleanup.
 pub struct DeferredMutation<K> {
-    pub key:          K,
+    pub key: K,
     pub notification: Option<ChangeNotification>,
-    pub prior:        Row,
+    pub prior: Row,
     /// Update payload used to drop replaced file columns. `None` for deletes.
-    pub payload:      Option<Row>,
+    pub payload: Option<Row>,
 }
 
 /// The row an update or delete will rewrite, plus the hot key to drop when one exists.
@@ -46,7 +46,7 @@ pub(crate) enum MutationTarget<K, V> {
 
 /// Hot rows a batch insert must replace, keyed by primary-key text.
 pub(crate) struct HotInsertScan<K, V> {
-    pub duplicate:  Option<String>,
+    pub duplicate: Option<String>,
     pub tombstones: HashMap<String, (K, V)>,
 }
 

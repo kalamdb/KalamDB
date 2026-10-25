@@ -88,8 +88,8 @@ impl BuiltinDefault {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct RoutineCall {
-    pub routine_id:      RoutineId,
-    pub arguments:       Vec<CallArgument>,
+    pub routine_id: RoutineId,
+    pub arguments: Vec<CallArgument>,
     #[cfg_attr(feature = "serde", serde(default))]
     pub named_arguments: Vec<Option<String>>,
 }

@@ -15,8 +15,8 @@ use kalamdb_system::providers::topics::{Topic, TopicRoute};
 /// Cached route: compiled filter plus a pointer into the shared topic.
 #[derive(Clone, Debug)]
 pub(crate) struct RouteEntry {
-    topic:               Arc<Topic>,
-    route_index:         usize,
+    topic: Arc<Topic>,
+    route_index: usize,
     pub compiled_filter: Option<Arc<RowFilter>>,
 }
 
@@ -39,14 +39,14 @@ pub(crate) struct RouteCache {
     /// TableId → matching routes
     table_routes: DashMap<TableId, Vec<RouteEntry>>,
     /// TopicId → full topic metadata (shared with `RouteEntry`)
-    topics:       DashMap<TopicId, Arc<Topic>>,
+    topics: DashMap<TopicId, Arc<Topic>>,
 }
 
 impl RouteCache {
     pub fn new() -> Self {
         Self {
             table_routes: DashMap::new(),
-            topics:       DashMap::new(),
+            topics: DashMap::new(),
         }
     }
 

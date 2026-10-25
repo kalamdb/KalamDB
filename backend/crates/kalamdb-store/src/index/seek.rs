@@ -29,22 +29,22 @@ pub enum IndexCmpOp {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndexKeyPredicate {
     pub column_index: usize,
-    pub op:           IndexCmpOp,
-    pub bound:        ScalarValue,
+    pub op: IndexCmpOp,
+    pub bound: ScalarValue,
 }
 
 /// Store-level scan recipe for one prefix index.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndexScanPlan {
-    pub index_idx:     usize,
-    pub prefix:        Vec<u8>,
-    pub start_key:     Option<Vec<u8>>,
+    pub index_idx: usize,
+    pub prefix: Vec<u8>,
+    pub start_key: Option<Vec<u8>>,
     pub exclusive_end: Option<Vec<u8>>,
-    equality_columns:  u8,
-    has_range:         bool,
-    user_scoped:       bool,
-    column_count:      u8,
-    key_predicates:    Vec<IndexKeyPredicate>,
+    equality_columns: u8,
+    has_range: bool,
+    user_scoped: bool,
+    column_count: u8,
+    key_predicates: Vec<IndexKeyPredicate>,
 }
 
 impl IndexScanPlan {

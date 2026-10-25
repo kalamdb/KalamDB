@@ -52,7 +52,7 @@ fn lift_colliding_order_by(query: &mut Query) {
     if let SetExpr::Select(select) = query.body.as_mut() {
         for (offset, (_, expr)) in collisions.iter().enumerate() {
             select.projection.push(SelectItem::ExprWithAlias {
-                expr:  expr.clone(),
+                expr: expr.clone(),
                 alias: Ident::new(format!("kalam_sort_{offset}")),
             });
         }
@@ -76,17 +76,17 @@ fn lift_colliding_order_by(query: &mut Query) {
         .collect();
     shell.from = vec![TableWithJoins {
         relation: TableFactor::Derived {
-            lateral:  false,
+            lateral: false,
             subquery: Box::new(inner),
-            alias:    Some(TableAlias {
+            alias: Some(TableAlias {
                 explicit: true,
-                name:     Ident::new("kalam_sort_wrap"),
-                columns:  Vec::new(),
-                at:       None,
+                name: Ident::new("kalam_sort_wrap"),
+                columns: Vec::new(),
+                at: None,
             }),
-            sample:   None,
+            sample: None,
         },
-        joins:    Vec::new(),
+        joins: Vec::new(),
     }];
 
     *query = Query {

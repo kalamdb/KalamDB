@@ -25,8 +25,8 @@ impl TypeRegistry {
         table: &TableDefinition,
     ) -> Result<Arc<arrow::datatypes::Schema>, KalamDbError> {
         let key = TableLayoutKey {
-            namespace_id:   table.namespace_id.clone(),
-            table_name:     table.table_name.clone(),
+            namespace_id: table.namespace_id.clone(),
+            table_name: table.table_name.clone(),
             schema_version: table.schema_version,
         };
         if let Some(cached) = self.table_layouts.get(&key) {

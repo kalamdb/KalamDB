@@ -1,84 +1,40 @@
 //! Convert SQL CALL arguments and execution results into routine values.
 
-use chrono::{DateTime, NaiveDate, NaiveTime, Timelike, Utc};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::{
     conversions::arrow_json_conversion::{
         coerce_scalar_to_field, json_value_to_scalar, scalar_value_to_js_json,
     },
-    json_value_to_scalar_for_column,
-    models::rows::Row,
-    CallArgument, KalamDataType,
+    domain_value_to_scalar, json_value_to_scalar_for_column,
+    models::{rows::Row, DomainValue},
+    scalar_to_domain_value, CallArgument, KalamDataType,
 };
 use kalamdb_functions::RoutineValue;
-use kalamdb_serialization::DomainValue;
 use serde_json::Value as JsonValue;
 
 use crate::{error::KalamDbError, sql::context::ExecutionResult};
 
-/// Convert a binary [`DomainValue`] directly into a [`RoutineValue`] without `serde_json::Value`
-/// or MessagePack intermediates (`T056`, `FR-039`, `FR-040`).
+/// Convert a binary [`DomainValue`] into a [`RoutineValue`], delegating scalar/array
+/// conversion to `kalamdb_commons::conversions::domain_value_to_scalar`.
 pub fn domain_value_to_routine_value(
     value: &DomainValue,
     data_type: Option<&KalamDataType>,
 ) -> Result<RoutineValue, KalamDbError> {
     if matches!(data_type, Some(KalamDataType::Json)) {
-        return match value {
-            DomainValue::SqlNull | DomainValue::Omitted => {
-                Ok(RoutineValue::json(ScalarValue::Utf8(None)))
-            },
-            DomainValue::JsonNull => {
-                Ok(RoutineValue::json(ScalarValue::Utf8(Some("null".to_string()))))
-            },
-            DomainValue::Json(text) | DomainValue::Utf8(text) => {
-                Ok(RoutineValue::json(ScalarValue::Utf8(Some(text.clone()))))
-            },
-            other => Err(KalamDbError::InvalidOperation(format!(
-                "expected JSON domain value, got {other:?}"
-            ))),
-        };
+        return json_domain_to_routine(value);
     }
 
     match value {
-        DomainValue::Omitted | DomainValue::SqlNull | DomainValue::Void => {
-            Ok(RoutineValue::new(ScalarValue::Null))
-        },
         DomainValue::JsonNull => {
             Ok(RoutineValue::json(ScalarValue::Utf8(Some("null".to_string()))))
         },
-        DomainValue::Bool(v) => Ok(RoutineValue::new(ScalarValue::Boolean(Some(*v)))),
-        DomainValue::Int8(v) => Ok(RoutineValue::new(ScalarValue::Int8(Some(*v)))),
-        DomainValue::Int16(v) => Ok(RoutineValue::new(ScalarValue::Int16(Some(*v)))),
-        DomainValue::Int32(v) => Ok(RoutineValue::new(ScalarValue::Int32(Some(*v)))),
-        DomainValue::Int64(v) => Ok(RoutineValue::new(ScalarValue::Int64(Some(*v)))),
-        DomainValue::UInt8(v) => Ok(RoutineValue::new(ScalarValue::UInt8(Some(*v)))),
-        DomainValue::UInt16(v) => Ok(RoutineValue::new(ScalarValue::UInt16(Some(*v)))),
-        DomainValue::UInt32(v) => Ok(RoutineValue::new(ScalarValue::UInt32(Some(*v)))),
-        DomainValue::UInt64(v) => Ok(RoutineValue::new(ScalarValue::UInt64(Some(*v)))),
-        DomainValue::Float32(v) => Ok(RoutineValue::new(ScalarValue::Float32(Some(*v)))),
-        DomainValue::Float64(v) => Ok(RoutineValue::new(ScalarValue::Float64(Some(*v)))),
-        DomainValue::Decimal128 {
-            unscaled,
-            precision,
-            scale,
-        } => Ok(RoutineValue::new(ScalarValue::Decimal128(Some(*unscaled), *precision, *scale))),
-        DomainValue::Date32(v) => Ok(RoutineValue::new(ScalarValue::Date32(Some(*v)))),
-        DomainValue::TimeMicros(v) => {
-            Ok(RoutineValue::new(ScalarValue::Time64Microsecond(Some(*v))))
-        },
-        DomainValue::TimestampMicros(v) | DomainValue::TimestampTzMicros(v) => {
-            Ok(RoutineValue::new(ScalarValue::TimestampMicrosecond(Some(*v), None)))
-        },
-        DomainValue::Uuid(bytes) => {
-            Ok(RoutineValue::new(ScalarValue::FixedSizeBinary(16, Some(bytes.to_vec()))))
-        },
-        DomainValue::Utf8(s) => Ok(RoutineValue::new(ScalarValue::Utf8(Some(s.clone())))),
-        DomainValue::Bytes(bytes) => {
-            Ok(RoutineValue::new(ScalarValue::Binary(Some(bytes.clone()))))
-        },
         DomainValue::Json(text) => Ok(RoutineValue::json(ScalarValue::Utf8(Some(text.clone())))),
-        DomainValue::Enum { label, .. } => {
-            Ok(RoutineValue::new(ScalarValue::Utf8(Some(label.clone()))))
+        DomainValue::Object(fields) => {
+            let mut named = Vec::with_capacity(fields.len());
+            for (name, field_val) in fields {
+                named.push((name.clone(), domain_value_to_routine_value(field_val, None)?));
+            }
+            Ok(RoutineValue::named_object(named))
         },
         DomainValue::Composite(fields) => {
             let mut named = Vec::with_capacity(fields.len());
@@ -86,24 +42,6 @@ pub fn domain_value_to_routine_value(
                 named.push((slot.to_string(), domain_value_to_routine_value(field_val, None)?));
             }
             Ok(RoutineValue::named_object(named))
-        },
-        DomainValue::Array(items) => {
-            let mut scalars = Vec::with_capacity(items.len());
-            for item in items {
-                scalars.push(domain_value_to_routine_value(item, data_type)?.value);
-            }
-            let elem_ty = scalars
-                .first()
-                .map(ScalarValue::data_type)
-                .unwrap_or(arrow::datatypes::DataType::Utf8);
-            Ok(RoutineValue::new(ScalarValue::List(ScalarValue::new_list(
-                &scalars, &elem_ty, true,
-            ))))
-        },
-        DomainValue::FileRef(file) => {
-            let json = serde_json::to_string(file)
-                .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
-            Ok(RoutineValue::new(ScalarValue::Utf8(Some(json))))
         },
         DomainValue::RowSet(rows) => {
             let mut row_vals = Vec::with_capacity(rows.len());
@@ -114,22 +52,31 @@ pub fn domain_value_to_routine_value(
             let fields = row_vals.into_iter().map(|rv| (String::new(), rv)).collect();
             Ok(RoutineValue::named_object(fields))
         },
+        other => domain_value_to_scalar(other, data_type)
+            .map(RoutineValue::new)
+            .map_err(KalamDbError::InvalidOperation),
     }
 }
 
-/// Convert a [`RoutineValue`] directly into a binary [`DomainValue`] without `serde_json::Value`
-/// intermediates on scalar/composite paths (`T056`).
+/// Convert a [`RoutineValue`] into a [`DomainValue`], delegating scalar/array/struct
+/// conversion to `kalamdb_commons::conversions::scalar_to_domain_value`.
 pub fn routine_value_to_domain_value(
     value: &RoutineValue,
     data_type: Option<&KalamDataType>,
 ) -> Result<DomainValue, KalamDbError> {
     if let Some(fields) = &value.named_fields {
-        let mut out = Vec::with_capacity(fields.len());
-        for (idx, (_name, rv)) in fields.iter().enumerate() {
-            let slot = u16::try_from(idx + 1).unwrap_or(u16::MAX);
-            out.push((slot, routine_value_to_domain_value(rv, None)?));
+        if fields.iter().all(|(name, _)| name.is_empty()) {
+            let mut items = Vec::with_capacity(fields.len());
+            for (_, rv) in fields.iter() {
+                items.push(routine_value_to_domain_value(rv, None)?);
+            }
+            return Ok(DomainValue::Array(items));
         }
-        return Ok(DomainValue::Composite(out));
+        let mut out = Vec::with_capacity(fields.len());
+        for (name, rv) in fields.iter() {
+            out.push((name.clone(), routine_value_to_domain_value(rv, None)?));
+        }
+        return Ok(DomainValue::Object(out));
     }
     if value.json_sql || matches!(data_type, Some(KalamDataType::Json)) {
         return match &value.value {
@@ -143,89 +90,14 @@ pub fn routine_value_to_domain_value(
             ScalarValue::Utf8(None) | ScalarValue::LargeUtf8(None) | ScalarValue::Null => {
                 Ok(DomainValue::SqlNull)
             },
-            other => {
-                Err(KalamDbError::ExecutionError(format!("invalid json routine value {other:?}")))
-            },
+            other => scalar_value_to_js_json(other)
+                .map(|json| DomainValue::Json(json.0.to_string()))
+                .map_err(|error| {
+                    KalamDbError::ExecutionError(format!("invalid json routine value: {error}"))
+                }),
         };
     }
-    scalar_to_domain_value(&value.value)
-}
-
-fn scalar_to_domain_value(scalar: &ScalarValue) -> Result<DomainValue, KalamDbError> {
-    Ok(match scalar {
-        ScalarValue::Null => DomainValue::SqlNull,
-        ScalarValue::Boolean(Some(v)) => DomainValue::Bool(*v),
-        ScalarValue::Boolean(None) => DomainValue::SqlNull,
-        ScalarValue::Int8(Some(v)) => DomainValue::Int8(*v),
-        ScalarValue::Int16(Some(v)) => DomainValue::Int16(*v),
-        ScalarValue::Int32(Some(v)) => DomainValue::Int32(*v),
-        ScalarValue::Int64(Some(v)) => DomainValue::Int64(*v),
-        ScalarValue::UInt8(Some(v)) => DomainValue::UInt8(*v),
-        ScalarValue::UInt16(Some(v)) => DomainValue::UInt16(*v),
-        ScalarValue::UInt32(Some(v)) => DomainValue::UInt32(*v),
-        ScalarValue::UInt64(Some(v)) => DomainValue::UInt64(*v),
-        ScalarValue::Float32(Some(v)) => DomainValue::Float32(*v),
-        ScalarValue::Float64(Some(v)) => DomainValue::Float64(*v),
-        ScalarValue::Decimal128(Some(unscaled), precision, scale) => DomainValue::Decimal128 {
-            unscaled:  *unscaled,
-            precision: *precision,
-            scale:     *scale,
-        },
-        ScalarValue::Date32(Some(v)) => DomainValue::Date32(*v),
-        ScalarValue::Time64Microsecond(Some(v)) => DomainValue::TimeMicros(*v),
-        ScalarValue::TimestampMillisecond(Some(ms), _) => {
-            DomainValue::TimestampTzMicros(ms.saturating_mul(1_000))
-        },
-        ScalarValue::TimestampMicrosecond(Some(us), _) => DomainValue::TimestampTzMicros(*us),
-        ScalarValue::TimestampNanosecond(Some(ns), _) => {
-            DomainValue::TimestampTzMicros(*ns / 1_000)
-        },
-        ScalarValue::FixedSizeBinary(16, Some(bytes)) if bytes.len() == 16 => {
-            let mut arr = [0u8; 16];
-            arr.copy_from_slice(bytes);
-            DomainValue::Uuid(arr)
-        },
-        ScalarValue::Binary(Some(bytes))
-        | ScalarValue::LargeBinary(Some(bytes))
-        | ScalarValue::BinaryView(Some(bytes))
-        | ScalarValue::FixedSizeBinary(_, Some(bytes)) => DomainValue::Bytes(bytes.clone()),
-        ScalarValue::Utf8(Some(s))
-        | ScalarValue::LargeUtf8(Some(s))
-        | ScalarValue::Utf8View(Some(s)) => DomainValue::Utf8(s.clone()),
-        ScalarValue::Struct(struct_arr) => {
-            use arrow::array::Array;
-            if struct_arr.len() == 0 || struct_arr.is_null(0) {
-                return Ok(DomainValue::SqlNull);
-            }
-            let mut fields = Vec::with_capacity(struct_arr.num_columns());
-            for col_idx in 0..struct_arr.num_columns() {
-                let cell = ScalarValue::try_from_array(struct_arr.column(col_idx), 0)
-                    .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
-                fields.push(((col_idx + 1) as u16, scalar_to_domain_value(&cell)?));
-            }
-            DomainValue::Composite(fields)
-        },
-        ScalarValue::List(list_arr) => {
-            use arrow::array::Array;
-            if list_arr.len() == 0 || list_arr.is_null(0) {
-                return Ok(DomainValue::SqlNull);
-            }
-            let values = list_arr.value(0);
-            let mut items = Vec::with_capacity(values.len());
-            for idx in 0..values.len() {
-                let cell = ScalarValue::try_from_array(values.as_ref(), idx)
-                    .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
-                items.push(scalar_to_domain_value(&cell)?);
-            }
-            DomainValue::Array(items)
-        },
-        other if other.is_null() => DomainValue::SqlNull,
-        other => {
-            return Err(KalamDbError::ExecutionError(format!(
-                "unsupported scalar for domain encoding: {other:?}"
-            )))
-        },
-    })
+    scalar_to_domain_value(&value.value).map_err(KalamDbError::ExecutionError)
 }
 
 pub fn json_to_routine_value(
@@ -244,10 +116,34 @@ pub fn json_to_routine_value(
         }
     }
     let scalar = match data_type {
-        Some(data_type) => bind_typed_argument(data_type, value)?,
+        Some(data_type) => {
+            json_value_to_scalar_for_column(value, data_type).map_err(KalamDbError::InvalidSql)?
+        },
         None => json_value_to_scalar(value),
     };
     Ok(RoutineValue::new(scalar))
+}
+
+fn json_domain_to_routine(value: &DomainValue) -> Result<RoutineValue, KalamDbError> {
+    match value {
+        DomainValue::SqlNull | DomainValue::Omitted => {
+            Ok(RoutineValue::json(ScalarValue::Utf8(None)))
+        },
+        DomainValue::JsonNull => {
+            Ok(RoutineValue::json(ScalarValue::Utf8(Some("null".to_string()))))
+        },
+        DomainValue::Json(text) | DomainValue::Utf8(text) => {
+            Ok(RoutineValue::json(ScalarValue::Utf8(Some(text.clone()))))
+        },
+        DomainValue::Object(_) | DomainValue::Array(_) | DomainValue::Composite(_) => {
+            let json = kalamdb_serialization::domain_value_to_json(value)
+                .map_err(|error| KalamDbError::InvalidOperation(error.to_string()))?;
+            Ok(RoutineValue::json(ScalarValue::Utf8(Some(json.to_string()))))
+        },
+        other => Err(KalamDbError::InvalidOperation(format!(
+            "expected JSON domain value, got {other:?}"
+        ))),
+    }
 }
 
 fn json_sql_value(value: &JsonValue) -> RoutineValue {
@@ -311,61 +207,6 @@ pub fn bind_call_arguments(
         values.push(value);
     }
     Ok(values)
-}
-
-fn bind_typed_argument(
-    data_type: &KalamDataType,
-    value: &JsonValue,
-) -> Result<ScalarValue, KalamDbError> {
-    if value.is_null() {
-        return Ok(ScalarValue::Null);
-    }
-    let coerced = coerce_typed_json(data_type, value)?;
-    json_value_to_scalar_for_column(&coerced, data_type).map_err(KalamDbError::InvalidSql)
-}
-
-fn coerce_typed_json(
-    data_type: &KalamDataType,
-    value: &JsonValue,
-) -> Result<JsonValue, KalamDbError> {
-    match (data_type, value) {
-        (KalamDataType::Date, JsonValue::String(text)) => {
-            let date = NaiveDate::parse_from_str(text, "%Y-%m-%d").map_err(|error| {
-                KalamDbError::InvalidSql(format!("invalid DATE argument '{text}': {error}"))
-            })?;
-            let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).expect("unix epoch");
-            Ok(JsonValue::Number((date - epoch).num_days().into()))
-        },
-        (KalamDataType::Time, JsonValue::String(text)) => {
-            let time = NaiveTime::parse_from_str(text, "%H:%M:%S")
-                .or_else(|_| NaiveTime::parse_from_str(text, "%H:%M:%S%.f"))
-                .map_err(|error| {
-                    KalamDbError::InvalidSql(format!("invalid TIME argument '{text}': {error}"))
-                })?;
-            let micros = i64::from(time.num_seconds_from_midnight()) * 1_000_000
-                + i64::from(time.nanosecond() / 1000);
-            Ok(JsonValue::Number(micros.into()))
-        },
-        (KalamDataType::Timestamp | KalamDataType::DateTime, JsonValue::String(text)) => {
-            Ok(JsonValue::Number(parse_timestamp_micros(text)?.into()))
-        },
-        _ => Ok(value.clone()),
-    }
-}
-
-fn parse_timestamp_micros(text: &str) -> Result<i64, KalamDbError> {
-    if let Ok(parsed) = DateTime::parse_from_rfc3339(text) {
-        return Ok(parsed.timestamp_micros());
-    }
-    if let Ok(parsed) = text.parse::<DateTime<Utc>>() {
-        return Ok(parsed.timestamp_micros());
-    }
-    let naive = chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S")
-        .or_else(|_| chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S"))
-        .map_err(|error| {
-            KalamDbError::InvalidSql(format!("invalid TIMESTAMP argument '{text}': {error}"))
-        })?;
-    Ok(naive.and_utc().timestamp_micros())
 }
 
 const MAX_PROCEDURE_QUERY_ROWS: usize = 10_000;
@@ -832,18 +673,6 @@ mod tests {
     }
 
     #[test]
-    fn nested_call_reuses_function_value_buffer() {
-        use kalamdb_serialization::FunctionValueEncoder;
-        use serde_json::json;
-
-        let mut encoder = FunctionValueEncoder::default();
-        let value = json!({"ok": true});
-        let first = encoder.encode("contract", &value).unwrap();
-        let second = encoder.encode("contract", &value).unwrap();
-        assert!(std::sync::Arc::ptr_eq(&first, &second));
-    }
-
-    #[test]
     fn t055_t056_domain_value_routine_value_lossless_roundtrip() {
         use kalamdb_commons::KalamDataType;
         use kalamdb_serialization::DomainValue;
@@ -857,15 +686,15 @@ mod tests {
 
         // 2. Exact Decimal128
         let dec = DomainValue::Decimal128 {
-            unscaled:  -123_456_789,
+            unscaled: -123_456_789,
             precision: 18,
-            scale:     4,
+            scale: 4,
         };
         let rv_dec = domain_value_to_routine_value(
             &dec,
             Some(&KalamDataType::Decimal {
                 precision: 18,
-                scale:     4,
+                scale: 4,
             }),
         )
         .unwrap();
@@ -886,6 +715,45 @@ mod tests {
         assert_eq!(
             routine_value_to_domain_value(&json_null, Some(&KalamDataType::Json)).unwrap(),
             DomainValue::JsonNull
+        );
+    }
+
+    #[test]
+    fn empty_domain_array_uses_declared_type_or_null() {
+        use arrow::datatypes::DataType;
+        use kalamdb_commons::KalamDataType;
+        use kalamdb_serialization::DomainValue;
+
+        use super::domain_value_to_routine_value;
+
+        let declared = domain_value_to_routine_value(
+            &DomainValue::Array(vec![]),
+            Some(&KalamDataType::BigInt),
+        )
+        .unwrap();
+        let ScalarValue::List(list) = &declared.value else {
+            panic!("declared empty array must be a list, got {:?}", declared.value);
+        };
+        assert_eq!(
+            list.data_type(),
+            &DataType::List(std::sync::Arc::new(arrow::datatypes::Field::new(
+                "item",
+                DataType::Int64,
+                true
+            )))
+        );
+
+        let undeclared = domain_value_to_routine_value(&DomainValue::Array(vec![]), None).unwrap();
+        let ScalarValue::List(list) = &undeclared.value else {
+            panic!("undeclared empty array must be a list");
+        };
+        assert_eq!(
+            list.data_type(),
+            &DataType::List(std::sync::Arc::new(arrow::datatypes::Field::new(
+                "item",
+                DataType::Null,
+                true,
+            )))
         );
     }
 }

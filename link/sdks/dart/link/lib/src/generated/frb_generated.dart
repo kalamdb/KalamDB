@@ -138,6 +138,11 @@ abstract class RustLibApi extends BaseApi {
 
   String crateApiDartFileRefStoredName({required String fileRefJson});
 
+  Uint8List crateApiDartEncodeRoutineRequest(
+      {required String argumentsJson, required String paramsJson});
+
+  String crateApiDartDecodeRoutineResult({required Uint8List frame});
+
   Future<bool> crateApiDartIsConnected({required DartKalamClient client});
 
   Future<List<DartSubscriptionInfo>> crateApiDartListSubscriptions(
@@ -603,6 +608,56 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(
         debugName: "dart_file_ref_relative_url",
         argNames: ["fileRefJson", "namespace", "table"],
+      );
+
+  @override
+  Uint8List crateApiDartEncodeRoutineRequest(
+      {required String argumentsJson, required String paramsJson}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_String(argumentsJson, serializer);
+        sse_encode_String(paramsJson, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 32)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_AnyhowException,
+      ),
+      constMeta: kCrateApiDartEncodeRoutineRequestConstMeta,
+      argValues: [argumentsJson, paramsJson],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDartEncodeRoutineRequestConstMeta =>
+      const TaskConstMeta(
+        debugName: "dart_encode_routine_request",
+        argNames: ["argumentsJson", "paramsJson"],
+      );
+
+  @override
+  String crateApiDartDecodeRoutineResult({required Uint8List frame}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_list_prim_u_8_strict(frame, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_String,
+        decodeErrorData: sse_decode_AnyhowException,
+      ),
+      constMeta: kCrateApiDartDecodeRoutineResultConstMeta,
+      argValues: [frame],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDartDecodeRoutineResultConstMeta =>
+      const TaskConstMeta(
+        debugName: "dart_decode_routine_result",
+        argNames: ["frame"],
       );
 
   @override

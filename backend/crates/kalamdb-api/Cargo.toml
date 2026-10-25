@@ -39,7 +39,6 @@ actix-rt = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
-rmp-serde = { workspace = true }
 
 
 # Bytes

@@ -14,8 +14,8 @@ pub enum HostDispatch {
 /// One portable `ctx` method. Nested HTTP/db objects are listed as their leaves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostMethod {
-    pub path:     &'static str,
-    pub ts:       &'static str,
+    pub path: &'static str,
+    pub ts: &'static str,
     pub dispatch: HostDispatch,
 }
 
@@ -55,85 +55,85 @@ pub const NATIVE_FNS: &[&str] = &[
 /// `FunctionHost` method — not a `CoreFunctionHost` impl.
 pub const HOST_METHODS: &[HostMethod] = &[
     HostMethod {
-        path:     "db.query",
-        ts:       "query(sql: string, params?: unknown[]): Promise<unknown>",
+        path: "db.query",
+        ts: "query(sql: string, params?: unknown[]): Promise<unknown>",
         dispatch: HostDispatch::AsyncOp("query"),
     },
     HostMethod {
-        path:     "db.queryView",
-        ts:       "queryView<T = Record<string, unknown>>(sql: string, params?: unknown[]): \
+        path: "db.queryView",
+        ts: "queryView<T = Record<string, unknown>>(sql: string, params?: unknown[]): \
                    Promise<ReadView<T>>",
         dispatch: HostDispatch::AsyncOp("query_view"),
     },
     HostMethod {
-        path:     "db.queryBatches",
-        ts:       "queryBatches<T = Record<string, unknown>>(sql: string, params?: unknown[]): \
+        path: "db.queryBatches",
+        ts: "queryBatches<T = Record<string, unknown>>(sql: string, params?: unknown[]): \
                    AsyncIterableIterator<ReadView<T>>",
         dispatch: HostDispatch::AsyncOp("query_batches"),
     },
     HostMethod {
-        path:     "db.execute",
-        ts:       "execute(sql: string, params?: unknown[]): Promise<unknown>",
+        path: "db.execute",
+        ts: "execute(sql: string, params?: unknown[]): Promise<unknown>",
         dispatch: HostDispatch::AsyncOp("execute"),
     },
     HostMethod {
-        path:     "functions.call",
-        ts:       "call(name: string, args?: unknown): Promise<unknown>",
+        path: "functions.call",
+        ts: "call(name: string, args?: unknown): Promise<unknown>",
         dispatch: HostDispatch::AsyncOp("call"),
     },
     HostMethod {
-        path:     "topics.publish",
-        ts:       "publish(topic: string, payload: unknown): Promise<void>",
+        path: "topics.publish",
+        ts: "publish(topic: string, payload: unknown): Promise<void>",
         dispatch: HostDispatch::AsyncOp("publish"),
     },
     HostMethod {
-        path:     "sleep",
-        ts:       "sleep(ms: number): Promise<void>",
+        path: "sleep",
+        ts: "sleep(ms: number): Promise<void>",
         dispatch: HostDispatch::AsyncOp("sleep"),
     },
     HostMethod {
-        path:     "log.debug",
-        ts:       "debug(message: string, ...args: unknown[]): void",
+        path: "log.debug",
+        ts: "debug(message: string, ...args: unknown[]): void",
         dispatch: HostDispatch::Native("kalamHostLog"),
     },
     HostMethod {
-        path:     "log.info",
-        ts:       "info(message: string, ...args: unknown[]): void",
+        path: "log.info",
+        ts: "info(message: string, ...args: unknown[]): void",
         dispatch: HostDispatch::Native("kalamHostLog"),
     },
     HostMethod {
-        path:     "log.warn",
-        ts:       "warn(message: string, ...args: unknown[]): void",
+        path: "log.warn",
+        ts: "warn(message: string, ...args: unknown[]): void",
         dispatch: HostDispatch::Native("kalamHostLog"),
     },
     HostMethod {
-        path:     "log.error",
-        ts:       "error(message: string, ...args: unknown[]): void",
+        path: "log.error",
+        ts: "error(message: string, ...args: unknown[]): void",
         dispatch: HostDispatch::Native("kalamHostLog"),
     },
     HostMethod {
-        path:     "http.request.headers.get",
-        ts:       "get(name: string): string | null",
+        path: "http.request.headers.get",
+        ts: "get(name: string): string | null",
         dispatch: HostDispatch::Native("kalamHostHttpHeader"),
     },
     HostMethod {
-        path:     "http.request.query.get",
-        ts:       "get(name: string): string | null",
+        path: "http.request.query.get",
+        ts: "get(name: string): string | null",
         dispatch: HostDispatch::Native("kalamHostHttpQuery"),
     },
     HostMethod {
-        path:     "http.response.status",
-        ts:       "status(code: number): void",
+        path: "http.response.status",
+        ts: "status(code: number): void",
         dispatch: HostDispatch::Native("kalamHostHttpSetStatus"),
     },
     HostMethod {
-        path:     "http.response.header",
-        ts:       "header(name: string, value: string): void",
+        path: "http.response.header",
+        ts: "header(name: string, value: string): void",
         dispatch: HostDispatch::Native("kalamHostHttpSetHeader"),
     },
     HostMethod {
-        path:     "http.response.contentType",
-        ts:       "contentType(value: string): void",
+        path: "http.response.contentType",
+        ts: "contentType(value: string): void",
         dispatch: HostDispatch::Native("kalamHostHttpSetHeader"),
     },
 ];

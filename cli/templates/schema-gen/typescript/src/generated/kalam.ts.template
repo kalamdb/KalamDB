@@ -17,6 +17,9 @@ export interface OperationDescriptor<TInput = unknown, TOutput = unknown> {
   readonly schema: string;
   readonly name: string;
   readonly cardinality: "void" | "scalar" | "setof" | "table";
+  /** Server descriptor pin sent as `x-kalam-descriptor-revision` when present. */
+  readonly revision?: string;
+  readonly params?: readonly { readonly name: string; readonly slot: number; readonly json?: boolean }[];
   readonly __input?: TInput;
   readonly __output?: TOutput;
 }
@@ -50,8 +53,8 @@ export type KalamQueryClient = {
 };
 
 {{#if has_calls}}
-function routineDescriptor(routineId: string, signature: string, schema: string, name: string, cardinality: OperationDescriptor["cardinality"]) {
-  return { epoch: KALAM_CONTRACT_EPOCH, codecVersion: KALAM_CODEC_VERSION, routineId, signature, schema, name, cardinality } as const;
+function routineDescriptor(routineId: string, signature: string, schema: string, name: string, cardinality: OperationDescriptor["cardinality"], params: OperationDescriptor["params"]) {
+  return { epoch: KALAM_CONTRACT_EPOCH, codecVersion: KALAM_CODEC_VERSION, routineId, signature, schema, name, cardinality, params } as const;
 }
 
 {{/if}}
@@ -62,7 +65,7 @@ export function createKalam({{#if has_calls}}client: KalamQueryClient{{else}}_cl
 {{#each procedures}}
 {{{jsdoc}}}      {{method_ident}}: ({{#if has_params}}input: {{request_ident}}, {{/if}}options?: InvocationOptions): Promise<{{result_ident}}> =>
         client.invokeRoutine(
-          routineDescriptor("{{routine_id}}", "{{signature}}", "{{schema}}", "{{name}}", "{{cardinality}}"),
+          routineDescriptor("{{routine_id}}", "{{signature}}", "{{schema}}", "{{name}}", "{{cardinality}}", [{{{params}}}]),
           {{#if has_params}}input{{else}}undefined{{/if}},
           options,
         ),
@@ -75,7 +78,7 @@ export function createKalam({{#if has_calls}}client: KalamQueryClient{{else}}_cl
     {{object_ident}}: {
 {{#each procedures}}
       {{method_ident}}: ({{#if has_params}}input: {{request_ident}}{{/if}}): KalamCall<{{result_ident}}> => ({
-        operation: routineDescriptor("{{routine_id}}", "{{signature}}", "{{schema}}", "{{name}}", "{{cardinality}}"),
+        operation: routineDescriptor("{{routine_id}}", "{{signature}}", "{{schema}}", "{{name}}", "{{cardinality}}", [{{{params}}}]),
         arguments: {{#if has_params}}input{{else}}undefined{{/if}},
       }),
 {{/each}}

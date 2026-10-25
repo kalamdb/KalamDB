@@ -48,13 +48,13 @@ struct OidcFixture {
 #[derive(Clone)]
 struct OidcUser {
     user_id: String,
-    jwt:     String,
+    jwt: String,
 }
 
 struct DocumentSeed {
-    id:    String,
+    id: String,
     title: String,
-    body:  String,
+    body: String,
 }
 
 #[derive(Deserialize)]
@@ -64,15 +64,15 @@ struct LoginOptionsResponse {
 
 #[derive(Deserialize)]
 struct LoginOptionsOidc {
-    issuer:         String,
-    client_id:      String,
+    issuer: String,
+    client_id: String,
     token_endpoint: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct DexTokenResponse {
-    id_token:          Option<String>,
-    error:             Option<String>,
+    id_token: Option<String>,
+    error: Option<String>,
     error_description: Option<String>,
 }
 
@@ -214,7 +214,7 @@ async fn prepare_oidc_users(http: &reqwest::Client, base_url: &str) -> Option<Ve
 
         users.push(OidcUser {
             user_id: authenticated_user_id,
-            jwt:     token,
+            jwt: token,
         });
     }
 
@@ -337,9 +337,9 @@ async fn wait_for_topic_routes(env: &TestEnv, topic: &str, min_routes: usize) {
 fn document_seeds() -> Vec<DocumentSeed> {
     (0..DOCUMENT_COUNT)
         .map(|index| DocumentSeed {
-            id:    format!("doc-{index:02}"),
+            id: format!("doc-{index:02}"),
             title: format!("Mobile chat knowledge packet {index:02}"),
-            body:  long_document_body(index),
+            body: long_document_body(index),
         })
         .collect()
 }

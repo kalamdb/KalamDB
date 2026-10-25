@@ -30,8 +30,8 @@ use crate::information_schema::extend::{
 /// Wraps DataFusion's `information_schema.routines` and appends Kalam procedures.
 #[derive(Debug)]
 pub struct ExtendedInformationSchemaRoutinesProvider {
-    inner:         Arc<dyn TableProvider>,
-    schema:        SchemaRef,
+    inner: Arc<dyn TableProvider>,
+    schema: SchemaRef,
     system_tables: Arc<SystemTablesRegistry>,
 }
 
@@ -57,12 +57,12 @@ impl ExtendedInformationSchemaRoutinesProvider {
 }
 
 struct ExtendedRoutinesScanSource {
-    provider:        Arc<ExtendedInformationSchemaRoutinesProvider>,
-    session_state:   SessionState,
+    provider: Arc<ExtendedInformationSchemaRoutinesProvider>,
+    session_state: SessionState,
     physical_filter: Option<Arc<dyn datafusion::physical_expr::PhysicalExpr>>,
-    projection:      Option<Vec<usize>>,
-    limit:           Option<usize>,
-    output_schema:   SchemaRef,
+    projection: Option<Vec<usize>>,
+    limit: Option<usize>,
+    output_schema: SchemaRef,
 }
 
 #[async_trait]
@@ -128,8 +128,8 @@ impl TableProvider for ExtendedInformationSchemaRoutinesProvider {
 
         Ok(Arc::new(DeferredBatchExec::new(Arc::new(ExtendedRoutinesScanSource {
             provider: Arc::new(ExtendedInformationSchemaRoutinesProvider {
-                inner:         Arc::clone(&self.inner),
-                schema:        Arc::clone(&self.schema),
+                inner: Arc::clone(&self.inner),
+                schema: Arc::clone(&self.schema),
                 system_tables: Arc::clone(&self.system_tables),
             }),
             session_state,

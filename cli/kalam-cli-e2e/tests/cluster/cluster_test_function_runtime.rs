@@ -141,9 +141,9 @@ fn open_sql_call(base_url: &str, token: &str, sql: &str) -> TcpStream {
 }
 
 struct CallOutcome {
-    id:      i64,
+    id: i64,
     elapsed: Duration,
-    result:  Result<i64, String>,
+    result: Result<i64, String>,
 }
 
 fn burst_calls(nodes: &[String], namespace: &str, procedure: &str, count: i64) -> Vec<CallOutcome> {

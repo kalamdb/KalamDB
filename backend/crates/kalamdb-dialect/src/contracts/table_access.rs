@@ -11,28 +11,28 @@ use super::{
 /// One catalog column as seen by generated row, insert, and patch models.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnContract {
-    pub name:                String,
-    pub type_name:           String,
-    pub not_null:            bool,
-    pub has_default:         bool,
-    pub is_identity:         bool,
-    pub is_generated:        bool,
-    pub is_read_only:        bool,
+    pub name: String,
+    pub type_name: String,
+    pub not_null: bool,
+    pub has_default: bool,
+    pub is_identity: bool,
+    pub is_generated: bool,
+    pub is_read_only: bool,
     pub primary_key_ordinal: Option<u16>,
 }
 
 /// Immutable table access surface derived from [`ContractTable`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableRowContract {
-    pub table_id:        String,
-    pub schema:          String,
-    pub name:            String,
+    pub table_id: String,
+    pub schema: String,
+    pub name: String,
     pub key_addressable: bool,
-    pub key_columns:     Vec<ColumnContract>,
-    pub row_columns:     Vec<ColumnContract>,
-    pub insert_columns:  Vec<ColumnContract>,
+    pub key_columns: Vec<ColumnContract>,
+    pub row_columns: Vec<ColumnContract>,
+    pub insert_columns: Vec<ColumnContract>,
     pub required_insert: Vec<String>,
-    pub patch_columns:   Vec<ColumnContract>,
+    pub patch_columns: Vec<ColumnContract>,
 }
 
 /// Which write shape a column list is being checked against.
@@ -115,13 +115,13 @@ pub fn reject_forbidden_write(
 
 fn column_contract(field: &ContractField) -> ColumnContract {
     ColumnContract {
-        name:                field.name.clone(),
-        type_name:           field.type_name.clone(),
-        not_null:            field.not_null,
-        has_default:         field.has_default,
-        is_identity:         field.is_identity,
-        is_generated:        field.is_generated,
-        is_read_only:        field.is_read_only,
+        name: field.name.clone(),
+        type_name: field.type_name.clone(),
+        not_null: field.not_null,
+        has_default: field.has_default,
+        is_identity: field.is_identity,
+        is_generated: field.is_generated,
+        is_read_only: field.is_read_only,
         primary_key_ordinal: field.primary_key_ordinal,
     }
 }

@@ -22,16 +22,16 @@ const PROVIDER_INITIALIZED: u8 = 1;
 const PROVIDER_OVERRIDDEN: u8 = 2;
 
 struct ProviderSlot {
-    state:             AtomicU8,
-    initial:           OnceLock<Arc<dyn TableProvider + Send + Sync>>,
+    state: AtomicU8,
+    initial: OnceLock<Arc<dyn TableProvider + Send + Sync>>,
     override_provider: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
 }
 
 impl ProviderSlot {
     fn new() -> Self {
         Self {
-            state:             AtomicU8::new(PROVIDER_EMPTY),
-            initial:           OnceLock::new(),
+            state: AtomicU8::new(PROVIDER_EMPTY),
+            initial: OnceLock::new(),
             override_provider: RwLock::new(None),
         }
     }

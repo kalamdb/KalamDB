@@ -32,7 +32,7 @@ struct OnConflictStageResult {
 }
 
 struct OnConflictExistingRow {
-    row:              Row,
+    row: Row,
     mutation_user_id: Option<UserId>,
 }
 
@@ -556,7 +556,7 @@ impl SqlExecutor {
                     Ok(None)
                 } else {
                     Ok(Some(OnConflictExistingRow {
-                        row:              entry.payload.clone(),
+                        row: entry.payload.clone(),
                         mutation_user_id: entry.user_id.clone(),
                     }))
                 };
@@ -572,14 +572,14 @@ impl SqlExecutor {
                 })?;
                 Ok(provider.find_by_pk(&user_id, primary_key).await?.map(|(_, row)| {
                     OnConflictExistingRow {
-                        row:              row.fields,
+                        row: row.fields,
                         mutation_user_id: Some(user_id),
                     }
                 }))
             },
             (TableType::Shared, OnConflictTableProvider::Shared(provider)) => {
                 Ok(provider.find_by_pk(primary_key).await?.map(|(_, row)| OnConflictExistingRow {
-                    row:              row.fields,
+                    row: row.fields,
                     mutation_user_id: None,
                 }))
             },

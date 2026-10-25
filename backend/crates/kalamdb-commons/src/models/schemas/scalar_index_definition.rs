@@ -16,10 +16,10 @@ use crate::models::ColumnId;
 /// [`Self::resolved_column_names`] when opening a store or matching SQL.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScalarIndexDefinition {
-    pub name:    String,
+    pub name: String,
     pub columns: Vec<ColumnId>,
     #[serde(default)]
-    pub unique:  bool,
+    pub unique: bool,
 }
 
 impl ScalarIndexDefinition {

@@ -20,6 +20,6 @@ pub enum PredicateOperator {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ScalarPredicate {
     pub column_id: u64,
-    pub operator:  PredicateOperator,
-    pub value:     PolicyScalar,
+    pub operator: PredicateOperator,
+    pub value: PolicyScalar,
 }

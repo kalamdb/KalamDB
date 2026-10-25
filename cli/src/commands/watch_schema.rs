@@ -23,11 +23,11 @@ struct TableSelector {
 
 #[derive(Debug, Clone)]
 struct WatchSchemaConfig {
-    namespaces:   Vec<SchemaId>,
-    tables:       Vec<TableSelector>,
-    run_command:  String,
+    namespaces: Vec<SchemaId>,
+    tables: Vec<TableSelector>,
+    run_command: String,
     run_on_start: bool,
-    interval:     Duration,
+    interval: Duration,
 }
 
 pub async fn handle_watch_schema(
@@ -331,11 +331,11 @@ mod tests {
     #[test]
     fn describe_scope_defaults_to_user_visible_namespaces() {
         let config = WatchSchemaConfig {
-            namespaces:   Vec::new(),
-            tables:       Vec::new(),
-            run_command:  "npm run schema:gen".into(),
+            namespaces: Vec::new(),
+            tables: Vec::new(),
+            run_command: "npm run schema:gen".into(),
             run_on_start: false,
-            interval:     Duration::from_secs(5),
+            interval: Duration::from_secs(5),
         };
 
         assert_eq!(describe_scope(&config), " across user-visible namespaces");

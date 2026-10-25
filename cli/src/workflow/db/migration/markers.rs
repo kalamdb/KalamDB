@@ -29,8 +29,8 @@ pub(crate) fn extract_between_markers<'a>(
 
 #[derive(Debug, Clone, Copy)]
 struct TopLevelLineSpan<'a> {
-    line_start:   usize,
-    line_end:     usize,
+    line_start: usize,
+    line_end: usize,
     trimmed_line: &'a str,
 }
 

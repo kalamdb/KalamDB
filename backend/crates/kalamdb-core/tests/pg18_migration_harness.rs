@@ -15,11 +15,11 @@ use support::{create_cluster_app_context, create_executor, execute_ok, request_e
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct OrderRowSnapshot {
-    id:       i64,
+    id: i64,
     customer: String,
-    qty:      i32,
-    amount:   String,
-    state:    String,
+    qty: i32,
+    amount: String,
+    state: String,
     metadata: String,
 }
 
@@ -48,11 +48,11 @@ async fn snapshot_orders(
         let qtys = batch.column(2).as_any().downcast_ref::<Int32Array>().unwrap();
         for row in 0..batch.num_rows() {
             out.push(OrderRowSnapshot {
-                id:       ids.value(row),
+                id: ids.value(row),
                 customer: array_value_to_string(batch.column(1).as_ref(), row),
-                qty:      qtys.value(row),
-                amount:   array_value_to_string(batch.column(3).as_ref(), row),
-                state:    array_value_to_string(batch.column(4).as_ref(), row),
+                qty: qtys.value(row),
+                amount: array_value_to_string(batch.column(3).as_ref(), row),
+                state: array_value_to_string(batch.column(4).as_ref(), row),
                 metadata: array_value_to_string(batch.column(5).as_ref(), row),
             });
         }
@@ -130,19 +130,19 @@ async fn migration_fixture_preserves_typed_contents_catalog_metadata_and_catches
     // 2. Compare typed data contents and domain/column defaults (T071/T109)
     let expected = vec![
         OrderRowSnapshot {
-            id:       1,
+            id: 1,
             customer: "alice".to_string(),
-            qty:      2,
-            amount:   "49.95".to_string(),
-            state:    "paid".to_string(),
+            qty: 2,
+            amount: "49.95".to_string(),
+            state: "paid".to_string(),
             metadata: "{\"Priority\":1,\"tier\":\"gold\"}".to_string(),
         },
         OrderRowSnapshot {
-            id:       2,
+            id: 2,
             customer: "bob".to_string(),
-            qty:      1, // materialized from DOMAIN positive_qty DEFAULT 1
-            amount:   "19.50".to_string(),
-            state:    "pending".to_string(), // materialized from column DEFAULT 'pending'
+            qty: 1, // materialized from DOMAIN positive_qty DEFAULT 1
+            amount: "19.50".to_string(),
+            state: "pending".to_string(), // materialized from column DEFAULT 'pending'
             metadata: "{\"tier\":\"silver\"}".to_string(),
         },
     ];

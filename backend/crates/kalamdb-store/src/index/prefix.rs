@@ -41,10 +41,10 @@ pub trait PrefixIndexedValue {
 /// Column-list prefix index. PK is this type with a single column name.
 #[derive(Clone, Debug)]
 pub struct PrefixIndex<K, V> {
-    partition:   Partition,
-    columns:     Vec<String>,
+    partition: Partition,
+    columns: Vec<String>,
     user_scoped: bool,
-    _marker:     PhantomData<(K, V)>,
+    _marker: PhantomData<(K, V)>,
 }
 
 impl<K, V> PrefixIndex<K, V> {

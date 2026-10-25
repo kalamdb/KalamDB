@@ -4,7 +4,7 @@ use crate::ddl::{create_schedule::ScheduleParser, DdlResult};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlterScheduleStatement {
     pub schedule_id: ScheduleId,
-    pub enabled:     bool,
+    pub enabled: bool,
 }
 impl AlterScheduleStatement {
     pub fn parse(sql: &str, namespace: &SchemaId) -> DdlResult<Self> {

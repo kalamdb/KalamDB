@@ -223,10 +223,10 @@ mod tests {
         row1_vals.insert("legacy_note".to_string(), ScalarValue::Utf8(Some("old".to_string())));
         let row1_bytes = encode_user_row(
             &UserTableRow {
-                user_id:  UserId::new("u1"),
+                user_id: UserId::new("u1"),
                 _version: VersionId::try_from_i64(1).unwrap(),
                 _deleted: false,
-                fields:   Row { values: row1_vals },
+                fields: Row { values: row1_vals },
             },
             &schema_v1,
         )
@@ -249,10 +249,10 @@ mod tests {
         row2_vals.insert("region".to_string(), ScalarValue::Utf8(Some("eu".to_string())));
         let row2_bytes = encode_user_row(
             &UserTableRow {
-                user_id:  UserId::new("u1"),
+                user_id: UserId::new("u1"),
                 _version: VersionId::try_from_i64(2).unwrap(),
                 _deleted: false,
-                fields:   Row { values: row2_vals },
+                fields: Row { values: row2_vals },
             },
             &schema_v2,
         )
@@ -279,10 +279,10 @@ mod tests {
         row3_vals.insert("score".to_string(), ScalarValue::Int64(Some(99)));
         let row3_bytes = encode_user_row(
             &UserTableRow {
-                user_id:  UserId::new("u1"),
+                user_id: UserId::new("u1"),
                 _version: VersionId::try_from_i64(3).unwrap(),
                 _deleted: false,
-                fields:   Row { values: row3_vals },
+                fields: Row { values: row3_vals },
             },
             &schema_v3,
         )

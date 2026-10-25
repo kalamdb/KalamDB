@@ -90,7 +90,7 @@ fn benchmark_prepared_metadata_cache_hits() {
 fn empty_plan() -> LogicalPlan {
     LogicalPlan::EmptyRelation(EmptyRelation {
         produce_one_row: true,
-        schema:          Arc::new(DFSchema::empty()),
+        schema: Arc::new(DFSchema::empty()),
     })
 }
 

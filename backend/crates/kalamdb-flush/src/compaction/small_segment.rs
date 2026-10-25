@@ -28,33 +28,33 @@ use crate::{error::FlushResultExt, FlushError, FlushManifestHelper, ManifestServ
 
 #[derive(Debug, Clone)]
 pub struct SmallSegmentCompactionSelection {
-    pub segments:            Vec<SegmentMetadata>,
+    pub segments: Vec<SegmentMetadata>,
     pub eligible_tail_count: usize,
-    pub total_rows:          u64,
+    pub total_rows: u64,
     pub target_segment_rows: u64,
-    pub schema_version:      u32,
+    pub schema_version: u32,
     pub older_segment_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmallSegmentCompactionResult {
-    pub merged_segments:     usize,
-    pub rows_merged:         u64,
-    pub output_path:         Option<String>,
+    pub merged_segments: usize,
+    pub rows_merged: u64,
+    pub output_path: Option<String>,
     pub eligible_tail_count: usize,
 }
 
 #[derive(Clone)]
 pub struct SmallSegmentCompactionContext {
-    pub manifest_service:     Arc<ManifestService>,
-    pub storage_cached:       Arc<StorageCached>,
-    pub settings:             FlushCompactionSettings,
-    pub schema_version:       u32,
-    pub schema:               SchemaRef,
-    pub primary_key_field:    String,
+    pub manifest_service: Arc<ManifestService>,
+    pub storage_cached: Arc<StorageCached>,
+    pub settings: FlushCompactionSettings,
+    pub schema_version: u32,
+    pub schema: SchemaRef,
+    pub primary_key_field: String,
     pub bloom_filter_columns: Vec<String>,
-    pub indexed_columns:      Vec<(u64, String)>,
-    pub compression:          TableCompression,
+    pub indexed_columns: Vec<(u64, String)>,
+    pub compression: TableCompression,
 }
 
 impl SmallSegmentCompactionContext {
@@ -85,35 +85,35 @@ impl SmallSegmentCompactionContext {
 
     fn schema_context(&self) -> CompactionSchemaContext {
         CompactionSchemaContext {
-            schema:               Arc::clone(&self.schema),
-            primary_key_field:    self.primary_key_field.clone(),
+            schema: Arc::clone(&self.schema),
+            primary_key_field: self.primary_key_field.clone(),
             bloom_filter_columns: self.bloom_filter_columns.clone(),
-            indexed_columns:      self.indexed_columns.clone(),
-            compression:          self.compression,
+            indexed_columns: self.indexed_columns.clone(),
+            compression: self.compression,
         }
     }
 }
 
 struct CompactionSchemaContext {
-    schema:               SchemaRef,
-    primary_key_field:    String,
+    schema: SchemaRef,
+    primary_key_field: String,
     bloom_filter_columns: Vec<String>,
-    indexed_columns:      Vec<(u64, String)>,
-    compression:          TableCompression,
+    indexed_columns: Vec<(u64, String)>,
+    compression: TableCompression,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct LatestVersion {
-    seq:     i64,
+    seq: i64,
     deleted: bool,
 }
 
 struct CompactedWriteResult {
-    filename:     String,
-    row_count:    u64,
-    size_bytes:   u64,
-    min_version:  kalamdb_commons::ids::VersionId,
-    max_version:  kalamdb_commons::ids::VersionId,
+    filename: String,
+    row_count: u64,
+    size_bytes: u64,
+    min_version: kalamdb_commons::ids::VersionId,
+    max_version: kalamdb_commons::ids::VersionId,
     column_stats: HashMap<u64, ColumnStats>,
 }
 
@@ -370,9 +370,9 @@ pub async fn compact_small_segments(
     );
 
     Ok(Some(SmallSegmentCompactionResult {
-        merged_segments:     selection.segments.len(),
-        rows_merged:         write_result.as_ref().map_or(0, |write| write.row_count),
-        output_path:         write_result.map(|write| write.filename),
+        merged_segments: selection.segments.len(),
+        rows_merged: write_result.as_ref().map_or(0, |write| write.row_count),
+        output_path: write_result.map(|write| write.filename),
         eligible_tail_count: selection.eligible_tail_count,
     }))
 }
@@ -861,9 +861,9 @@ fn primary_key_at(
 
 #[derive(Default)]
 struct CompactionWriteAccumulator {
-    row_count:    u64,
-    min_version:  Option<kalamdb_commons::ids::VersionId>,
-    max_version:  Option<kalamdb_commons::ids::VersionId>,
+    row_count: u64,
+    min_version: Option<kalamdb_commons::ids::VersionId>,
+    max_version: Option<kalamdb_commons::ids::VersionId>,
     column_stats: HashMap<u64, ColumnStats>,
 }
 

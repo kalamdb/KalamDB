@@ -19,8 +19,9 @@
 //! - change: id, change type, optional rows, optional old values
 //! - error: id, code, message
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{hash_map::Entry, HashMap};
 
+use kalamdb_commons::ids::{VersionDomain, VersionId};
 use kalamdb_commons::models::{KalamCellValue, KalamDataType, Role, SchemaField, SchemaId, UserId};
 use kalamdb_commons::websocket_auth::WsAuthCredentials;
 use kalamdb_commons::websocket_messages::{
@@ -28,15 +29,14 @@ use kalamdb_commons::websocket_messages::{
     SubscriptionRequest,
 };
 use kalamdb_commons::websocket_protocol::{CompressionType, ProtocolOptions, SerializationType};
-use kalamdb_commons::ids::{VersionDomain, VersionId};
 use kalamdb_commons::{FieldFlag, TableId, TableName};
 
+use crate::decode_domain_frame_for_surface;
 use crate::domain::{
-    encode_domain_frame, encode_domain_frame_from_payload, write_domain_value, DTAG_COMPOSITE,
-    DomainDecodeBudget, DomainMessageKind, DomainValue, EndpointSurface,
+    encode_domain_frame, encode_domain_frame_from_payload, write_domain_value, DomainDecodeBudget,
+    DomainMessageKind, DomainValue, EndpointSurface, DTAG_COMPOSITE,
 };
 use crate::error::{Result, SerializationError};
-use crate::decode_domain_frame_for_surface;
 
 /// Live WebSocket message-layout revision inside the current domain epoch.
 ///
@@ -57,14 +57,12 @@ pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
                 (2, protocol_to_domain(protocol)),
             ]),
         ),
-        ClientMessage::Subscribe { subscription } => (
-            DomainMessageKind::WsSubscribe,
-            subscription_to_domain(subscription)?,
-        ),
-        ClientMessage::Unsubscribe { subscription_id } => (
-            DomainMessageKind::WsUnsubscribe,
-            composite(vec![(1, utf8(subscription_id))]),
-        ),
+        ClientMessage::Subscribe { subscription } => {
+            (DomainMessageKind::WsSubscribe, subscription_to_domain(subscription)?)
+        },
+        ClientMessage::Unsubscribe { subscription_id } => {
+            (DomainMessageKind::WsUnsubscribe, composite(vec![(1, utf8(subscription_id))]))
+        },
         ClientMessage::NextBatch {
             subscription_id,
             last_seq_id,
@@ -94,19 +92,17 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
     let message = match frame.kind {
         DomainMessageKind::WsAuth => ClientMessage::Authenticate {
             credentials: credentials_from_domain(slots.take(1)?)?,
-            protocol:    protocol_from_domain(slots.take(2)?)?,
+            protocol: protocol_from_domain(slots.take(2)?)?,
         },
-        DomainMessageKind::WsSubscribe => {
-            ClientMessage::Subscribe {
-                subscription: subscription_from_domain(&mut slots)?,
-            }
+        DomainMessageKind::WsSubscribe => ClientMessage::Subscribe {
+            subscription: subscription_from_domain(&mut slots)?,
         },
         DomainMessageKind::WsUnsubscribe => ClientMessage::Unsubscribe {
             subscription_id: owned_utf8(slots.take(1)?)?,
         },
         DomainMessageKind::WsCursor => ClientMessage::NextBatch {
             subscription_id: owned_utf8(slots.take(1)?)?,
-            last_seq_id:     match slots.optional(2) {
+            last_seq_id: match slots.optional(2) {
                 Some(value) => Some(version_from_domain(value)?),
                 None => None,
             },
@@ -265,8 +261,8 @@ fn decode_server_frame(kind: DomainMessageKind, payload: &DomainValue) -> Result
     let message = match kind {
         DomainMessageKind::WsAuth => match as_u8(slots.take(1)?)? {
             1 => ServerMessage::AuthSuccess {
-                user:     UserId::new(owned_utf8(slots.take(2)?)?),
-                role:     role_from_name(&owned_utf8(slots.take(3)?)?)?,
+                user: UserId::new(owned_utf8(slots.take(2)?)?),
+                role: role_from_name(&owned_utf8(slots.take(3)?)?)?,
                 protocol: protocol_from_domain(slots.take(4)?)?,
             },
             2 => ServerMessage::AuthError {
@@ -276,29 +272,31 @@ fn decode_server_frame(kind: DomainMessageKind, payload: &DomainValue) -> Result
         },
         DomainMessageKind::WsAck => ServerMessage::SubscriptionAck {
             subscription_id: owned_utf8(slots.take(1)?)?,
-            total_rows:      as_u32(slots.take(2)?)?,
-            batch_control:   batch_control_from_domain(slots.take(3)?)?,
-            schema:          schema_from_domain(slots.take(4)?)?,
+            total_rows: as_u32(slots.take(2)?)?,
+            batch_control: batch_control_from_domain(slots.take(3)?)?,
+            schema: schema_from_domain(slots.take(4)?)?,
         },
         DomainMessageKind::WsSnapshotBegin
         | DomainMessageKind::WsSnapshotBatch
         | DomainMessageKind::WsSnapshotEnd => ServerMessage::InitialDataBatch {
             subscription_id: owned_utf8(slots.take(1)?)?,
-            rows:            rows_from_domain(slots.take(2)?)?,
-            batch_control:   batch_control_from_domain(slots.take(3)?)?,
+            rows: rows_from_domain(slots.take(2)?)?,
+            batch_control: batch_control_from_domain(slots.take(3)?)?,
         },
         DomainMessageKind::WsChanges => ServerMessage::Change {
             subscription_id: owned_utf8(slots.take(1)?)?,
-            change_type:     change_type_from_name(&owned_utf8(slots.take(2)?)?)?,
-            rows:            optional_rows(&mut slots, 3)?,
-            old_values:      optional_rows(&mut slots, 4)?,
+            change_type: change_type_from_name(&owned_utf8(slots.take(2)?)?)?,
+            rows: optional_rows(&mut slots, 3)?,
+            old_values: optional_rows(&mut slots, 4)?,
         },
         DomainMessageKind::WsError => ServerMessage::Error {
             subscription_id: owned_utf8(slots.take(1)?)?,
-            code:            owned_utf8(slots.take(2)?)?,
-            message:         owned_utf8(slots.take(3)?)?,
+            code: owned_utf8(slots.take(2)?)?,
+            message: owned_utf8(slots.take(3)?)?,
         },
-        other => return Err(decode(format!("server frame kind {other:?} is not a server message"))),
+        other => {
+            return Err(decode(format!("server frame kind {other:?} is not a server message")))
+        },
     };
     slots.finish()?;
     Ok(message)
@@ -315,7 +313,11 @@ fn snapshot_kind(batch: &BatchControl) -> DomainMessageKind {
 }
 
 fn decode_frame(bytes: &[u8]) -> Result<crate::DomainFrame> {
-    decode_domain_frame_for_surface(bytes, EndpointSurface::WebSocket, DomainDecodeBudget::default())
+    decode_domain_frame_for_surface(
+        bytes,
+        EndpointSurface::WebSocket,
+        DomainDecodeBudget::default(),
+    )
 }
 
 fn subscription_to_domain(subscription: &SubscriptionRequest) -> Result<DomainValue> {
@@ -328,8 +330,8 @@ fn subscription_to_domain(subscription: &SubscriptionRequest) -> Result<DomainVa
 
 fn subscription_from_domain(slots: &mut Slots<'_>) -> Result<SubscriptionRequest> {
     let request = SubscriptionRequest {
-        id:      owned_utf8(slots.take(1)?)?,
-        sql:     owned_utf8(slots.take(2)?)?,
+        id: owned_utf8(slots.take(1)?)?,
+        sql: owned_utf8(slots.take(2)?)?,
         options: match slots.optional(3) {
             Some(value) => Some(options_from_domain(value)?),
             None => None,
@@ -344,9 +346,8 @@ fn options_to_domain(options: &SubscriptionOptions) -> Result<DomainValue> {
         fields.push((1, version_domain_to_domain(domain)));
     }
     if let Some(batch_size) = options.batch_size {
-        let size = u32::try_from(batch_size).map_err(|_| {
-            SerializationError::Encode("batch size exceeds u32".to_string())
-        })?;
+        let size = u32::try_from(batch_size)
+            .map_err(|_| SerializationError::Encode("batch size exceeds u32".to_string()))?;
         fields.push((2, DomainValue::UInt32(size)));
     }
     if let Some(last_rows) = options.last_rows {
@@ -364,21 +365,21 @@ fn options_to_domain(options: &SubscriptionOptions) -> Result<DomainValue> {
 fn options_from_domain(value: &DomainValue) -> Result<SubscriptionOptions> {
     let mut slots = Slots::parse(value)?;
     let options = SubscriptionOptions {
-        version_domain:     match slots.optional(1) {
+        version_domain: match slots.optional(1) {
             Some(value) => Some(version_domain_from_domain(value)?),
             None => None,
         },
-        batch_size:         match slots.optional(2) {
+        batch_size: match slots.optional(2) {
             Some(value) => Some(
                 usize::try_from(as_u32(value)?).map_err(|_| decode("batch size exceeds usize"))?,
             ),
             None => None,
         },
-        last_rows:          match slots.optional(3) {
+        last_rows: match slots.optional(3) {
             Some(value) => Some(as_u32(value)?),
             None => None,
         },
-        from:               match slots.optional(4) {
+        from: match slots.optional(4) {
             Some(value) => Some(version_from_domain(value)?),
             None => None,
         },
@@ -443,10 +444,10 @@ fn batch_control_from_domain(value: &DomainValue) -> Result<BatchControl> {
             Some(value) => Some(version_domain_from_domain(value)?),
             None => None,
         },
-        batch_num:      as_u32(slots.take(2)?)?,
-        has_more:       as_bool(slots.take(3)?)?,
-        status:         batch_status_from_name(&owned_utf8(slots.take(4)?)?)?,
-        last_seq_id:    match slots.optional(5) {
+        batch_num: as_u32(slots.take(2)?)?,
+        has_more: as_bool(slots.take(3)?)?,
+        status: batch_status_from_name(&owned_utf8(slots.take(4)?)?)?,
+        last_seq_id: match slots.optional(5) {
             Some(value) => Some(version_from_domain(value)?),
             None => None,
         },
@@ -461,15 +462,15 @@ fn schema_to_domain(schema: &[SchemaField]) -> Result<DomainValue> {
         let mut slots = vec![
             (1, utf8(&field.name)),
             (2, data_type_to_domain(field.data_type)),
-            (3, DomainValue::UInt32(u32::try_from(field.index).map_err(|_| {
-                SerializationError::Encode("schema index exceeds u32".to_string())
-            })?)),
+            (
+                3,
+                DomainValue::UInt32(u32::try_from(field.index).map_err(|_| {
+                    SerializationError::Encode("schema index exceeds u32".to_string())
+                })?),
+            ),
         ];
         if let Some(flags) = &field.flags {
-            let names = flags
-                .iter()
-                .map(|flag| utf8(field_flag_name(flag)))
-                .collect::<Vec<_>>();
+            let names = flags.iter().map(|flag| utf8(field_flag_name(flag))).collect::<Vec<_>>();
             slots.push((4, DomainValue::Array(names)));
         }
         fields.push(composite(slots));
@@ -486,11 +487,11 @@ fn schema_from_domain(value: &DomainValue) -> Result<Vec<SchemaField>> {
         .map(|item| {
             let mut slots = Slots::parse(item)?;
             let field = SchemaField {
-                name:      owned_utf8(slots.take(1)?)?,
+                name: owned_utf8(slots.take(1)?)?,
                 data_type: data_type_from_domain(slots.take(2)?)?,
-                index:     usize::try_from(as_u32(slots.take(3)?)?)
+                index: usize::try_from(as_u32(slots.take(3)?)?)
                     .map_err(|_| decode("schema index exceeds usize"))?,
-                flags:     match slots.optional(4) {
+                flags: match slots.optional(4) {
                     Some(value) => Some(flags_from_domain(value)?),
                     None => None,
                 },
@@ -518,9 +519,7 @@ fn data_type_to_domain(data_type: KalamDataType) -> DomainValue {
 
 fn data_type_from_domain(value: &DomainValue) -> Result<KalamDataType> {
     match value {
-        DomainValue::UInt8(tag) => {
-            KalamDataType::from_tag(*tag).map_err(|message| decode(message))
-        },
+        DomainValue::UInt8(tag) => KalamDataType::from_tag(*tag).map_err(|message| decode(message)),
         DomainValue::Composite(_) => {
             let mut slots = Slots::parse(value)?;
             let tag = as_u8(slots.take(1)?)?;
@@ -588,8 +587,13 @@ fn rows_from_domain(value: &DomainValue) -> Result<Vec<HashMap<String, KalamCell
                 let name = owned_utf8(slots.take(1)?)?;
                 let cell = cell_from_domain(slots.take(2)?)?;
                 slots.finish()?;
-                if decoded.insert(name.clone(), cell).is_some() {
-                    return Err(decode(format!("duplicate column {name}")));
+                match decoded.entry(name) {
+                    Entry::Vacant(entry) => {
+                        entry.insert(cell);
+                    },
+                    Entry::Occupied(entry) => {
+                        return Err(decode(format!("duplicate column {}", entry.key())));
+                    },
                 }
             }
             Ok(decoded)
@@ -642,10 +646,7 @@ fn json_to_domain(value: &serde_json::Value) -> Result<DomainValue> {
                 let child = map.get(&name).expect("sorted key is present");
                 pairs.push(composite(vec![(1, utf8(name)), (2, json_to_domain(child)?)]));
             }
-            Ok(composite(vec![
-                (1, utf8("object")),
-                (2, DomainValue::Array(pairs)),
-            ]))
+            Ok(composite(vec![(1, utf8("object")), (2, DomainValue::Array(pairs))]))
         },
     }
 }
@@ -686,11 +687,17 @@ fn domain_to_json(value: &DomainValue) -> Result<serde_json::Value> {
                     let name = owned_utf8(pair_slots.take(1)?)?;
                     let child = domain_to_json(pair_slots.take(2)?)?;
                     pair_slots.finish()?;
-                    map.insert(name, child);
+                    match map.entry(name) {
+                        serde_json::map::Entry::Vacant(entry) => {
+                            entry.insert(child);
+                        },
+                        serde_json::map::Entry::Occupied(entry) => {
+                            return Err(decode(format!("duplicate object key {}", entry.key())));
+                        },
+                    }
                 }
                 return Ok(serde_json::Value::Object(map));
             }
-            drop(slots);
             Err(decode("unsupported cell composite"))
         },
         other => Err(decode(format!("unsupported cell value {other:?}"))),
@@ -699,9 +706,7 @@ fn domain_to_json(value: &DomainValue) -> Result<serde_json::Value> {
 
 fn credentials_to_domain(credentials: &WsAuthCredentials) -> Result<DomainValue> {
     match credentials {
-        WsAuthCredentials::Jwt { token } => {
-            Ok(composite(vec![(1, utf8("jwt")), (2, utf8(token))]))
-        },
+        WsAuthCredentials::Jwt { token } => Ok(composite(vec![(1, utf8("jwt")), (2, utf8(token))])),
     }
 }
 
@@ -729,7 +734,7 @@ fn protocol_from_domain(value: &DomainValue) -> Result<ProtocolOptions> {
     let mut slots = Slots::parse(value)?;
     let protocol = ProtocolOptions {
         serialization: serialization_from_name(&owned_utf8(slots.take(1)?)?)?,
-        compression:   compression_from_name(&owned_utf8(slots.take(2)?)?)?,
+        compression: compression_from_name(&owned_utf8(slots.take(2)?)?)?,
     };
     slots.finish()?;
     Ok(protocol)
@@ -892,7 +897,7 @@ fn decode(message: impl Into<String>) -> SerializationError {
 }
 
 struct Slots<'a> {
-    map: BTreeMap<u16, &'a DomainValue>,
+    remaining: &'a [(u16, DomainValue)],
 }
 
 impl<'a> Slots<'a> {
@@ -900,25 +905,26 @@ impl<'a> Slots<'a> {
         let DomainValue::Composite(fields) = value else {
             return Err(decode("expected composite"));
         };
-        let mut map = BTreeMap::new();
-        for (slot, field) in fields {
-            if map.insert(*slot, field).is_some() {
-                return Err(decode(format!("duplicate slot {slot}")));
-            }
-        }
-        Ok(Self { map })
+        // The domain decoder validates strictly increasing, unique slots. Every
+        // message reader below consumes them in order, so no lookup map is needed.
+        Ok(Self { remaining: fields })
     }
 
     fn take(&mut self, slot: u16) -> Result<&'a DomainValue> {
-        self.map.remove(&slot).ok_or_else(|| decode(format!("missing slot {slot}")))
+        self.optional(slot).ok_or_else(|| decode(format!("missing slot {slot}")))
     }
 
     fn optional(&mut self, slot: u16) -> Option<&'a DomainValue> {
-        self.map.remove(&slot)
+        let ((next_slot, value), rest) = self.remaining.split_first()?;
+        if *next_slot != slot {
+            return None;
+        }
+        self.remaining = rest;
+        Some(value)
     }
 
     fn finish(self) -> Result<()> {
-        if let Some(slot) = self.map.keys().next() {
+        if let Some((slot, _)) = self.remaining.first() {
             return Err(decode(format!("unknown slot {slot}")));
         }
         Ok(())
@@ -943,15 +949,15 @@ mod tests {
             },
             ClientMessage::NextBatch {
                 subscription_id: "sub-1".to_string(),
-                last_seq_id:     Some(version()),
+                last_seq_id: Some(version()),
             },
             ClientMessage::Authenticate {
                 credentials: WsAuthCredentials::Jwt {
                     token: "token-1".to_string(),
                 },
-                protocol:    ProtocolOptions {
+                protocol: ProtocolOptions {
                     serialization: SerializationType::Domain,
-                    compression:   CompressionType::None,
+                    compression: CompressionType::None,
                 },
             },
         ];
@@ -975,9 +981,9 @@ mod tests {
         );
         let message = ServerMessage::Change {
             subscription_id: "sub-1".to_string(),
-            change_type:     ChangeTypeRaw::Insert,
-            rows:            Some(vec![row]),
-            old_values:      None,
+            change_type: ChangeTypeRaw::Insert,
+            rows: Some(vec![row]),
+            old_values: None,
         };
         let bytes = encode_server_message(&message).expect("encode");
         assert_eq!(decode_server_message(&bytes).expect("decode"), message);
@@ -1007,8 +1013,8 @@ mod tests {
 
     #[test]
     fn stale_descriptor_is_rejected_before_a_message_is_returned() {
-        let ping = encode_domain_frame(DomainMessageKind::WsPing, 0, 0, &DomainValue::Void)
-            .expect("ping");
+        let ping =
+            encode_domain_frame(DomainMessageKind::WsPing, 0, 0, &DomainValue::Void).expect("ping");
         let ping_error = decode_client_message(&ping).expect_err("stale client descriptor");
         assert!(ping_error.to_string().contains("stale WebSocket descriptor"));
 
@@ -1026,9 +1032,81 @@ mod tests {
         assert!(change_error.to_string().contains("current contract is 1"));
     }
 
+    #[test]
+    fn change_roundtrips_with_optional_slot_gaps() {
+        for (rows, old_values) in [
+            (None, None),
+            (Some(vec![]), None),
+            (None, Some(vec![])),
+            (Some(vec![]), Some(vec![])),
+        ] {
+            let message = ServerMessage::Change {
+                subscription_id: "sub-1".to_string(),
+                change_type: ChangeTypeRaw::Update,
+                rows,
+                old_values,
+            };
+            let bytes = encode_server_message(&message).unwrap();
+            assert_eq!(decode_server_message(&bytes).unwrap(), message);
+        }
+    }
+
+    #[test]
+    fn change_rejects_unknown_slots_before_between_and_after_known_slots() {
+        for unknown in [0, 5, u16::MAX] {
+            let mut fields = vec![
+                (1, utf8("sub-1")),
+                (2, utf8("insert")),
+                (unknown, DomainValue::SqlNull),
+            ];
+            fields.sort_by_key(|(slot, _)| *slot);
+            let bytes = encode_domain_frame(
+                DomainMessageKind::WsChanges,
+                WS_CONTRACT_DESCRIPTOR_ID,
+                0,
+                &DomainValue::Composite(fields),
+            )
+            .unwrap();
+            assert!(decode_server_message(&bytes).is_err());
+        }
+    }
+
+    #[test]
+    fn object_cell_rejects_duplicate_keys() {
+        let pair = || composite(vec![(1, utf8("same")), (2, DomainValue::Int64(1))]);
+        let object = composite(vec![
+            (1, utf8("object")),
+            (2, DomainValue::Array(vec![pair(), pair()])),
+        ]);
+        let payload = composite(vec![
+            (1, utf8("sub-1")),
+            (2, utf8("insert")),
+            (
+                3,
+                DomainValue::Array(vec![DomainValue::Array(vec![composite(vec![
+                    (1, utf8("metadata")),
+                    (2, object),
+                ])])]),
+            ),
+        ]);
+        let bytes = encode_domain_frame(
+            DomainMessageKind::WsChanges,
+            WS_CONTRACT_DESCRIPTOR_ID,
+            0,
+            &payload,
+        )
+        .unwrap();
+        assert!(decode_server_message(&bytes)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate object key"));
+    }
+
     fn message_rows(message: &ServerMessage) -> &[HashMap<String, KalamCellValue>] {
         match message {
-            ServerMessage::Change { rows: Some(rows), .. } => rows,
+            ServerMessage::Change {
+                rows: Some(rows), ..
+            } => rows,
             _ => unreachable!("fixture is a change with rows"),
         }
     }

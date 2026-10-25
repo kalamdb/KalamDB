@@ -6,14 +6,14 @@ use crate::{ids::VersionId, models::UserId};
 /// Unified table row model for user and stream tables.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KTableRow {
-    pub user_id:    UserId,
-    pub _version:   VersionId,
+    pub user_id: UserId,
+    pub _version: VersionId,
     /// Present for STREAM rows. USER rows leave this empty.
     pub _timestamp: Option<i64>,
     /// Soft delete flag. Stream TTL eviction does not use this flag.
-    pub _deleted:   bool,
+    pub _deleted: bool,
     /// Row data (JSON)
-    pub fields:     Row,
+    pub fields: Row,
 }
 
 impl KTableRow {

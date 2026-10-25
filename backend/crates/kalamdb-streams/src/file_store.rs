@@ -49,16 +49,16 @@ const WINDOW_DIR_PREFIX: &str = "w";
 
 /// Cached state for an open segment file.
 struct SegmentWriter {
-    writer:       BufWriter<File>,
+    writer: BufWriter<File>,
     record_count: u32,
-    last_write:   Instant,
+    last_write: Instant,
 }
 
 #[derive(Debug, Clone)]
 struct LogFileEntry {
     window_start: u64,
-    window_end:   u64,
-    path:         PathBuf,
+    window_end: u64,
+    path: PathBuf,
 }
 
 /// File-based stream log store with cached file handles and write buffering.
@@ -74,8 +74,8 @@ struct LogFileEntry {
 /// * **Batch writes** — multiple records targeting the same segment share a single lock
 ///   acquisition.
 pub struct FileStreamLogStore {
-    config:   StreamLogConfig,
-    schema:   Arc<StorageSchema>,
+    config: StreamLogConfig,
+    schema: Arc<StorageSchema>,
     /// Cached open segment writers keyed by log-file path.
     segments: DashMap<PathBuf, Arc<Mutex<SegmentWriter>>>,
 }
@@ -457,9 +457,9 @@ impl FileStreamLogStore {
             .open(path)
             .map_err(|e| StreamLogError::Io(e.to_string()))?;
         let writer = Arc::new(Mutex::new(SegmentWriter {
-            writer:       BufWriter::with_capacity(SEGMENT_BUF_CAPACITY, file),
+            writer: BufWriter::with_capacity(SEGMENT_BUF_CAPACITY, file),
             record_count: 0,
-            last_write:   Instant::now(),
+            last_write: Instant::now(),
         }));
 
         // Use `entry` API so a concurrent creation by another thread is
@@ -965,10 +965,10 @@ mod tests {
     fn build_row(user_id: &UserId, version: VersionId, timestamp: i64) -> StreamTableRow {
         let values: BTreeMap<String, ScalarValue> = BTreeMap::new();
         StreamTableRow {
-            user_id:    user_id.clone(),
-            _version:   version,
+            user_id: user_id.clone(),
+            _version: version,
             _timestamp: timestamp,
-            fields:     Row::new(values),
+            fields: Row::new(values),
         }
     }
 

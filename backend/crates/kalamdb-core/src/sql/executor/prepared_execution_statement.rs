@@ -10,15 +10,15 @@ use sqlparser::ast::Statement;
 /// allocate a copy of every SQL expression. Bind values stay request-local.
 #[derive(Debug, Clone)]
 pub struct PreparedExecutionStatement {
-    pub sql:                  String,
-    pub table_id:             Option<TableId>,
-    pub table_type:           Option<TableType>,
+    pub sql: String,
+    pub table_id: Option<TableId>,
+    pub table_type: Option<TableType>,
     pub classified_statement: Option<Arc<SqlStatement>>,
     /// Precomputed at prepare time; checked with a single bool on the execution hot path.
-    pub track_slow_query:     bool,
+    pub track_slow_query: bool,
     /// DML sqlparser AST parsed once at prepare; reused by literal insert, batch insert,
     /// and system.migrations handlers so execute does not re-parse.
-    pub parsed_dml:           Option<Arc<Statement>>,
+    pub parsed_dml: Option<Arc<Statement>>,
     /// DataFusion-ready sqlparser AST (with text-compat and AST operator rewrites applied)
     /// parsed once at prepare and reused by SELECT and DataFusion DML planning.
     pub datafusion_statement: Option<Arc<Statement>>,

@@ -74,8 +74,8 @@ fn row(values: Vec<(&str, ScalarValue)>) -> Row {
 
 #[derive(Debug, Clone)]
 struct TestSchemaRegistry {
-    table_def:  Arc<TableDefinition>,
-    schema:     SchemaRef,
+    table_def: Arc<TableDefinition>,
+    schema: SchemaRef,
     storage_id: StorageId,
 }
 
@@ -310,8 +310,8 @@ impl TransactionAccessValidator for AllowAllAccessValidator {
 }
 
 struct OwnedServices {
-    services:  Arc<TableServices>,
-    schema:    SchemaRef,
+    services: Arc<TableServices>,
+    schema: SchemaRef,
     _temp_dir: TempDir,
 }
 
@@ -360,17 +360,17 @@ fn build_storage_registry(
     let base_directory = temp_dir.path().to_string_lossy().into_owned();
     storages_provider
         .create_storage(Storage {
-            storage_id:             StorageId::local(),
-            storage_name:           "Local Storage".to_string(),
-            description:            Some("Provider source-model test storage".to_string()),
-            storage_type:           StorageType::Filesystem,
-            base_directory:         base_directory.clone(),
-            credentials:            None,
-            config_json:            None,
+            storage_id: StorageId::local(),
+            storage_name: "Local Storage".to_string(),
+            description: Some("Provider source-model test storage".to_string()),
+            storage_type: StorageType::Filesystem,
+            base_directory: base_directory.clone(),
+            credentials: None,
+            config_json: None,
             shared_tables_template: "shared/{namespace}/{table}".to_string(),
-            user_tables_template:   "user/{namespace}/{table}/{userId}".to_string(),
-            created_at:             1_000,
-            updated_at:             1_000,
+            user_tables_template: "user/{namespace}/{table}/{userId}".to_string(),
+            created_at: 1_000,
+            updated_at: 1_000,
         })
         .expect("seed local storage");
 
@@ -542,11 +542,11 @@ async fn stream_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
     let store = Arc::new(new_stream_table_store(
         &table_id,
         StreamTableStoreConfig {
-            base_dir:          services._temp_dir.path().join("streams").join("events"),
+            base_dir: services._temp_dir.path().join("streams").join("events"),
             max_rows_per_user: 64,
-            shard_router:      ShardRouter::default_config(),
-            ttl_seconds:       Some(3_600),
-            storage_mode:      StreamTableStorageMode::Memory,
+            shard_router: ShardRouter::default_config(),
+            ttl_seconds: Some(3_600),
+            storage_mode: StreamTableStorageMode::Memory,
         },
         storage_schema_for_table(&table_def).expect("stream storage schema"),
     ));
@@ -640,10 +640,10 @@ async fn user_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
         .insert(
             &kalamdb_commons::ids::UserTableRowId::new(user_id.clone(), seq),
             &UserTableRow {
-                user_id:  user_id.clone(),
+                user_id: user_id.clone(),
                 _version: seq,
                 _deleted: false,
-                fields:   row(vec![
+                fields: row(vec![
                     ("id", ScalarValue::Int64(Some(1))),
                     ("name", ScalarValue::Utf8(Some("committed".to_string()))),
                 ]),
@@ -717,10 +717,10 @@ async fn user_provider_dba_session_reads_only_subject_rows() {
         .insert(
             &kalamdb_commons::ids::UserTableRowId::new(root_user.clone(), 1.into()),
             &UserTableRow {
-                user_id:  root_user.clone(),
+                user_id: root_user.clone(),
                 _version: 1.into(),
                 _deleted: false,
-                fields:   row(vec![
+                fields: row(vec![
                     ("id", ScalarValue::Int64(Some(1))),
                     ("name", ScalarValue::Utf8(Some("root-row".to_string()))),
                 ]),
@@ -731,10 +731,10 @@ async fn user_provider_dba_session_reads_only_subject_rows() {
         .insert(
             &kalamdb_commons::ids::UserTableRowId::new(dba_user.clone(), 2.into()),
             &UserTableRow {
-                user_id:  dba_user.clone(),
+                user_id: dba_user.clone(),
                 _version: 2.into(),
                 _deleted: false,
-                fields:   row(vec![
+                fields: row(vec![
                     ("id", ScalarValue::Int64(Some(2))),
                     ("name", ScalarValue::Utf8(Some("jamal-row".to_string()))),
                 ]),
@@ -791,10 +791,10 @@ async fn user_provider_delete_only_tombstones_subject_row() {
         .insert(
             &kalamdb_commons::ids::UserTableRowId::new(root_user.clone(), 1.into()),
             &UserTableRow {
-                user_id:  root_user.clone(),
+                user_id: root_user.clone(),
                 _version: 1.into(),
                 _deleted: false,
-                fields:   row(vec![
+                fields: row(vec![
                     ("id", ScalarValue::Int64(Some(1))),
                     ("name", ScalarValue::Utf8(Some("root-row".to_string()))),
                 ]),
@@ -805,10 +805,10 @@ async fn user_provider_delete_only_tombstones_subject_row() {
         .insert(
             &kalamdb_commons::ids::UserTableRowId::new(dba_user.clone(), 2.into()),
             &UserTableRow {
-                user_id:  dba_user.clone(),
+                user_id: dba_user.clone(),
                 _version: 2.into(),
                 _deleted: false,
-                fields:   row(vec![
+                fields: row(vec![
                     ("id", ScalarValue::Int64(Some(1))),
                     ("name", ScalarValue::Utf8(Some("jamal-row".to_string()))),
                 ]),
@@ -876,10 +876,10 @@ async fn user_provider_scan_with_overlay_uses_transaction_overlay_exec() {
         .insert(
             &kalamdb_commons::ids::UserTableRowId::new(user_id.clone(), seq),
             &UserTableRow {
-                user_id:  user_id.clone(),
+                user_id: user_id.clone(),
                 _version: seq,
                 _deleted: false,
-                fields:   row(vec![
+                fields: row(vec![
                     ("id", ScalarValue::Int64(Some(1))),
                     ("name", ScalarValue::Utf8(Some("committed".to_string()))),
                 ]),
@@ -943,7 +943,7 @@ async fn shared_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
             &SharedTableRow {
                 _version: seq,
                 _deleted: false,
-                fields:   row(vec![
+                fields: row(vec![
                     ("id", ScalarValue::Int64(Some(1))),
                     ("name", ScalarValue::Utf8(Some("committed".to_string()))),
                 ]),
@@ -1018,7 +1018,7 @@ async fn shared_provider_scan_with_overlay_uses_transaction_overlay_exec() {
             &SharedTableRow {
                 _version: seq,
                 _deleted: false,
-                fields:   row(vec![
+                fields: row(vec![
                     ("id", ScalarValue::Int64(Some(1))),
                     ("name", ScalarValue::Utf8(Some("committed".to_string()))),
                 ]),
@@ -1085,7 +1085,7 @@ async fn shared_provider_conversation_filter_seeks_scalar_index() {
                 &SharedTableRow {
                     _version: row_id,
                     _deleted: false,
-                    fields:   row(vec![
+                    fields: row(vec![
                         ("id", ScalarValue::Int64(Some(seq))),
                         ("conversation_id", ScalarValue::Int64(Some(conversation_id))),
                         ("created_at_ms", ScalarValue::Int64(Some(1_000 + seq))),
@@ -1149,7 +1149,7 @@ async fn shared_provider_numeric_range_filters_index_keys_before_row_fetch() {
                 &SharedTableRow {
                     _version: row_id,
                     _deleted: false,
-                    fields:   row(vec![
+                    fields: row(vec![
                         ("id", ScalarValue::Int64(Some(seq))),
                         ("conversation_id", ScalarValue::Int64(Some(1))),
                         ("created_at_ms", ScalarValue::Int64(Some(seq))),
@@ -1210,7 +1210,7 @@ async fn shared_provider_scalar_index_seek_does_not_resurrect_superseded_version
                 &SharedTableRow {
                     _version: row_id,
                     _deleted: false,
-                    fields:   row(vec![
+                    fields: row(vec![
                         ("id", ScalarValue::Int64(Some(seq))),
                         ("conversation_id", ScalarValue::Int64(Some(1))),
                         ("created_at_ms", ScalarValue::Int64(Some(1_000 + seq))),
@@ -1226,7 +1226,7 @@ async fn shared_provider_scalar_index_seek_does_not_resurrect_superseded_version
     let previous_id1_row = SharedTableRow {
         _version: previous_id1,
         _deleted: false,
-        fields:   row(vec![
+        fields: row(vec![
             ("id", ScalarValue::Int64(Some(1))),
             ("conversation_id", ScalarValue::Int64(Some(1))),
             ("created_at_ms", ScalarValue::Int64(Some(1_001))),
@@ -1240,7 +1240,7 @@ async fn shared_provider_scalar_index_seek_does_not_resurrect_superseded_version
             &SharedTableRow {
                 _version: updated_seq,
                 _deleted: false,
-                fields:   row(vec![
+                fields: row(vec![
                     ("id", ScalarValue::Int64(Some(1))),
                     ("conversation_id", ScalarValue::Int64(Some(2))),
                     ("created_at_ms", ScalarValue::Int64(Some(9_000))),
@@ -1253,7 +1253,7 @@ async fn shared_provider_scalar_index_seek_does_not_resurrect_superseded_version
     let previous_id2_row = SharedTableRow {
         _version: previous_id2,
         _deleted: false,
-        fields:   row(vec![
+        fields: row(vec![
             ("id", ScalarValue::Int64(Some(2))),
             ("conversation_id", ScalarValue::Int64(Some(1))),
             ("created_at_ms", ScalarValue::Int64(Some(1_002))),
@@ -1267,7 +1267,7 @@ async fn shared_provider_scalar_index_seek_does_not_resurrect_superseded_version
             &SharedTableRow {
                 _version: tombstone_seq,
                 _deleted: true,
-                fields:   row(vec![
+                fields: row(vec![
                     ("id", ScalarValue::Int64(Some(2))),
                     ("conversation_id", ScalarValue::Int64(Some(1))),
                     ("created_at_ms", ScalarValue::Int64(Some(1_023))),
@@ -1330,10 +1330,10 @@ async fn user_provider_conversation_filter_seeks_scalar_index() {
             .insert(
                 &kalamdb_commons::ids::UserTableRowId::new(user_id.clone(), row_id),
                 &UserTableRow {
-                    user_id:  user_id.clone(),
+                    user_id: user_id.clone(),
                     _version: row_id,
                     _deleted: false,
-                    fields:   row(vec![
+                    fields: row(vec![
                         ("id", ScalarValue::Int64(Some(seq))),
                         ("conversation_id", ScalarValue::Int64(Some(conversation_id))),
                         ("created_at_ms", ScalarValue::Int64(Some(1_000 + seq))),
@@ -1469,10 +1469,10 @@ async fn user_sql_dml_writes_each_version_once_with_statement_commit_seq() {
             .insert(
                 &kalamdb_commons::ids::UserTableRowId::new(user_id.clone(), seq.into()),
                 &UserTableRow {
-                    user_id:  user_id.clone(),
+                    user_id: user_id.clone(),
                     _version: seq.into(),
                     _deleted: false,
-                    fields:   row(vec![
+                    fields: row(vec![
                         ("id", ScalarValue::Int64(Some(seq))),
                         ("name", ScalarValue::Utf8(Some("before".to_string()))),
                     ]),
@@ -1611,7 +1611,7 @@ async fn shared_sql_dml_writes_each_version_once_with_statement_commit_seq() {
                 &SharedTableRow {
                     _version: seq.into(),
                     _deleted: false,
-                    fields:   row(vec![
+                    fields: row(vec![
                         ("id", ScalarValue::Int64(Some(seq))),
                         ("name", ScalarValue::Utf8(Some("before".to_string()))),
                     ]),

@@ -1,9 +1,14 @@
 //! Ordinal KOBJ row codec vs the previous name-keyed FlexBuffers row.
 //!
 //! Reports encoded size and throughput. Run:
-//! `cargo bench -p kalamdb-serialization --bench codec`
+//! `cargo bench --profile dev -p kalamdb-serialization --bench codec`
 
-use std::{collections::BTreeMap, hint::black_box, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    hint::black_box,
+    sync::Arc,
+    time::Duration,
+};
 
 use arrow::{
     array::{Int64Array, ListArray, StringArray, StructArray},
@@ -16,13 +21,14 @@ use kalamdb_commons::{
     ids::VersionId,
     models::{
         rows::{Row, UserTableRow},
-        UserId,
+        KalamCellValue, UserId,
     },
+    websocket_messages::{ChangeTypeRaw, ServerMessage},
 };
 use kalamdb_serialization::{
-    decode_object, decode_payloads_to_arrow_batch, decode_user_row, decode_user_row_selected,
-    encode_object, encode_user_row, encode_user_row_v2, StorageDataType, StorageField,
-    StorageSchema,
+    decode_object, decode_payloads_to_arrow_batch, decode_server_message, decode_user_row,
+    decode_user_row_selected, encode_object, encode_server_message, encode_user_row,
+    encode_user_row_v2, StorageDataType, StorageField, StorageSchema,
 };
 use serde::{Deserialize, Serialize};
 
@@ -30,9 +36,9 @@ const BATCH_SIZE: usize = 256;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CatalogObject {
-    name:    String,
+    name: String,
     version: u32,
-    tags:    Vec<String>,
+    tags: Vec<String>,
 }
 
 fn customer_type() -> StorageDataType {
@@ -99,10 +105,10 @@ fn text_heavy_row() -> UserTableRow {
         ScalarValue::Utf8(Some("{\"env\":\"prod\",\"region\":\"us-east-1\"}".to_string())),
     );
     UserTableRow {
-        user_id:  UserId::new("user-1"),
+        user_id: UserId::new("user-1"),
         _version: VersionId::try_from_i64(100).unwrap(),
         _deleted: false,
-        fields:   Row { values },
+        fields: Row { values },
     }
 }
 
@@ -145,10 +151,10 @@ fn nested_row() -> UserTableRow {
     values.insert("customer".to_string(), struct_scalar(7, "ada"));
     values.insert("tags".to_string(), utf8_list(&["vip", "west"]));
     UserTableRow {
-        user_id:  UserId::new("user-1"),
+        user_id: UserId::new("user-1"),
         _version: VersionId::try_from_i64(100).unwrap(),
         _deleted: false,
-        fields:   Row { values },
+        fields: Row { values },
     }
 }
 
@@ -161,10 +167,10 @@ fn scalar_row() -> UserTableRow {
         ScalarValue::Utf8(Some("hello from kalamdb 0.7".to_string())),
     );
     UserTableRow {
-        user_id:  UserId::new("user-1"),
+        user_id: UserId::new("user-1"),
         _version: VersionId::try_from_i64(100).unwrap(),
         _deleted: false,
-        fields:   Row { values },
+        fields: Row { values },
     }
 }
 
@@ -174,9 +180,9 @@ fn encode_name_keyed(row: &UserTableRow) -> Vec<u8> {
 
 fn catalog_object() -> CatalogObject {
     CatalogObject {
-        name:    "app.messages".to_string(),
+        name: "app.messages".to_string(),
         version: 4,
-        tags:    vec!["chat".to_string(), "rls".to_string()],
+        tags: vec!["chat".to_string(), "rls".to_string()],
     }
 }
 
@@ -417,5 +423,50 @@ fn bench_codec(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_codec);
+fn bench_websocket(c: &mut Criterion) {
+    let mut group = c.benchmark_group("serialization_websocket");
+    group.measurement_time(Duration::from_secs(3));
+    group.warm_up_time(Duration::from_secs(1));
+    group.sample_size(30);
+    for count in [1, 256] {
+        let rows = (0..count)
+            .map(|index| {
+                HashMap::from([
+                    ("id".to_string(), KalamCellValue::int(index)),
+                    (
+                        "body".to_string(),
+                        KalamCellValue::from_json(serde_json::json!("hello from KalamDB")),
+                    ),
+                    (
+                        "tags".to_string(),
+                        KalamCellValue::from_json(serde_json::json!(["one", "two"])),
+                    ),
+                    (
+                        "metadata".to_string(),
+                        KalamCellValue::from_json(serde_json::json!({"active": true, "score": 42})),
+                    ),
+                    ("optional".to_string(), KalamCellValue::null()),
+                ])
+            })
+            .collect();
+        let message = ServerMessage::Change {
+            subscription_id: "sub-1".to_string(),
+            change_type: ChangeTypeRaw::Insert,
+            rows: Some(rows),
+            old_values: None,
+        };
+        let bytes = encode_server_message(&message).unwrap();
+        assert_eq!(decode_server_message(&bytes).unwrap(), message);
+        group.throughput(Throughput::Bytes(bytes.len() as u64));
+        group.bench_function(format!("change_decode_{count}"), |b| {
+            b.iter(|| decode_server_message(black_box(&bytes)).unwrap())
+        });
+        group.bench_function(format!("change_encode_{count}"), |b| {
+            b.iter(|| encode_server_message(black_box(&message)).unwrap())
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_codec, bench_websocket);
 criterion_main!(benches);

@@ -32,10 +32,10 @@ impl LogChannel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostLogRecord {
-    pub channel:   LogChannel,
-    pub level:     String,
-    pub message:   String,
-    pub error:     Option<String>,
+    pub channel: LogChannel,
+    pub level: String,
+    pub message: String,
+    pub error: Option<String>,
     pub args_json: Option<String>,
 }
 

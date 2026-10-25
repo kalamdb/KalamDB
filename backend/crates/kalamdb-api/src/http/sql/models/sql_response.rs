@@ -269,7 +269,7 @@ impl SqlResponse {
             results: Vec::new(),
             took,
             error: Some(ErrorDetail {
-                code:    code.as_str().to_string(),
+                code: code.as_str().to_string(),
                 message: message.to_string(),
                 details: None,
             }),
@@ -299,7 +299,7 @@ impl SqlResponse {
             results: Vec::new(),
             took,
             error: Some(ErrorDetail {
-                code:    code.as_str().to_string(),
+                code: code.as_str().to_string(),
                 message: message.to_string(),
                 details: Some(details.to_string()),
             }),
@@ -358,11 +358,11 @@ impl QueryResult {
     /// Create a result for a DDL statement (CREATE/ALTER/DROP)
     pub fn with_message(message: String) -> Self {
         Self {
-            schema:    Vec::new(),
-            rows:      None,
+            schema: Vec::new(),
+            rows: None,
             row_count: 0,
-            message:   Some(message),
-            as_user:   "unknown".to_string(),
+            message: Some(message),
+            as_user: "unknown".to_string(),
         }
     }
 

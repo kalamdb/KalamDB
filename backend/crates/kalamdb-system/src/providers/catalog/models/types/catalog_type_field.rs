@@ -21,7 +21,7 @@ pub struct CatalogTypeField {
         default = "None",
         comment = "TypeId:slot for composites; TypeId:name for enum labels"
     )]
-    pub type_field_id:    TypeFieldId,
+    pub type_field_id: TypeFieldId,
     #[column(
         id = 2,
         ordinal = 2,
@@ -31,7 +31,7 @@ pub struct CatalogTypeField {
         default = "None",
         comment = "Parent catalog type"
     )]
-    pub type_id:          TypeId,
+    pub type_id: TypeId,
     #[column(
         id = 3,
         ordinal = 3,
@@ -41,7 +41,7 @@ pub struct CatalogTypeField {
         default = "None",
         comment = "Field or enum label name"
     )]
-    pub name:             String,
+    pub name: String,
     #[column(
         id = 4,
         ordinal = 4,
@@ -51,7 +51,7 @@ pub struct CatalogTypeField {
         default = "None",
         comment = "Declaration order"
     )]
-    pub ordinal:          i32,
+    pub ordinal: i32,
     #[column(
         id = 5,
         ordinal = 5,
@@ -62,7 +62,7 @@ pub struct CatalogTypeField {
         comment = "Named type reference when the field is not a primitive"
     )]
     #[serde(default)]
-    pub field_type_id:    Option<TypeId>,
+    pub field_type_id: Option<TypeId>,
     #[column(
         id = 6,
         ordinal = 6,
@@ -72,7 +72,7 @@ pub struct CatalogTypeField {
         default = "None",
         comment = "Resolved type name (primitive or named)"
     )]
-    pub type_name:        String,
+    pub type_name: String,
     #[column(
         id = 7,
         ordinal = 7,
@@ -82,7 +82,7 @@ pub struct CatalogTypeField {
         default = "None",
         comment = "True when the field is an array"
     )]
-    pub is_array:         bool,
+    pub is_array: bool,
     #[column(
         id = 8,
         ordinal = 8,
@@ -92,7 +92,7 @@ pub struct CatalogTypeField {
         default = "None",
         comment = "NOT NULL"
     )]
-    pub not_null:         bool,
+    pub not_null: bool,
     #[column(
         id = 9,
         ordinal = 9,
@@ -102,7 +102,7 @@ pub struct CatalogTypeField {
         default = "None",
         comment = "NONEMPTY for arrays"
     )]
-    pub nonempty:         bool,
+    pub nonempty: bool,
     #[column(
         id = 10,
         ordinal = 10,
@@ -113,7 +113,7 @@ pub struct CatalogTypeField {
         comment = "Builtin KalamDataType when the field is not a named CREATE TYPE"
     )]
     #[serde(default)]
-    pub data_type:        Option<KalamDataType>,
+    pub data_type: Option<KalamDataType>,
     #[column(
         id = 11,
         ordinal = 11,
@@ -124,7 +124,7 @@ pub struct CatalogTypeField {
         comment = "Stable physical slot; never reused"
     )]
     #[serde(default)]
-    pub slot:             i32,
+    pub slot: i32,
     #[column(
         id = 12,
         ordinal = 12,
@@ -135,7 +135,7 @@ pub struct CatalogTypeField {
         comment = "Tombstone; slot is not reused"
     )]
     #[serde(default)]
-    pub dropped:          bool,
+    pub dropped: bool,
     #[column(
         id = 13,
         ordinal = 13,

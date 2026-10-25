@@ -241,9 +241,9 @@ pub(super) fn wait_for_storage_check_healthy(
 
 #[derive(Debug, Clone)]
 pub(super) struct StorageMeta {
-    pub base_directory:  String,
+    pub base_directory: String,
     pub shared_template: String,
-    pub user_template:   String,
+    pub user_template: String,
 }
 
 pub(super) fn fetch_storage_metadata(storage_id: &str) -> StorageMeta {
@@ -263,9 +263,9 @@ pub(super) fn fetch_storage_metadata(storage_id: &str) -> StorageMeta {
     let row = rows.first().unwrap();
 
     StorageMeta {
-        base_directory:  get_row_string(row, "base_directory"),
+        base_directory: get_row_string(row, "base_directory"),
         shared_template: get_row_string(row, "shared_tables_template"),
-        user_template:   get_row_string(row, "user_tables_template"),
+        user_template: get_row_string(row, "user_tables_template"),
     }
 }
 

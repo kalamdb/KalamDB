@@ -10,7 +10,7 @@ use crate::{
 pub(super) struct PendingIndex {
     pub(super) table_sql: String,
     pub(super) table_key: String,
-    pub(super) index:     TableIndex,
+    pub(super) index: TableIndex,
 }
 
 pub(super) fn is_index_ddl(sql: &str) -> bool {
@@ -91,19 +91,19 @@ fn table_index_from_operation(
             unique,
             ..
         } => Ok(TableIndex {
-            name:    name.clone(),
+            name: name.clone(),
             columns: columns.clone(),
-            unique:  *unique,
-            kind:    TableIndexKind::Scalar,
+            unique: *unique,
+            kind: TableIndexKind::Scalar,
         }),
         ColumnOperation::CreateVectorIndex {
             column_name,
             metric,
         } => Ok(TableIndex {
-            name:    column_name.clone(),
+            name: column_name.clone(),
             columns: vec![column_name.clone()],
-            unique:  false,
-            kind:    TableIndexKind::Vector {
+            unique: false,
+            kind: TableIndexKind::Vector {
                 metric: format!("{metric:?}").to_ascii_uppercase(),
             },
         }),

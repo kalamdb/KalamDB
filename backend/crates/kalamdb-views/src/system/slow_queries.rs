@@ -30,27 +30,27 @@ const LOG_TAIL: JsonlTailLimits = JsonlTailLimits::DEFAULT;
 
 #[derive(Debug)]
 struct SlowQueryLogEntry {
-    timestamp:    String,
+    timestamp: String,
     timestamp_ms: i64,
-    duration_ms:  f64,
-    user_id:      String,
-    table_type:   String,
-    table_name:   Option<String>,
-    row_count:    i64,
-    query:        String,
+    duration_ms: f64,
+    user_id: String,
+    table_type: String,
+    table_name: Option<String>,
+    row_count: i64,
+    query: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
 struct RawSlowQueryLogEntry {
-    timestamp:     Option<String>,
-    timestamp_ms:  Option<i64>,
-    duration_ms:   Option<f64>,
+    timestamp: Option<String>,
+    timestamp_ms: Option<i64>,
+    duration_ms: Option<f64>,
     duration_secs: Option<f64>,
-    row_count:     Option<i64>,
-    user_id:       Option<String>,
-    table_type:    Option<String>,
-    table_name:    Option<String>,
-    query:         Option<String>,
+    row_count: Option<i64>,
+    user_id: Option<String>,
+    table_type: Option<String>,
+    table_name: Option<String>,
+    query: Option<String>,
 }
 
 impl RawSlowQueryLogEntry {

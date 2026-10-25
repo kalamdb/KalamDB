@@ -86,7 +86,7 @@ pub fn storage_data_type_from_arrow(data_type: &DataType) -> Result<StorageDataT
         DataType::Timestamp(_, _) => Ok(StorageDataType::TimestampMicrosecond),
         DataType::Decimal128(precision, scale) => Ok(StorageDataType::Decimal {
             precision: *precision,
-            scale:     *scale,
+            scale: *scale,
         }),
         DataType::FixedSizeList(field, dimension) if field.data_type() == &DataType::Float32 => {
             Ok(StorageDataType::Embedding {

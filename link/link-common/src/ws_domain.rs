@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use kalamdb_serialization::{decode_server_message as decode_commons_server_message, SerializationError};
+use kalamdb_serialization::{
+    decode_server_message as decode_commons_server_message, SerializationError,
+};
 
 use crate::error::{KalamLinkError, Result};
 use crate::models::{KalamCellValue, ServerMessage};

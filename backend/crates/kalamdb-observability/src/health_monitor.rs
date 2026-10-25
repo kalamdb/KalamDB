@@ -33,13 +33,13 @@ pub fn get_websocket_session_peak_count() -> usize {
 /// Descriptor class breakdown captured from process file descriptors.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OpenFileBreakdown {
-    pub total:       usize,
-    pub regular:     usize,
+    pub total: usize,
+    pub regular: usize,
     pub directories: usize,
-    pub kqueue:      usize,
-    pub unix:        usize,
-    pub ipv4:        usize,
-    pub other:       usize,
+    pub kqueue: usize,
+    pub unix: usize,
+    pub ipv4: usize,
+    pub other: usize,
 }
 
 /// Monitor for system health and job statistics

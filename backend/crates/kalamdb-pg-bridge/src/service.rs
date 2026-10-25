@@ -794,13 +794,13 @@ mod tests {
     async fn scan_nonexistent_table_returns_not_found() {
         let (_app_ctx, svc) = setup();
         let req = ScanRequest {
-            table_id:   TableId::new(SchemaId::new("no_ns"), TableName::new("no_table")),
+            table_id: TableId::new(SchemaId::new("no_ns"), TableName::new("no_table")),
             table_type: TableType::Shared,
             session_id: None,
-            columns:    vec![],
-            limit:      None,
-            user_id:    Some(UserId::new("service")),
-            filters:    vec![],
+            columns: vec![],
+            limit: None,
+            user_id: Some(UserId::new("service")),
+            filters: vec![],
         };
         let err = svc.execute_scan(req).await.unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
@@ -1031,11 +1031,11 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_insert(InsertRequest {
-                table_id:   TableId::new(SchemaId::new("system"), TableName::new("users")),
+                table_id: TableId::new(SchemaId::new("system"), TableName::new("users")),
                 table_type: TableType::System,
                 session_id: None,
-                rows:       vec![empty_row()],
-                user_id:    None,
+                rows: vec![empty_row()],
+                user_id: None,
             })
             .await
             .unwrap_err();
@@ -1047,12 +1047,12 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_update(UpdateRequest {
-                table_id:   TableId::new(SchemaId::new("system"), TableName::new("users")),
+                table_id: TableId::new(SchemaId::new("system"), TableName::new("users")),
                 table_type: TableType::System,
                 session_id: None,
-                updates:    vec![empty_row()],
-                pk_value:   "some_pk".to_string(),
-                user_id:    None,
+                updates: vec![empty_row()],
+                pk_value: "some_pk".to_string(),
+                user_id: None,
             })
             .await
             .unwrap_err();
@@ -1064,11 +1064,11 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_delete(DeleteRequest {
-                table_id:   TableId::new(SchemaId::new("system"), TableName::new("users")),
+                table_id: TableId::new(SchemaId::new("system"), TableName::new("users")),
                 table_type: TableType::System,
                 session_id: None,
-                pk_value:   "some_pk".to_string(),
-                user_id:    None,
+                pk_value: "some_pk".to_string(),
+                user_id: None,
             })
             .await
             .unwrap_err();
@@ -1084,11 +1084,11 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_insert(InsertRequest {
-                table_id:   TableId::new(SchemaId::new("default"), TableName::new("tbl")),
+                table_id: TableId::new(SchemaId::new("default"), TableName::new("tbl")),
                 table_type: TableType::User,
                 session_id: None,
-                rows:       vec![empty_row()],
-                user_id:    None,
+                rows: vec![empty_row()],
+                user_id: None,
             })
             .await
             .unwrap_err();
@@ -1101,12 +1101,12 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_update(UpdateRequest {
-                table_id:   TableId::new(SchemaId::new("default"), TableName::new("tbl")),
+                table_id: TableId::new(SchemaId::new("default"), TableName::new("tbl")),
                 table_type: TableType::User,
                 session_id: None,
-                updates:    vec![empty_row()],
-                pk_value:   "pk".to_string(),
-                user_id:    None,
+                updates: vec![empty_row()],
+                pk_value: "pk".to_string(),
+                user_id: None,
             })
             .await
             .unwrap_err();
@@ -1118,11 +1118,11 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_delete(DeleteRequest {
-                table_id:   TableId::new(SchemaId::new("default"), TableName::new("tbl")),
+                table_id: TableId::new(SchemaId::new("default"), TableName::new("tbl")),
                 table_type: TableType::User,
                 session_id: None,
-                pk_value:   "pk".to_string(),
-                user_id:    None,
+                pk_value: "pk".to_string(),
+                user_id: None,
             })
             .await
             .unwrap_err();
@@ -1134,11 +1134,11 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_insert(InsertRequest {
-                table_id:   TableId::new(SchemaId::new("default"), TableName::new("events")),
+                table_id: TableId::new(SchemaId::new("default"), TableName::new("events")),
                 table_type: TableType::Stream,
                 session_id: None,
-                rows:       vec![empty_row()],
-                user_id:    None,
+                rows: vec![empty_row()],
+                user_id: None,
             })
             .await
             .unwrap_err();
@@ -1166,11 +1166,11 @@ mod tests {
 
         let error = svc
             .execute_insert(InsertRequest {
-                table_id:   TableId::new(SchemaId::new("default"), TableName::new("items")),
+                table_id: TableId::new(SchemaId::new("default"), TableName::new("items")),
                 table_type: TableType::Shared,
                 session_id: Some(session_id.to_string()),
-                user_id:    None,
-                rows:       vec![Row::new(values)],
+                user_id: None,
+                rows: vec![Row::new(values)],
             })
             .await
             .expect_err("shared typed write must not bypass RLS");
@@ -1291,12 +1291,12 @@ mod tests {
 
         let error = svc
             .execute_update(UpdateRequest {
-                table_id:   TableId::new(SchemaId::new("default"), TableName::new("items")),
+                table_id: TableId::new(SchemaId::new("default"), TableName::new("items")),
                 table_type: TableType::Shared,
                 session_id: Some(session_id.to_string()),
-                user_id:    None,
-                updates:    vec![empty_row()],
-                pk_value:   "1".to_string(),
+                user_id: None,
+                updates: vec![empty_row()],
+                pk_value: "1".to_string(),
             })
             .await
             .expect_err("shared typed update must not bypass RLS");
@@ -1315,11 +1315,11 @@ mod tests {
 
         let error = svc
             .execute_delete(DeleteRequest {
-                table_id:   TableId::new(SchemaId::new("default"), TableName::new("items")),
+                table_id: TableId::new(SchemaId::new("default"), TableName::new("items")),
                 table_type: TableType::Shared,
                 session_id: Some(session_id.to_string()),
-                user_id:    None,
-                pk_value:   "1".to_string(),
+                user_id: None,
+                pk_value: "1".to_string(),
             })
             .await
             .expect_err("shared typed delete must not bypass RLS");

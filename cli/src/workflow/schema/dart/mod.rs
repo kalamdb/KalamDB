@@ -29,33 +29,33 @@ const DART_TEMPLATE: &str = "lib/generated/kalam.dart";
 #[derive(Serialize)]
 struct DartContext {
     contract_hash_line: String,
-    enums:              Vec<EnumContext>,
-    classes:            Vec<RowClassContext>,
-    aliases:            Vec<AliasContext>,
-    result_aliases:     Vec<ResultAlias>,
-    tables:             Vec<TableSpecContext>,
-    has_functions:      bool,
-    namespaces:         Vec<functions::NamespaceContext>,
-    needs_helpers:      bool,
+    enums: Vec<EnumContext>,
+    classes: Vec<RowClassContext>,
+    aliases: Vec<AliasContext>,
+    result_aliases: Vec<ResultAlias>,
+    tables: Vec<TableSpecContext>,
+    has_functions: bool,
+    namespaces: Vec<functions::NamespaceContext>,
+    needs_helpers: bool,
 }
 
 #[derive(Serialize)]
 struct EnumContext {
-    doc:    String,
-    ident:  String,
+    doc: String,
+    ident: String,
     labels: Vec<EnumLabel>,
 }
 
 #[derive(Serialize)]
 struct EnumLabel {
-    ident:      String,
-    label:      String,
+    ident: String,
+    label: String,
     terminator: &'static str,
 }
 
 #[derive(Serialize)]
 struct AliasContext {
-    ident:    String,
+    ident: String,
     alias_of: String,
 }
 
@@ -100,14 +100,14 @@ fn dart_context(
             ContractTypeKind::Enum { labels } => {
                 let last = labels.len().saturating_sub(1);
                 enums.push(EnumContext {
-                    doc:    line_docs(ty.comment.as_deref(), "/// "),
-                    ident:  names.type_ident(id).to_string(),
+                    doc: line_docs(ty.comment.as_deref(), "/// "),
+                    ident: names.type_ident(id).to_string(),
                     labels: labels
                         .iter()
                         .enumerate()
                         .map(|(index, label)| EnumLabel {
-                            ident:      camel_case(label),
-                            label:      escape_js_single_quoted_string(label),
+                            ident: camel_case(label),
+                            label: escape_js_single_quoted_string(label),
                             terminator: if index == last { ";" } else { "," },
                         })
                         .collect(),
@@ -129,7 +129,7 @@ fn dart_context(
             },
             ContractTypeKind::Domain { base_type, .. } => {
                 aliases.push(AliasContext {
-                    ident:    names.type_ident(id).to_string(),
+                    ident: names.type_ident(id).to_string(),
                     alias_of: crate::workflow::schema::types::render_field_type(
                         base_type,
                         names,
@@ -159,7 +159,7 @@ fn dart_context(
             let row_ident = names.type_ident(table.row_type_id.as_str());
             if alias_ident != row_ident {
                 aliases.push(AliasContext {
-                    ident:    row_ident.to_string(),
+                    ident: row_ident.to_string(),
                     alias_of: alias_ident.to_string(),
                 });
             }
@@ -375,11 +375,11 @@ CREATE TABLE chat.users (
         let procedures = ProcedureCatalog::from_snapshot(&snapshot, &names);
         write_dart_schema(&SchemaEmitInput {
             project_root: temp.path(),
-            output_path:  &output,
-            snapshot:     &snapshot,
-            hash:         &hash,
-            names:        &names,
-            procedures:   &procedures,
+            output_path: &output,
+            snapshot: &snapshot,
+            hash: &hash,
+            names: &names,
+            procedures: &procedures,
         })
         .unwrap();
         let source = std::fs::read_to_string(&output).unwrap();
@@ -459,16 +459,18 @@ CREATE FUNCTION app.send_message(body JSON NOT NULL) RETURNS JSON;
             ),
             "{source}"
         );
-        assert!(source.contains("SELECT chat.create_message($1, $2) AS result"), "{source}");
-        assert!(source.contains("input.userId, input.body"), "{source}");
-        assert!(source.contains("final result = _kalamCallResult(response);"), "{source}");
+        assert!(source.contains("invokeRoutine("), "{source}");
+        assert!(source.contains("schema: 'chat'"), "{source}");
+        assert!(source.contains("name: 'create_message'"), "{source}");
+        assert!(source.contains("arguments: input.toJson()"), "{source}");
         assert!(source.contains("ChatUser.fromJson(_asJsonMap(result))"), "{source}");
         assert!(source.contains("Future<ChatPingResult> ping() async"), "{source}");
-        assert!(source.contains("CALL chat.ping()"), "{source}");
+        assert!(source.contains("name: 'ping'"), "{source}");
+        assert!(!source.contains("CALL chat."), "{source}");
+        assert!(!source.contains("SELECT chat.create_message"), "{source}");
         assert!(source.contains("Future<AppSendMessageResult> sendMessage"), "{source}");
         assert!(source.contains("return _asJsonMapOrNull(result);"), "{source}");
-        assert!(source.contains("Object? _kalamCallResult(QueryResponse response)"), "{source}");
+        assert!(!source.contains("_kalamCallResult"), "{source}");
         assert!(!source.contains("KalamClient.call"), "{source}");
-        assert!(!source.contains("/v1/functions"), "{source}");
     }
 }

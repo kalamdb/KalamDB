@@ -206,14 +206,14 @@ impl SqlExecutor {
                 .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
             return Ok(Some(ExecutionResult::Rows {
                 row_count: batch.num_rows(),
-                batches:   vec![batch],
-                schema:    Some(schema),
+                batches: vec![batch],
+                schema: Some(schema),
             }));
         }
 
         let ast_expr = Self::routine_value_to_ast_expr(&rv, &routine)?;
         select.projection[0] = sqlparser::ast::SelectItem::ExprWithAlias {
-            expr:  ast_expr,
+            expr: ast_expr,
             alias: sqlparser::ast::Ident::new(col_name),
         };
         Ok(None)
@@ -410,7 +410,7 @@ impl SqlExecutor {
                             sqlparser::ast::Expr::Value(sqlparser::ast::Value::Null.into()),
                         );
                         *item = sqlparser::ast::SelectItem::ExprWithAlias {
-                            expr:  replaced,
+                            expr: replaced,
                             alias: sqlparser::ast::Ident::new(alias_name),
                         };
                     }
@@ -577,18 +577,18 @@ impl SqlExecutor {
             )));
         }
         let func = Function {
-            name:             name.clone(),
+            name: name.clone(),
             uses_odbc_syntax: false,
-            parameters:       FunctionArguments::None,
-            args:             FunctionArguments::List(FunctionArgumentList {
+            parameters: FunctionArguments::None,
+            args: FunctionArguments::List(FunctionArgumentList {
                 duplicate_treatment: None,
-                args:                func_args.args.clone(),
-                clauses:             Vec::new(),
+                args: func_args.args.clone(),
+                clauses: Vec::new(),
             }),
-            filter:           None,
-            null_treatment:   None,
-            over:             None,
-            within_group:     Vec::new(),
+            filter: None,
+            null_treatment: None,
+            over: None,
+            within_group: Vec::new(),
         };
         let call = kalamdb_sql::ddl::column_default::function_to_routine_call_with_placeholders(
             &func,
@@ -623,8 +623,8 @@ impl SqlExecutor {
         };
         Ok(Some(ExecutionResult::Rows {
             row_count: usize::from(include),
-            batches:   vec![batch],
-            schema:    Some(schema),
+            batches: vec![batch],
+            schema: Some(schema),
         }))
     }
 
@@ -689,46 +689,46 @@ impl SqlExecutor {
             | ScalarValue::LargeUtf8(None)
             | ScalarValue::Utf8View(None) => match routine.return_data_type {
                 Some(KalamDataType::Boolean) => AstExpr::Cast {
-                    kind:      sqlparser::ast::CastKind::Cast,
-                    expr:      Box::new(AstExpr::Value(AstValue::Null.into())),
+                    kind: sqlparser::ast::CastKind::Cast,
+                    expr: Box::new(AstExpr::Value(AstValue::Null.into())),
                     data_type: AstDataType::Boolean,
-                    array:     false,
-                    format:    None,
+                    array: false,
+                    format: None,
                 },
                 Some(KalamDataType::SmallInt) => AstExpr::Cast {
-                    kind:      sqlparser::ast::CastKind::Cast,
-                    expr:      Box::new(AstExpr::Value(AstValue::Null.into())),
+                    kind: sqlparser::ast::CastKind::Cast,
+                    expr: Box::new(AstExpr::Value(AstValue::Null.into())),
                     data_type: AstDataType::SmallInt(None),
-                    array:     false,
-                    format:    None,
+                    array: false,
+                    format: None,
                 },
                 Some(KalamDataType::Int) => AstExpr::Cast {
-                    kind:      sqlparser::ast::CastKind::Cast,
-                    expr:      Box::new(AstExpr::Value(AstValue::Null.into())),
+                    kind: sqlparser::ast::CastKind::Cast,
+                    expr: Box::new(AstExpr::Value(AstValue::Null.into())),
                     data_type: AstDataType::Int(None),
-                    array:     false,
-                    format:    None,
+                    array: false,
+                    format: None,
                 },
                 Some(KalamDataType::BigInt) => AstExpr::Cast {
-                    kind:      sqlparser::ast::CastKind::Cast,
-                    expr:      Box::new(AstExpr::Value(AstValue::Null.into())),
+                    kind: sqlparser::ast::CastKind::Cast,
+                    expr: Box::new(AstExpr::Value(AstValue::Null.into())),
                     data_type: AstDataType::BigInt(None),
-                    array:     false,
-                    format:    None,
+                    array: false,
+                    format: None,
                 },
                 Some(KalamDataType::Double | KalamDataType::Float) => AstExpr::Cast {
-                    kind:      sqlparser::ast::CastKind::Cast,
-                    expr:      Box::new(AstExpr::Value(AstValue::Null.into())),
+                    kind: sqlparser::ast::CastKind::Cast,
+                    expr: Box::new(AstExpr::Value(AstValue::Null.into())),
                     data_type: AstDataType::Double(sqlparser::ast::ExactNumberInfo::None),
-                    array:     false,
-                    format:    None,
+                    array: false,
+                    format: None,
                 },
                 _ => AstExpr::Cast {
-                    kind:      sqlparser::ast::CastKind::Cast,
-                    expr:      Box::new(AstExpr::Value(AstValue::Null.into())),
+                    kind: sqlparser::ast::CastKind::Cast,
+                    expr: Box::new(AstExpr::Value(AstValue::Null.into())),
                     data_type: AstDataType::Text,
-                    array:     false,
-                    format:    None,
+                    array: false,
+                    format: None,
                 },
             },
             ScalarValue::Boolean(Some(b)) => AstExpr::Value(AstValue::Boolean(*b).into()),

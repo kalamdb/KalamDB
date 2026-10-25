@@ -3,7 +3,7 @@
 use std::{
     ops::Deref,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc,
     },
 };
@@ -48,20 +48,23 @@ type TriggerAttemptsStore = IndexedEntityStore<TriggerAttemptId, CatalogTriggerA
 pub struct CatalogStores(Arc<CatalogStoresInner>);
 
 pub struct CatalogStoresInner {
-    pub types:              TypesStore,
-    pub type_fields:        TypeFieldsStore,
-    pub routines:           RoutinesStore,
+    pub types: TypesStore,
+    pub type_fields: TypeFieldsStore,
+    pub routines: RoutinesStore,
     pub routine_parameters: RoutineParametersStore,
-    pub routine_grants:     RoutineGrantsStore,
-    pub function_modules:   FunctionModulesStore,
+    pub routine_grants: RoutineGrantsStore,
+    pub function_modules: FunctionModulesStore,
     pub function_revisions: FunctionRevisionsStore,
     pub function_artifacts: FunctionArtifactsStore,
-    pub schedules:          IndexedEntityStore<ScheduleId, CatalogSchedule>,
-    pub triggers:           TriggersStore,
-    pub trigger_attempts:   TriggerAttemptsStore,
-    routines_cache:         DashMap<RoutineId, CatalogRoutine>,
-    parameters_cache:       DashMap<RoutineId, Vec<CatalogRoutineParameter>>,
-    user_routine_count:     AtomicUsize,
+    pub schedules: IndexedEntityStore<ScheduleId, CatalogSchedule>,
+    pub triggers: TriggersStore,
+    pub trigger_attempts: TriggerAttemptsStore,
+    routines_cache: DashMap<RoutineId, CatalogRoutine>,
+    parameters_cache: DashMap<RoutineId, Vec<CatalogRoutineParameter>>,
+    user_routine_count: AtomicUsize,
+    /// Bumped when a routine or its parameters change. Descriptor caches compare this
+    /// instead of re-reading and re-hashing on every call.
+    contract_generation: AtomicU64,
 }
 
 impl Deref for CatalogStores {
@@ -171,6 +174,7 @@ impl CatalogStores {
             routines_cache,
             parameters_cache: DashMap::new(),
             user_routine_count: AtomicUsize::new(initial_user_routines),
+            contract_generation: AtomicU64::new(1),
         }))
     }
 
@@ -311,6 +315,7 @@ impl CatalogStores {
 
     pub fn upsert_routine(&self, routine: CatalogRoutine) -> Result<(), SystemError> {
         put_model(&self.routines, &routine.routine_id, &routine)?;
+        self.bump_contract_generation();
         let is_user = is_user_routine(&routine);
         let prev_was_user = self
             .routines_cache
@@ -346,6 +351,7 @@ impl CatalogStores {
         let routine_id = parameter.routine_id.clone();
         put_model(&self.routine_parameters, &parameter.parameter_id, &parameter)?;
         self.parameters_cache.remove(&routine_id);
+        self.bump_contract_generation();
         Ok(())
     }
 
@@ -367,6 +373,16 @@ impl CatalogStores {
         }
         self.parameters_cache.remove(routine_id);
         Ok(())
+    }
+
+    /// Monotonic counter covering routine and parameter writes.
+    #[inline]
+    pub fn contract_generation(&self) -> u64 {
+        self.contract_generation.load(Ordering::Acquire)
+    }
+
+    fn bump_contract_generation(&self) {
+        self.contract_generation.fetch_add(1, Ordering::Release);
     }
 
     pub fn list_parameters(
@@ -851,45 +867,45 @@ impl CatalogStores {
         let file_put_id = RoutineId::new("pg_catalog.file_put");
         if self.get_routine(&file_put_id)?.is_none() {
             self.upsert_routine(CatalogRoutine {
-                routine_id:         file_put_id.clone(),
-                namespace_id:       pg_catalog_ns.clone(),
-                name:               "file_put".to_string(),
-                owner:              system_owner.clone(),
-                security:           RoutineSecurityMode::Invoker,
-                language:           Some("INTERNAL".to_string()),
-                body:               None,
-                return_type_id:     Some(file_type_id.clone()),
-                return_type_name:   Some("pg_catalog.file".to_string()),
-                return_is_array:    false,
-                return_not_null:    true,
-                comment:            Some(
+                routine_id: file_put_id.clone(),
+                namespace_id: pg_catalog_ns.clone(),
+                name: "file_put".to_string(),
+                owner: system_owner.clone(),
+                security: RoutineSecurityMode::Invoker,
+                language: Some("INTERNAL".to_string()),
+                body: None,
+                return_type_id: Some(file_type_id.clone()),
+                return_type_name: Some("pg_catalog.file".to_string()),
+                return_is_array: false,
+                return_not_null: true,
+                comment: Some(
                     "Stage a multipart file upload and return a minted pg_catalog.file reference"
                         .to_string(),
                 ),
-                return_data_type:   Some(KalamDataType::File),
+                return_data_type: Some(KalamDataType::File),
                 inline_source_hash: None,
                 inline_artifact_id: None,
-                kind:               RoutineKind::Function,
-                volatility:         RoutineVolatility::Volatile,
-                null_safety:        RoutineNullSafety::ReturnsNullOnNullInput,
-                parallel_safety:    RoutineParallelSafety::Unsafe,
-                cost:               None,
-                rows:               None,
-                config_params:      None,
+                kind: RoutineKind::Function,
+                volatility: RoutineVolatility::Volatile,
+                null_safety: RoutineNullSafety::ReturnsNullOnNullInput,
+                parallel_safety: RoutineParallelSafety::Unsafe,
+                cost: None,
+                rows: None,
+                config_params: None,
             })?;
             self.upsert_parameter(CatalogRoutineParameter {
                 parameter_id: RoutineParameterId::new(&file_put_id, 1)
                     .map_err(SystemError::InvalidOperation)?,
-                routine_id:   file_put_id,
-                name:         "placeholder".to_string(),
-                ordinal:      1,
-                type_id:      None,
-                type_name:    "text".to_string(),
-                is_array:     false,
-                not_null:     true,
-                nonempty:     false,
-                data_type:    Some(KalamDataType::Text),
-                mode:         RoutineParameterMode::In,
+                routine_id: file_put_id,
+                name: "placeholder".to_string(),
+                ordinal: 1,
+                type_id: None,
+                type_name: "text".to_string(),
+                is_array: false,
+                not_null: true,
+                nonempty: false,
+                data_type: Some(KalamDataType::Text),
+                mode: RoutineParameterMode::In,
                 default_expr: None,
             })?;
         }
@@ -897,44 +913,44 @@ impl CatalogStores {
         let file_read_id = RoutineId::new("pg_catalog.file_read");
         if self.get_routine(&file_read_id)?.is_none() {
             self.upsert_routine(CatalogRoutine {
-                routine_id:         file_read_id.clone(),
-                namespace_id:       pg_catalog_ns.clone(),
-                name:               "file_read".to_string(),
-                owner:              system_owner.clone(),
-                security:           RoutineSecurityMode::Invoker,
-                language:           Some("INTERNAL".to_string()),
-                body:               None,
-                return_type_id:     None,
-                return_type_name:   Some("bytea".to_string()),
-                return_is_array:    false,
-                return_not_null:    true,
-                comment:            Some(
+                routine_id: file_read_id.clone(),
+                namespace_id: pg_catalog_ns.clone(),
+                name: "file_read".to_string(),
+                owner: system_owner.clone(),
+                security: RoutineSecurityMode::Invoker,
+                language: Some("INTERNAL".to_string()),
+                body: None,
+                return_type_id: None,
+                return_type_name: Some("bytea".to_string()),
+                return_is_array: false,
+                return_not_null: true,
+                comment: Some(
                     "Read raw bytes from the filestore for a pg_catalog.file reference".to_string(),
                 ),
-                return_data_type:   Some(KalamDataType::Bytes),
+                return_data_type: Some(KalamDataType::Bytes),
                 inline_source_hash: None,
                 inline_artifact_id: None,
-                kind:               RoutineKind::Function,
-                volatility:         RoutineVolatility::Stable,
-                null_safety:        RoutineNullSafety::ReturnsNullOnNullInput,
-                parallel_safety:    RoutineParallelSafety::Restricted,
-                cost:               None,
-                rows:               None,
-                config_params:      None,
+                kind: RoutineKind::Function,
+                volatility: RoutineVolatility::Stable,
+                null_safety: RoutineNullSafety::ReturnsNullOnNullInput,
+                parallel_safety: RoutineParallelSafety::Restricted,
+                cost: None,
+                rows: None,
+                config_params: None,
             })?;
             self.upsert_parameter(CatalogRoutineParameter {
                 parameter_id: RoutineParameterId::new(&file_read_id, 1)
                     .map_err(SystemError::InvalidOperation)?,
-                routine_id:   file_read_id,
-                name:         "file".to_string(),
-                ordinal:      1,
-                type_id:      Some(file_type_id.clone()),
-                type_name:    "pg_catalog.file".to_string(),
-                is_array:     false,
-                not_null:     true,
-                nonempty:     false,
-                data_type:    Some(KalamDataType::File),
-                mode:         RoutineParameterMode::In,
+                routine_id: file_read_id,
+                name: "file".to_string(),
+                ordinal: 1,
+                type_id: Some(file_type_id.clone()),
+                type_name: "pg_catalog.file".to_string(),
+                is_array: false,
+                not_null: true,
+                nonempty: false,
+                data_type: Some(KalamDataType::File),
+                mode: RoutineParameterMode::In,
                 default_expr: None,
             })?;
         }
@@ -942,45 +958,45 @@ impl CatalogStores {
         let file_delete_id = RoutineId::new("pg_catalog.file_delete");
         if self.get_routine(&file_delete_id)?.is_none() {
             self.upsert_routine(CatalogRoutine {
-                routine_id:         file_delete_id.clone(),
-                namespace_id:       pg_catalog_ns,
-                name:               "file_delete".to_string(),
-                owner:              system_owner,
-                security:           RoutineSecurityMode::Invoker,
-                language:           Some("INTERNAL".to_string()),
-                body:               None,
-                return_type_id:     None,
-                return_type_name:   None,
-                return_is_array:    false,
-                return_not_null:    false,
-                comment:            Some(
+                routine_id: file_delete_id.clone(),
+                namespace_id: pg_catalog_ns,
+                name: "file_delete".to_string(),
+                owner: system_owner,
+                security: RoutineSecurityMode::Invoker,
+                language: Some("INTERNAL".to_string()),
+                body: None,
+                return_type_id: None,
+                return_type_name: None,
+                return_is_array: false,
+                return_not_null: false,
+                comment: Some(
                     "Delete a staged or stored filestore blob for a pg_catalog.file reference"
                         .to_string(),
                 ),
-                return_data_type:   None,
+                return_data_type: None,
                 inline_source_hash: None,
                 inline_artifact_id: None,
-                kind:               RoutineKind::Function,
-                volatility:         RoutineVolatility::Volatile,
-                null_safety:        RoutineNullSafety::ReturnsNullOnNullInput,
-                parallel_safety:    RoutineParallelSafety::Unsafe,
-                cost:               None,
-                rows:               None,
-                config_params:      None,
+                kind: RoutineKind::Function,
+                volatility: RoutineVolatility::Volatile,
+                null_safety: RoutineNullSafety::ReturnsNullOnNullInput,
+                parallel_safety: RoutineParallelSafety::Unsafe,
+                cost: None,
+                rows: None,
+                config_params: None,
             })?;
             self.upsert_parameter(CatalogRoutineParameter {
                 parameter_id: RoutineParameterId::new(&file_delete_id, 1)
                     .map_err(SystemError::InvalidOperation)?,
-                routine_id:   file_delete_id,
-                name:         "file".to_string(),
-                ordinal:      1,
-                type_id:      Some(file_type_id),
-                type_name:    "pg_catalog.file".to_string(),
-                is_array:     false,
-                not_null:     true,
-                nonempty:     false,
-                data_type:    Some(KalamDataType::File),
-                mode:         RoutineParameterMode::In,
+                routine_id: file_delete_id,
+                name: "file".to_string(),
+                ordinal: 1,
+                type_id: Some(file_type_id),
+                type_name: "pg_catalog.file".to_string(),
+                is_array: false,
+                not_null: true,
+                nonempty: false,
+                data_type: Some(KalamDataType::File),
+                mode: RoutineParameterMode::In,
                 default_expr: None,
             })?;
         }

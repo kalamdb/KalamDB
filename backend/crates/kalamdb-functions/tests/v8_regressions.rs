@@ -24,14 +24,7 @@ fn settled_promise_returns_its_value() {
 
 #[test]
 fn transfer_safe_int64_is_js_number_so_plus_one_is_arithmetic() {
-    let encoded = kalamdb_commons::conversions::arrow_json_conversion::scalar_value_to_js_json(
-        &ScalarValue::Int64(Some(41)),
-    )
-    .expect("js json");
-    let bytes = kalamdb_serialization::encode_function_value("", &encoded.0).unwrap();
-    let mut arg = RoutineValue::new(ScalarValue::Int64(Some(41)));
-    arg.transfer = Some(bytes.into());
-    arg.contract_hash = Some(String::new());
+    let arg = RoutineValue::new(ScalarValue::Int64(Some(41)));
     let mut session = V8Session::load(
         ModuleRevision::typescript_fixture(kalamdb_functions::wrap_procedure_source(
             "return input + 1;",

@@ -29,32 +29,29 @@ use crate::{
 pub enum ColumnOperation {
     /// Add a new column
     Add {
-        column_name:              String,
-        data_type:                KalamDataType,
-        type_ref:                 Option<crate::ddl::TypeReference>,
-        nullable:                 bool,
-        default_value:            Option<ColumnDefault>,
-        if_not_exists:            bool,
+        column_name: String,
+        data_type: KalamDataType,
+        type_ref: Option<crate::ddl::TypeReference>,
+        nullable: bool,
+        default_value: Option<ColumnDefault>,
+        if_not_exists: bool,
         character_maximum_length: Option<u32>,
     },
     /// Drop an existing column
     Drop { column_name: String },
     /// Modify an existing column's data type
     Modify {
-        column_name:   String,
+        column_name: String,
         new_data_type: KalamDataType,
-        type_ref:      Option<crate::ddl::TypeReference>,
-        nullable:      Option<bool>,
-        using_expr:    Option<String>,
+        type_ref: Option<crate::ddl::TypeReference>,
+        nullable: Option<bool>,
+        using_expr: Option<String>,
     },
     /// Set or drop nullable state on an existing column.
-    SetNullable {
-        column_name: String,
-        nullable:    bool,
-    },
+    SetNullable { column_name: String, nullable: bool },
     /// Set a column default expression.
     SetDefault {
-        column_name:   String,
+        column_name: String,
         default_value: ColumnDefault,
     },
     /// Drop a column default expression.
@@ -69,15 +66,15 @@ pub enum ColumnOperation {
     /// Create or enable a vector index for an embedding column.
     CreateVectorIndex {
         column_name: String,
-        metric:      VectorMetric,
+        metric: VectorMetric,
     },
     /// Disable a vector index for an embedding column.
     DropVectorIndex { column_name: String },
     /// Create a scalar prefix index (parentheses form).
     CreateScalarIndex {
-        name:          String,
-        columns:       Vec<String>,
-        unique:        bool,
+        name: String,
+        columns: Vec<String>,
+        unique: bool,
         if_not_exists: bool,
     },
     /// Drop a scalar index, or a vector index when the name is not in the
@@ -86,15 +83,15 @@ pub enum ColumnOperation {
     /// PostgreSQL `DROP INDEX [IF EXISTS] name` with no table. The handler
     /// resolves each name to the table that owns that scalar index.
     DropStandaloneIndex {
-        indexes:   Vec<StandaloneIndexName>,
+        indexes: Vec<StandaloneIndexName>,
         if_exists: bool,
     },
     /// Rename a scalar index once the owning table is known.
     RenameIndex { name: String, new_name: String },
     /// PostgreSQL `ALTER INDEX [IF EXISTS] name RENAME TO new_name`.
     RenameStandaloneIndex {
-        index:     StandaloneIndexName,
-        new_name:  String,
+        index: StandaloneIndexName,
+        new_name: String,
         if_exists: bool,
     },
     /// Constraint accepted so PostgreSQL installers can proceed.
@@ -107,13 +104,13 @@ pub enum ColumnOperation {
     /// `on_update` and `on_delete` are reported as written; they are not applied
     /// when the referenced row changes.
     AlignForeignKey {
-        name:                 String,
-        columns:              Vec<String>,
+        name: String,
+        columns: Vec<String>,
         referenced_namespace: SchemaId,
-        referenced_table:     TableName,
-        referenced_columns:   Vec<String>,
-        on_update:            ForeignKeyAction,
-        on_delete:            ForeignKeyAction,
+        referenced_table: TableName,
+        referenced_columns: Vec<String>,
+        on_update: ForeignKeyAction,
+        on_delete: ForeignKeyAction,
     },
     /// `ALTER TABLE ... DROP CONSTRAINT`. A matching unique index is removed.
     /// A primary key, foreign key, or check that is not a stored index is a
@@ -129,17 +126,17 @@ pub enum ColumnOperation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StandaloneIndexName {
     pub namespace_id: SchemaId,
-    pub name:         String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct TablePropertyUpdates {
-    pub storage_id:            Option<StorageId>,
-    pub use_user_storage:      Option<bool>,
-    pub flush_policy:          Option<Option<FlushPolicy>>,
-    pub ttl_seconds:           Option<u64>,
-    pub compression:           Option<TableCompression>,
-    pub eviction_strategy:     Option<String>,
+    pub storage_id: Option<StorageId>,
+    pub use_user_storage: Option<bool>,
+    pub flush_policy: Option<Option<FlushPolicy>>,
+    pub ttl_seconds: Option<u64>,
+    pub compression: Option<TableCompression>,
+    pub eviction_strategy: Option<String>,
     pub max_stream_size_bytes: Option<u64>,
 }
 
@@ -603,14 +600,14 @@ fn build_alter_column_operation(
     match operation {
         AlterColumnOperation::SetNotNull => Ok(ColumnOperation::SetNullable {
             column_name: column_name.value.clone(),
-            nullable:    false,
+            nullable: false,
         }),
         AlterColumnOperation::DropNotNull => Ok(ColumnOperation::SetNullable {
             column_name: column_name.value.clone(),
-            nullable:    true,
+            nullable: true,
         }),
         AlterColumnOperation::SetDefault { value } => Ok(ColumnOperation::SetDefault {
-            column_name:   column_name.value.clone(),
+            column_name: column_name.value.clone(),
             default_value: expr_to_column_default(value, default_namespace)?,
         }),
         AlterColumnOperation::DropDefault => Ok(ColumnOperation::DropDefault {

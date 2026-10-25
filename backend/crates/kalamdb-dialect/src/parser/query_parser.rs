@@ -60,9 +60,9 @@ pub struct QueryParser;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubscriptionQueryAnalysis {
-    pub table_name:   String,
+    pub table_name: String,
     pub where_clause: Option<String>,
-    pub projections:  Option<Vec<String>>,
+    pub projections: Option<Vec<String>>,
 }
 
 impl QueryParser {
@@ -291,9 +291,9 @@ impl QueryParser {
         Self::validate_subscription_query_ast(query)?;
 
         Ok(SubscriptionQueryAnalysis {
-            table_name:   Self::extract_table_from_query(query)?,
+            table_name: Self::extract_table_from_query(query)?,
             where_clause: Self::extract_where_from_query(query)?,
-            projections:  Self::extract_projections_from_query(query)?,
+            projections: Self::extract_projections_from_query(query)?,
         })
     }
 

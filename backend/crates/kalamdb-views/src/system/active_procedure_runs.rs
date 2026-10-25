@@ -21,15 +21,15 @@ crate::memoized_view_schema!(active_procedure_runs_schema, ActiveProcedureRunsVi
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveProcedureRunSnapshot {
     pub execution_id: String,
-    pub request_id:   String,
+    pub request_id: String,
     pub procedure_id: String,
-    pub module_id:    Option<String>,
-    pub revision_id:  Option<String>,
-    pub actor:        String,
-    pub principal:    String,
-    pub origin:       String,
-    pub started_at:   i64,
-    pub depth:        i64,
+    pub module_id: Option<String>,
+    pub revision_id: Option<String>,
+    pub actor: String,
+    pub principal: String,
+    pub origin: String,
+    pub started_at: i64,
+    pub depth: i64,
 }
 
 /// Active-run snapshot callback type.
@@ -168,15 +168,15 @@ mod tests {
         view.set_snapshot_callback(Arc::new(|| {
             vec![ActiveProcedureRunSnapshot {
                 execution_id: "exec-1".into(),
-                request_id:   "req-1".into(),
+                request_id: "req-1".into(),
                 procedure_id: "api.health".into(),
-                module_id:    Some("backend".into()),
-                revision_id:  Some("backend:abc".into()),
-                actor:        "alice".into(),
-                principal:    "alice".into(),
-                origin:       "sql".into(),
-                started_at:   1,
-                depth:        0,
+                module_id: Some("backend".into()),
+                revision_id: Some("backend:abc".into()),
+                actor: "alice".into(),
+                principal: "alice".into(),
+                origin: "sql".into(),
+                started_at: 1,
+                depth: 0,
             }]
         }));
         let batch = view.compute_batch().expect("batch");

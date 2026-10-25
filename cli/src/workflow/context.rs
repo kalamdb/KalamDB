@@ -15,21 +15,21 @@ use crate::{
 /// Shared workflow context for command handlers.
 #[derive(Debug, Clone)]
 pub struct WorkflowContext {
-    pub project_root:       PathBuf,
-    pub config:             KalamProjectConfig,
-    pub cli_config:         CLIConfiguration,
-    pub use_color:          bool,
-    pub animations:         bool,
-    pub agent:              bool,
-    pub json:               bool,
-    pub project_dir:        Option<PathBuf>,
-    pub env_override:       Option<String>,
+    pub project_root: PathBuf,
+    pub config: KalamProjectConfig,
+    pub cli_config: CLIConfiguration,
+    pub use_color: bool,
+    pub animations: bool,
+    pub agent: bool,
+    pub json: bool,
+    pub project_dir: Option<PathBuf>,
+    pub env_override: Option<String>,
     pub namespace_override: Option<String>,
-    pub url_override:       Option<String>,
-    pub global:             bool,
-    pub host:               Option<String>,
-    pub port:               Option<u16>,
-    pub instance:           Option<String>,
+    pub url_override: Option<String>,
+    pub global: bool,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub instance: Option<String>,
 }
 
 impl WorkflowContext {
@@ -90,15 +90,15 @@ impl WorkflowContext {
 
     pub fn target_selector(&self) -> TargetSelector {
         TargetSelector {
-            start_dir:   self.project_root.clone(),
+            start_dir: self.project_root.clone(),
             project_dir: self.project_dir.clone(),
-            global:      self.global,
-            env:         self.env_override.clone(),
-            url:         self.url_override.clone(),
-            host:        self.host.clone(),
-            port:        self.port,
-            namespace:   self.namespace_override.clone(),
-            instance:    self.instance.clone(),
+            global: self.global,
+            env: self.env_override.clone(),
+            url: self.url_override.clone(),
+            host: self.host.clone(),
+            port: self.port,
+            namespace: self.namespace_override.clone(),
+            instance: self.instance.clone(),
         }
     }
 }

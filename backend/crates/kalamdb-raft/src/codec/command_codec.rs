@@ -160,21 +160,21 @@ pub fn decode_shared_data_command(bytes: &[u8]) -> Result<SharedDataCommand, Raf
             let packed = decode_packed_insert(PACKED_SHARED_INSERT, bytes).map_err(map_ser)?;
             return Ok(SharedDataCommand::Insert {
                 required_meta_index: packed.required_meta_index,
-                transaction_id:      packed.transaction_id,
-                actor_user_id:       packed.user_id,
-                table_id:            packed.table_id,
-                rows:                Vec::new(),
-                encoded_fields:      packed.encoded_fields,
+                transaction_id: packed.transaction_id,
+                actor_user_id: packed.user_id,
+                table_id: packed.table_id,
+                rows: Vec::new(),
+                encoded_fields: packed.encoded_fields,
             });
         },
         Some(PACKED_SHARED_DELETE) => {
             let packed = decode_packed_delete(PACKED_SHARED_DELETE, bytes).map_err(map_ser)?;
             return Ok(SharedDataCommand::Delete {
                 required_meta_index: packed.required_meta_index,
-                transaction_id:      packed.transaction_id,
-                actor_user_id:       packed.user_id,
-                table_id:            packed.table_id,
-                pk_values:           packed.pk_values,
+                transaction_id: packed.transaction_id,
+                actor_user_id: packed.user_id,
+                table_id: packed.table_id,
+                pk_values: packed.pk_values,
             });
         },
         _ => {},
@@ -290,10 +290,10 @@ mod tests {
     fn raft_transaction_commit_roundtrip() {
         let command = RaftCommand::TransactionCommit {
             required_meta_index: 0,
-            transaction_id:      kalamdb_commons::models::TransactionId::new(
+            transaction_id: kalamdb_commons::models::TransactionId::new(
                 "01960f7b-3d15-7d6d-b26c-7e4db6f25f8d",
             ),
-            mutations:           vec![StagedMutation::new(
+            mutations: vec![StagedMutation::new(
                 kalamdb_commons::models::TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d"),
                 TableId::new(SchemaId::from("ns"), TableName::from("items")),
                 TableType::Shared,
@@ -324,11 +324,11 @@ mod tests {
     fn shared_insert_encoded_fields_roundtrip() {
         let cmd = SharedDataCommand::Insert {
             required_meta_index: 1,
-            transaction_id:      None,
-            actor_user_id:       None,
-            table_id:            TableId::new(SchemaId::from("ns"), TableName::from("t")),
-            rows:                vec![],
-            encoded_fields:      vec![vec![1, 2, 3, 4]],
+            transaction_id: None,
+            actor_user_id: None,
+            table_id: TableId::new(SchemaId::from("ns"), TableName::from("t")),
+            rows: vec![],
+            encoded_fields: vec![vec![1, 2, 3, 4]],
         };
         let bytes = encode_shared_data_command(&cmd).expect("encode");
         assert_eq!(bytes[0], 0xA2);
@@ -350,11 +350,11 @@ mod tests {
     fn user_insert_packed_roundtrip() {
         let cmd = UserDataCommand::Insert {
             required_meta_index: 0,
-            transaction_id:      None,
-            table_id:            TableId::new(SchemaId::from("ns"), TableName::from("t")),
-            user_id:             kalamdb_commons::models::UserId::from("u1"),
-            rows:                vec![],
-            encoded_fields:      vec![vec![9, 8, 7]],
+            transaction_id: None,
+            table_id: TableId::new(SchemaId::from("ns"), TableName::from("t")),
+            user_id: kalamdb_commons::models::UserId::from("u1"),
+            rows: vec![],
+            encoded_fields: vec![vec![9, 8, 7]],
         };
         let bytes = encode_user_data_command(&cmd).expect("encode");
         assert_eq!(bytes[0], 0xA1);
@@ -379,16 +379,11 @@ mod tests {
         assert!(namespace.len() > 64);
         let cmd = UserDataCommand::Insert {
             required_meta_index: 0,
-            transaction_id:      None,
-            table_id:            TableId::new(
-                SchemaId::new(namespace.clone()),
-                TableName::from("items"),
-            ),
-            user_id:             kalamdb_commons::models::UserId::from(
-                "sql-insert-conflict-return-user",
-            ),
-            rows:                vec![],
-            encoded_fields:      vec![vec![9, 8, 7]],
+            transaction_id: None,
+            table_id: TableId::new(SchemaId::new(namespace.clone()), TableName::from("items")),
+            user_id: kalamdb_commons::models::UserId::from("sql-insert-conflict-return-user"),
+            rows: vec![],
+            encoded_fields: vec![vec![9, 8, 7]],
         };
         let bytes = encode_user_data_command(&cmd).expect("encode");
         match decode_user_data_command(&bytes).expect("decode") {
@@ -403,10 +398,10 @@ mod tests {
     fn packed_user_and_shared_delete_roundtrip() {
         let user_cmd = UserDataCommand::Delete {
             required_meta_index: 42,
-            transaction_id:      None,
-            table_id:            TableId::new(SchemaId::from("ns"), TableName::from("t")),
-            user_id:             kalamdb_commons::models::UserId::from("u1"),
-            pk_values:           Some(vec!["pk1".to_string(), "pk2".to_string()]),
+            transaction_id: None,
+            table_id: TableId::new(SchemaId::from("ns"), TableName::from("t")),
+            user_id: kalamdb_commons::models::UserId::from("u1"),
+            pk_values: Some(vec!["pk1".to_string(), "pk2".to_string()]),
         };
         let user_bytes = encode_user_data_command(&user_cmd).expect("encode user delete");
         assert_eq!(user_bytes[0], 0xA4);
@@ -426,10 +421,10 @@ mod tests {
 
         let shared_cmd = SharedDataCommand::Delete {
             required_meta_index: 7,
-            transaction_id:      None,
-            actor_user_id:       None,
-            table_id:            TableId::new(SchemaId::from("ns"), TableName::from("t")),
-            pk_values:           Some(vec!["s1".to_string()]),
+            transaction_id: None,
+            actor_user_id: None,
+            table_id: TableId::new(SchemaId::from("ns"), TableName::from("t")),
+            pk_values: Some(vec!["s1".to_string()]),
         };
         let shared_bytes = encode_shared_data_command(&shared_cmd).expect("encode shared delete");
         assert_eq!(shared_bytes[0], 0xA5);

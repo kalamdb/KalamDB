@@ -254,13 +254,13 @@ where
     K: StorageKey,
     V: KSerializable + 'static,
 {
-    backend:          Arc<dyn StorageBackend>,
-    partition:        String,
-    main_partition:   Partition,
-    indexes:          Vec<Arc<dyn IndexDefinition<K, V>>>,
+    backend: Arc<dyn StorageBackend>,
+    partition: String,
+    main_partition: Partition,
+    indexes: Vec<Arc<dyn IndexDefinition<K, V>>>,
     index_partitions: Vec<Partition>,
-    codec:            Arc<dyn EntityCodec<K, V>>,
-    _marker:          std::marker::PhantomData<(K, V)>,
+    codec: Arc<dyn EntityCodec<K, V>>,
+    _marker: std::marker::PhantomData<(K, V)>,
 }
 
 impl<K, V> IndexedEntityStore<K, V>
@@ -387,8 +387,8 @@ where
             if let Some(index_key) = index.extract_key(&key, &entity) {
                 operations.push(Operation::Put {
                     partition: index_partition.clone(),
-                    key:       index_key,
-                    value:     index.index_value(&key, &entity),
+                    key: index_key,
+                    value: index.index_value(&key, &entity),
                 });
                 count += 1;
                 if operations.len() >= BATCH_SIZE {
@@ -521,8 +521,8 @@ where
                 let index_value = index.index_value(key, entity);
                 operations.push(Operation::Put {
                     partition: index_partition.clone(),
-                    key:       index_key,
-                    value:     index_value,
+                    key: index_key,
+                    value: index_value,
                 });
             }
         }
@@ -591,8 +591,8 @@ where
                     let index_value = index.index_value(key, entity);
                     operations.push(Operation::Put {
                         partition: index_partition.clone(),
-                        key:       index_key,
-                        value:     index_value,
+                        key: index_key,
+                        value: index_value,
                     });
                 }
             }
@@ -647,8 +647,8 @@ where
                     let index_value = index.index_value(key, entity);
                     operations.push(Operation::Put {
                         partition: index_partition.clone(),
-                        key:       index_key,
-                        value:     index_value,
+                        key: index_key,
+                        value: index_value,
                     });
                 }
             }
@@ -711,7 +711,7 @@ where
                 if let Some(old_key) = old_index_key {
                     operations.push(Operation::Delete {
                         partition: index_partition.clone(),
-                        key:       old_key,
+                        key: old_key,
                     });
                 }
 
@@ -719,8 +719,8 @@ where
                     let index_value = index.index_value(key, new_entity);
                     operations.push(Operation::Put {
                         partition: index_partition.clone(),
-                        key:       idx_key,
-                        value:     index_value,
+                        key: idx_key,
+                        value: index_value,
                     });
                 }
             }
@@ -762,7 +762,7 @@ where
             if let Some(index_key) = index.extract_key(key, entity) {
                 operations.push(Operation::Delete {
                     partition: index_partition.clone(),
-                    key:       index_key,
+                    key: index_key,
                 });
             }
         }
@@ -794,7 +794,7 @@ where
             // Main entity delete is always needed
             operations.push(Operation::Delete {
                 partition: self.main_partition.clone(),
-                key:       key.storage_key(),
+                key: key.storage_key(),
             });
 
             // Index cleanup requires fetching the entity to extract index keys
@@ -806,7 +806,7 @@ where
                         if let Some(index_key) = index.extract_key(key, &entity) {
                             operations.push(Operation::Delete {
                                 partition: index_partition.clone(),
-                                key:       index_key,
+                                key: index_key,
                             });
                         }
                     }
@@ -873,7 +873,7 @@ where
             if !same_key {
                 operations.push(Operation::Delete {
                     partition: self.main_partition.clone(),
-                    key:       old_storage,
+                    key: old_storage,
                 });
             }
             for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
@@ -887,7 +887,7 @@ where
                     if let Some(index_key) = old_index_key {
                         operations.push(Operation::Delete {
                             partition: index_partition.clone(),
-                            key:       index_key,
+                            key: index_key,
                         });
                     }
                 }
@@ -905,8 +905,8 @@ where
                 let index_value = index.index_value(new_key, new_entity);
                 operations.push(Operation::Put {
                     partition: index_partition.clone(),
-                    key:       index_key,
-                    value:     index_value,
+                    key: index_key,
+                    value: index_value,
                 });
             }
         }
@@ -1276,13 +1276,13 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            backend:          Arc::clone(&self.backend),
-            partition:        self.partition.clone(),
-            main_partition:   self.main_partition.clone(),
-            indexes:          self.indexes.clone(),
+            backend: Arc::clone(&self.backend),
+            partition: self.partition.clone(),
+            main_partition: self.main_partition.clone(),
+            indexes: self.indexes.clone(),
             index_partitions: self.index_partitions.clone(),
-            codec:            Arc::clone(&self.codec),
-            _marker:          std::marker::PhantomData,
+            codec: Arc::clone(&self.codec),
+            _marker: std::marker::PhantomData,
         }
     }
 }

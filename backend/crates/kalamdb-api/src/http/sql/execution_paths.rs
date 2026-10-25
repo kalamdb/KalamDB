@@ -350,8 +350,8 @@ async fn forward_batch_statement_to_group(
     const INITIAL_BACKOFF_MS: u64 = 5;
 
     let request = QueryRequest {
-        sql:          statement.prepared_statement.sql.clone(),
-        params:       None,
+        sql: statement.prepared_statement.sql.clone(),
+        params: None,
         namespace_id: request_namespace,
     };
 

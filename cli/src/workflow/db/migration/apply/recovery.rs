@@ -319,17 +319,17 @@ mod tests {
     fn failed_server_record_without_local_file_is_ignored_by_partition() {
         let temp = tempfile::TempDir::new().unwrap();
         let record = MigrationRecord {
-            migration_id:  "0002_auto_missing.sql".into(),
-            namespace:     kalamdb_commons::SchemaId::new("test1"),
+            migration_id: "0002_auto_missing.sql".into(),
+            namespace: kalamdb_commons::SchemaId::new("test1"),
             migration_key: None,
-            name:          "auto_missing".into(),
-            checksum:      "abc".into(),
-            status:        MigrationStatus::Failed,
-            started_at:    None,
-            finished_at:   None,
+            name: "auto_missing".into(),
+            checksum: "abc".into(),
+            status: MigrationStatus::Failed,
+            started_at: None,
+            finished_at: None,
             error_message: Some("table already exists".into()),
-            sql:           None,
-            source:        Some("0002_auto_missing.sql".into()),
+            sql: None,
+            source: Some("0002_auto_missing.sql".into()),
             kalam_version: None,
         };
 

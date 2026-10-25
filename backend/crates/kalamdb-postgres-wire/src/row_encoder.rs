@@ -117,11 +117,11 @@ fn record_batches_to_query_response(
 
 /// Encodes one wire row at a time so a portal can stop after `max_rows`.
 struct EncodedRows {
-    batches:       std::vec::IntoIter<RecordBatch>,
-    columns:       Vec<arrow::array::ArrayRef>,
+    batches: std::vec::IntoIter<RecordBatch>,
+    columns: Vec<arrow::array::ArrayRef>,
     rows_in_batch: usize,
-    row:           usize,
-    encoder:       DataRowEncoder,
+    row: usize,
+    encoder: DataRowEncoder,
     logical_types: Vec<LogicalTypeRef>,
 }
 
@@ -563,9 +563,9 @@ mod tests {
         .expect("batch is valid");
 
         let responses = execution_result_to_responses(ExecutionResult::Rows {
-            batches:   vec![batch],
+            batches: vec![batch],
             row_count: 1,
-            schema:    Some(schema),
+            schema: Some(schema),
         })
         .expect("supported values encode");
 
@@ -602,9 +602,9 @@ mod tests {
         .expect("batch is valid");
 
         let responses = execution_result_to_responses(ExecutionResult::Rows {
-            batches:   vec![batch],
+            batches: vec![batch],
             row_count: 2,
-            schema:    Some(schema),
+            schema: Some(schema),
         })
         .expect("utf8view values encode");
 
@@ -648,9 +648,9 @@ mod tests {
         .expect("batch is valid");
 
         let responses = execution_result_to_responses(ExecutionResult::Rows {
-            batches:   vec![batch],
+            batches: vec![batch],
             row_count: 1,
-            schema:    Some(schema),
+            schema: Some(schema),
         })
         .expect("list values encode");
 
@@ -671,9 +671,9 @@ mod tests {
         .expect("batch is valid");
 
         let error = execution_result_to_responses(ExecutionResult::Rows {
-            batches:   vec![batch],
+            batches: vec![batch],
             row_count: 1,
-            schema:    Some(schema),
+            schema: Some(schema),
         })
         .expect_err("binary should not be silently stringified");
 
@@ -699,9 +699,9 @@ mod tests {
 
         let responses = execution_result_to_responses_with_format(
             ExecutionResult::Rows {
-                batches:   vec![batch],
+                batches: vec![batch],
                 row_count: 1,
-                schema:    Some(schema),
+                schema: Some(schema),
             },
             Some(&Format::UnifiedBinary),
         )
@@ -763,9 +763,9 @@ mod tests {
     fn encodes_timestamps_and_dates_as_postgres_text() {
         let (schema, batch) = timestamp_date_batch();
         let responses = execution_result_to_responses(ExecutionResult::Rows {
-            batches:   vec![batch],
+            batches: vec![batch],
             row_count: 1,
-            schema:    Some(schema),
+            schema: Some(schema),
         })
         .expect("temporal values encode");
         let row = first_encoded_row(responses);
@@ -789,9 +789,9 @@ mod tests {
         let (schema, batch) = timestamp_date_batch();
         let responses = execution_result_to_responses_with_format(
             ExecutionResult::Rows {
-                batches:   vec![batch],
+                batches: vec![batch],
                 row_count: 1,
-                schema:    Some(schema),
+                schema: Some(schema),
             },
             Some(&Format::UnifiedBinary),
         )
@@ -846,9 +846,9 @@ mod tests {
         .expect("batch is valid");
 
         let responses = execution_result_to_responses(ExecutionResult::Rows {
-            batches:   vec![batch],
+            batches: vec![batch],
             row_count: 1,
-            schema:    Some(schema),
+            schema: Some(schema),
         })
         .expect("logical-typed values encode");
 
@@ -896,9 +896,9 @@ mod tests {
         .expect("batch is valid");
 
         let responses = execution_result_to_responses(ExecutionResult::Rows {
-            batches:   vec![batch],
+            batches: vec![batch],
             row_count: 1,
-            schema:    Some(schema),
+            schema: Some(schema),
         })
         .expect("json values encode");
 
