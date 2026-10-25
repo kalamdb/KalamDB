@@ -10,61 +10,13 @@ use std::{
 };
 
 use kalamdb_configs::RateLimitSettings;
+use kalamdb_observability::AtomicRateWindow;
 use moka::sync::Cache;
 use parking_lot::Mutex;
 
-#[derive(Debug)]
-struct TokenBucket {
-    capacity: u32,
-    tokens: u32,
-    last_refill: Instant,
-    tokens_per_sec: f64,
-}
-
-impl TokenBucket {
-    #[inline]
-    fn new(capacity: u32, refill_rate: u32, window: Duration) -> Self {
-        let tokens_per_sec = refill_rate as f64 / window.as_secs_f64();
-        Self {
-            capacity,
-            tokens: capacity,
-            last_refill: Instant::now(),
-            tokens_per_sec,
-        }
-    }
-
-    #[inline]
-    fn try_consume(&mut self, tokens: u32) -> bool {
-        self.refill();
-
-        if self.tokens >= tokens {
-            self.tokens -= tokens;
-            true
-        } else {
-            false
-        }
-    }
-
-    #[inline]
-    fn refill(&mut self) {
-        let now = Instant::now();
-        let elapsed = now.duration_since(self.last_refill);
-
-        if elapsed.as_millis() < 10 {
-            return;
-        }
-
-        let tokens_to_add = (self.tokens_per_sec * elapsed.as_secs_f64()) as u32;
-        if tokens_to_add > 0 {
-            self.tokens = self.capacity.min(self.tokens + tokens_to_add);
-            self.last_refill = now;
-        }
-    }
-}
-
 struct IpState {
     active_connections: AtomicU32,
-    request_bucket: Mutex<TokenBucket>,
+    request_window: AtomicRateWindow,
     banned_until: Mutex<Option<Instant>>,
     violation_count: AtomicU32,
 }
@@ -73,11 +25,7 @@ impl IpState {
     fn new(max_requests_per_sec: u32) -> Self {
         Self {
             active_connections: AtomicU32::new(0),
-            request_bucket: Mutex::new(TokenBucket::new(
-                max_requests_per_sec,
-                max_requests_per_sec,
-                Duration::from_secs(1),
-            )),
+            request_window: AtomicRateWindow::per_second(max_requests_per_sec),
             banned_until: Mutex::new(None),
             violation_count: AtomicU32::new(0),
         }
@@ -160,6 +108,11 @@ impl ConnectionGuard {
         self.ip_states.get_with(ip, || Arc::new(IpState::new(max_requests)))
     }
 
+    #[inline]
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
     pub fn check_request(&self, ip: IpAddr, body_size: Option<usize>) -> ConnectionGuardResult {
         if !self.enabled {
             return ConnectionGuardResult::Allowed;
@@ -186,7 +139,7 @@ impl ConnectionGuard {
             };
         }
 
-        if !state.request_bucket.lock().try_consume(1) {
+        if !state.request_window.try_acquire() {
             let violations = state.violation_count.fetch_add(1, Ordering::Relaxed) + 1;
 
             if violations >= 10 {

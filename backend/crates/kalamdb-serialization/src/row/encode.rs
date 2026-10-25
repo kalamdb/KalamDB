@@ -139,52 +139,60 @@ fn encode_row_body_v2(
     let layout = schema.layout();
     let span = field_count(schema)?;
     let bitmap_len = (usize::from(span) + 7) / 8;
-    let mut bitmap = vec![0u8; bitmap_len];
+    let mut scratch =
+        take_v2_scratch(bitmap_len, layout.fixed_region_len, layout.variable_ordinals.len());
     let mut has_any_null = false;
 
-    let mut fixed_region = vec![0u8; layout.fixed_region_len];
-    let mut var_data = Vec::new();
-    let mut var_end_offsets = Vec::with_capacity(layout.variable_ordinals.len());
+    let resolved: Vec<Option<&ScalarValue>> = schema
+        .fields
+        .iter()
+        .enumerate()
+        .map(|(ordinal, field)| field_value(&fields, field, ordinal))
+        .collect();
 
     // First pass: check nulls and populate fixed region.
     for (ordinal, field) in schema.fields.iter().enumerate() {
         if field.dropped {
-            bitmap[ordinal / 8] |= 1 << (ordinal % 8);
+            scratch.bitmap[ordinal / 8] |= 1 << (ordinal % 8);
             has_any_null = true;
             continue;
         }
-        let val_opt = field_value(&fields, field, ordinal);
+        let val_opt = resolved[ordinal];
         let is_null = match val_opt {
             None => true,
             Some(v) => v.is_null(),
         };
         if is_null {
-            bitmap[ordinal / 8] |= 1 << (ordinal % 8);
+            scratch.bitmap[ordinal / 8] |= 1 << (ordinal % 8);
             has_any_null = true;
             continue;
         }
         let val = val_opt.unwrap();
         if let Some((offset, width)) = layout.fixed_offsets[ordinal] {
-            encode_fixed_value(&mut fixed_region[offset..offset + width], val, &field.data_type)?;
+            encode_fixed_value(
+                &mut scratch.fixed[offset..offset + width],
+                val,
+                &field.data_type,
+            )?;
         }
     }
 
     // Second pass: encode variable-width columns in variable_ordinals order.
     for &ordinal in &layout.variable_ordinals {
         let field = &schema.fields[ordinal];
-        let is_null = (bitmap[ordinal / 8] & (1 << (ordinal % 8))) != 0;
+        let is_null = (scratch.bitmap[ordinal / 8] & (1 << (ordinal % 8))) != 0;
         if !is_null {
-            let val = field_value(&fields, field, ordinal).unwrap();
-            encode_variable_value_v2(&mut var_data, val, &field.data_type)?;
+            let val = resolved[ordinal].unwrap();
+            encode_variable_value_v2(&mut scratch.var_data, val, &field.data_type)?;
         }
-        let end = u32::try_from(var_data.len()).map_err(|_| {
+        let end = u32::try_from(scratch.var_data.len()).map_err(|_| {
             SerializationError::Encode("v2 variable data exceeds u32 length".to_string())
         })?;
-        var_end_offsets.push(end);
+        scratch.var_ends.push(end);
     }
 
-    let final_end = var_end_offsets.last().copied().unwrap_or(0);
-    let (offset_width_code, offset_byte_width): (u8, usize) = if var_end_offsets.is_empty() {
+    let final_end = scratch.var_ends.last().copied().unwrap_or(0);
+    let (offset_width_code, offset_byte_width): (u8, usize) = if scratch.var_ends.is_empty() {
         (0, 0)
     } else if final_end <= u32::from(u8::MAX) {
         (1, 1)
@@ -202,9 +210,9 @@ fn encode_row_body_v2(
 
     let est_len = 5
         + if has_any_null { bitmap_len } else { 0 }
-        + fixed_region.len()
-        + var_end_offsets.len() * offset_byte_width
-        + var_data.len();
+        + scratch.fixed.len()
+        + scratch.var_ends.len() * offset_byte_width
+        + scratch.var_data.len();
 
     let mut buf = begin_envelope(
         ObjectKind::Row,
@@ -216,19 +224,61 @@ fn encode_row_body_v2(
     write_u8(&mut buf, row_flags);
     write_u16(&mut buf, span);
     if has_any_null {
-        buf.extend_from_slice(&bitmap);
+        buf.extend_from_slice(&scratch.bitmap);
     }
-    buf.extend_from_slice(&fixed_region);
-    for end in var_end_offsets {
+    buf.extend_from_slice(&scratch.fixed);
+    for end in &scratch.var_ends {
         match offset_byte_width {
-            1 => buf.push(end as u8),
-            2 => buf.extend_from_slice(&(end as u16).to_le_bytes()),
+            1 => buf.push(*end as u8),
+            2 => buf.extend_from_slice(&(*end as u16).to_le_bytes()),
             4 => buf.extend_from_slice(&end.to_le_bytes()),
             _ => {},
         }
     }
-    buf.extend_from_slice(&var_data);
+    buf.extend_from_slice(&scratch.var_data);
+    recycle_v2_scratch(scratch);
     finish_envelope(buf)
+}
+
+struct V2Scratch {
+    bitmap: Vec<u8>,
+    fixed: Vec<u8>,
+    var_data: Vec<u8>,
+    var_ends: Vec<u32>,
+}
+
+std::thread_local! {
+    static V2_SCRATCH: std::cell::RefCell<Option<V2Scratch>> = const { std::cell::RefCell::new(None) };
+}
+
+fn take_v2_scratch(bitmap_len: usize, fixed_len: usize, variable_count: usize) -> V2Scratch {
+    let mut scratch = V2_SCRATCH.with(|slot| slot.borrow_mut().take()).unwrap_or(V2Scratch {
+        bitmap: Vec::new(),
+        fixed: Vec::new(),
+        var_data: Vec::new(),
+        var_ends: Vec::new(),
+    });
+    scratch.bitmap.clear();
+    scratch.bitmap.resize(bitmap_len, 0);
+    scratch.fixed.clear();
+    scratch.fixed.resize(fixed_len, 0);
+    scratch.var_data.clear();
+    scratch.var_ends.clear();
+    scratch.var_ends.reserve(variable_count);
+    scratch
+}
+
+fn recycle_v2_scratch(mut scratch: V2Scratch) {
+    scratch.bitmap.clear();
+    scratch.fixed.clear();
+    scratch.var_data.clear();
+    scratch.var_ends.clear();
+    V2_SCRATCH.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(scratch);
+        }
+    });
 }
 
 fn encode_fixed_value(

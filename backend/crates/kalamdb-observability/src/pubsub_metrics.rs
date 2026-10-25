@@ -150,8 +150,7 @@ fn pubsub_elapsed_window(now_second: u64) -> u64 {
         now_second
             .saturating_sub(first_second)
             .saturating_add(1)
-            .min(RATE_WINDOW_SECS)
-            .max(1)
+            .clamp(1, RATE_WINDOW_SECS)
     }
 }
 
@@ -198,7 +197,7 @@ pub fn heartbeat_pubsub_consumer(consumer_key: &str) {
     leases.insert(consumer_key.to_string(), expires_at);
 
     let touches = CONSUMER_LEASE_TOUCHES.fetch_add(1, Ordering::Relaxed).saturating_add(1);
-    if touches % CONSUMER_LEASE_PRUNE_EVERY == 0 {
+    if touches.is_multiple_of(CONSUMER_LEASE_PRUNE_EVERY) {
         prune_expired_consumer_leases(&mut leases, now_second);
     }
 }

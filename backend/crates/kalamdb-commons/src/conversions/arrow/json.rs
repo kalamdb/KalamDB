@@ -151,19 +151,33 @@ pub fn json_rows_to_arrow_batch(schema: &SchemaRef, rows: Vec<Row>) -> Result<Re
         }
     }
 
-    // Build arrays from columns
+    scalar_columns_to_record_batch(schema, columns)
+}
+
+/// Build a record batch from column-major scalars already coerced to `schema`.
+pub fn scalar_columns_to_record_batch(
+    schema: &SchemaRef,
+    columns: Vec<Vec<ScalarValue>>,
+) -> Result<RecordBatch, String> {
     let mut arrays: Vec<ArrayRef> = Vec::with_capacity(schema.fields().len());
     for (i, col_values) in columns.into_iter().enumerate() {
         let field = schema.field(i);
-        let array = build_array_from_scalars(field.as_ref(), col_values)
+        let array = build_array_from_scalars(field, col_values)
             .map_err(|e| format!("Failed to build column '{}': {}", field.name(), e))?;
-        let array = super::project::align_array_to_field(array, field.as_ref())
+        let array = super::project::align_array_to_field(array, field)
             .map_err(|e| format!("Failed to align column '{}': {}", field.name(), e))?;
         arrays.push(array);
     }
 
     RecordBatch::try_new(schema.clone(), arrays)
         .map_err(|e| format!("Failed to build record batch: {}", e))
+}
+
+pub fn coerce_scalar_for_arrow_field(
+    value: ScalarValue,
+    field: &arrow::datatypes::Field,
+) -> Result<ScalarValue, String> {
+    coerce_scalar_to_field_inner(value, field, false).map_err(|error| error.to_string())
 }
 
 fn get_column_defaults(schema: &SchemaRef) -> Vec<Option<ScalarValue>> {
@@ -242,6 +256,9 @@ fn create_empty_array(data_type: &DataType) -> ArrayRef {
 }
 
 fn build_array_from_scalars(field: &Field, values: Vec<ScalarValue>) -> Result<ArrayRef, String> {
+    if values.is_empty() {
+        return Ok(create_empty_array(field.data_type()));
+    }
     match field.data_type() {
         DataType::FixedSizeList(child, len) if matches!(child.data_type(), DataType::Float32) => {
             build_embedding_array(child.clone(), *len, values)
@@ -259,7 +276,7 @@ fn build_array_from_scalars(field: &Field, values: Vec<ScalarValue>) -> Result<A
                     .map_err(|e| e.to_string())?;
             Ok(Arc::new(struct_arr) as ArrayRef)
         },
-        _ => ScalarValue::iter_to_array(values.into_iter()).map_err(|e| format!("{}", e)),
+        _ => ScalarValue::iter_to_array(values).map_err(|e| format!("{}", e)),
     }
 }
 
@@ -1964,6 +1981,11 @@ mod tests {
         let batch = json_rows_to_arrow_batch(&schema, vec![]).unwrap();
         assert_eq!(batch.num_rows(), 0);
         assert_eq!(batch.num_columns(), 2);
+
+        let empty_columns = vec![Vec::new(), Vec::new()];
+        let direct = scalar_columns_to_record_batch(&schema, empty_columns).unwrap();
+        assert_eq!(direct.num_rows(), 0);
+        assert_eq!(direct.num_columns(), 2);
     }
 
     #[test]
@@ -2784,6 +2806,218 @@ pub fn record_batch_to_json_rows(
 ///
 /// # Architecture Note
 /// ✅ NO direct conversions - all cells go through scalar_value_to_json()
+/// Write one JSON array per row directly from Arrow columns.
+///
+/// Returns false when a column type has no direct writer. Callers then use
+/// [`record_batch_to_json_arrays`] so masking and uncommon types stay unchanged.
+pub fn try_append_record_batch_json_rows(
+    batch: &RecordBatch,
+    out: &mut Vec<u8>,
+    row_separator_needed: &mut bool,
+) -> Result<bool, CommonError> {
+    if !batch.columns().iter().all(|column| arrow_column_has_direct_json(column.as_ref())) {
+        return Ok(false);
+    }
+    for row_idx in 0..batch.num_rows() {
+        if *row_separator_needed {
+            out.push(b',');
+        } else {
+            *row_separator_needed = true;
+        }
+        out.push(b'[');
+        for (col_idx, column) in batch.columns().iter().enumerate() {
+            if col_idx > 0 {
+                out.push(b',');
+            }
+            append_arrow_cell_json(column.as_ref(), row_idx, out)?;
+        }
+        out.push(b']');
+    }
+    Ok(true)
+}
+
+fn arrow_column_has_direct_json(column: &dyn arrow::array::Array) -> bool {
+    matches!(
+        column.data_type(),
+        arrow::datatypes::DataType::Boolean
+            | arrow::datatypes::DataType::Int8
+            | arrow::datatypes::DataType::Int16
+            | arrow::datatypes::DataType::Int32
+            | arrow::datatypes::DataType::Int64
+            | arrow::datatypes::DataType::UInt8
+            | arrow::datatypes::DataType::UInt16
+            | arrow::datatypes::DataType::UInt32
+            | arrow::datatypes::DataType::UInt64
+            | arrow::datatypes::DataType::Float32
+            | arrow::datatypes::DataType::Float64
+            | arrow::datatypes::DataType::Utf8
+            | arrow::datatypes::DataType::LargeUtf8
+            | arrow::datatypes::DataType::Null
+    )
+}
+
+fn append_arrow_cell_json(
+    column: &dyn arrow::array::Array,
+    row_idx: usize,
+    out: &mut Vec<u8>,
+) -> Result<(), CommonError> {
+    use arrow::array::{
+        BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
+        LargeStringArray, StringArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+    };
+
+    if column.is_null(row_idx) {
+        out.extend_from_slice(b"null");
+        return Ok(());
+    }
+    match column.data_type() {
+        arrow::datatypes::DataType::Boolean => {
+            let value = column.as_any().downcast_ref::<BooleanArray>().unwrap().value(row_idx);
+            out.extend_from_slice(if value { b"true" } else { b"false" });
+        },
+        arrow::datatypes::DataType::Int8 => {
+            let value = column.as_any().downcast_ref::<Int8Array>().unwrap().value(row_idx);
+            append_i64(out, i64::from(value));
+        },
+        arrow::datatypes::DataType::Int16 => {
+            let value = column.as_any().downcast_ref::<Int16Array>().unwrap().value(row_idx);
+            append_i64(out, i64::from(value));
+        },
+        arrow::datatypes::DataType::Int32 => {
+            let value = column.as_any().downcast_ref::<Int32Array>().unwrap().value(row_idx);
+            append_i64(out, i64::from(value));
+        },
+        arrow::datatypes::DataType::Int64 => {
+            let value = column.as_any().downcast_ref::<Int64Array>().unwrap().value(row_idx);
+            out.push(b'"');
+            append_i64(out, value);
+            out.push(b'"');
+        },
+        arrow::datatypes::DataType::UInt8 => {
+            let value = column.as_any().downcast_ref::<UInt8Array>().unwrap().value(row_idx);
+            append_i64(out, i64::from(value));
+        },
+        arrow::datatypes::DataType::UInt16 => {
+            let value = column.as_any().downcast_ref::<UInt16Array>().unwrap().value(row_idx);
+            append_i64(out, i64::from(value));
+        },
+        arrow::datatypes::DataType::UInt32 => {
+            let value = column.as_any().downcast_ref::<UInt32Array>().unwrap().value(row_idx);
+            append_i64(out, i64::from(value));
+        },
+        arrow::datatypes::DataType::UInt64 => {
+            let value = column.as_any().downcast_ref::<UInt64Array>().unwrap().value(row_idx);
+            out.push(b'"');
+            append_u64(out, value);
+            out.push(b'"');
+        },
+        arrow::datatypes::DataType::Float32 => {
+            let value = column.as_any().downcast_ref::<Float32Array>().unwrap().value(row_idx);
+            append_json_f64(out, f64::from(value));
+        },
+        arrow::datatypes::DataType::Float64 => {
+            let value = column.as_any().downcast_ref::<Float64Array>().unwrap().value(row_idx);
+            append_json_f64(out, value);
+        },
+        arrow::datatypes::DataType::Utf8 => {
+            let value = column.as_any().downcast_ref::<StringArray>().unwrap().value(row_idx);
+            append_json_string(out, value);
+        },
+        arrow::datatypes::DataType::LargeUtf8 => {
+            let value = column.as_any().downcast_ref::<LargeStringArray>().unwrap().value(row_idx);
+            append_json_string(out, value);
+        },
+        arrow::datatypes::DataType::Null => out.extend_from_slice(b"null"),
+        _ => {
+            return Err(CommonError::invalid_input(
+                "column type has no direct JSON writer",
+            ));
+        },
+    }
+    Ok(())
+}
+
+fn append_json_f64(out: &mut Vec<u8>, value: f64) {
+    if value.is_finite() {
+        out.extend_from_slice(format!("{value}").as_bytes());
+    } else {
+        out.extend_from_slice(b"null");
+    }
+}
+
+fn append_u64(out: &mut Vec<u8>, mut remaining: u64) {
+    if remaining == 0 {
+        out.push(b'0');
+        return;
+    }
+    let mut buf = [0u8; 20];
+    let mut cursor = buf.len();
+    while remaining > 0 {
+        cursor -= 1;
+        buf[cursor] = b'0' + (remaining % 10) as u8;
+        remaining /= 10;
+    }
+    out.extend_from_slice(&buf[cursor..]);
+}
+
+fn append_i64(out: &mut Vec<u8>, value: i64) {
+    if value == i64::MIN {
+        out.extend_from_slice(b"-9223372036854775808");
+        return;
+    }
+    let mut buf = [0u8; 20];
+    let mut cursor = buf.len();
+    let negative = value < 0;
+    let mut remaining = if negative { -value } else { value } as u64;
+    if remaining == 0 {
+        out.push(b'0');
+        return;
+    }
+    while remaining > 0 {
+        cursor -= 1;
+        buf[cursor] = b'0' + (remaining % 10) as u8;
+        remaining /= 10;
+    }
+    if negative {
+        cursor -= 1;
+        buf[cursor] = b'-';
+    }
+    out.extend_from_slice(&buf[cursor..]);
+}
+
+fn append_json_string(out: &mut Vec<u8>, value: &str) {
+    out.push(b'"');
+    for ch in value.chars() {
+        match ch {
+            '"' => out.extend_from_slice(b"\\\""),
+            '\\' => out.extend_from_slice(b"\\\\"),
+            '\n' => out.extend_from_slice(b"\\n"),
+            '\r' => out.extend_from_slice(b"\\r"),
+            '\t' => out.extend_from_slice(b"\\t"),
+            ch if (ch as u32) < 0x20 => {
+                let mut hex = [0u8; 6];
+                hex[0] = b'\\';
+                hex[1] = b'u';
+                hex[2] = b'0';
+                hex[3] = b'0';
+                let byte = ch as u8;
+                hex[4] = hex_digit(byte >> 4);
+                hex[5] = hex_digit(byte & 0x0f);
+                out.extend_from_slice(&hex);
+            },
+            ch => {
+                let mut buf = [0u8; 4];
+                out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+            },
+        }
+    }
+    out.push(b'"');
+}
+
+fn hex_digit(value: u8) -> u8 {
+    b"0123456789abcdef"[usize::from(value)]
+}
+
 pub fn record_batch_to_json_arrays(
     batch: &RecordBatch,
 ) -> Result<Vec<Vec<KalamCellValue>>, CommonError> {

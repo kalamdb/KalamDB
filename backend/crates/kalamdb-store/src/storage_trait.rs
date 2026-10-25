@@ -90,6 +90,14 @@ pub trait StorageBackend: Send + Sync {
     /// Returns `Ok(None)` if the key doesn't exist.
     fn get(&self, partition: &Partition, key: &[u8]) -> Result<Option<Vec<u8>>>;
 
+    /// Fetch many keys from one partition, preserving `keys` order.
+    ///
+    /// The default walks [`Self::get`]. Backends override this with a storage
+    /// multi-get so index scans do not pay one round trip per hit.
+    fn get_many(&self, partition: &Partition, keys: &[Vec<u8>]) -> Result<Vec<Option<Vec<u8>>>> {
+        keys.iter().map(|key| self.get(partition, key)).collect()
+    }
+
     /// Stores a key-value pair in the specified partition.
     ///
     /// If the key already exists, its value is updated.

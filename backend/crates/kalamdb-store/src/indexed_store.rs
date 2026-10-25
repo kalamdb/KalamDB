@@ -972,6 +972,17 @@ where
         prefix: Option<&[u8]>,
         limit: Option<usize>,
     ) -> Result<EntityIterator<'_, K, V>> {
+        self.scan_by_index_iter_selected(index_idx, prefix, limit, None)
+    }
+
+    /// Index scan that decodes only `ordinals` from each entity payload.
+    pub fn scan_by_index_iter_selected(
+        &self,
+        index_idx: usize,
+        prefix: Option<&[u8]>,
+        limit: Option<usize>,
+        ordinals: Option<Vec<usize>>,
+    ) -> Result<EntityIterator<'_, K, V>> {
         let index_partition = self
             .index_partitions
             .get(index_idx)
@@ -980,31 +991,107 @@ where
         let mut iter = self.backend.scan(&index_partition, prefix, None, limit)?;
         let mut remaining = limit.unwrap_or(usize::MAX);
 
+        let mut pending = std::collections::VecDeque::new();
         let mapped = std::iter::from_fn(move || {
+            if let Some(next) = pending.pop_front() {
+                return Some(next);
+            }
             if remaining == 0 {
                 return None;
             }
-
-            loop {
-                let next = iter.next()?;
-                let (_index_key, primary_key_bytes) = next;
-                let primary_key = match K::from_storage_key(&primary_key_bytes) {
-                    Ok(key) => key,
-                    Err(e) => return Some(Err(StorageError::SerializationError(e))),
+            let mut keys = Vec::new();
+            while keys.len() < 32 && remaining > keys.len() {
+                let Some((_index_key, primary_key_bytes)) = iter.next() else {
+                    break;
                 };
-
-                match self.get(&primary_key) {
-                    Ok(Some(entity)) => {
-                        remaining -= 1;
-                        return Some(Ok((primary_key, entity)));
+                match K::from_storage_key(&primary_key_bytes) {
+                    Ok(key) => keys.push(key),
+                    Err(error) => {
+                        return Some(Err(StorageError::SerializationError(error)));
                     },
-                    Ok(None) => continue,
-                    Err(e) => return Some(Err(e)),
                 }
             }
+            if keys.is_empty() {
+                return None;
+            }
+            let fetched = match self.fetch_entities_in_index_order(keys, ordinals.as_deref()) {
+                Ok(rows) => rows,
+                Err(error) => return Some(Err(error)),
+            };
+            for row in fetched {
+                if remaining == 0 {
+                    break;
+                }
+                remaining -= 1;
+                pending.push_back(Ok(row));
+            }
+            pending.pop_front()
         });
 
         Ok(Box::new(mapped))
+    }
+
+    /// Load entities for index hits in that order, skipping missing keys.
+    fn fetch_entities_in_index_order(
+        &self,
+        keys: Vec<K>,
+        ordinals: Option<&[usize]>,
+    ) -> Result<Vec<(K, V)>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let storage_keys: Vec<Vec<u8>> = keys.iter().map(K::storage_key).collect();
+        let values = self.backend.get_many(&self.main_partition, &storage_keys)?;
+        let mut rows = Vec::with_capacity(keys.len());
+        for (key, value) in keys.into_iter().zip(values) {
+            let Some(bytes) = value else {
+                continue;
+            };
+            let entity = match ordinals {
+                Some(ordinals) if !ordinals.is_empty() => {
+                    self.codec.decode_selected(&key, &bytes, ordinals)?
+                },
+                _ => self.codec.decode(&key, &bytes)?,
+            };
+            rows.push((key.clone(), entity));
+        }
+        Ok(rows)
+    }
+
+    /// Newest index hit's tombstone flag, without decoding user columns when the codec can say.
+    pub fn get_latest_deleted_flag_by_index_prefix(
+        &self,
+        index_idx: usize,
+        prefix: &[u8],
+    ) -> Result<Option<(K, bool)>> {
+        let index_partition = self
+            .index_partitions
+            .get(index_idx)
+            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?
+            .clone();
+        let mut iter =
+            match self.backend.scan_reverse(&index_partition, Some(prefix), None, Some(1)) {
+                Ok(iter) => iter,
+                Err(StorageError::PartitionNotFound(_)) => return Ok(None),
+                Err(error) => return Err(error),
+            };
+        let Some((_index_key, primary_key_bytes)) = iter.next() else {
+            return Ok(None);
+        };
+        let primary_key =
+            K::from_storage_key(&primary_key_bytes).map_err(StorageError::SerializationError)?;
+        let Some(bytes) = self.backend.get(&self.main_partition, &primary_key.storage_key())?
+        else {
+            return Ok(None);
+        };
+        if let Some(deleted) = self.codec.row_deleted_flag(&bytes)? {
+            return Ok(Some((primary_key, deleted)));
+        }
+        let entity = self.codec.decode(&primary_key, &bytes)?;
+        let _ = entity;
+        Err(StorageError::Other(
+            "row codec cannot report a tombstone without a full decode".to_string(),
+        ))
     }
 
     /// Scan an index using a planned prefix, optional UTF-8 bounds, and residual key filters.
@@ -1013,6 +1100,17 @@ where
         &self,
         plan: &crate::index::seek::IndexScanPlan,
         limit: Option<usize>,
+    ) -> Result<EntityIterator<'_, K, V>> {
+        self.scan_by_index_plan_iter_selected(plan, limit, None)
+    }
+
+    /// Planned index scan that decodes only `ordinals` from each entity payload.
+    #[cfg(feature = "datafusion")]
+    pub fn scan_by_index_plan_iter_selected(
+        &self,
+        plan: &crate::index::seek::IndexScanPlan,
+        limit: Option<usize>,
+        ordinals: Option<Vec<usize>>,
     ) -> Result<EntityIterator<'_, K, V>> {
         let index_partition = self
             .index_partitions
@@ -1035,33 +1133,47 @@ where
         let plan = plan.clone();
         let mut remaining = limit.unwrap_or(usize::MAX);
 
+        let mut pending = std::collections::VecDeque::new();
         let mapped = std::iter::from_fn(move || {
+            if let Some(next) = pending.pop_front() {
+                return Some(next);
+            }
             if remaining == 0 {
                 return None;
             }
-
-            loop {
-                let (index_key, primary_key_bytes) = iter.next()?;
+            let mut keys = Vec::new();
+            while keys.len() < 32 && remaining > keys.len() {
+                let Some((index_key, primary_key_bytes)) = iter.next() else {
+                    break;
+                };
                 if plan.is_past_end(&index_key) {
-                    return None;
+                    break;
                 }
                 if !plan.matches_key_predicates(&index_key) {
                     continue;
                 }
-                let primary_key = match K::from_storage_key(&primary_key_bytes) {
-                    Ok(key) => key,
-                    Err(e) => return Some(Err(StorageError::SerializationError(e))),
-                };
-
-                match self.get(&primary_key) {
-                    Ok(Some(entity)) => {
-                        remaining -= 1;
-                        return Some(Ok((primary_key, entity)));
+                match K::from_storage_key(&primary_key_bytes) {
+                    Ok(key) => keys.push(key),
+                    Err(error) => {
+                        return Some(Err(StorageError::SerializationError(error)));
                     },
-                    Ok(None) => continue,
-                    Err(e) => return Some(Err(e)),
                 }
             }
+            if keys.is_empty() {
+                return None;
+            }
+            let fetched = match self.fetch_entities_in_index_order(keys, ordinals.as_deref()) {
+                Ok(rows) => rows,
+                Err(error) => return Some(Err(error)),
+            };
+            for row in fetched {
+                if remaining == 0 {
+                    break;
+                }
+                remaining -= 1;
+                pending.push_back(Ok(row));
+            }
+            pending.pop_front()
         });
 
         Ok(Box::new(mapped))
@@ -1236,6 +1348,18 @@ where
 
     fn deserialize(&self, key: &K, bytes: &[u8]) -> Result<V> {
         self.codec.decode(key, bytes)
+    }
+
+    fn deserialize_selected(
+        &self,
+        key: &K,
+        bytes: &[u8],
+        ordinals: Option<&[usize]>,
+    ) -> Result<V> {
+        match ordinals {
+            Some(ordinals) if !ordinals.is_empty() => self.codec.decode_selected(key, bytes, ordinals),
+            _ => self.codec.decode(key, bytes),
+        }
     }
 
     fn scan_iterator(

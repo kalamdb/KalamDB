@@ -79,8 +79,7 @@ pub fn function_metrics_snapshot() -> FunctionMetricsSnapshot {
         now_second
             .saturating_sub(first_second)
             .saturating_add(1)
-            .min(RATE_WINDOW_SECS)
-            .max(1)
+            .clamp(1, RATE_WINDOW_SECS)
     };
     FunctionMetricsSnapshot {
         function_invocations_total: INVOCATIONS_TOTAL.load(Ordering::Relaxed),

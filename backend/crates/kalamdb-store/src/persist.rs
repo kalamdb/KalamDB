@@ -33,6 +33,12 @@ pub trait EntityCodec<K, V>: Send + Sync {
     fn decode_selected(&self, key: &K, bytes: &[u8], _ordinals: &[usize]) -> Result<V> {
         self.decode(key, bytes)
     }
+
+    /// Tombstone bit without decoding user columns. `Ok(None)` means the codec
+    /// cannot answer without a full decode.
+    fn row_deleted_flag(&self, _bytes: &[u8]) -> Result<Option<bool>> {
+        Ok(None)
+    }
 }
 
 /// Default codec: generic object envelope.

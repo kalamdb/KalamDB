@@ -19,13 +19,25 @@ pub struct Row {
 /// Compact, ordered representation of a row aligned with a physical schema.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RowEnvelope {
+    /// Catalog `schema_version` these columns were validated against.
+    pub schema_version: u16,
     /// Column-aligned scalar values (Null when column missing)
     pub columns: Vec<ScalarValue>,
 }
 
 impl RowEnvelope {
     pub fn new(columns: Vec<ScalarValue>) -> Self {
-        Self { columns }
+        Self {
+            schema_version: 0,
+            columns,
+        }
+    }
+
+    pub fn versioned(schema_version: u16, columns: Vec<ScalarValue>) -> Self {
+        Self {
+            schema_version,
+            columns,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -314,6 +326,15 @@ impl Row {
             map.insert(k, v);
         }
         Self { values: map }
+    }
+
+    /// Build a row from values already ordered like `names`.
+    pub fn from_aligned(names: &[String], columns: Vec<ScalarValue>) -> Self {
+        let mut values = BTreeMap::new();
+        for (name, value) in names.iter().zip(columns) {
+            values.insert(name.clone(), value);
+        }
+        Self { values }
     }
 
     pub fn get(&self, key: &str) -> Option<&ScalarValue> {

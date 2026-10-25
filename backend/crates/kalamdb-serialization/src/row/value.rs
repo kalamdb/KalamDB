@@ -347,6 +347,14 @@ pub(crate) fn encode_value(
     Ok(())
 }
 
+fn scale_timestamp(value: i64, factor: i64) -> Result<i64> {
+    value.checked_mul(factor).ok_or_else(|| {
+        SerializationError::Decode(format!(
+            "timestamp {value} overflows when scaled by {factor}"
+        ))
+    })
+}
+
 pub(crate) fn decode_value(
     reader: &mut Reader<'_>,
     expected: &StorageDataType,
@@ -421,12 +429,14 @@ pub(crate) fn decode_value(
             Ok(ScalarValue::TimestampMillisecond(Some(reader.i64()?), None))
         },
         (TAG_TS_MS, StorageDataType::TimestampMicrosecond) => Ok(
-            ScalarValue::TimestampMicrosecond(Some(reader.i64()?.saturating_mul(1_000)), None),
+            ScalarValue::TimestampMicrosecond(Some(scale_timestamp(reader.i64()?, 1_000)?), None),
         ),
-        (TAG_TS_MS, StorageDataType::TimestampNanosecond) => Ok(ScalarValue::TimestampNanosecond(
-            Some(reader.i64()?.saturating_mul(1_000_000)),
-            None,
-        )),
+        (TAG_TS_MS, StorageDataType::TimestampNanosecond) => {
+            Ok(ScalarValue::TimestampNanosecond(
+                Some(scale_timestamp(reader.i64()?, 1_000_000)?),
+                None,
+            ))
+        },
         (TAG_TS_US, StorageDataType::TimestampMillisecond) => {
             Ok(ScalarValue::TimestampMillisecond(Some(reader.i64()? / 1_000), None))
         },
@@ -434,7 +444,7 @@ pub(crate) fn decode_value(
             Ok(ScalarValue::TimestampMicrosecond(Some(reader.i64()?), None))
         },
         (TAG_TS_US, StorageDataType::TimestampNanosecond) => Ok(ScalarValue::TimestampNanosecond(
-            Some(reader.i64()?.saturating_mul(1_000)),
+            Some(scale_timestamp(reader.i64()?, 1_000)?),
             None,
         )),
         (TAG_TS_NS, StorageDataType::TimestampNanosecond) => {

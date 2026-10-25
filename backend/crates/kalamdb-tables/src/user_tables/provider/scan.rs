@@ -70,6 +70,86 @@ impl DeferredMvccScanProvider<UserTableRowId, UserTableRow> for UserTableProvide
             .await
     }
 
+    fn requires_row_authorization(&self, _scan_context: &Self::ScanContext) -> bool {
+        false
+    }
+
+    async fn scan_kvs_with_context_projected(
+        &self,
+        scan_context: &Self::ScanContext,
+        filter: Option<&Expr>,
+        since_seq: Option<VersionId>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+        cold_columns: Option<&[String]>,
+        storage_ordinals: Option<&[usize]>,
+    ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
+        let user_id = &scan_context.user_id;
+        if scan_context.allow_all_users {
+            self.scan_all_users_with_version_resolution_async(
+                filter,
+                limit,
+                keep_deleted,
+                scan_context.snapshot_commit_seq,
+                Some(user_id),
+                false,
+            )
+            .await
+            .map(|result| result.rows)
+        } else {
+            self.scan_with_version_resolution_to_kvs_result_async(
+                user_id,
+                filter,
+                since_seq,
+                limit,
+                keep_deleted,
+                cold_columns,
+                scan_context.snapshot_commit_seq,
+                false,
+                storage_ordinals.map(|ordinals| ordinals.to_vec()),
+            )
+            .await
+            .map(|result| result.rows)
+        }
+    }
+
+    async fn scan_kvs_with_diagnostics_projected(
+        &self,
+        scan_context: &Self::ScanContext,
+        filter: Option<&Expr>,
+        since_seq: Option<VersionId>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+        cold_columns: Option<&[String]>,
+        storage_ordinals: Option<&[usize]>,
+    ) -> Result<base::MvccScanResult<UserTableRowId, UserTableRow>, KalamDbError> {
+        let user_id = &scan_context.user_id;
+        if scan_context.allow_all_users {
+            self.scan_all_users_with_version_resolution_async(
+                filter,
+                limit,
+                keep_deleted,
+                scan_context.snapshot_commit_seq,
+                Some(user_id),
+                true,
+            )
+            .await
+        } else {
+            self.scan_with_version_resolution_to_kvs_result_async(
+                user_id,
+                filter,
+                since_seq,
+                limit,
+                keep_deleted,
+                cold_columns,
+                scan_context.snapshot_commit_seq,
+                true,
+                storage_ordinals.map(|ordinals| ordinals.to_vec()),
+            )
+            .await
+        }
+    }
+
     async fn scan_kvs_with_context(
         &self,
         scan_context: &Self::ScanContext,
@@ -504,6 +584,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             cold_columns,
             snapshot_commit_seq,
             false,
+            None,
         )
         .await
         .map(|result| result.rows)

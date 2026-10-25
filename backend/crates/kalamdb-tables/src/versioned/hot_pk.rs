@@ -54,6 +54,7 @@ pub(crate) struct HotInsertScan<K, V> {
 ///
 /// A live row is a duplicate. A tombstone is returned so the insert can delete
 /// that key in the same write. An empty prefix is neither.
+#[allow(dead_code)]
 pub(crate) fn scan_hot_inserts<K, V>(
     pk_prefixes: &[(String, Vec<u8>)],
     mut latest: impl FnMut(&[u8]) -> Result<Option<(K, V)>, KalamDbError>,

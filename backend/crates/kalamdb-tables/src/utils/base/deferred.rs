@@ -101,6 +101,14 @@ where
         true
     }
 
+    /// Payload columns required to authorize a row, in addition to the projection.
+    ///
+    /// An empty list while [`Self::requires_row_authorization`] is true keeps a
+    /// full decode, because the policy columns are not known.
+    fn additional_stored_column_names(&self, _scan_context: &Self::ScanContext) -> Vec<String> {
+        Vec::new()
+    }
+
     async fn authorize_resolved_rows(
         &self,
         _scan_context: &Self::ScanContext,
@@ -167,6 +175,50 @@ where
         })
     }
 
+    async fn scan_kvs_with_context_projected(
+        &self,
+        scan_context: &Self::ScanContext,
+        filter: Option<&Expr>,
+        since_seq: Option<VersionId>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+        cold_columns: Option<&[String]>,
+        storage_ordinals: Option<&[usize]>,
+    ) -> Result<Vec<(K, V)>, KalamDbError> {
+        let _ = storage_ordinals;
+        self.scan_kvs_with_context(
+            scan_context,
+            filter,
+            since_seq,
+            limit,
+            keep_deleted,
+            cold_columns,
+        )
+        .await
+    }
+
+    async fn scan_kvs_with_diagnostics_projected(
+        &self,
+        scan_context: &Self::ScanContext,
+        filter: Option<&Expr>,
+        since_seq: Option<VersionId>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+        cold_columns: Option<&[String]>,
+        storage_ordinals: Option<&[usize]>,
+    ) -> Result<MvccScanResult<K, V>, KalamDbError> {
+        let _ = storage_ordinals;
+        self.scan_kvs_with_diagnostics(
+            scan_context,
+            filter,
+            since_seq,
+            limit,
+            keep_deleted,
+            cold_columns,
+        )
+        .await
+    }
+
     async fn scan_rows_with_context(
         &self,
         scan_context: &Self::ScanContext,
@@ -210,7 +262,8 @@ where
 
         if self.can_try_pk_fast_path(scan_context) {
             if let Some(pk_scalar) = typed_pk_literal_from_filter(&schema, filter, pk_name) {
-                let storage_ordinals = storage_ordinals_for_scan(self, scan_context, projection);
+                let storage_ordinals =
+                    storage_ordinals_for_scan(self, scan_context, projection, filter);
                 if let Some(resolved) = resolve_pk_point_lookup(
                     self,
                     scan_context,
@@ -247,26 +300,29 @@ where
         let keep_deleted =
             since_seq.is_some() || filter.map(filter_uses_deleted_column).unwrap_or(false);
         let cold_columns = compute_cold_columns(projection, &schema, pk_name);
+        let storage_ordinals = storage_ordinals_for_scan(self, scan_context, projection, filter);
         let scan_result = if include_diagnostics {
-            self.scan_kvs_with_diagnostics(
+            self.scan_kvs_with_diagnostics_projected(
                 scan_context,
                 filter,
                 since_seq,
                 limit,
                 keep_deleted,
                 cold_columns.as_deref(),
+                storage_ordinals.as_deref(),
             )
             .await?
         } else {
             MvccScanResult {
                 rows: self
-                    .scan_kvs_with_context(
+                    .scan_kvs_with_context_projected(
                         scan_context,
                         filter,
                         since_seq,
                         limit,
                         keep_deleted,
                         cold_columns.as_deref(),
+                        storage_ordinals.as_deref(),
                     )
                     .await?,
                 diagnostics: DeferredScanDiagnostics::default(),
@@ -306,10 +362,16 @@ where
         let schema = self.schema_ref();
         let pk_name = self.primary_key_field_name();
 
-        if !kalamdb_observability::kdb_await_in_info_span!(
-            self.pre_authorize_scan(scan_context, authorization_filter),
-            "table.pre_authorize"
-        )? {
+        let authorized = {
+            let _pre_auth = kalamdb_observability::stage_trace::stage_guard(
+                kalamdb_observability::stage_trace::SqlStage::PreAuthorize,
+            );
+            kalamdb_observability::kdb_await_in_info_span!(
+                self.pre_authorize_scan(scan_context, authorization_filter),
+                "table.pre_authorize"
+            )?
+        };
+        if !authorized {
             let _materialize = kalamdb_observability::kdb_info_span_entered!("table.materialize");
             let (target, rows) =
                 materialize_scan_rows(&schema, Vec::<(K, V)>::new(), projection, |_, _| {})?;
@@ -318,7 +380,8 @@ where
 
         if self.can_try_pk_fast_path(scan_context) {
             if let Some(pk_scalar) = typed_pk_literal_from_filter(&schema, filter, pk_name) {
-                let storage_ordinals = storage_ordinals_for_scan(self, scan_context, projection);
+                let storage_ordinals =
+                    storage_ordinals_for_scan(self, scan_context, projection, filter);
                 if let Some(resolved) = resolve_pk_point_lookup(
                     self,
                     scan_context,
@@ -338,7 +401,10 @@ where
                     } else {
                         resolved.into_iter().collect()
                     };
-                    let _materialize =
+                    let _materialize = kalamdb_observability::stage_trace::stage_guard(
+                        kalamdb_observability::stage_trace::SqlStage::Materialize,
+                    );
+                    let _materialize_span =
                         kalamdb_observability::kdb_info_span_entered!("table.materialize");
                     let (target, rows) =
                         materialize_scan_rows(&schema, resolved, projection, |_, _| {})?;
@@ -361,26 +427,29 @@ where
         let keep_deleted =
             since_seq.is_some() || filter.map(filter_uses_deleted_column).unwrap_or(false);
         let cold_columns = compute_cold_columns(projection, &schema, pk_name);
+        let storage_ordinals = storage_ordinals_for_scan(self, scan_context, projection, filter);
         let scan_result = if include_diagnostics {
-            self.scan_kvs_with_diagnostics(
+            self.scan_kvs_with_diagnostics_projected(
                 scan_context,
                 filter,
                 since_seq,
                 limit,
                 keep_deleted,
                 cold_columns.as_deref(),
+                storage_ordinals.as_deref(),
             )
             .await?
         } else {
             MvccScanResult {
                 rows: self
-                    .scan_kvs_with_context(
+                    .scan_kvs_with_context_projected(
                         scan_context,
                         filter,
                         since_seq,
                         limit,
                         keep_deleted,
                         cold_columns.as_deref(),
+                        storage_ordinals.as_deref(),
                     )
                     .await?,
                 diagnostics: DeferredScanDiagnostics::default(),
@@ -738,17 +807,30 @@ fn cached_manifest_is_hot_only(entry: Option<&ManifestCacheEntry>) -> bool {
 /// stored fields. The bake-off `SELECT` lists every user column, so decoding
 /// those ordinals is the same field work as a full decode and was a small
 /// regression (17.31s / p50 252µs vs 16.88s / p50 245µs on 2026-09-11).
+fn filter_column_names(filter: Option<&Expr>) -> Vec<String> {
+    let Some(filter) = filter else {
+        return Vec::new();
+    };
+    let mut columns = HashSet::new();
+    if expr_to_columns(filter, &mut columns).is_err() {
+        return Vec::new();
+    }
+    columns.into_iter().map(|column| column.name).collect()
+}
+
 fn storage_ordinals_for_scan<P, K, V>(
     provider: &P,
     scan_context: &P::ScanContext,
     projection: Option<&Vec<usize>>,
+    filter: Option<&Expr>,
 ) -> Option<Vec<usize>>
 where
     P: DeferredMvccScanProvider<K, V>,
     K: StorageKey + Send + Sync + 'static,
     V: ScanRow + Send + Sync + 'static,
 {
-    if provider.requires_row_authorization(scan_context) {
+    let extra = provider.additional_stored_column_names(scan_context);
+    if provider.requires_row_authorization(scan_context) && extra.is_empty() {
         return None;
     }
     let storage = provider.core().storage_schema();
@@ -757,14 +839,21 @@ where
     }
     let proj = projection?;
     let arrow_schema = provider.schema_ref();
-    let mut ordinals = Vec::with_capacity(proj.len());
+    let mut names = extra;
+    names.push(provider.primary_key_field_name().to_string());
+    names.extend(filter_column_names(filter));
     for &idx in proj {
         let Some(field) = arrow_schema.fields().get(idx) else {
             continue;
         };
-        if let Some(ordinal) = storage.fields.iter().position(|stored| stored.name == *field.name())
-        {
-            ordinals.push(ordinal);
+        names.push(field.name().clone());
+    }
+    let mut ordinals = Vec::with_capacity(names.len());
+    for name in names {
+        if let Some(ordinal) = storage.fields.iter().position(|stored| stored.name == name) {
+            if !ordinals.contains(&ordinal) {
+                ordinals.push(ordinal);
+            }
         }
     }
     let covers_all_live = storage
@@ -805,10 +894,15 @@ where
     V: ScanRow + Send + Sync + 'static,
 {
     let snapshot_bound = provider.scan_snapshot_commit_seq(scan_context);
-    let latest_hot = kalamdb_observability::kdb_await_in_info_span!(
-        provider.scan_latest_hot_pk_entry(scan_context, pk_scalar, storage_ordinals),
-        "table.pk_hot_get"
-    )?;
+    let latest_hot = {
+        let _hot_get = kalamdb_observability::stage_trace::stage_guard(
+            kalamdb_observability::stage_trace::SqlStage::HotGet,
+        );
+        kalamdb_observability::kdb_await_in_info_span!(
+            provider.scan_latest_hot_pk_entry(scan_context, pk_scalar, storage_ordinals),
+            "table.pk_hot_get"
+        )?
+    };
     if let Some((_, row)) = latest_hot.as_ref() {
         let visible_at_snapshot = match snapshot_bound {
             None => true,

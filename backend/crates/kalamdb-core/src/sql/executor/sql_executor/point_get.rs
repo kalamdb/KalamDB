@@ -14,6 +14,7 @@ use kalamdb_commons::{
     schemas::TableType,
 };
 use kalamdb_datafusion_sources::exec::DeferredBatchExec;
+use kalamdb_observability::stage_trace::{stage_guard, SqlStage};
 
 use crate::{
     error::KalamDbError,
@@ -194,8 +195,10 @@ impl SqlExecutor {
             return Ok(None);
         };
 
+        let _point_get = stage_guard(SqlStage::PointGet);
         let mut filters = Vec::with_capacity(scan.filters.len());
         {
+            let _bind = stage_guard(SqlStage::Bind);
             let _span = kalamdb_observability::kdb_info_span_entered!("sql.point_get.bind");
             for filter in &scan.filters {
                 let bound = match bind_placeholders_in_expr(filter.clone(), params) {
@@ -216,20 +219,25 @@ impl SqlExecutor {
             return Ok(None);
         };
         let state = {
+            let _session = stage_guard(SqlStage::Session);
             let _span = kalamdb_observability::kdb_info_span_entered!("sql.point_get.session");
             self.point_read_session_state(exec_ctx)?
         };
         let limit = Some(scan.fetch.unwrap_or(1).min(1));
-        let physical_plan = kalamdb_observability::kdb_await_in_info_span!(
-            provider.scan(state.as_ref(), scan.projection.as_ref(), &filters, limit),
-            "sql.point_get.scan"
-        )
-        .map_err(Self::datafusion_to_execution_error)?;
+        let physical_plan = {
+            let _scan_plan = stage_guard(SqlStage::ScanPlan);
+            kalamdb_observability::kdb_await_in_info_span!(
+                provider.scan(state.as_ref(), scan.projection.as_ref(), &filters, limit),
+                "sql.point_get.scan"
+            )
+            .map_err(Self::datafusion_to_execution_error)?
+        };
         // HTTP `/v1/api/sql` serializes ScalarRows without Arrow. If this
         // returns None for a simple `pk = $1` scan, the bake-off falls back
         // to RecordBatch + JSON and regresses (~1.6s / ~25µs p50 on 1M reads).
         // Keep this Some-path; do not scan again on success.
         if let Some(deferred) = physical_plan.downcast_ref::<DeferredBatchExec>() {
+            let _scalar = stage_guard(SqlStage::Scalar);
             if let Some((schema, rows)) = kalamdb_observability::kdb_await_in_info_span!(
                 deferred.produce_scalar_rows_direct(),
                 "sql.point_get.scalar"
@@ -261,6 +269,7 @@ impl SqlExecutor {
                 }));
             }
         }
+        let _arrow = stage_guard(SqlStage::Arrow);
         let schema = physical_plan.schema();
         let batches = if let Some(deferred) = physical_plan.downcast_ref::<DeferredBatchExec>() {
             vec![deferred

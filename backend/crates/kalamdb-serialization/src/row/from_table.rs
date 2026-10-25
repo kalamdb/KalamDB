@@ -118,6 +118,36 @@ pub fn storage_schema_from_table(table: &TableDefinition) -> Result<StorageSchem
     build_storage_schema(table, None)
 }
 
+/// Register every historical table definition so v2 rows written under an older
+/// `schema_version` still resolve `layout_for_version`.
+///
+/// `versions` is ascending. The last entry is the current schema. Production
+/// stores those definitions under `TableVersionId`; callers that only have the
+/// latest definition cannot reconstruct a dropped column's old slot layout.
+pub fn storage_schema_from_table_versions(versions: &[TableDefinition]) -> Result<StorageSchema> {
+    storage_schema_from_table_versions_with_arrow(versions, None)
+}
+
+/// Like [`storage_schema_from_table_versions`], with the current layout using a
+/// resolved Arrow overlay. Older versions keep the catalog types they were
+/// written with.
+pub fn storage_schema_from_table_versions_with_arrow(
+    versions: &[TableDefinition],
+    arrow: Option<&arrow::datatypes::Schema>,
+) -> Result<StorageSchema> {
+    let current = versions.last().ok_or_else(|| {
+        SerializationError::Encode("storage schema requires at least one table version".to_string())
+    })?;
+    let mut schema = build_storage_schema(current, arrow)?;
+    for prior in &versions[..versions.len() - 1] {
+        let prior_schema = build_storage_schema(prior, None)?;
+        if prior_schema.version != schema.version {
+            schema.register_historical_version(prior_schema.version, &prior_schema.fields);
+        }
+    }
+    Ok(schema)
+}
+
 /// Build storage schema using a resolved Arrow overlay so named TypeId columns
 /// encode as Struct/List instead of the builtin placeholder type.
 pub fn storage_schema_from_table_with_arrow(
@@ -344,5 +374,37 @@ mod tests {
             },
             other => panic!("expected struct, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn historical_versions_keep_their_layouts() {
+        let mut original = TableDefinition::new(
+            SchemaId::new("app"),
+            TableName::new("orders"),
+            TableType::User,
+            vec![column(1, "id", 1, KalamDataType::BigInt)],
+            TableOptions::user(),
+            None,
+        )
+        .unwrap();
+        original.schema_version = 1;
+        let mut current = TableDefinition::new(
+            SchemaId::new("app"),
+            TableName::new("orders"),
+            TableType::User,
+            vec![
+                column(1, "id", 1, KalamDataType::BigInt),
+                column(2, "note", 2, KalamDataType::Text),
+            ],
+            TableOptions::user(),
+            None,
+        )
+        .unwrap();
+        current.schema_version = 2;
+        let schema = storage_schema_from_table_versions(&[original, current]).unwrap();
+        assert!(schema.layout_for_version(1).is_some());
+        assert!(schema.layout_for_version(2).is_some());
+        assert!(schema.layout_for_version(1).unwrap().variable_ordinals.is_empty());
+        assert_eq!(schema.layout_for_version(2).unwrap().variable_ordinals.len(), 1);
     }
 }

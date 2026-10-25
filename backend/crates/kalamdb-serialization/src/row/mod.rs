@@ -15,8 +15,8 @@ pub use batch::{
     decode_payloads_to_arrow_batch, MAX_BATCH_BYTES, MAX_BATCH_ROWS, MAX_LIST_LEN, MAX_NESTING,
 };
 pub use decode::{
-    decode_row_fields, decode_shared_row, decode_shared_row_selected, decode_stream_row,
-    decode_user_row, decode_user_row_selected, RowView,
+    decode_row_fields, decode_row_fields_columns, decode_shared_row, decode_shared_row_selected,
+    decode_stream_row, decode_user_row, decode_user_row_selected, RowView,
 };
 pub use encode::{
     encode_row_envelope, encode_row_fields, encode_row_fields_from_columns, encode_shared_row,
@@ -25,6 +25,7 @@ pub use encode::{
 };
 pub use from_table::{
     storage_data_type_from_arrow, storage_data_type_from_kalam, storage_schema_from_table,
+    storage_schema_from_table_versions, storage_schema_from_table_versions_with_arrow,
     storage_schema_from_table_with_arrow,
 };
 pub use metadata::{decode_row_metadata, RowMetadata};

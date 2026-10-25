@@ -2,15 +2,38 @@ fn scan_hot_pk_insert(
     store: &SharedTableIndexedStore,
     pk_prefixes: &[(String, Vec<u8>)],
 ) -> Result<crate::versioned::HotInsertScan<SharedTableRowId, SharedTableRow>, KalamDbError> {
-    crate::versioned::scan_hot_inserts(
-        pk_prefixes,
-        |prefix| {
-            store.get_latest_by_index_prefix(0, prefix).map_err(|e| {
-                KalamDbError::InvalidOperation(format!("PK index scan failed: {}", e))
-            })
-        },
-        |row| row._deleted,
-    )
+    let mut tombstones = HashMap::new();
+    for (pk_str, prefix) in pk_prefixes {
+        match store.get_latest_deleted_flag_by_index_prefix(0, prefix) {
+            Ok(Some((_, false))) => {
+                return Ok(crate::versioned::HotInsertScan {
+                    duplicate: Some(pk_str.clone()),
+                    tombstones,
+                });
+            },
+            Ok(Some((key, true))) => {
+                let row = store.get(&key).map_err(|error| {
+                    KalamDbError::InvalidOperation(format!("PK tombstone load failed: {error}"))
+                })?;
+                let Some(row) = row else {
+                    return Err(KalamDbError::InvalidOperation(format!(
+                        "tombstone for primary key '{pk_str}' disappeared before replacement"
+                    )));
+                };
+                tombstones.insert(pk_str.clone(), (key, row));
+            },
+            Ok(None) => {},
+            Err(error) => {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "PK index scan failed: {error}"
+                )));
+            },
+        }
+    }
+    Ok(crate::versioned::HotInsertScan {
+        duplicate: None,
+        tombstones,
+    })
 }
 
 fn collect_live_string_primary_keys_before_from_store(

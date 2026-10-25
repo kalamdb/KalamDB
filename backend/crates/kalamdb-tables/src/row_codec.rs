@@ -8,9 +8,10 @@ use kalamdb_commons::{
     schemas::TableDefinition,
 };
 use kalamdb_serialization::{
-    decode_shared_row, decode_shared_row_selected, decode_user_row, decode_user_row_selected,
-    encode_shared_row, encode_user_row, storage_schema_from_table,
-    storage_schema_from_table_with_arrow, StorageDataType, StorageField, StorageSchema,
+    decode_row_metadata, decode_shared_row, decode_shared_row_selected, decode_user_row,
+    decode_user_row_selected, encode_shared_row, encode_user_row, storage_schema_from_table,
+    storage_schema_from_table_versions_with_arrow, storage_schema_from_table_with_arrow,
+    StorageDataType, StorageField, StorageSchema,
 };
 use kalamdb_store::{EntityCodec, StorageError};
 
@@ -29,6 +30,16 @@ pub fn storage_schema_for_table_with_arrow(
     arrow: &datafusion::arrow::datatypes::Schema,
 ) -> Result<Arc<StorageSchema>, String> {
     storage_schema_from_table_with_arrow(table, arrow)
+        .map(Arc::new)
+        .map_err(|err| err.to_string())
+}
+
+/// Current layout plus historical layouts for rows written under older versions.
+pub fn storage_schema_for_table_versions(
+    versions: &[TableDefinition],
+    arrow: Option<&datafusion::arrow::datatypes::Schema>,
+) -> Result<Arc<StorageSchema>, String> {
+    storage_schema_from_table_versions_with_arrow(versions, arrow)
         .map(Arc::new)
         .map_err(|err| err.to_string())
 }
@@ -91,6 +102,10 @@ impl EntityCodec<UserTableRowId, UserTableRow> for UserRowCodec {
         decode_user_row_selected(bytes, &self.schema, key.user_id.clone(), key.version, ordinals)
             .map_err(map_ser)
     }
+
+    fn row_deleted_flag(&self, bytes: &[u8]) -> kalamdb_store::storage_trait::Result<Option<bool>> {
+        decode_row_metadata(bytes).map(|meta| Some(meta.deleted)).map_err(map_ser)
+    }
 }
 
 /// Ordinal SHARED row codec. Identity is reconstructed from [`SharedTableRowId`].
@@ -131,5 +146,9 @@ impl EntityCodec<SharedTableRowId, SharedTableRow> for SharedRowCodec {
         ordinals: &[usize],
     ) -> kalamdb_store::storage_trait::Result<SharedTableRow> {
         decode_shared_row_selected(bytes, &self.schema, *key, ordinals).map_err(map_ser)
+    }
+
+    fn row_deleted_flag(&self, bytes: &[u8]) -> kalamdb_store::storage_trait::Result<Option<bool>> {
+        decode_row_metadata(bytes).map(|meta| Some(meta.deleted)).map_err(map_ser)
     }
 }

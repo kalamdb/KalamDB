@@ -12,7 +12,10 @@ use std::sync::Arc;
 pub use audit::extract_user_id_for_audit;
 use bearer::authenticate_bearer;
 pub use bearer_session_cache::invalidate_bearer_sessions;
-use kalamdb_commons::{models::ConnectionInfo, Role};
+use kalamdb_commons::{
+    models::{ConnectionInfo, UserId},
+    Role,
+};
 use once_cell::sync::Lazy;
 use password::authenticate_user_password;
 use tracing::Instrument;
@@ -149,6 +152,15 @@ pub fn try_cached_bearer_session(
 ) -> Option<AuthenticatedUser> {
     let token = extract_bearer_token(auth_header).ok()?;
     bearer_session_cache::lookup_cached_bearer_session(token, connection_info)
+}
+
+/// User id and role for a previously verified bearer token.
+///
+/// The SQL extractor uses this so a cache hit does not clone the stored email
+/// and display name, which the handler does not read.
+pub(crate) fn try_cached_bearer_principal(auth_header: &str) -> Option<(UserId, Role)> {
+    let token = extract_bearer_token(auth_header).ok()?;
+    bearer_session_cache::lookup_cached_bearer_principal(token)
 }
 
 fn try_cached_auth_request(

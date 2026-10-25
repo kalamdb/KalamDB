@@ -49,6 +49,17 @@ use crate::{
 /// This executor is stateless and designed for concurrent access from
 /// multiple Data Raft groups. Each method accesses the schema registry
 /// to get the appropriate provider and performs the operation.
+fn table_has_file_column(app_context: &AppContext, table_id: &TableId) -> bool {
+    app_context.schema_registry().get(table_id).is_some_and(|cached| {
+        cached.table.columns.iter().any(|column| {
+            matches!(
+                column.data_type(),
+                kalamdb_commons::models::datatypes::KalamDataType::File
+            )
+        })
+    })
+}
+
 fn shared_update_targets(
     updates: &[Row],
     pk_values: Option<&[String]>,
@@ -460,6 +471,36 @@ impl DmlExecutor {
         }
     }
 
+    /// Insert ordinal field payloads for a user table. `Ok(None)` means this table is not a user
+    /// table and the caller should decode logical rows.
+    pub async fn insert_user_encoded_fields(
+        &self,
+        table_id: &TableId,
+        user_id: &UserId,
+        payloads: &[Vec<u8>],
+        versions: &[VersionId],
+    ) -> Result<Option<usize>, ApplierError> {
+        if payloads.is_empty() {
+            return Ok(Some(0));
+        }
+        if table_has_file_column(self.app_context.as_ref(), table_id) {
+            return Ok(None);
+        }
+        let provider_arc = self.load_provider(table_id, "Table provider").await?;
+        let Some(provider) =
+            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
+        else {
+            return Ok(None);
+        };
+        let log_index = Self::log_index_from_versions(versions)?;
+        let count = provider
+            .insert_encoded_fields_with_versions(user_id, payloads, versions)
+            .await
+            .map_err(|error| ApplierError::from_table(error, "Failed to insert batch"))?;
+        self.defer_observe(table_id, TableType::User, Some(user_id), log_index);
+        Ok(Some(count))
+    }
+
     /// Update rows in a user table
     pub async fn update_user_data(
         &self,
@@ -674,6 +715,35 @@ impl DmlExecutor {
                 table_id
             )))
         }
+    }
+
+    /// Insert ordinal field payloads for a shared table.
+    pub async fn insert_shared_encoded_fields(
+        &self,
+        table_id: &TableId,
+        actor_user_id: Option<&UserId>,
+        payloads: &[Vec<u8>],
+        versions: &[VersionId],
+    ) -> Result<Option<usize>, ApplierError> {
+        if payloads.is_empty() {
+            return Ok(Some(0));
+        }
+        if table_has_file_column(self.app_context.as_ref(), table_id) {
+            return Ok(None);
+        }
+        let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
+        let Some(provider) =
+            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
+        else {
+            return Ok(None);
+        };
+        let log_index = Self::log_index_from_versions(versions)?;
+        let count = provider
+            .insert_encoded_fields_with_versions(actor_user_id, payloads, versions)
+            .await
+            .map_err(|error| ApplierError::from_table(error, "Failed to insert batch"))?;
+        self.defer_observe(table_id, TableType::Shared, actor_user_id, log_index);
+        Ok(Some(count))
     }
 
     /// Update rows in a shared table

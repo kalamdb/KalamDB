@@ -132,6 +132,74 @@ impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableP
             cold_columns.as_deref(),
             scan_context.snapshot_commit_seq,
             true,
+            None,
+        )
+        .await
+    }
+
+    fn additional_stored_column_names(&self, scan_context: &Self::ScanContext) -> Vec<String> {
+        let mut names = Vec::new();
+        for column_id in scan_context.policies.required_column_ids() {
+            if let Some(column) = self
+                .core
+                .table_def()
+                .columns
+                .iter()
+                .find(|column| column.column_id == column_id)
+            {
+                names.push(column.column_name.clone());
+            }
+        }
+        names
+    }
+
+    async fn scan_kvs_with_context_projected(
+        &self,
+        scan_context: &Self::ScanContext,
+        filter: Option<&Expr>,
+        since_seq: Option<VersionId>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+        cold_columns: Option<&[String]>,
+        storage_ordinals: Option<&[usize]>,
+    ) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
+        let scan_limit = scan_context.policies.bypasses_rls().then_some(limit).flatten();
+        let cold_columns = self.authorization_cold_columns(scan_context, cold_columns);
+        self.scan_with_version_resolution_to_kvs_result_async(
+            filter,
+            since_seq,
+            scan_limit,
+            keep_deleted,
+            cold_columns.as_deref(),
+            scan_context.snapshot_commit_seq,
+            false,
+            storage_ordinals.map(|ordinals| ordinals.to_vec()),
+        )
+        .await
+        .map(|result| result.rows)
+    }
+
+    async fn scan_kvs_with_diagnostics_projected(
+        &self,
+        scan_context: &Self::ScanContext,
+        filter: Option<&Expr>,
+        since_seq: Option<VersionId>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+        cold_columns: Option<&[String]>,
+        storage_ordinals: Option<&[usize]>,
+    ) -> Result<base::MvccScanResult<SharedTableRowId, SharedTableRow>, KalamDbError> {
+        let scan_limit = scan_context.policies.bypasses_rls().then_some(limit).flatten();
+        let cold_columns = self.authorization_cold_columns(scan_context, cold_columns);
+        self.scan_with_version_resolution_to_kvs_result_async(
+            filter,
+            since_seq,
+            scan_limit,
+            keep_deleted,
+            cold_columns.as_deref(),
+            scan_context.snapshot_commit_seq,
+            true,
+            storage_ordinals.map(|ordinals| ordinals.to_vec()),
         )
         .await
     }
@@ -469,6 +537,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             cold_columns,
             snapshot_commit_seq,
             false,
+            None,
         )
         .await
         .map(|result| result.rows)
@@ -577,6 +646,7 @@ impl SharedTableProvider {
         cold_columns: Option<&[String]>,
         snapshot_commit_seq: Option<VersionId>,
         include_diagnostics: bool,
+        storage_ordinals: Option<Vec<usize>>,
     ) -> Result<base::MvccScanResult<SharedTableRowId, SharedTableRow>, KalamDbError> {
         use kalamdb_store::EntityStoreAsync;
 
@@ -593,13 +663,26 @@ impl SharedTableProvider {
                         scan_limit,
                         pk_name,
                         None,
+                        storage_ordinals.clone(),
                     )
                     .await;
                 }
             }
-            self.store
-                .scan_typed_with_prefix_and_start_async(None, start_key.as_ref(), scan_limit)
-                .await
+            let scanned = if let Some(ordinals) = storage_ordinals.clone() {
+                self.store
+                    .scan_typed_with_prefix_and_start_selected_async(
+                        None,
+                        start_key.as_ref(),
+                        scan_limit,
+                        ordinals,
+                    )
+                    .await
+            } else {
+                self.store
+                    .scan_typed_with_prefix_and_start_async(None, start_key.as_ref(), scan_limit)
+                    .await
+            };
+            scanned
                 .map_err(|e| {
                     KalamDbError::InvalidOperation(format!(
                         "Failed to scan shared table hot storage: {}",

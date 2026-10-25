@@ -261,15 +261,14 @@ async fn build_insert_rows_from_values_rows(
             return Err(InsertValuesRowsError::Unsupported);
         }
 
-        let mut values = BTreeMap::new();
+        let mut columns = Vec::with_capacity(column_names.len());
         for ((expr, column_name), target_field) in value_row
             .content
             .iter()
             .zip(column_names.iter())
             .zip(target_fields.iter().copied())
         {
-            values.insert(
-                column_name.clone(),
+            columns.push(
                 insert_value_expr_to_scalar(
                     expr,
                     column_name,
@@ -283,7 +282,7 @@ async fn build_insert_rows_from_values_rows(
                 .await?,
             );
         }
-        rows.push(Row::new(values));
+        rows.push(Row::from_aligned(column_names, columns));
     }
 
     Ok(rows)

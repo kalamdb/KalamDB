@@ -44,6 +44,19 @@ impl SchemasTableProvider {
         }
     }
 
+    /// Table definitions in ascending `schema_version` order.
+    pub fn list_table_definitions(
+        &self,
+        table_id: &TableId,
+    ) -> Result<Vec<TableDefinition>, SystemError> {
+        Ok(self
+            .store
+            .list_versions(table_id)?
+            .into_iter()
+            .map(|(_, definition)| definition)
+            .collect())
+    }
+
     /// Create a new table entry (stores version 1)
     pub fn create_table(
         &self,

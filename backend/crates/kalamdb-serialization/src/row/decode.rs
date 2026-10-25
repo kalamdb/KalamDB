@@ -457,8 +457,7 @@ pub(crate) struct DecodedRow {
 pub(crate) fn decode_row_body_into_columns(
     bytes: &[u8],
     schema: &StorageSchema,
-    columns: &mut [Vec<ScalarValue>],
-    mut on_value: impl FnMut(&ScalarValue) -> Result<()>,
+    mut push: impl FnMut(usize, ScalarValue) -> Result<()>,
 ) -> Result<bool> {
     let (header, payload) = decode_envelope(bytes, ObjectKind::Row)?;
     if (header.flags & FLAG_ROW_BODY_V2) != 0 {
@@ -473,8 +472,7 @@ pub(crate) fn decode_row_body_into_columns(
             } else {
                 view.decode_field(index, schema)?
             };
-            on_value(&value)?;
-            columns[output_index].push(value);
+            push(output_index, value)?;
             output_index += 1;
         }
         return Ok(view.is_deleted());
@@ -492,13 +490,13 @@ pub(crate) fn decode_row_body_into_columns(
                 continue;
             }
             let value = decode_value(&mut reader, &field.data_type)?;
-            on_value(&value)?;
-            columns[output_index].push(value);
+            push(output_index, value)?;
             output_index += 1;
         } else if !field.dropped {
-            columns[output_index].push(
+            push(
+                output_index,
                 field.missing_default.clone().unwrap_or_else(|| null_for_type(&field.data_type)),
-            );
+            )?;
             output_index += 1;
         }
     }
@@ -509,6 +507,37 @@ pub(crate) fn decode_row_body_into_columns(
         return Err(SerializationError::Decode("trailing bytes after row payload".to_string()));
     }
     Ok(deleted)
+}
+
+/// Decode ordinal field payloads into schema-ordered columns.
+///
+/// Dropped slots stay [`ScalarValue::Null`]. Missing trailing fields use the
+/// field default, then a typed null. Callers encode these with
+/// [`super::encode::encode_row_fields_from_columns`] without rebuilding a name map.
+pub fn decode_row_fields_columns(bytes: &[u8], schema: &StorageSchema) -> Result<Vec<ScalarValue>> {
+    let mut reader = Reader::new(bytes);
+    let stored_field_count = reader.u16()? as usize;
+    let mut columns = vec![ScalarValue::Null; schema.fields.len()];
+    let live_count = stored_field_count.min(schema.fields.len());
+    for (index, field) in schema.fields.iter().enumerate() {
+        if index < live_count {
+            if field.dropped {
+                skip_value(&mut reader)?;
+                continue;
+            }
+            columns[index] = decode_value(&mut reader, &field.data_type)?;
+        } else if !field.dropped {
+            columns[index] =
+                field.missing_default.clone().unwrap_or_else(|| null_for_type(&field.data_type));
+        }
+    }
+    for _ in live_count..stored_field_count {
+        skip_value(&mut reader)?;
+    }
+    if !reader.is_empty() {
+        return Err(SerializationError::Decode("trailing bytes after row fields".to_string()));
+    }
+    Ok(columns)
 }
 
 /// Decode ordinal field payloads produced by [`super::encode::encode_row_fields`].

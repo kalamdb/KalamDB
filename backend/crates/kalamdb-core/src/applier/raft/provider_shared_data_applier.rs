@@ -60,6 +60,17 @@ impl SharedDataApplier for ProviderSharedDataApplier {
         encoded_fields: &[Vec<u8>],
         versions: &[VersionId],
     ) -> Result<usize, RaftError> {
+        if !encoded_fields.is_empty() {
+            if let Some(count) = self
+                .executor
+                .dml()
+                .insert_shared_encoded_fields(table_id, actor_user_id, encoded_fields, versions)
+                .await
+                .map_err(crate::applier::error::ApplierError::into_raft)?
+            {
+                return Ok(count);
+            }
+        }
         let rows = {
             let _decode_span = kalamdb_observability::kdb_info_span_entered!("raft.decode_rows");
             crate::applier::ordinal_dml::decode_insert_rows(

@@ -214,8 +214,7 @@ pub fn query_metrics_snapshot() -> QueryMetricsSnapshot {
         now_second
             .saturating_sub(first_second)
             .saturating_add(1)
-            .min(RATE_WINDOW_SECS)
-            .max(1)
+            .clamp(1, RATE_WINDOW_SECS)
     };
 
     QueryMetricsSnapshot {

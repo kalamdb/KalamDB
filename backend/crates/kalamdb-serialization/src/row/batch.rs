@@ -1,14 +1,62 @@
 //! Direct RocksDB tagged bytes → Arrow RecordBatch without `Row` maps.
 
+use std::sync::Arc;
+
 use arrow::{
-    array::{Array, ArrayRef},
-    datatypes::SchemaRef,
+    array::{
+        Array, ArrayRef, BooleanBuilder, Float32Builder, Float64Builder, Int16Builder,
+        Int32Builder, Int64Builder, Int8Builder, LargeStringBuilder, StringBuilder, UInt16Builder,
+        UInt32Builder, UInt64Builder, UInt8Builder,
+    },
+    datatypes::{DataType, SchemaRef},
     record_batch::{RecordBatch, RecordBatchOptions},
 };
 use datafusion_common::ScalarValue;
 
 use super::{decode::decode_row_body_into_columns, schema::StorageSchema};
 use crate::error::{Result, SerializationError};
+
+enum ColumnSink {
+    Boolean(BooleanBuilder),
+    Int8(Int8Builder),
+    Int16(Int16Builder),
+    Int32(Int32Builder),
+    Int64(Int64Builder),
+    UInt8(UInt8Builder),
+    UInt16(UInt16Builder),
+    UInt32(UInt32Builder),
+    UInt64(UInt64Builder),
+    Float32(Float32Builder),
+    Float64(Float64Builder),
+    Utf8(StringBuilder),
+    LargeUtf8(LargeStringBuilder),
+    Null(usize),
+    EmptyStruct(usize),
+    Fallback(Vec<ScalarValue>),
+}
+
+fn column_sink(data_type: &DataType, capacity: usize) -> ColumnSink {
+    match data_type {
+        DataType::Boolean => ColumnSink::Boolean(BooleanBuilder::with_capacity(capacity)),
+        DataType::Int8 => ColumnSink::Int8(Int8Builder::with_capacity(capacity)),
+        DataType::Int16 => ColumnSink::Int16(Int16Builder::with_capacity(capacity)),
+        DataType::Int32 => ColumnSink::Int32(Int32Builder::with_capacity(capacity)),
+        DataType::Int64 => ColumnSink::Int64(Int64Builder::with_capacity(capacity)),
+        DataType::UInt8 => ColumnSink::UInt8(UInt8Builder::with_capacity(capacity)),
+        DataType::UInt16 => ColumnSink::UInt16(UInt16Builder::with_capacity(capacity)),
+        DataType::UInt32 => ColumnSink::UInt32(UInt32Builder::with_capacity(capacity)),
+        DataType::UInt64 => ColumnSink::UInt64(UInt64Builder::with_capacity(capacity)),
+        DataType::Float32 => ColumnSink::Float32(Float32Builder::with_capacity(capacity)),
+        DataType::Float64 => ColumnSink::Float64(Float64Builder::with_capacity(capacity)),
+        DataType::Utf8 => ColumnSink::Utf8(StringBuilder::with_capacity(capacity, capacity * 16)),
+        DataType::LargeUtf8 => {
+            ColumnSink::LargeUtf8(LargeStringBuilder::with_capacity(capacity, capacity * 16))
+        },
+        DataType::Null => ColumnSink::Null(0),
+        DataType::Struct(fields) if fields.is_empty() => ColumnSink::EmptyStruct(0),
+        _ => ColumnSink::Fallback(Vec::with_capacity(capacity)),
+    }
+}
 
 /// Decode budgets so a cyclic or huge payload cannot expand unbounded Arrow.
 pub const MAX_BATCH_ROWS: usize = 16_384;
@@ -37,55 +85,181 @@ pub fn decode_payloads_to_arrow_batch(
     }
 
     let live_count = storage.fields.iter().filter(|field| !field.dropped).count();
-    let mut columns: Vec<Vec<ScalarValue>> = vec![Vec::with_capacity(payloads.len()); live_count];
-
-    for payload in payloads {
-        decode_row_body_into_columns(payload, storage, &mut columns, |value| {
-            assert_nesting(value, 0)
-        })?;
-    }
-
     if arrow_schema.fields().is_empty() {
         let options = RecordBatchOptions::new().with_row_count(Some(payloads.len()));
         return RecordBatch::try_new_with_options(arrow_schema, vec![], &options)
             .map_err(|error| SerializationError::Decode(error.to_string()));
     }
+    if arrow_schema.fields().len() != live_count {
+        return Err(SerializationError::Decode(format!(
+            "arrow schema has {} fields but storage schema has {live_count} live columns",
+            arrow_schema.fields().len()
+        )));
+    }
 
-    let arrays: Result<Vec<ArrayRef>> = columns
+    let mut sinks: Vec<ColumnSink> = arrow_schema
+        .fields()
+        .iter()
+        .map(|field| column_sink(field.data_type(), payloads.len()))
+        .collect();
+
+    for payload in payloads {
+        decode_row_body_into_columns(payload, storage, |index, value| {
+            assert_nesting(&value, 0)?;
+            let sink = sinks.get_mut(index).ok_or_else(|| {
+                SerializationError::Decode(format!("decoded column {index} has no arrow builder"))
+            })?;
+            push_scalar(sink, value)
+        })?;
+    }
+
+    let arrays: Result<Vec<ArrayRef>> = sinks
         .into_iter()
         .enumerate()
-        .map(|(index, values)| {
+        .map(|(index, sink)| {
             let field = &arrow_schema.fields()[index];
-            if values.is_empty() {
-                return Ok(arrow::array::new_null_array(field.data_type(), 0));
-            }
-            let array = match field.data_type() {
-                arrow::datatypes::DataType::Struct(fields) if fields.is_empty() => {
-                    let len = values.len();
-                    let validity: Vec<bool> = values.iter().map(|v| !v.is_null()).collect();
-                    let nulls = if validity.iter().all(|valid| *valid) {
-                        None
-                    } else {
-                        Some(arrow::buffer::NullBuffer::from(validity))
-                    };
-                    let struct_arr = arrow::array::StructArray::try_new_with_length(
-                        fields.clone(),
-                        Vec::new(),
-                        nulls,
-                        len,
-                    )
-                    .map_err(|error| SerializationError::Decode(error.to_string()))?;
-                    std::sync::Arc::new(struct_arr) as ArrayRef
-                },
-                _ => ScalarValue::iter_to_array(values)
-                    .map_err(|error| SerializationError::Decode(error.to_string()))?,
-            };
+            let array = finish_sink(sink, field.data_type())?;
             kalamdb_commons::conversions::align_array_to_field(array, field.as_ref())
                 .map_err(SerializationError::Decode)
         })
         .collect();
     RecordBatch::try_new(arrow_schema, arrays?)
         .map_err(|error| SerializationError::Decode(error.to_string()))
+}
+
+macro_rules! append_option {
+    ($builder:expr, $value:expr, $variant:ident) => {
+        match $value {
+            ScalarValue::$variant(inner) => {
+                $builder.append_option(inner);
+                Ok(())
+            },
+            ScalarValue::Null => {
+                $builder.append_null();
+                Ok(())
+            },
+            other => Err(SerializationError::Decode(format!(
+                "arrow column type mismatch, got {other:?}"
+            ))),
+        }
+    };
+}
+
+fn push_scalar(sink: &mut ColumnSink, value: ScalarValue) -> Result<()> {
+    match sink {
+        ColumnSink::Boolean(builder) => match value {
+            ScalarValue::Boolean(Some(flag)) => {
+                builder.append_value(flag);
+                Ok(())
+            },
+            ScalarValue::Boolean(None) | ScalarValue::Null => {
+                builder.append_null();
+                Ok(())
+            },
+            other => Err(SerializationError::Decode(format!(
+                "expected boolean while building arrow column, got {other:?}"
+            ))),
+        },
+        ColumnSink::Int8(builder) => append_option!(builder, value, Int8),
+        ColumnSink::Int16(builder) => append_option!(builder, value, Int16),
+        ColumnSink::Int32(builder) => append_option!(builder, value, Int32),
+        ColumnSink::Int64(builder) => append_option!(builder, value, Int64),
+        ColumnSink::UInt8(builder) => append_option!(builder, value, UInt8),
+        ColumnSink::UInt16(builder) => append_option!(builder, value, UInt16),
+        ColumnSink::UInt32(builder) => append_option!(builder, value, UInt32),
+        ColumnSink::UInt64(builder) => append_option!(builder, value, UInt64),
+        ColumnSink::Float32(builder) => append_option!(builder, value, Float32),
+        ColumnSink::Float64(builder) => append_option!(builder, value, Float64),
+        ColumnSink::Utf8(builder) => append_text(builder, value),
+        ColumnSink::LargeUtf8(builder) => append_large_text(builder, value),
+        ColumnSink::Null(count) => {
+            *count += 1;
+            Ok(())
+        },
+        ColumnSink::EmptyStruct(count) => {
+            *count += 1;
+            Ok(())
+        },
+        ColumnSink::Fallback(values) => {
+            values.push(value);
+            Ok(())
+        },
+    }
+}
+
+fn append_text(builder: &mut StringBuilder, value: ScalarValue) -> Result<()> {
+    match value {
+        ScalarValue::Utf8(Some(text)) | ScalarValue::LargeUtf8(Some(text)) => {
+            builder.append_value(&text);
+            Ok(())
+        },
+        ScalarValue::Utf8(None) | ScalarValue::LargeUtf8(None) | ScalarValue::Null => {
+            builder.append_null();
+            Ok(())
+        },
+        other => Err(SerializationError::Decode(format!(
+            "expected text while building arrow column, got {other:?}"
+        ))),
+    }
+}
+
+fn append_large_text(builder: &mut LargeStringBuilder, value: ScalarValue) -> Result<()> {
+    match value {
+        ScalarValue::Utf8(Some(text)) | ScalarValue::LargeUtf8(Some(text)) => {
+            builder.append_value(&text);
+            Ok(())
+        },
+        ScalarValue::Utf8(None) | ScalarValue::LargeUtf8(None) | ScalarValue::Null => {
+            builder.append_null();
+            Ok(())
+        },
+        other => Err(SerializationError::Decode(format!(
+            "expected text while building arrow column, got {other:?}"
+        ))),
+    }
+}
+
+fn finish_sink(sink: ColumnSink, data_type: &DataType) -> Result<ArrayRef> {
+    let array: ArrayRef = match sink {
+        ColumnSink::Boolean(mut builder) => Arc::new(builder.finish()),
+        ColumnSink::Int8(mut builder) => Arc::new(builder.finish()),
+        ColumnSink::Int16(mut builder) => Arc::new(builder.finish()),
+        ColumnSink::Int32(mut builder) => Arc::new(builder.finish()),
+        ColumnSink::Int64(mut builder) => Arc::new(builder.finish()),
+        ColumnSink::UInt8(mut builder) => Arc::new(builder.finish()),
+        ColumnSink::UInt16(mut builder) => Arc::new(builder.finish()),
+        ColumnSink::UInt32(mut builder) => Arc::new(builder.finish()),
+        ColumnSink::UInt64(mut builder) => Arc::new(builder.finish()),
+        ColumnSink::Float32(mut builder) => Arc::new(builder.finish()),
+        ColumnSink::Float64(mut builder) => Arc::new(builder.finish()),
+        ColumnSink::Utf8(mut builder) => Arc::new(builder.finish()),
+        ColumnSink::LargeUtf8(mut builder) => Arc::new(builder.finish()),
+        ColumnSink::Null(len) => arrow::array::new_null_array(&DataType::Null, len),
+        ColumnSink::EmptyStruct(len) => {
+            let DataType::Struct(fields) = data_type else {
+                return Err(SerializationError::Decode(
+                    "empty struct builder received a non-struct type".to_string(),
+                ));
+            };
+            let struct_arr = arrow::array::StructArray::try_new_with_length(
+                fields.clone(),
+                Vec::new(),
+                None,
+                len,
+            )
+            .map_err(|error| SerializationError::Decode(error.to_string()))?;
+            Arc::new(struct_arr)
+        },
+        ColumnSink::Fallback(values) => {
+            if values.is_empty() {
+                arrow::array::new_null_array(data_type, 0)
+            } else {
+                ScalarValue::iter_to_array(values)
+                    .map_err(|error| SerializationError::Decode(error.to_string()))?
+            }
+        },
+    };
+    Ok(array)
 }
 
 fn assert_nesting(value: &ScalarValue, depth: usize) -> Result<()> {

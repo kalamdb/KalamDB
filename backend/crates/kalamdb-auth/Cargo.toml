@@ -56,6 +56,10 @@ moka = { workspace = true }
 # Time handling
 chrono = { workspace = true }
 
+# Lock-free hot bearer slot. A cache hit loads one Arc and compares the token.
+arc-swap = { workspace = true }
+kalamdb-observability = { path = "../kalamdb-observability", default-features = false }
+
 async-trait = { workspace = true }
 once_cell = { workspace = true }
 

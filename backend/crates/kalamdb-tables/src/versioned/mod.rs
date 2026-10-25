@@ -6,6 +6,6 @@ mod hot_pk;
 
 pub use hot_pk::DeferredMutation;
 pub(crate) use hot_pk::{
-    classify_hot_pk, insert_notification_when_watched, scan_hot_inserts, HotInsertScan,
+    classify_hot_pk, insert_notification_when_watched, HotInsertScan,
     HotPkLookup, MutationTarget,
 };

@@ -34,6 +34,7 @@ use kalamdb_core::{
     sql::{context::ExecutionContext, executor::SqlExecutor, SqlImpersonationService},
 };
 use kalamdb_jobs::health_monitor::record_activity_now;
+use kalamdb_observability::stage_trace::{stage_guard, SqlStage};
 use kalamdb_raft::GroupId;
 use kalamdb_session::AuthSession;
 use tokio_util::sync::CancellationToken;
@@ -163,6 +164,7 @@ pub async fn execute_sql_v1(
     sql_executor: web::Data<Arc<SqlExecutor>>,
     rate_limiter: Option<web::Data<Arc<RateLimiter>>>,
 ) -> impl Responder {
+    let _handler = stage_guard(SqlStage::Handler);
     let start_time = Instant::now();
     let session: AuthSession = extractor.into();
 
@@ -182,11 +184,13 @@ pub async fn execute_sql_v1(
     }
 
     // 2. Parse payload (JSON or multipart)
-    let parsed_payload =
+    let parsed_payload = {
+        let _parse = stage_guard(SqlStage::Parse);
         match parse_incoming_payload(&http_req, payload, app_context.get_ref(), start_time).await {
             Ok(p) => p,
             Err(resp) => return resp,
-        };
+        }
+    };
 
     let sql = parsed_payload.sql;
     let params_json = parsed_payload.params;
@@ -210,20 +214,24 @@ pub async fn execute_sql_v1(
     // (classify + table extract only) because execute_file_upload_path fully prepares
     // the substituted SQL before execution.
     let file_upload_request = files_present || sql_may_contain_file_placeholder(&sql);
-    let prepared_statements = if file_upload_request {
-        match split_and_prepare_statements_light(
-            &sql,
-            &exec_ctx,
-            sql_executor.get_ref(),
-            start_time,
-        ) {
-            Ok(stmts) => stmts,
-            Err(resp) => return resp,
-        }
-    } else {
-        match split_and_prepare_statements(&sql, &exec_ctx, sql_executor.get_ref(), start_time) {
-            Ok(stmts) => stmts,
-            Err(resp) => return resp,
+    let prepared_statements = {
+        let _prepare = stage_guard(SqlStage::Prepare);
+        if file_upload_request {
+            match split_and_prepare_statements_light(
+                &sql,
+                &exec_ctx,
+                sql_executor.get_ref(),
+                start_time,
+            ) {
+                Ok(stmts) => stmts,
+                Err(resp) => return resp,
+            }
+        } else {
+            match split_and_prepare_statements(&sql, &exec_ctx, sql_executor.get_ref(), start_time)
+            {
+                Ok(stmts) => stmts,
+                Err(resp) => return resp,
+            }
         }
     };
 
@@ -285,21 +293,24 @@ pub async fn execute_sql_v1(
     // (query, insert, update, transaction, or CALL). Dropping the future is
     // what stops the work, including a procedure running inside CALL.
     let cancel = client_cancel_token(&http_req);
-    if !files_present {
-        let forward = forward_sql_if_follower(
-            &http_req,
-            &sql,
-            &params_json,
-            &namespace_id,
-            app_context.get_ref(),
-            &prepared_statements,
-            exec_ctx.user_id(),
-            exec_ctx.request_id(),
-        );
-        match await_unless_client_gone(cancel.clone(), forward).await {
-            Err(response) => return response,
-            Ok(Some(response)) => return response,
-            Ok(None) => {},
+    {
+        let _forward = stage_guard(SqlStage::Forward);
+        if !files_present {
+            let forward = forward_sql_if_follower(
+                &http_req,
+                &sql,
+                &params_json,
+                &namespace_id,
+                app_context.get_ref(),
+                &prepared_statements,
+                exec_ctx.user_id(),
+                exec_ctx.request_id(),
+            );
+            match await_unless_client_gone(cancel.clone(), forward).await {
+                Err(response) => return response,
+                Ok(Some(response)) => return response,
+                Ok(None) => {},
+            }
         }
     }
 

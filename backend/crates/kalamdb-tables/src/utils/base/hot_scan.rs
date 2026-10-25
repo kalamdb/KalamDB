@@ -116,6 +116,7 @@ pub(crate) async fn scan_hot_index_resolved<K, V>(
     scan_limit: usize,
     _pk_name: &str,
     _user_id: Option<&UserId>,
+    ordinals: Option<Vec<usize>>,
 ) -> Result<Vec<(K, V)>, KalamDbError>
 where
     K: StorageKey + Clone + Send + Sync + 'static,
@@ -123,7 +124,9 @@ where
 {
     let store = Arc::clone(store);
     tokio::task::spawn_blocking(move || -> Result<Vec<(K, V)>, StorageError> {
-        store.scan_by_index_plan_iter(&plan, Some(scan_limit))?.collect()
+        store
+            .scan_by_index_plan_iter_selected(&plan, Some(scan_limit), ordinals)?
+            .collect()
     })
     .await
     .map_err(|error| {

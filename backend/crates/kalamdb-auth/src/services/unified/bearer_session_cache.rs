@@ -7,14 +7,19 @@
 
 use std::{
     collections::HashMap,
-    sync::RwLock,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, RwLock,
+    },
+    time::Duration,
 };
 
+use arc_swap::ArcSwapOption;
 use kalamdb_commons::{
     models::{ConnectionInfo, UserId},
     AuthType, Role,
 };
+use kalamdb_observability::coarse_unix_secs;
 use moka::sync::Cache;
 use once_cell::sync::Lazy;
 
@@ -33,14 +38,25 @@ pub(super) struct CachedBearerIdentity {
     created_at: i64,
     updated_at: i64,
     exp: usize,
-    epoch: u64,
+    epoch_slot: Arc<AtomicU64>,
+    seen_epoch: u64,
+}
+
+struct HotBearer {
+    token: Arc<str>,
+    user_id: UserId,
+    role: Role,
+    exp: usize,
+    epoch_slot: Arc<AtomicU64>,
+    seen_epoch: u64,
 }
 
 impl CachedBearerIdentity {
     pub(super) fn from_authenticated_user(
         user: &AuthenticatedUser,
         exp: usize,
-        epoch: u64,
+        epoch_slot: Arc<AtomicU64>,
+        seen_epoch: u64,
     ) -> Self {
         Self {
             user_id: user.user_id.clone(),
@@ -51,7 +67,8 @@ impl CachedBearerIdentity {
             created_at: user.created_at,
             updated_at: user.updated_at,
             exp,
-            epoch,
+            epoch_slot,
+            seen_epoch,
         }
     }
 
@@ -79,29 +96,85 @@ static SESSION_CACHE: Lazy<Cache<String, CachedBearerIdentity>> = Lazy::new(|| {
         .build()
 });
 
-static USER_EPOCHS: Lazy<RwLock<HashMap<UserId, u64>>> = Lazy::new(|| RwLock::new(HashMap::new()));
+static USER_EPOCHS: Lazy<RwLock<HashMap<UserId, Arc<AtomicU64>>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// Last token seen on this process. A repeated SQL read compares the header
+/// to this slot and loads one atomic. It does not hash the JWT or clone the
+/// cached email and name.
+static HOT: Lazy<ArcSwapOption<HotBearer>> = Lazy::new(ArcSwapOption::empty);
 
 fn unix_now() -> usize {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs() as usize)
-        .unwrap_or(0)
+    usize::try_from(coarse_unix_secs()).unwrap_or(usize::MAX)
 }
 
-pub(super) fn user_epoch(user_id: &UserId) -> u64 {
-    USER_EPOCHS
+fn epoch_slot(user_id: &UserId) -> Arc<AtomicU64> {
+    if let Some(slot) = USER_EPOCHS
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .get(user_id)
-        .copied()
-        .unwrap_or(0)
+        .cloned()
+    {
+        return slot;
+    }
+
+    let mut epochs = USER_EPOCHS.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+    epochs
+        .entry(user_id.clone())
+        .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+        .clone()
+}
+
+fn token_is_current(exp: usize, epoch_slot: &AtomicU64, seen_epoch: u64) -> bool {
+    unix_now() < exp && epoch_slot.load(Ordering::Acquire) == seen_epoch
+}
+
+fn install_hot(token: &str, identity: &CachedBearerIdentity) {
+    HOT.store(Some(Arc::new(HotBearer {
+        token: Arc::from(token),
+        user_id: identity.user_id.clone(),
+        role: identity.role,
+        exp: identity.exp,
+        epoch_slot: Arc::clone(&identity.epoch_slot),
+        seen_epoch: identity.seen_epoch,
+    })));
+}
+
+fn lookup_hot(token: &str) -> Option<(UserId, Role)> {
+    let guard = HOT.load();
+    let hot = guard.as_ref()?;
+    if hot.token.as_ref() != token {
+        return None;
+    }
+    if !token_is_current(hot.exp, &hot.epoch_slot, hot.seen_epoch) {
+        drop(guard);
+        HOT.store(None);
+        return None;
+    }
+    Some((hot.user_id.clone(), hot.role))
 }
 
 /// Drop cached bearer sessions for `user_id` (role change, delete, password update).
 pub fn invalidate_bearer_sessions(user_id: &UserId) {
-    let mut epochs = USER_EPOCHS.write().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let next = epochs.get(user_id).copied().unwrap_or(0).saturating_add(1);
-    epochs.insert(user_id.clone(), next);
+    epoch_slot(user_id).fetch_add(1, Ordering::AcqRel);
+    if HOT.load().as_ref().is_some_and(|hot| &hot.user_id == user_id) {
+        HOT.store(None);
+    }
+}
+
+/// Identity fields the SQL hot path needs. Does not clone email or name.
+pub(super) fn lookup_cached_bearer_principal(token: &str) -> Option<(UserId, Role)> {
+    if let Some(principal) = lookup_hot(token) {
+        return Some(principal);
+    }
+
+    let cached = SESSION_CACHE.get(token)?;
+    if !token_is_current(cached.exp, &cached.epoch_slot, cached.seen_epoch) {
+        SESSION_CACHE.invalidate(token);
+        return None;
+    }
+    install_hot(token, &cached);
+    Some((cached.user_id.clone(), cached.role))
 }
 
 pub(super) fn lookup_cached_bearer_session(
@@ -109,14 +182,11 @@ pub(super) fn lookup_cached_bearer_session(
     connection_info: &ConnectionInfo,
 ) -> Option<AuthenticatedUser> {
     let cached = SESSION_CACHE.get(token)?;
-    if unix_now() >= cached.exp {
+    if !token_is_current(cached.exp, &cached.epoch_slot, cached.seen_epoch) {
         SESSION_CACHE.invalidate(token);
         return None;
     }
-    if cached.epoch != user_epoch(&cached.user_id) {
-        SESSION_CACHE.invalidate(token);
-        return None;
-    }
+    install_hot(token, &cached);
     Some(cached.into_authenticated_user(connection_info))
 }
 
@@ -124,15 +194,16 @@ pub(super) fn store_cached_bearer_session(token: &str, user: &AuthenticatedUser,
     if unix_now() >= exp {
         return;
     }
-    let epoch = user_epoch(&user.user_id);
-    SESSION_CACHE.insert(
-        token.to_string(),
-        CachedBearerIdentity::from_authenticated_user(user, exp, epoch),
-    );
+    let epoch_slot = epoch_slot(&user.user_id);
+    let seen_epoch = epoch_slot.load(Ordering::Acquire);
+    let identity = CachedBearerIdentity::from_authenticated_user(user, exp, epoch_slot, seen_epoch);
+    install_hot(token, &identity);
+    SESSION_CACHE.insert(token.to_string(), identity);
 }
 
 #[cfg(test)]
 pub(super) fn clear_bearer_session_cache() {
+    HOT.store(None);
     SESSION_CACHE.invalidate_all();
     SESSION_CACHE.run_pending_tasks();
     USER_EPOCHS.write().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();

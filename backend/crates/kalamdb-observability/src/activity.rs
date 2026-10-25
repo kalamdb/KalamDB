@@ -3,11 +3,10 @@ use std::{
     time::Duration,
 };
 
+use crate::coarse_clock::coarse_unix_millis;
+
 fn epoch_millis() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    coarse_unix_millis()
 }
 
 static LAST_ACTIVITY_MS: AtomicU64 = AtomicU64::new(0);
@@ -15,6 +14,12 @@ static LAST_ACTIVITY_MS: AtomicU64 = AtomicU64::new(0);
 /// Record server activity using the current wall-clock timestamp.
 pub fn record_activity_now() -> u64 {
     let now = epoch_millis();
+    let last = LAST_ACTIVITY_MS.load(Ordering::Relaxed);
+    // The background clock only moves every 10ms. Skip the store when this
+    // request is still inside the tick we already published.
+    if now.saturating_sub(last) < 10 {
+        return last;
+    }
     LAST_ACTIVITY_MS.store(now, Ordering::Release);
     now
 }

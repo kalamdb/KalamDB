@@ -55,6 +55,8 @@ where
     };
 
     apply_process_memory_policy();
+    kalamdb_observability::start_coarse_clock();
+    kalamdb_observability::stage_trace::enable_from_env();
     let config = load_server_config(&config_path)?;
     let worker_threads = resolve_tokio_worker_threads(&config);
     let max_blocking_threads =

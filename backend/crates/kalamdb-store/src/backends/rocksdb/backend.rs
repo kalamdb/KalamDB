@@ -351,6 +351,21 @@ impl StorageBackend for RocksDBBackend {
             .map_err(|e| StorageError::IoError(e.to_string()))
     }
 
+    fn get_many(&self, partition: &Partition, keys: &[Vec<u8>]) -> Result<Vec<Option<Vec<u8>>>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let cf = self.get_cf(partition)?;
+        let physical_keys: Vec<Vec<u8>> =
+            keys.iter().map(|key| physical_key(partition.name(), key)).collect();
+        let lookups = physical_keys.iter().map(|key| (&cf, key.as_slice()));
+        self.db
+            .multi_get_cf(lookups)
+            .into_iter()
+            .map(|value| value.map_err(|error| StorageError::IoError(error.to_string())))
+            .collect()
+    }
+
     fn put(&self, partition: &Partition, key: &[u8], value: &[u8]) -> Result<()> {
         if crate::write_coalesce::buffer_put(partition, key, value) {
             return Ok(());

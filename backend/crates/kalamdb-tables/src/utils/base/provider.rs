@@ -566,6 +566,9 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
             return Ok(());
         }
 
+        let _leader = kalamdb_observability::stage_trace::stage_guard(
+            kalamdb_observability::stage_trace::SqlStage::Leader,
+        );
         kalamdb_observability::kdb_await_in_info_span!(
             async {
                 let coordinator = self.cluster_coordinator();

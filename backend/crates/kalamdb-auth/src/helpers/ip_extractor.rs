@@ -3,7 +3,10 @@
 //! This module provides secure extraction of client IP addresses from HTTP requests,
 //! with protection against header spoofing attacks that attempt to bypass localhost checks.
 
-use std::{net::IpAddr, sync::RwLock};
+use std::{
+    net::IpAddr,
+    sync::{OnceLock, RwLock},
+};
 
 use actix_web::{
     http::header::{HeaderMap, HeaderValue},
@@ -53,15 +56,47 @@ pub fn extract_client_ip_addr_secure(
     peer_addr: Option<IpAddr>,
     headers: &HeaderMap,
 ) -> Option<IpAddr> {
+    // No proxy headers means the peer address is the client. Skip the trusted
+    // range lock on that path.
+    if !headers.contains_key("x-forwarded-for") && !headers.contains_key("x-real-ip") {
+        return peer_addr;
+    }
+
     let trusted_proxy_ranges =
         TRUSTED_PROXY_RANGES.read().unwrap_or_else(std::sync::PoisonError::into_inner);
     extract_client_ip_addr_with_trusted_ranges(peer_addr, headers, &trusted_proxy_ranges)
 }
 
 pub fn extract_client_ip_secure(req: &HttpRequest) -> ConnectionInfo {
-    extract_client_ip_addr_secure(req.peer_addr().map(|addr| addr.ip()), req.headers())
-        .map(|ip| ConnectionInfo::new(Some(ip.to_string())))
+    let peer = req.peer_addr().map(|addr| addr.ip());
+    let headers = req.headers();
+    if !headers.contains_key("x-forwarded-for") && !headers.contains_key("x-real-ip") {
+        return connection_info_for_peer(peer);
+    }
+    extract_client_ip_addr_secure(peer, headers)
+        .map(|ip| connection_info_for_peer(Some(ip)))
         .unwrap_or_else(|| ConnectionInfo::new(None))
+}
+
+fn connection_info_for_peer(peer: Option<IpAddr>) -> ConnectionInfo {
+    match peer {
+        Some(IpAddr::V4(ip)) if ip.octets() == [127, 0, 0, 1] => loopback_v4(),
+        Some(IpAddr::V6(ip)) if ip.is_loopback() => loopback_v6(),
+        Some(ip) => ConnectionInfo::new(Some(ip.to_string())),
+        None => ConnectionInfo::new(None),
+    }
+}
+
+fn loopback_v4() -> ConnectionInfo {
+    static LOOPBACK: OnceLock<ConnectionInfo> = OnceLock::new();
+    LOOPBACK
+        .get_or_init(|| ConnectionInfo::new(Some("127.0.0.1".to_string())))
+        .clone()
+}
+
+fn loopback_v6() -> ConnectionInfo {
+    static LOOPBACK: OnceLock<ConnectionInfo> = OnceLock::new();
+    LOOPBACK.get_or_init(|| ConnectionInfo::new(Some("::1".to_string()))).clone()
 }
 
 fn extract_client_ip_addr_with_trusted_ranges(

@@ -6,7 +6,9 @@
 //! [`HttpClientCancel`] on the connection. SQL execution selects on that token
 //! around every statement — query, insert, update, transaction, and `CALL` —
 //! and drops the statement future. A procedure runs inside that future, so the
-//! same drop cancels the function worker. There is no second socket watcher.
+//! same drop cancels the function worker. The disconnect check is a slow timer
+//! on a duplicated socket, not a readability watch, so request bytes do not
+//! wake it.
 
 use std::any::Any;
 
@@ -41,9 +43,7 @@ pub fn watch_http_client_disconnect(connection: &dyn Any, extensions: &mut Exten
 
 #[cfg(unix)]
 fn watch_unix_disconnect(connection: &dyn Any, cancel: CancellationToken) {
-    use std::io::ErrorKind;
-
-    use tokio::io::{unix::AsyncFd, Ready};
+    use std::{io::ErrorKind, time::Duration};
 
     let Some(stream) = connection.downcast_ref::<actix_web::rt::net::TcpStream>() else {
         return;
@@ -51,29 +51,21 @@ fn watch_unix_disconnect(connection: &dyn Any, cancel: CancellationToken) {
     let Some(watcher) = duplicate_tcp_stream(stream) else {
         return;
     };
-    let Ok(watcher) = AsyncFd::new(watcher) else {
-        return;
-    };
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         return;
     };
+    // Do not register the socket with the reactor. A readability watch wakes
+    // this task on every request byte and peeks while Actix is reading and
+    // writing the same connection. Hangup is checked on a slow timer instead.
     handle.spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_millis(20));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
-            let mut guard = match watcher.readable().await {
-                Ok(guard) => guard,
-                Err(_) => {
-                    cancel.cancel();
-                    break;
-                },
-            };
-            let ready = guard.ready();
-            if ready.is_read_closed() || ready.is_error() || peer_hangup(watcher.get_ref()) {
+            ticker.tick().await;
+            if peer_hangup(&watcher) {
                 cancel.cancel();
                 break;
             }
-            // Request bytes are still buffered for Actix. Clear this edge and
-            // park. The next wake is more data or peer close, not a timer.
-            guard.clear_ready_matching(Ready::READABLE);
         }
     });
 

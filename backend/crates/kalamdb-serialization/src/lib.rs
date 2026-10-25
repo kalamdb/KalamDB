@@ -47,12 +47,14 @@ pub use protocol::{
 };
 #[cfg(feature = "backend-adapters")]
 pub use row::{
-    decode_payloads_to_arrow_batch, decode_row_fields, decode_row_metadata, decode_shared_row,
+    decode_payloads_to_arrow_batch, decode_row_fields, decode_row_fields_columns,
+    decode_row_metadata, decode_shared_row,
     decode_shared_row_selected, decode_stream_row, decode_user_row, decode_user_row_selected,
     encode_row_envelope, encode_row_fields, encode_row_fields_from_columns, encode_shared_row,
     encode_shared_row_v2, encode_stream_row, encode_tombstone_row_v2, encode_user_row,
-    encode_user_row_from_columns, encode_user_row_v2, storage_data_type_from_arrow,
-    storage_data_type_from_kalam, storage_schema_from_table, storage_schema_from_table_with_arrow,
+    encode_user_row_from_columns, encode_user_row_v2,     storage_data_type_from_arrow, storage_data_type_from_kalam, storage_schema_from_table,
+    storage_schema_from_table_versions, storage_schema_from_table_versions_with_arrow,
+    storage_schema_from_table_with_arrow,
     RowMetadata, RowView, StorageDataType, StorageField, StorageSchema, StorageVersionLayout,
 };
 pub use stream_frame::{

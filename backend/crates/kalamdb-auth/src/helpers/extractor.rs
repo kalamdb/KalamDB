@@ -32,15 +32,22 @@
 //!
 //! ```
 
-use std::{fmt, future::Future, pin::Pin, sync::Arc};
+use std::{
+    fmt,
+    future::Future,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 use actix_web::{dev::Payload, http::StatusCode, FromRequest, HttpRequest, ResponseError};
+use kalamdb_session::AuthMethod;
 
 use crate::{
     errors::error::AuthError,
     helpers::ip_extractor::extract_client_ip_secure,
     repository::user_repo::UserRepository,
-    services::unified::{authenticate, try_cached_bearer_session, AuthRequest},
+    services::unified::{authenticate, try_cached_bearer_principal, AuthRequest},
 };
 
 /// Error type for authentication extraction.
@@ -302,46 +309,53 @@ fn request_id_from_headers(req: &HttpRequest) -> Option<Arc<str>> {
         .map(Arc::<str>::from)
 }
 
-fn session_from_authenticated_user(
-    user: crate::models::context::AuthenticatedUser,
-    connection_info: kalamdb_commons::models::ConnectionInfo,
-    request_id: Option<Arc<str>>,
-) -> AuthSessionExtractor {
-    let mut session = kalamdb_session::AuthSession::with_auth_details(
-        user.user_id,
-        user.role,
-        connection_info,
-        kalamdb_session::AuthMethod::Bearer,
-    );
-    if let Some(rid) = request_id {
-        session = session.with_request_id(rid);
-    }
-    AuthSessionExtractor(session)
-}
-
 fn try_extract_cached_bearer_session(req: &HttpRequest) -> Option<AuthSessionExtractor> {
     let auth_header = req.headers().get("Authorization")?.to_str().ok()?;
-    let connection_info = extract_client_ip_secure(req);
-    let user = try_cached_bearer_session(auth_header, &connection_info)?;
-    Some(session_from_authenticated_user(
-        user,
-        connection_info,
-        request_id_from_headers(req),
-    ))
+    let (user_id, role) = try_cached_bearer_principal(auth_header)?;
+    let mut session = kalamdb_session::AuthSession::with_auth_details(
+        user_id,
+        role,
+        extract_client_ip_secure(req),
+        AuthMethod::Bearer,
+    );
+    if let Some(request_id) = request_id_from_headers(req) {
+        session = session.with_request_id(request_id);
+    }
+    Some(AuthSessionExtractor(session))
+}
+
+/// Cache hits stay on the stack. Only a token that is not in the session cache
+/// allocates a boxed future and talks to the user store.
+pub enum AuthExtractFuture {
+    Ready(Option<Result<AuthSessionExtractor, AuthExtractError>>),
+    Pending(Pin<Box<dyn Future<Output = Result<AuthSessionExtractor, AuthExtractError>>>>),
+}
+
+impl Future for AuthExtractFuture {
+    type Output = Result<AuthSessionExtractor, AuthExtractError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.get_mut() {
+            Self::Ready(slot) => {
+                Poll::Ready(slot.take().expect("auth extractor polled after completion"))
+            },
+            Self::Pending(future) => future.as_mut().poll(cx),
+        }
+    }
 }
 
 impl FromRequest for AuthSessionExtractor {
     type Error = AuthExtractError;
-    type Future = Pin<Box<dyn Future<Output = Result<Self, Self::Error>>>>;
+    type Future = AuthExtractFuture;
 
     fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
         if let Some(extractor) = try_extract_cached_bearer_session(req) {
-            return Box::pin(std::future::ready(Ok(extractor)));
+            return AuthExtractFuture::Ready(Some(Ok(extractor)));
         }
 
         let req = req.clone();
 
-        Box::pin(async move {
+        AuthExtractFuture::Pending(Box::pin(async move {
             let start_time = std::time::Instant::now();
 
             // Get user repository from app data - MUST be registered
@@ -438,6 +452,6 @@ impl FromRequest for AuthSessionExtractor {
                     Err(AuthExtractError::new(e, took))
                 },
             }
-        })
+        }))
     }
 }

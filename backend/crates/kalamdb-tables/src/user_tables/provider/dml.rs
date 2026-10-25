@@ -2,15 +2,38 @@ fn scan_user_hot_pk_insert(
     store: &UserTableIndexedStore,
     pk_prefixes: &[(String, Vec<u8>)],
 ) -> Result<crate::versioned::HotInsertScan<UserTableRowId, UserTableRow>, KalamDbError> {
-    crate::versioned::scan_hot_inserts(
-        pk_prefixes,
-        |prefix| {
-            store.get_latest_by_index_prefix(0, prefix).map_err(|e| {
-                KalamDbError::InvalidOperation(format!("PK index scan failed: {}", e))
-            })
-        },
-        |row| row._deleted,
-    )
+    let mut tombstones = HashMap::new();
+    for (pk_str, prefix) in pk_prefixes {
+        match store.get_latest_deleted_flag_by_index_prefix(0, prefix) {
+            Ok(Some((_, false))) => {
+                return Ok(crate::versioned::HotInsertScan {
+                    duplicate: Some(pk_str.clone()),
+                    tombstones,
+                });
+            },
+            Ok(Some((key, true))) => {
+                let row = store.get(&key).map_err(|error| {
+                    KalamDbError::InvalidOperation(format!("PK tombstone load failed: {error}"))
+                })?;
+                let Some(row) = row else {
+                    return Err(KalamDbError::InvalidOperation(format!(
+                        "tombstone for primary key '{pk_str}' disappeared before replacement"
+                    )));
+                };
+                tombstones.insert(pk_str.clone(), (key, row));
+            },
+            Ok(None) => {},
+            Err(error) => {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "PK index scan failed: {error}"
+                )));
+            },
+        }
+    }
+    Ok(crate::versioned::HotInsertScan {
+        duplicate: None,
+        tombstones,
+    })
 }
 
 impl UserTableProvider {
@@ -33,6 +56,7 @@ impl UserTableProvider {
             cold_columns,
             snapshot_commit_seq,
             true,
+            None,
         )
         .await
     }
@@ -47,6 +71,7 @@ impl UserTableProvider {
         cold_columns: Option<&[String]>,
         snapshot_commit_seq: Option<VersionId>,
         include_diagnostics: bool,
+        storage_ordinals: Option<Vec<usize>>,
     ) -> Result<base::MvccScanResult<UserTableRowId, UserTableRow>, KalamDbError> {
         use kalamdb_store::EntityStoreAsync;
 
@@ -73,6 +98,7 @@ impl UserTableProvider {
                         scan_limit,
                         pk_name,
                         Some(user_id),
+                        storage_ordinals.clone(),
                     )
                     .await
                     .map(|rows| {
@@ -82,9 +108,21 @@ impl UserTableProvider {
                     });
                 }
             }
-            self.store
-                .scan_with_raw_prefix_async(&user_prefix, start_key_bytes.as_deref(), scan_limit)
-                .await
+            let scanned = if let Some(ordinals) = storage_ordinals.clone() {
+                self.store
+                    .scan_with_raw_prefix_selected_async(
+                        &user_prefix,
+                        start_key_bytes.as_deref(),
+                        scan_limit,
+                        ordinals,
+                    )
+                    .await
+            } else {
+                self.store
+                    .scan_with_raw_prefix_async(&user_prefix, start_key_bytes.as_deref(), scan_limit)
+                    .await
+            };
+            scanned
                 .map_err(|e| {
                     KalamDbError::InvalidOperation(format!(
                         "Failed to scan user table hot storage: {}",

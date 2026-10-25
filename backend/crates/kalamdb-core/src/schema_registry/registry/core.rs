@@ -891,13 +891,21 @@ impl SchemaRegistry {
 
         // Wrap table_def in Arc for sharing across core (avoids cloning TableDefinition)
         let table_def_arc = Arc::new(table_def.clone());
-        let core = Arc::new(TableProviderCore::new(
-            table_def_arc,
-            services,
-            pk_field.clone(),
-            arrow_schema,
-            column_defaults,
-        ));
+        let history = app_ctx
+            .system_tables()
+            .tables()
+            .list_table_definitions(&table_id)
+            .unwrap_or_default();
+        let core = Arc::new(
+            TableProviderCore::new(
+                table_def_arc,
+                services,
+                pk_field.clone(),
+                arrow_schema,
+                column_defaults,
+            )
+            .with_historical_definitions(&history),
+        );
         let storage_schema = Arc::clone(core.storage_schema());
 
         match table_def.table_type {
