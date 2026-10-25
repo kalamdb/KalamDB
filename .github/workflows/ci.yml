@@ -269,6 +269,7 @@ jobs:
           mkdir -p ci-artifacts
           cargo nextest run \
             --profile ci \
+            --no-fail-fast \
             --workspace \
             --exclude kalam-pg-extension \
             --exclude kalam-link-wasm \
