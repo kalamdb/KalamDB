@@ -76,7 +76,9 @@ fn create_app_context(
     let db_path = config.storage.rocksdb_dir();
     std::fs::create_dir_all(&db_path)?;
 
+    eprintln!("startup: opening storage");
     let (backend, partition_count) = open_storage_backend(&db_path, &config.storage.rocksdb)?;
+    eprintln!("startup: storage open ({partition_count} partitions)");
     info!(
         "Storage backend initialized at {} with {} partitions ({:.2}ms)",
         db_path.display(),
@@ -94,6 +96,7 @@ fn create_app_context(
         .unwrap_or_else(|| kalamdb_commons::NodeId::new(1));
     let storage_dir = config.storage.storage_dir().to_string_lossy().into_owned();
     let phase_start = std::time::Instant::now();
+    eprintln!("startup: creating application context");
     let app_context = match mode {
         AppContextMode::Global => kalamdb_core::app_context::AppContext::init(
             backend,
@@ -108,6 +111,7 @@ fn create_app_context(
             config.clone(),
         ),
     };
+    eprintln!("startup: application context created");
     info!(
         "Startup: AppContext initialized in {:.2}ms",
         phase_start.elapsed().as_secs_f64() * 1000.0
