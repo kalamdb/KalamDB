@@ -22,11 +22,6 @@ env:
   CARGO_PROFILE_TEST_DEBUG: "0"
   CARGO_PROFILE_DEV_SPLIT_DEBUGINFO: "off"
   CARGO_PROFILE_TEST_SPLIT_DEBUGINFO: "off"
-  # cc applies these after OPT_LEVEL, so RocksDB's C++ is -O2 even when a
-  # build-override or a restored cache would otherwise compile DB::Open at -O0.
-  # Unoptimized DB::Open overflows the Linux thread stack.
-  CFLAGS: "-O2"
-  CXXFLAGS: "-O2"
   RUSTC_WRAPPER: ""
   CARGO_BUILD_RUSTC_WRAPPER: ""
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
