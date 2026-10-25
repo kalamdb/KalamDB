@@ -240,7 +240,9 @@ pub async fn bootstrap(
     config: &ServerConfig,
 ) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
     let app_context = create_app_context(config, AppContextMode::Global)?;
+    eprintln!("startup: installing pg bridge");
     kalamdb_pg_bridge::install(&app_context);
+    eprintln!("startup: pg bridge installed");
     app_context.log_runtime_metrics();
 
     // Start the executor (always Raft - single-node or cluster)
@@ -281,6 +283,7 @@ pub async fn bootstrap(
             debug!("  Peer {}: rpc={}, api={}", peer.node_id, peer.rpc_addr, peer.api_addr);
         }
 
+        eprintln!("startup: starting cluster raft");
         if let Err(error) = app_context.executor().start().await {
             return fail_bootstrap(
                 app_context,
@@ -288,6 +291,7 @@ pub async fn bootstrap(
             )
             .await;
         }
+        eprintln!("startup: cluster raft started");
 
         // Auto-bootstrap: node_id=1 is the designated bootstrap node
         let should_bootstrap = cluster_config.peers.is_empty() || cluster_config.node_id == 1;
@@ -300,6 +304,7 @@ pub async fn bootstrap(
                     cluster_config.node_id
                 );
             }
+            eprintln!("startup: initializing cluster");
             if let Err(error) = app_context.executor().initialize_cluster().await {
                 return fail_bootstrap(
                     app_context,
@@ -341,7 +346,10 @@ pub async fn bootstrap(
         );
     }
 
-    finish_bootstrap(config, app_context, true).await
+    eprintln!("startup: finishing bootstrap");
+    let result = finish_bootstrap(config, app_context, true).await;
+    eprintln!("startup: bootstrap finished");
+    result
 }
 
 async fn bootstrap_isolated_inner(

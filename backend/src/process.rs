@@ -69,7 +69,12 @@ where
         .context("failed to build Tokio runtime")?;
     eprintln!("startup: tokio runtime ready");
 
-    let result = runtime.block_on(start_server(config, worker_threads, max_blocking_threads));
+    let server = start_server(config, worker_threads, max_blocking_threads);
+    eprintln!(
+        "startup: server future is {} bytes",
+        std::mem::size_of_val(&server)
+    );
+    let result = runtime.block_on(server);
     // A timed-out blocking storage operation cannot be cancelled by Tokio. Do not let such an
     // orphan keep process termination waiting forever after the owned async tasks were drained.
     runtime.shutdown_background();
