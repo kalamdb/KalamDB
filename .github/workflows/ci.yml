@@ -14,7 +14,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: "1.99.1"
   WASM_PACK_VERSION: "0.15.0"
-  CARGO_ENCODED_RUSTFLAGS: "-Clink-arg=-Wl,--export-dynamic"
+  CARGO_ENCODED_RUSTFLAGS: ""
   CARGO_INCREMENTAL: "0"
   # The runner disk is 145G. Unpacked split debuginfo grew `target/` past 100G
   # and the linker then SIGBUS'd. CI keeps no debuginfo and does not split it.
@@ -235,9 +235,6 @@ jobs:
           wasm-pack --version
 
       - name: Build unpublished TypeScript SDKs for CLI template e2e
-        env:
-          # Host-only. wasm-pack rejects --export-dynamic.
-          CARGO_ENCODED_RUSTFLAGS: ""
         run: |
           set -euo pipefail
           for pkg in client orm consumer react; do
