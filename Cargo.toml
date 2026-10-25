@@ -353,6 +353,14 @@ split-debuginfo = "unpacked"
 [profile.test]
 debug = "line-tables-only"
 
+# RocksDB 11 compiled at opt-level 0 overflows the Linux stack inside DB::Open.
+# The C++ stays optimized in dev and test; Rust crates stay unoptimized.
+[profile.dev.package.librocksdb-sys]
+opt-level = 3
+
+[profile.test.package.librocksdb-sys]
+opt-level = 3
+
 [profile.dev.build-override]
 opt-level = 0
 debug = 0

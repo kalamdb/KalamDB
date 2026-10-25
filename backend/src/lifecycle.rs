@@ -76,9 +76,7 @@ fn create_app_context(
     let db_path = config.storage.rocksdb_dir();
     std::fs::create_dir_all(&db_path)?;
 
-    eprintln!("startup: opening storage");
     let (backend, partition_count) = open_storage_backend(&db_path, &config.storage.rocksdb)?;
-    eprintln!("startup: storage open ({partition_count} partitions)");
     info!(
         "Storage backend initialized at {} with {} partitions ({:.2}ms)",
         db_path.display(),
@@ -96,7 +94,6 @@ fn create_app_context(
         .unwrap_or_else(|| kalamdb_commons::NodeId::new(1));
     let storage_dir = config.storage.storage_dir().to_string_lossy().into_owned();
     let phase_start = std::time::Instant::now();
-    eprintln!("startup: creating application context");
     let app_context = match mode {
         AppContextMode::Global => kalamdb_core::app_context::AppContext::init(
             backend,
@@ -111,7 +108,6 @@ fn create_app_context(
             config.clone(),
         ),
     };
-    eprintln!("startup: application context created");
     info!(
         "Startup: AppContext initialized in {:.2}ms",
         phase_start.elapsed().as_secs_f64() * 1000.0
@@ -240,9 +236,7 @@ pub async fn bootstrap(
     config: &ServerConfig,
 ) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
     let app_context = create_app_context(config, AppContextMode::Global)?;
-    eprintln!("startup: installing pg bridge");
     kalamdb_pg_bridge::install(&app_context);
-    eprintln!("startup: pg bridge installed");
     app_context.log_runtime_metrics();
 
     // Start the executor (always Raft - single-node or cluster)
@@ -283,7 +277,6 @@ pub async fn bootstrap(
             debug!("  Peer {}: rpc={}, api={}", peer.node_id, peer.rpc_addr, peer.api_addr);
         }
 
-        eprintln!("startup: starting cluster raft");
         if let Err(error) = app_context.executor().start().await {
             return fail_bootstrap(
                 app_context,
@@ -291,7 +284,6 @@ pub async fn bootstrap(
             )
             .await;
         }
-        eprintln!("startup: cluster raft started");
 
         // Auto-bootstrap: node_id=1 is the designated bootstrap node
         let should_bootstrap = cluster_config.peers.is_empty() || cluster_config.node_id == 1;
@@ -304,7 +296,6 @@ pub async fn bootstrap(
                     cluster_config.node_id
                 );
             }
-            eprintln!("startup: initializing cluster");
             if let Err(error) = app_context.executor().initialize_cluster().await {
                 return fail_bootstrap(
                     app_context,
@@ -346,10 +337,7 @@ pub async fn bootstrap(
         );
     }
 
-    eprintln!("startup: finishing bootstrap");
-    let result = finish_bootstrap(config, app_context, true).await;
-    eprintln!("startup: bootstrap finished");
-    result
+    finish_bootstrap(config, app_context, true).await
 }
 
 async fn bootstrap_isolated_inner(

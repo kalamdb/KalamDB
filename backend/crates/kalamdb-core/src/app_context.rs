@@ -309,12 +309,10 @@ impl AppContext {
             // Create system table providers registry FIRST (needed by StorageRegistry and
             // information_schema)
             let system_tables = Arc::new(SystemTablesRegistry::new(storage_backend.clone()));
-            eprintln!("startup: system tables ready");
             system_tables
                 .catalog_stores()
                 .ensure_builtin_extension_catalog()
                 .expect("Failed to initialize built-in extension catalog");
-            eprintln!("startup: builtin catalog ready");
 
             // Create storage registry (uses StoragesTableProvider from system_tables)
             let storage_registry = Arc::new(StorageRegistry::new(

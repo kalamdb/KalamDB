@@ -11,30 +11,6 @@ fn desired_fd_soft_limit(current: libc::rlim_t, hard: libc::rlim_t) -> libc::rli
     current.max(65_536).min(hard)
 }
 
-#[cfg(target_os = "linux")]
-fn report_thread_stack() {
-    use std::mem::MaybeUninit;
-
-    // SAFETY: pthread_getattr_np initializes `attr` for the calling thread. The stack
-    // pointer and size are only printed, then the attribute is destroyed.
-    unsafe {
-        let mut attr = MaybeUninit::<libc::pthread_attr_t>::uninit();
-        if libc::pthread_getattr_np(libc::pthread_self(), attr.as_mut_ptr()) != 0 {
-            return;
-        }
-        let mut attr = attr.assume_init();
-        let mut addr: *mut libc::c_void = std::ptr::null_mut();
-        let mut size: usize = 0;
-        if libc::pthread_attr_getstack(&mut attr, &mut addr, &mut size) == 0 {
-            eprintln!("startup: thread stack is {size} bytes");
-        }
-        libc::pthread_attr_destroy(&mut attr);
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn report_thread_stack() {}
-
 #[cfg(unix)]
 fn raise_fd_limit() {
     use std::mem::MaybeUninit;
@@ -60,24 +36,12 @@ fn raise_fd_limit() {
 }
 
 fn main() -> Result<()> {
-    // Linux CI's main thread is smaller than startup. The process runs on its own
-    // stack; 32MB still overflowed there, so this thread asks for 64MB.
-    let args: Vec<String> = std::env::args().collect();
-    let handle = std::thread::Builder::new()
-        .name("kalamdb-main".to_string())
-        .stack_size(64 * 1024 * 1024)
-        .spawn(|| {
-            report_thread_stack();
-            kalamdb_observability::apply_process_memory_policy();
-            #[cfg(unix)]
-            raise_fd_limit();
-            kalamdb_server::process::run_process(args)
-        })
-        .expect("failed to start the server thread");
-    match handle.join() {
-        Ok(result) => result,
-        Err(payload) => std::panic::resume_unwind(payload),
-    }
+    kalamdb_observability::apply_process_memory_policy();
+
+    #[cfg(unix)]
+    raise_fd_limit();
+
+    kalamdb_server::process::run_process(std::env::args())
 }
 
 #[cfg(test)]
