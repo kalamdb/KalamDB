@@ -341,8 +341,11 @@ impl SqlExecutor {
         let df = if params.is_empty() {
             self.plan_dml_with_provider_reload(pre_parsed, sql, exec_ctx, &params).await?.1
         } else {
-            let cache_key =
-                PlanCacheKey::new(exec_ctx.default_namespace(), exec_ctx.user_role(), sql);
+            let cache_key = self.sql_cache_registry.plan_cache().current_key(
+                exec_ctx.default_namespace(),
+                exec_ctx.user_role(),
+                sql,
+            );
             let session = self.create_session_with_transaction_context(exec_ctx)?;
 
             if let Some(template_plan) = self.sql_cache_registry.plan_cache().get(&cache_key) {

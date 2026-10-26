@@ -11,7 +11,6 @@ use sqlparser::ast::Statement;
 
 use crate::sql::{
     executor::{PreparedExecutionStatement, SqlExecutor},
-    plan_cache::PlanCacheKey,
     ExecutionContext,
 };
 
@@ -65,7 +64,10 @@ impl SqlExecutor {
         role: Role,
         include_dml_ast: bool,
     ) -> Result<PreparedExecutionStatement, StatementClassificationError> {
-        let cache_key = (PlanCacheKey::new(default_namespace.clone(), role, sql), include_dml_ast);
+        let cache_key = (
+            self.sql_cache_registry.plan_cache().current_key(default_namespace.clone(), role, sql),
+            include_dml_ast,
+        );
         if let Some(prepared) = self.prepared_statement_cache.get(&cache_key) {
             return Ok(prepared);
         }
