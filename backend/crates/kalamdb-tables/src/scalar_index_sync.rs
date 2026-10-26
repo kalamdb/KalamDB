@@ -5,7 +5,7 @@
 //! Doing that only on the node that accepted the HTTP request leaves the data
 //! leader with an empty index, and equality scans then miss live rows.
 
-use std::{collections::{HashMap, HashSet}, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use kalamdb_commons::{models::schemas::TableDefinition, schemas::TableType, TableId};
 use kalamdb_store::StorageBackend;
