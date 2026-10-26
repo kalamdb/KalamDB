@@ -39,6 +39,7 @@ The KalamDB Benchmarking Tool is designed to facilitate performance testing of t
 - **run-connection-scale.sh**: Dedicated runner for the opt-in `connection_scale` stress benchmark on macOS/loopback hosts.
 - **comparison/**: HTTP bake-off against TrailBase / PocketBase / SurrealDB.
 - **kalam-vs-pg/**: KalamDB pgwire + KalamDB HTTP SQL vs native PostgreSQL 18. See [kalam-vs-pg/README.md](kalam-vs-pg/README.md).
+- **sqlite-speed/**: PGlite's 16 SQLite speed scripts, on this machine. One local SQLite process and one release KalamDB server. `./sqlite-speed/run.sh`
 
 - **run-benchmarks.ps1**: PowerShell script to run benchmarks in a Windows environment.
 
