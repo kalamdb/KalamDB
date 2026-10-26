@@ -1,5 +1,3 @@
-mod support;
-
 use std::sync::Arc;
 
 use kalamdb_commons::{
@@ -9,7 +7,7 @@ use kalamdb_commons::{
 use kalamdb_core::sql::{context::ExecutionResult, ExecutionContext};
 use kalamdb_sql::classifier::{SqlStatement, SqlStatementKind};
 use ntest::timeout;
-use support::{create_cluster_app_context, create_executor, execute_ok};
+use crate::support::{create_cluster_app_context, create_executor, execute_ok};
 
 #[tokio::test]
 #[timeout(20000)]

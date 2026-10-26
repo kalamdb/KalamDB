@@ -1,5 +1,3 @@
-mod support;
-
 use std::sync::Arc;
 
 use arrow::{
@@ -11,7 +9,7 @@ use kalamdb_core::sql::context::ExecutionResult;
 use kalamdb_sql::split_statements;
 use kalamdb_views::pg_catalog::PgCatalogSchemaProvider;
 use ntest::timeout;
-use support::{create_cluster_app_context, create_executor, execute_ok, request_exec_ctx};
+use crate::support::{create_cluster_app_context, create_executor, execute_ok, request_exec_ctx};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct OrderRowSnapshot {

@@ -1,5 +1,3 @@
-mod support;
-
 use std::sync::Arc;
 
 use kalamdb_commons::{
@@ -12,7 +10,7 @@ use kalamdb_commons::{
 };
 use kalamdb_pg::OperationExecutor;
 use kalamdb_pg_bridge::OperationService;
-use support::{
+use crate::support::{
     create_cluster_app_context, create_shared_table_with_public_policy, row, unique_namespace,
 };
 

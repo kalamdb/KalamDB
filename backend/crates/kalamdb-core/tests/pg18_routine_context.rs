@@ -1,7 +1,7 @@
 //! Integration tests for routine security context (`SECURITY INVOKER` vs `SECURITY DEFINER`),
 //! volatility enforcement (`IMMUTABLE`/`STABLE` reject writes), and max call depth (16).
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

@@ -1,5 +1,3 @@
-mod support;
-
 use std::sync::Arc;
 
 use arrow::array::{Int64Array, StringArray};
@@ -9,7 +7,7 @@ use kalamdb_commons::{
 };
 use kalamdb_core::sql::{context::ExecutionResult, ExecutionContext, ScalarValue};
 use ntest::timeout;
-use support::{create_cluster_app_context, create_executor, execute_ok, request_exec_ctx};
+use crate::support::{create_cluster_app_context, create_executor, execute_ok, request_exec_ctx};
 
 #[tokio::test]
 #[timeout(30000)]

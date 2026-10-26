@@ -1,10 +1,8 @@
-mod support;
-
 use std::sync::Arc;
 
 use kalamdb_commons::TransactionState;
 use ntest::timeout;
-use support::{
+use crate::support::{
     create_cluster_app_context, create_executor, create_shared_table, execute_err, execute_ok,
     insert_sql, request_exec_ctx, request_transaction_coordinator, request_transaction_state,
     select_names, unique_namespace,

@@ -1,5 +1,3 @@
-mod support;
-
 use std::collections::HashMap;
 
 use datafusion_common::ScalarValue;
@@ -9,7 +7,7 @@ use kalamdb_commons::{
 };
 use kalamdb_core::sql::context::{ExecutionContext, ExecutionResult};
 use kalamdb_tables::UserTableProvider;
-use support::{
+use crate::support::{
     create_cluster_app_context, create_context_files_table, create_executor, create_user_table,
     execute_ok, execute_ok_with_params, request_exec_ctx, result_rows, select_names,
     unique_namespace,

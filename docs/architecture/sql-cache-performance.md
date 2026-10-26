@@ -53,7 +53,7 @@ end-to-end database speedup or a PostgreSQL win.
 Run the isolated cache benchmark in the default test profile:
 
 ```sh
-cargo nextest run -p kalamdb-core --test prepared_metadata_cache \
+cargo nextest run -p kalamdb-core --test sql_semantics prepared_metadata_cache \
   --run-ignored only --nocapture
 ```
 

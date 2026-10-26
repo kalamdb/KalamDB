@@ -1,5 +1,3 @@
-mod support;
-
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -18,7 +16,7 @@ use kalamdb_commons::{
 use kalamdb_core::{app_context::AppContext, sql::context::ExecutionContext};
 use kalamdb_store::test_utils::TestDb;
 use kalamdb_system::FileRef;
-use support::{create_cluster_app_context, create_executor, execute_ok, unique_namespace};
+use crate::support::{create_cluster_app_context, create_executor, execute_ok, unique_namespace};
 
 async fn create_user_file_table(
     app_ctx: &Arc<AppContext>,

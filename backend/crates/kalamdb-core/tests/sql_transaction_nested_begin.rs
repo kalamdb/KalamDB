@@ -1,6 +1,4 @@
-mod support;
-
-use support::{execute_err, execute_ok, request_exec_ctx, setup_shared_table};
+use crate::support::{execute_err, execute_ok, request_exec_ctx, setup_shared_table};
 
 #[tokio::test]
 #[ntest::timeout(15000)]

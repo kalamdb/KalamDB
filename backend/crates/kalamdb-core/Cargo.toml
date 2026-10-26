@@ -6,6 +6,9 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+# Integration cases share a few binaries. One file per case linked the full
+# engine again, which dominated CI test compilation.
+autotests = false
 
 [dependencies]
 
@@ -119,3 +122,19 @@ cloud-aws = ["kalamdb-filestore/cloud-aws"]
 
 [lib]
 doctest = false
+
+[[test]]
+name = "pg18"
+path = "tests/pg18.rs"
+
+[[test]]
+name = "sql_semantics"
+path = "tests/sql_semantics.rs"
+
+[[test]]
+name = "transactions"
+path = "tests/transactions.rs"
+
+[[test]]
+name = "storage_ops"
+path = "tests/storage_ops.rs"

@@ -1,6 +1,6 @@
 //! End-to-end PostgreSQL 18 routine lifecycle integration tests (US11).
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

@@ -139,7 +139,10 @@ sqlparser = { version = ">=0.62.0" }
 parquet = { version = ">=59.2.0", default-features = false, features = ["snap", "zstd", "arrow", "async"] }
 
 # Web framework
-actix-web = { version = "4.17.0", features = ["http2"] }
+# Cookies, routing macros, HTTP/2, and WebSocket stay on. The three default
+# content-encoding crates are not used; responses are not wrapped in
+# actix_web::middleware::Compress. actix-ws still enables the `ws` feature.
+actix-web = { version = "4.17.0", default-features = false, features = ["macros", "cookies", "http2", "unicode", "compat", "ws"] }
 actix-ws = "0.4.0"
 actix-cors = "0.7.2"
 # actix-web / actix-server depend on actix-rt with default-features = false.

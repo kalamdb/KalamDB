@@ -1,5 +1,3 @@
-mod support;
-
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     future::Future,
@@ -26,7 +24,7 @@ use kalamdb_store::{test_utils::TestDb, StorageBackend};
 use kalamdb_system::{
     providers::storages::models::StorageType, Storage, StoragePartition, SystemTable,
 };
-use support::{create_cluster_app_context, create_user_table, row, unique_namespace};
+use crate::support::{create_cluster_app_context, create_user_table, row, unique_namespace};
 
 const VALID_IDLE_SESSION_ID: &str = "pg-7101-deadbeef";
 // 15% tolerance: the two code paths are functionally identical so a real

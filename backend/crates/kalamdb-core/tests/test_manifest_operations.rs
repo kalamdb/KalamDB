@@ -3,7 +3,7 @@
 //! These tests cover error scenarios, edge cases, and failure modes
 //! that could occur during manifest read/write operations.
 
-mod support;
+use crate::support;
 
 use std::{collections::HashMap, sync::Arc};
 

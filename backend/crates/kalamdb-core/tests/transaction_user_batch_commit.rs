@@ -1,5 +1,3 @@
-mod support;
-
 use std::sync::Arc;
 
 use datafusion_common::ScalarValue;
@@ -12,7 +10,7 @@ use kalamdb_pg::OperationExecutor;
 use kalamdb_pg_bridge::OperationService;
 use kalamdb_sharding::ShardRouter;
 use kalamdb_tables::UserTableProvider;
-use support::{create_cluster_app_context, create_user_table, row, unique_namespace};
+use crate::support::{create_cluster_app_context, create_user_table, row, unique_namespace};
 
 fn insert_mutation(
     transaction_id: &kalamdb_commons::models::TransactionId,

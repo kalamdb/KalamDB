@@ -1,6 +1,6 @@
 //! Integration tests for PostgreSQL 18 routine DDL and type dependency checks.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

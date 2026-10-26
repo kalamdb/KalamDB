@@ -1,6 +1,6 @@
 //! Integration tests for JS <-> SQL/PLPGSQL routine calls under one shared root transaction.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

@@ -1,5 +1,3 @@
-mod support;
-
 use datafusion_common::ScalarValue;
 use kalamdb_backend::session::BackendAuth;
 use kalamdb_commons::{
@@ -15,7 +13,7 @@ use kalamdb_core::{
     sql::{context::ExecutionContext, ExecutionResult},
 };
 use kalamdb_system::{CatalogRoutine, CatalogRoutineParameter};
-use support::{
+use crate::support::{
     create_cluster_app_context, create_cluster_app_context_with_config, create_executor,
     create_shared_table, execute_err, execute_ok, execute_ok_with_params, observer_exec_ctx,
     result_rows, unique_namespace,

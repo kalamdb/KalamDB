@@ -1,5 +1,3 @@
-mod support;
-
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use datafusion_common::ScalarValue;
@@ -22,7 +20,7 @@ use kalamdb_pg::{
 };
 use kalamdb_pg_bridge::{connect, OperationService};
 use kalamdb_system::{providers::storages::models::StorageMode, AuthType, Role, User};
-use support::{
+use crate::support::{
     create_cluster_app_context, create_cluster_app_context_with_config, create_executor,
     create_shared_table, create_user_table, execute_err, execute_ok, insert_sql, observer_exec_ctx,
     request_exec_ctx, request_transaction_coordinator, request_transaction_state, row,

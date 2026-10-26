@@ -21,7 +21,7 @@ After the shared statement reaches HTTP SQL and the wire for one query and one p
 
 ```text
 cargo nextest run -p kalamdb-dialect
-cargo nextest run -p kalamdb-core --test prepared_metadata_cache
+cargo nextest run -p kalamdb-core --test sql_semantics prepared_metadata_cache
 cargo check -p kalamdb-server
 ```
 
@@ -94,7 +94,7 @@ Until `scripts/pg18-rewrite/rewrite.sh` exists, Phase C does not start the mass 
 Gate execution summary (verified on working tree derived from `9cf03307`):
 
 - `cargo nextest run -p kalamdb-dialect` — 646 passed, 0 failed (`1.41s`)
-- `cargo nextest run -p kalamdb-core --test prepared_metadata_cache --test statement_plan_once --test pg_type_slice --test pg18_type_semantics --test pg18_domains --test pg18_extension_types --test pg18_schema_evolution --test pg18_execution_slice --test pg18_transaction_cases --test pg18_subscription_schema --test pg18_type_declarations --test pg18_routine_ddl --test pg18_routine_binding --test pg18_js_sql_calls --test pg18_routine_context --test pg18_routine_catalog --test pg18_migration_harness` — all suites passed
+- `cargo nextest run -p kalamdb-core --test sql_semantics --test pg18` — the prepared-metadata, statement-plan, and PostgreSQL type/routine suites passed
 - `cargo nextest run -p kalamdb-views --test pg_catalog_slice` — 57 passed, 0 failed (`0.22s`)
 - `cargo nextest run -p kalamdb-postgres-wire` — 36 passed, 0 failed (`0.26s`)
 - `cargo nextest run -p kalamdb-functions --test v8_regressions --test runtime_lifecycle` — 56 passed, 0 failed (`0.18s`)

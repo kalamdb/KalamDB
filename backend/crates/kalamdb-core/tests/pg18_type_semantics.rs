@@ -12,7 +12,7 @@
 //!   `jsonb`/`timestamptz` modifiers, `Decimal128(p, s)`, and composite `Struct` fields).
 //! - Nested composite type revision cascading and pinned historical revision retention.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

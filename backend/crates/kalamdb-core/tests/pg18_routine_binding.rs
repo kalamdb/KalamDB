@@ -1,7 +1,7 @@
 //! Integration tests for PostgreSQL 18 routine argument binding, defaults, OUT/INOUT, and strict
 //! NULL.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

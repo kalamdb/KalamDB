@@ -4,7 +4,7 @@
 //! must keep their meaning through planning, hot storage, and text and binary
 //! results. This is the T042 gate: it fails while those forms still collapse.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

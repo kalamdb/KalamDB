@@ -1,7 +1,7 @@
 //! Integration tests for PostgreSQL 18 routine catalog projections (`pg_catalog.pg_proc`,
 //! `information_schema.routines`, `information_schema.parameters`, and `system.procedures`).
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

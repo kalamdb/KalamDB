@@ -1,7 +1,7 @@
 //! Phase 5 (`T086` / `T086A` / `T091`–`T098` / `T101`–`T102`) PostgreSQL 18 schema evolution
 //! and row storage v2 integration tests.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

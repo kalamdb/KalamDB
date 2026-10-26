@@ -1,12 +1,10 @@
-mod support;
-
 use kalamdb_backend::session::BackendAuth;
 use kalamdb_commons::{
     models::{SessionOrigin, UserId},
     Role,
 };
 use kalamdb_core::transactions::ExecutionOwnerKey;
-use support::create_cluster_app_context;
+use crate::support::create_cluster_app_context;
 
 #[tokio::test]
 #[ntest::timeout(8_000)]

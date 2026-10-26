@@ -28,3 +28,11 @@ upload Cargo compilation timings for before/after comparisons.
 These boundaries reduce compilation scope without disabling server capabilities
 or reducing test coverage. The pre-change audit and timing evidence are in
 `docs/development/build-time-audit-2026-10-25/`.
+
+`kalamdb-core` integration tests link as four binaries (`pg18`, `sql_semantics`,
+`transactions`, `storage_ops`) instead of one executable per source file. Run a
+single case with a name filter, for example
+`cargo nextest run -p kalamdb-core prepared_metadata_cache`. Actix content
+encoding is off; cookies, HTTP/2, and WebSocket stay enabled. DataFusion still
+re-enables Parquet's default codecs, and both Rustls providers stay because
+Reqwest uses ring while JWT, gRPC, and pgwire use AWS-LC.
