@@ -186,7 +186,7 @@ pub fn apply_limit<T>(result: &mut Vec<T>, limit: Option<usize>) {
 /// We scan more than the limit to account for version resolution and tombstones.
 /// Default is 100,000 if no limit is provided.
 pub fn calculate_scan_limit(limit: Option<usize>) -> usize {
-    limit.map(|l| std::cmp::max(l * 2, 1000)).unwrap_or(100_000)
+    limit.map(|l| l.saturating_mul(2).max(1000)).unwrap_or(100_000)
 }
 
 /// Build a count-only RecordBatch with no columns but the given row count.
@@ -212,6 +212,12 @@ mod tests {
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
 
     use super::*;
+
+    #[test]
+    fn scan_limit_saturates_without_overflow() {
+        assert_eq!(super::calculate_scan_limit(Some(usize::MAX)), usize::MAX);
+        assert_eq!(super::calculate_scan_limit(Some(1)), 1000);
+    }
 
     #[test]
     fn compute_metadata_only_cold_columns_returns_pk_and_mvcc_columns() {

@@ -212,6 +212,13 @@ impl PlanCache {
         }
     }
 
+    /// Build a query-plan identity using the current dependency and permission epochs.
+    /// Callers must not construct zero-epoch keys after a DDL or permission change.
+    pub fn current_key(&self, namespace: SchemaId, role: Role, sql: impl Into<String>) -> PlanCacheKey {
+        PlanCacheKey::new(namespace, role, sql)
+            .epochs(self.dependency_epoch(), self.permission_epoch())
+    }
+
     pub fn dependency_epoch(&self) -> u64 {
         self.dependency_epoch.load(Ordering::Acquire)
     }
@@ -308,7 +315,9 @@ impl PlanCache {
     }
 
     pub fn clear(&self) {
-        self.invalidate_plans();
+        // Bump the epoch as well as evicting cached plans. A planner already
+        // building during a DDL change must not re-admit its stale result.
+        self.bump_dependency_epoch();
     }
 
     pub fn len(&self) -> usize {
@@ -569,6 +578,27 @@ mod tests {
         let rebuilt = prepared.epochs(dependency, permission);
         assert_eq!(cache.insert(rebuilt.clone(), empty_plan()), PlanAdmission::Admitted);
         assert!(cache.get(&rebuilt).is_some());
+    }
+
+    #[test]
+    fn current_cache_keys_continue_to_work_after_dependency_and_permission_changes() {
+        let cache = PlanCache::new();
+        let make_key = || cache.current_key(SchemaId::new("default"), Role::User, "SELECT 42");
+        let original = make_key();
+        assert_eq!(cache.insert(original.clone(), empty_plan()), PlanAdmission::Admitted);
+        assert!(cache.get(&make_key()).is_some());
+
+        cache.bump_permission_epoch();
+        assert!(cache.get(&original).is_none());
+        let after_grant = make_key();
+        assert_eq!(cache.insert(after_grant.clone(), empty_plan()), PlanAdmission::Admitted);
+        assert!(cache.get(&make_key()).is_some());
+
+        cache.clear();
+        assert_eq!(cache.insert(after_grant, empty_plan()), PlanAdmission::StaleEpoch);
+        let after_ddl = make_key();
+        assert_eq!(cache.insert(after_ddl, empty_plan()), PlanAdmission::Admitted);
+        assert!(cache.get(&make_key()).is_some());
     }
 
     #[test]

@@ -424,7 +424,11 @@ impl SqlExecutor {
         // Try cached template plan first (works for both plain and parameterized SQL).
         // Key excludes user_id because LogicalPlan is user-agnostic - filtering happens at scan
         // time. Key uses `sql` directly so warm plan-cache hits skip SQL rewriting and parsing.
-        let cache_key = PlanCacheKey::new(default_namespace.clone(), exec_ctx.user_role(), sql);
+        let cache_key = self.sql_cache_registry.plan_cache().current_key(
+            default_namespace.clone(),
+            exec_ctx.user_role(),
+            sql,
+        );
 
         let df = if let Some(template_plan) = self.sql_cache_registry.plan_cache().get(&cache_key) {
             if let Some(result) = kalamdb_observability::kdb_await_in_info_span!(
