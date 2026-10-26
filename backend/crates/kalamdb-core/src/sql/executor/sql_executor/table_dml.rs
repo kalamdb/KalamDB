@@ -90,6 +90,14 @@ impl SqlExecutor {
             }
         }
 
+        if matches!(dml_kind, DmlKind::Update) {
+            if let Some(result) =
+                self.try_execute_literal_equality_update(metadata, &params, dml_ctx).await?
+            {
+                return Ok(result);
+            }
+        }
+
         if matches!(dml_kind, DmlKind::Insert) {
             match kalamdb_observability::kdb_await_in_info_span!(
                 self.try_execute_literal_insert_via_applier(sql, metadata, dml_ctx, &params),

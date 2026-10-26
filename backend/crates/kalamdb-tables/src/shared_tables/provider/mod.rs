@@ -98,6 +98,8 @@ fn version_from_commit_seq(commit_seq: u64, ordinal: u32) -> Result<VersionId, K
     crate::utils::base::statement_row_version(commit_seq, ordinal)
 }
 
+mod equality_update;
+
 include!("storage.rs");
 include!("pk_maintenance.rs");
 include!("scan.rs");
