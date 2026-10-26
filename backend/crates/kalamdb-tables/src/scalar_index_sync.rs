@@ -5,7 +5,7 @@
 //! Doing that only on the node that accepted the HTTP request leaves the data
 //! leader with an empty index, and equality scans then miss live rows.
 
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::{HashMap, HashSet}, sync::Arc};
 
 use kalamdb_commons::{models::schemas::TableDefinition, schemas::TableType, TableId};
 use kalamdb_store::StorageBackend;
@@ -43,17 +43,23 @@ pub fn sync_scalar_indexes_with_arrow(
         return Ok(());
     }
 
-    let previous_names = previous
-        .map(|definition| index_names(&definition.scalar_indexes))
-        .unwrap_or_default();
-    let new_names = index_names(&table_def.scalar_indexes);
+    let previous_indexes: HashMap<&str, &kalamdb_commons::models::schemas::ScalarIndexDefinition> =
+        previous.map(|table| table.scalar_indexes.iter().map(|index| (index.name.as_str(), index)).collect())
+            .unwrap_or_default();
     let user_scoped = matches!(table_def.table_type, TableType::User);
 
-    for name in previous_names.difference(&new_names) {
-        drop_index_partition(&backend, table_id, user_scoped, name);
+    // A replacement with the same name but different columns/uniqueness must
+    // rebuild its physical index; name-only diffs leave stale lookup keys.
+    for (name, old) in &previous_indexes {
+        let replacement = table_def.scalar_indexes.iter().find(|index| index.name == *name);
+        if replacement != Some(*old) {
+            drop_index_partition(&backend, table_id, user_scoped, name)?;
+        }
     }
 
-    let added: Vec<&str> = new_names.difference(&previous_names).copied().collect();
+    let added: Vec<&str> = table_def.scalar_indexes.iter()
+        .filter(|index| previous_indexes.get(index.name.as_str()).is_none_or(|old| *old != index))
+        .map(|index| index.name.as_str()).collect();
     if added.is_empty() {
         return Ok(());
     }
@@ -122,22 +128,16 @@ fn drop_index_partition(
     table_id: &TableId,
     user_scoped: bool,
     index_name: &str,
-) {
+) -> Result<(), String> {
     let partition = kalamdb_store::Partition::new(scalar_index_partition_name(
         table_id,
         index_name,
         user_scoped,
     ));
-    if let Err(err) = backend.drop_partition(&partition) {
-        let message = err.to_string();
-        if !message.to_lowercase().contains("not found") {
-            log::warn!("Failed to drop scalar index partition {}: {}", partition.name(), message);
-        }
+    match backend.drop_partition(&partition) {
+        Ok(()) => Ok(()),
+        Err(err) if err.to_string().to_lowercase().contains("not found") => Ok(()),
+        Err(err) => Err(format!("Failed to drop scalar index partition {}: {}", partition.name(), err)),
     }
 }
 
-fn index_names(
-    indexes: &[kalamdb_commons::models::schemas::ScalarIndexDefinition],
-) -> HashSet<&str> {
-    indexes.iter().map(|index| index.name.as_str()).collect()
-}

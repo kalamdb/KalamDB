@@ -167,6 +167,11 @@ fn parse_index_columns(list: &str) -> DdlResult<Vec<String>> {
     if columns.is_empty() {
         return Err("CREATE INDEX requires at least one column".to_string());
     }
+    // PrefixIndex encodes at most four indexed columns. Reject unsupported
+    // definitions at DDL time instead of silently skipping all index entries.
+    if columns.len() > 4 {
+        return Err("CREATE INDEX supports at most four columns".to_string());
+    }
     for column in &columns {
         if !column.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
             || !column.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
@@ -436,6 +441,22 @@ mod tests {
             },
             other => panic!("expected CreateScalarIndex, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn reject_index_with_more_than_four_columns() {
+        let err = parse_create_index_on(
+            "CREATE INDEX idx_five ON events (a, b, c, d, e)",
+            &ns(),
+        )
+        .unwrap_err();
+        assert!(err.contains("at most four columns"), "{err}");
+        let err = parse_alter_table_scalar_index(
+            "ALTER TABLE events CREATE INDEX idx_five (a, b, c, d, e)",
+            &ns(),
+        )
+        .unwrap_err();
+        assert!(err.contains("at most four columns"), "{err}");
     }
 
     #[test]
