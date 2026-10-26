@@ -48,7 +48,9 @@ pub use explain::{
 pub use extensions::*;
 pub use kalam::KalamParser;
 pub use query_parser::*;
-pub use star_columns::{expand_stars_without_storage_columns, storage_star_table_names};
+pub use star_columns::{
+    expand_stars_without_row_id, expand_stars_without_storage_columns, storage_star_table_names,
+};
 pub use system::*;
 pub use utils::{
     apply_datafusion_ast_rewrites, extract_dml_table_id, extract_dml_table_id_fast,

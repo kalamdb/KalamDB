@@ -30,6 +30,16 @@ backend/crates/kalamdb-tables/src/user_tables/user_table_store.rs
 - Storage key format: `{user_id}:{_seq}` (big-endian bytes)
 - `IndexedEntityStore` maintains the PK secondary index
 
+Index keys are ordered RocksDB keys, not a separate B-tree. An index key is the
+indexed column bytes followed by `_seq`. Integers are encoded as 16 big-endian
+bytes with the sign bit flipped, so byte order is numeric order. Text uses its
+UTF-8 bytes. Equality and range predicates on the leading indexed column become
+one RocksDB seek plus an ordered scan that stops at the upper bound.
+
+DataFusion does not choose indexes. It passes `WHERE` predicates to
+`TableProvider::scan`, `update`, and `delete_from`. `IndexedEntityStore::plan_index_scan`
+then picks the index with the most equality columns before a range.
+
 ### Shared tables
 
 Same MVCC model, but without a user prefix. One RocksDB partition covers the entire table.

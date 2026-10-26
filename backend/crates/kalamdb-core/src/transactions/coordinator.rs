@@ -455,6 +455,17 @@ impl TransactionCoordinator {
         self.write_sets.get(transaction_id).map(|write_set| write_set.merged_overlay())
     }
 
+    /// Snapshot of one table's staged rows. Cloning the overlay is a refcount bump.
+    pub fn get_table_overlay(
+        &self,
+        transaction_id: &TransactionId,
+        table_id: &TableId,
+    ) -> Option<TransactionOverlay> {
+        self.write_sets
+            .get(transaction_id)
+            .and_then(|write_set| write_set.overlay_for_table(table_id))
+    }
+
     pub fn get_handle(&self, transaction_id: &TransactionId) -> Option<TransactionHandle> {
         self.active_by_id.get(transaction_id).map(|handle| handle.clone())
     }

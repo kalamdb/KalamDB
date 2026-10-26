@@ -11,7 +11,9 @@ use super::schema::{StorageDataType, StorageField, StorageSchema};
 use crate::error::{Result, SerializationError};
 
 fn is_key_or_envelope_column(table: &TableDefinition, name: &str) -> bool {
-    if SystemColumnNames::is_system_column(name) {
+    // `_row_id` is payload. Secondary indexes and updates address the row by it.
+    // `_version` and `_deleted` stay on the MVCC envelope.
+    if name != SystemColumnNames::ROW_ID && SystemColumnNames::is_system_column(name) {
         return true;
     }
     // STREAM identity `user_id` lives on the RocksDB key and is injected on scan.

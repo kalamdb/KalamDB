@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use kalamdb_commons::{
     models::{rows::Row, OperationKind, TableId, TransactionId, UserId},
@@ -21,6 +24,17 @@ impl ScopedPkKey {
             user_id: user_id.cloned(),
             primary_key: primary_key.into(),
         }
+    }
+
+    /// Overlay identity of a row. Shared and system rows have no owner, so the
+    /// primary key alone identifies them.
+    #[inline]
+    pub fn for_entry(entry: &TransactionOverlayEntry) -> Self {
+        let owner = match entry.table_type {
+            TableType::User | TableType::Stream => entry.user_id.as_ref(),
+            TableType::Shared | TableType::System => None,
+        };
+        Self::new(owner, entry.primary_key.clone())
     }
 }
 
@@ -46,13 +60,17 @@ impl TransactionOverlayEntry {
 }
 
 /// Query-time overlay for transaction-local read visibility.
+///
+/// The maps are reference-counted. A scan clones the overlay in constant time
+/// and keeps that snapshot. The next staged row copies a map only when a scan
+/// still holds the previous one.
 #[derive(Debug, Clone)]
 pub struct TransactionOverlay {
     pub transaction_id: TransactionId,
-    pub entries_by_table: HashMap<TableId, HashMap<ScopedPkKey, TransactionOverlayEntry>>,
-    pub inserted_keys: HashMap<TableId, HashSet<ScopedPkKey>>,
-    pub deleted_keys: HashMap<TableId, HashSet<ScopedPkKey>>,
-    pub updated_keys: HashMap<TableId, HashSet<ScopedPkKey>>,
+    pub entries_by_table: Arc<HashMap<TableId, HashMap<ScopedPkKey, TransactionOverlayEntry>>>,
+    pub inserted_keys: Arc<HashMap<TableId, HashSet<ScopedPkKey>>>,
+    pub deleted_keys: Arc<HashMap<TableId, HashSet<ScopedPkKey>>>,
+    pub updated_keys: Arc<HashMap<TableId, HashSet<ScopedPkKey>>>,
 }
 
 impl TransactionOverlay {
@@ -60,21 +78,21 @@ impl TransactionOverlay {
     pub fn new(transaction_id: TransactionId) -> Self {
         Self {
             transaction_id,
-            entries_by_table: HashMap::new(),
-            inserted_keys: HashMap::new(),
-            deleted_keys: HashMap::new(),
-            updated_keys: HashMap::new(),
+            entries_by_table: Arc::new(HashMap::new()),
+            inserted_keys: Arc::new(HashMap::new()),
+            deleted_keys: Arc::new(HashMap::new()),
+            updated_keys: Arc::new(HashMap::new()),
         }
     }
 
     pub fn apply_entry(&mut self, entry: TransactionOverlayEntry) {
         let table_id = entry.table_id.clone();
-        let entry_key = ScopedPkKey::new(entry.user_id.as_ref(), entry.primary_key.clone());
+        let entry_key = ScopedPkKey::for_entry(&entry);
         let effective_entry = self.merge_visible_entry(&table_id, &entry_key, entry);
         let is_deleted = effective_entry.is_deleted();
         let operation_kind = effective_entry.operation_kind;
 
-        self.entries_by_table
+        Arc::make_mut(&mut self.entries_by_table)
             .entry(table_id.clone())
             .or_default()
             .insert(entry_key.clone(), effective_entry);
@@ -91,7 +109,7 @@ impl TransactionOverlay {
             }
         };
 
-        target_map.entry(table_id).or_default().insert(entry_key);
+        Arc::make_mut(target_map).entry(table_id).or_default().insert(entry_key);
     }
 
     pub fn merge_from(&mut self, other: &TransactionOverlay) {
@@ -134,16 +152,16 @@ impl TransactionOverlay {
         let entries = self.entries_by_table.get(table_id)?.clone();
 
         let mut overlay = TransactionOverlay::new(self.transaction_id.clone());
-        overlay.entries_by_table.insert(table_id.clone(), entries);
+        Arc::make_mut(&mut overlay.entries_by_table).insert(table_id.clone(), entries);
 
         if let Some(keys) = self.inserted_keys.get(table_id) {
-            overlay.inserted_keys.insert(table_id.clone(), keys.clone());
+            Arc::make_mut(&mut overlay.inserted_keys).insert(table_id.clone(), keys.clone());
         }
         if let Some(keys) = self.deleted_keys.get(table_id) {
-            overlay.deleted_keys.insert(table_id.clone(), keys.clone());
+            Arc::make_mut(&mut overlay.deleted_keys).insert(table_id.clone(), keys.clone());
         }
         if let Some(keys) = self.updated_keys.get(table_id) {
-            overlay.updated_keys.insert(table_id.clone(), keys.clone());
+            Arc::make_mut(&mut overlay.updated_keys).insert(table_id.clone(), keys.clone());
         }
 
         Some(overlay)
@@ -155,10 +173,11 @@ impl TransactionOverlay {
             &mut self.deleted_keys,
             &mut self.updated_keys,
         ] {
-            if let Some(keys) = key_set.get_mut(table_id) {
+            let map = Arc::make_mut(key_set);
+            if let Some(keys) = map.get_mut(table_id) {
                 keys.remove(entry_key);
                 if keys.is_empty() {
-                    key_set.remove(table_id);
+                    map.remove(table_id);
                 }
             }
         }

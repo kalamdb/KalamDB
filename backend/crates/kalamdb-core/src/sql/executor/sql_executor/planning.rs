@@ -13,8 +13,8 @@ use datafusion::{
     prelude::SessionContext,
     sql::parser::Statement as DfStatement,
 };
-use kalamdb_commons::models::SchemaId;
-use sqlparser::ast::{ObjectName, ObjectNamePart, Statement};
+use kalamdb_commons::{constants::SystemColumnNames, models::SchemaId};
+use sqlparser::ast::{Ident, ObjectName, ObjectNamePart, Statement, TableObject};
 
 /// Which caller is retrying a plan after a missing table provider.
 pub(super) enum ProviderReload {
@@ -35,17 +35,30 @@ use crate::{
 /// PostgreSQL sessions omit storage columns from a star. The Kalam SQL API
 /// keeps them, because live snapshots and row clients read `_version` there.
 /// An explicit `SELECT _version` still resolves on either path.
+///
+/// `_row_id` is hidden from every star. An `INSERT` with no column list
+/// targets the remaining user columns, so `INSERT INTO t VALUES (...)` and
+/// `INSERT INTO t SELECT * FROM u` match PostgreSQL.
 async fn hide_storage_columns_from_star(session: &SessionContext, statement: &mut Statement) {
-    if session
+    let postgres_star = session
         .state()
         .config()
         .options()
         .extensions
         .get::<kalamdb_session_datafusion::PostgresStar>()
-        .is_none()
-    {
-        return;
+        .is_some();
+    let inserting = matches!(statement, Statement::Insert(_));
+    if postgres_star || inserting {
+        expand_stars(session, statement, false).await;
+    } else {
+        expand_stars(session, statement, true).await;
     }
+    if inserting {
+        assign_visible_insert_columns(session, statement).await;
+    }
+}
+
+async fn expand_stars(session: &SessionContext, statement: &mut Statement, row_id_only: bool) {
     let tables = kalamdb_sql::storage_star_table_names(statement);
     if tables.is_empty() {
         return;
@@ -69,7 +82,41 @@ async fn hide_storage_columns_from_star(session: &SessionContext, statement: &mu
             .collect();
         columns_by_table.insert(key, names);
     }
-    kalamdb_sql::expand_stars_without_storage_columns(statement, &columns_by_table);
+    if row_id_only {
+        kalamdb_sql::expand_stars_without_row_id(statement, &columns_by_table);
+    } else {
+        kalamdb_sql::expand_stars_without_storage_columns(statement, &columns_by_table);
+    }
+}
+
+async fn assign_visible_insert_columns(session: &SessionContext, statement: &mut Statement) {
+    let table_name = match statement {
+        Statement::Insert(insert) if insert.columns.is_empty() => match &insert.table {
+            TableObject::TableName(name) => name.clone(),
+            _ => return,
+        },
+        _ => return,
+    };
+    let Some(reference) = table_reference_from_object_name(&table_name) else {
+        return;
+    };
+    let Ok(provider) = session.table_provider(reference).await else {
+        return;
+    };
+    let field_count = provider.schema().fields().len();
+    let visible: Vec<ObjectName> = provider
+        .schema()
+        .fields()
+        .iter()
+        .filter(|field| !SystemColumnNames::is_system_column(field.name()))
+        .map(|field| ObjectName::from(vec![Ident::new(field.name())]))
+        .collect();
+    if visible.is_empty() || visible.len() == field_count {
+        return;
+    }
+    if let Statement::Insert(insert) = statement {
+        insert.columns = visible;
+    }
 }
 
 fn table_reference_from_object_name(name: &ObjectName) -> Option<TableReference> {

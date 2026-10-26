@@ -41,18 +41,9 @@ impl TableProvider for SharedTableProvider {
 
         // Leader routing and transaction table access live in `base_scan`.
 
-        let table_overlay = extract_transaction_query_context(state)
-            .and_then(|context| context.overlay_view.overlay_for_table(self.core.table_id()));
-
         kalamdb_observability::kdb_await_in_info_span!(
             <Self as BaseTableProvider<SharedTableRowId, SharedTableRow>>::base_scan_with_overlay(
-                self,
-                state,
-                projection,
-                filters,
-                limit,
-                table_overlay,
-                None,
+                self, state, projection, filters, limit, None,
             ),
             "table.base_scan"
         )

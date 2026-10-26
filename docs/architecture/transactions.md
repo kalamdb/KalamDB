@@ -179,6 +179,8 @@ Reads inside the same explicit transaction use `TransactionQueryContext` and `Co
 
 That means a transaction can see its own staged inserts, updates, and deletes before commit, while other callers still see only committed data.
 
+`TransactionOverlayExec` merges the overlay into the committed scan in two steps. It looks up each scanned row by primary key, then appends only rows this transaction inserted. A statement does not walk every staged update or delete, so a long transaction of point updates stays linear. Shared and system overlay entries are keyed by primary key alone; user and stream entries are keyed by owner and primary key.
+
 ### 4. Commit
 
 `TransactionCoordinator::commit()` is the single server-side seal point for explicit transactions.

@@ -22,12 +22,15 @@ use futures_util::TryStreamExt;
 use kalamdb_commons::{
     constants::SystemColumnNames,
     conversions::arrow_json_conversion::json_rows_to_arrow_batch,
-    models::{rows::Row, OperationKind, UserId},
+    models::{rows::Row, UserId},
     try_pk_bucket_key, try_pk_bucket_key_from_typed_string, PkBucketKey, TableId,
 };
 use kalamdb_datafusion_sources::{exec::projected_schema, stream::one_shot_batch_stream};
 
-use crate::overlay::TransactionOverlay;
+use crate::{
+    overlay::{ScopedPkKey, TransactionOverlay},
+    query_context::TransactionOverlayView,
+};
 
 /// Physical execution node that merges transaction-local overlay rows with committed scan output.
 #[derive(Debug, Clone)]
@@ -35,7 +38,8 @@ pub struct TransactionOverlayExec {
     input: Arc<dyn ExecutionPlan>,
     table_id: TableId,
     primary_key_column: Arc<str>,
-    overlay: TransactionOverlay,
+    /// Read when the plan executes, so a live plan holds no overlay snapshot.
+    overlay_view: Arc<dyn TransactionOverlayView>,
     user_scope: Option<UserId>,
     final_projection: Option<Vec<usize>>,
     fetch: Option<usize>,
@@ -52,7 +56,7 @@ impl TransactionOverlayExec {
         input: Arc<dyn ExecutionPlan>,
         table_id: TableId,
         primary_key_column: impl Into<Arc<str>>,
-        overlay: TransactionOverlay,
+        overlay_view: Arc<dyn TransactionOverlayView>,
         user_scope: Option<UserId>,
         final_projection: Option<Vec<usize>>,
         fetch: Option<usize>,
@@ -72,7 +76,7 @@ impl TransactionOverlayExec {
             input,
             table_id,
             primary_key_column: primary_key_column.into(),
-            overlay,
+            overlay_view,
             user_scope,
             final_projection,
             fetch,
@@ -144,7 +148,7 @@ impl ExecutionPlan for TransactionOverlayExec {
                 children.swap_remove(0),
                 self.table_id.clone(),
                 Arc::clone(&self.primary_key_column),
-                self.overlay.clone(),
+                Arc::clone(&self.overlay_view),
                 self.user_scope.clone(),
                 self.final_projection.clone(),
                 self.fetch,
@@ -175,7 +179,7 @@ impl ExecutionPlan for TransactionOverlayExec {
         }
 
         let input = Arc::clone(&self.input);
-        let overlay = self.overlay.clone();
+        let overlay = self.overlay_view.overlay_for_table(&self.table_id);
         let table_id = self.table_id.clone();
         let primary_key_column = Arc::clone(&self.primary_key_column);
         let final_projection = self.final_projection.clone();
@@ -190,7 +194,7 @@ impl ExecutionPlan for TransactionOverlayExec {
                 context,
                 &table_id,
                 primary_key_column.as_ref(),
-                &overlay,
+                overlay.as_ref(),
                 user_scope.as_ref(),
                 final_projection.as_ref(),
                 fetch,
@@ -206,7 +210,7 @@ async fn merge_partitions_with_overlay(
     context: Arc<TaskContext>,
     table_id: &TableId,
     primary_key_column: &str,
-    overlay: &TransactionOverlay,
+    overlay: Option<&TransactionOverlay>,
     overlay_user_scope: Option<&UserId>,
     final_projection: Option<&Vec<usize>>,
     fetch: Option<usize>,
@@ -260,7 +264,7 @@ fn merge_batches_with_overlay(
         input_schema,
         table_id,
         primary_key_column,
-        overlay,
+        Some(overlay),
         overlay_user_scope,
         rows,
         row_index_by_pk,
@@ -293,7 +297,7 @@ fn finalize_overlay_rows(
     input_schema: &SchemaRef,
     table_id: &TableId,
     primary_key_column: &str,
-    overlay: &TransactionOverlay,
+    overlay: Option<&TransactionOverlay>,
     overlay_user_scope: Option<&UserId>,
     mut rows: Vec<Option<Row>>,
     mut row_index_by_pk: HashMap<PkBucketKey, usize>,
@@ -301,47 +305,51 @@ fn finalize_overlay_rows(
     fetch: Option<usize>,
     residual_filter: Option<&Arc<dyn PhysicalExpr>>,
 ) -> DataFusionResult<RecordBatch> {
-    let mut overlay_entries = overlay
-        .table_entries(table_id)
-        .map(|entries| {
-            entries
-                .values()
-                .filter(|entry| {
-                    overlay_user_scope
-                        .map(|user_id| entry.user_id.as_ref() == Some(user_id))
-                        .unwrap_or(true)
-                })
-                .cloned()
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    overlay_entries.sort_by_key(|entry| entry.mutation_order);
-
-    let pk_data_type = input_schema
-        .field_with_name(primary_key_column)
-        .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?
-        .data_type()
-        .clone();
-
-    for entry in overlay_entries {
-        let pk_key = try_pk_bucket_key_from_typed_string(&entry.primary_key, &pk_data_type)
-            .map_err(DataFusionError::Execution)?;
-        if entry.is_deleted() {
-            if let Some(existing_index) = row_index_by_pk.remove(&pk_key) {
-                rows[existing_index] = None;
-            }
-            continue;
-        }
-
-        if let Some(existing_index) = row_index_by_pk.get(&pk_key).copied() {
-            if let Some(existing_row) = rows[existing_index].as_mut() {
+    if let Some((overlay, entries)) =
+        overlay.and_then(|overlay| Some((overlay, overlay.table_entries(table_id)?)))
+    {
+        // Each scanned row costs one lookup, so a statement does not pay for
+        // every row staged earlier in the transaction.
+        for (pk_key, &row_index) in &row_index_by_pk {
+            let key = ScopedPkKey::new(overlay_user_scope, pk_key.to_string());
+            let Some(entry) = entries.get(&key) else {
+                continue;
+            };
+            if entry.is_deleted() {
+                rows[row_index] = None;
+            } else if let Some(existing_row) = rows[row_index].as_mut() {
                 merge_row(existing_row, &entry.payload);
             }
-        } else if matches!(entry.operation_kind, OperationKind::Insert) {
-            // An update whose base row is outside this scan is a partial patch.
-            // Emitting it as a new row puts nulls in non-nullable columns.
-            row_index_by_pk.insert(pk_key, rows.len());
-            rows.push(Some(overlay_payload_without_invented_version(&entry.payload)));
+        }
+
+        // An update whose base row is outside this scan is a partial patch.
+        // Emitting it as a new row puts nulls in non-nullable columns, so only
+        // rows inserted by this transaction are appended.
+        let mut inserted = overlay
+            .inserted_keys
+            .get(table_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|key| entries.get(key))
+            .filter(|entry| {
+                overlay_user_scope.is_none_or(|user_id| entry.user_id.as_ref() == Some(user_id))
+            })
+            .collect::<Vec<_>>();
+        if !inserted.is_empty() {
+            inserted.sort_by_key(|entry| entry.mutation_order);
+            let pk_data_type = input_schema
+                .field_with_name(primary_key_column)
+                .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?
+                .data_type()
+                .clone();
+            for entry in inserted {
+                let pk_key = try_pk_bucket_key_from_typed_string(&entry.primary_key, &pk_data_type)
+                    .map_err(DataFusionError::Execution)?;
+                if !row_index_by_pk.contains_key(&pk_key) {
+                    row_index_by_pk.insert(pk_key, rows.len());
+                    rows.push(Some(overlay_payload_without_invented_version(&entry.payload)));
+                }
+            }
         }
     }
 
@@ -579,6 +587,65 @@ mod tests {
     }
 
     #[test]
+    fn shared_update_staged_by_session_user_patches_scanned_row() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, true),
+        ]));
+        let base_batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int64Array::from(vec![1, 2])),
+                Arc::new(StringArray::from(vec![Some("before"), Some("gone")])),
+            ],
+        )
+        .expect("base batch");
+
+        let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
+        let session_user = UserId::new("user-a");
+        let mut overlay = TransactionOverlay::new(transaction_id.clone());
+        overlay.apply_entry(TransactionOverlayEntry {
+            transaction_id: transaction_id.clone(),
+            mutation_order: 0,
+            table_id:       table_id.clone(),
+            table_type:     TableType::Shared,
+            user_id:        Some(session_user.clone()),
+            operation_kind: OperationKind::Update,
+            primary_key:    "1".to_string(),
+            payload:        row(&[("name", ScalarValue::Utf8(Some("after".to_string())))]),
+            tombstone:      false,
+        });
+        overlay.apply_entry(TransactionOverlayEntry {
+            transaction_id,
+            mutation_order: 1,
+            table_id: table_id.clone(),
+            table_type: TableType::Shared,
+            user_id: Some(session_user),
+            operation_kind: OperationKind::Delete,
+            primary_key: "2".to_string(),
+            payload: Row::new(BTreeMap::new()),
+            tombstone: true,
+        });
+
+        let merged = merge_batches_with_overlay(
+            &schema,
+            &table_id,
+            "id",
+            &overlay,
+            None,
+            &[base_batch],
+            None,
+            None,
+        )
+        .expect("merged batch");
+
+        let rows = record_batch_to_rows(&merged).expect("rows");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].values.get("name"), Some(&ScalarValue::Utf8(Some("after".to_string()))));
+    }
+
+    #[test]
     fn overlay_update_keeps_base_version_and_insert_omits_invented_version() {
         use kalamdb_commons::constants::SystemColumnNames;
 
@@ -745,7 +812,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn overlay_exec_applies_overlay_once_across_multiple_input_partitions() {
+    async fn overlay_exec_reads_rows_staged_after_planning_once_across_partitions() {
         use datafusion::{execution::context::SessionContext, physical_plan::collect};
         use kalamdb_datafusion_sources::stream::one_shot_batch_stream;
 
@@ -842,13 +909,43 @@ mod tests {
             Field::new("id", DataType::Int64, false),
             Field::new("name", DataType::Utf8, true),
         ]));
+        #[derive(Debug)]
+        struct LiveOverlayView(std::sync::Mutex<TransactionOverlay>);
+
+        impl TransactionOverlayView for LiveOverlayView {
+            fn overlay(&self) -> TransactionOverlay {
+                self.0.lock().expect("overlay lock").clone()
+            }
+
+            fn overlay_for_table(&self, table_id: &TableId) -> Option<TransactionOverlay> {
+                self.0.lock().expect("overlay lock").table_overlay(table_id)
+            }
+        }
+
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
         let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
-        let mut overlay = TransactionOverlay::new(transaction_id.clone());
-        overlay.apply_entry(TransactionOverlayEntry {
+        let view = Arc::new(LiveOverlayView(std::sync::Mutex::new(TransactionOverlay::new(
+            transaction_id.clone(),
+        ))));
+
+        let exec = Arc::new(
+            TransactionOverlayExec::try_new(
+                Arc::new(EmptyTwoPartitionExec::new(Arc::clone(&schema))),
+                table_id.clone(),
+                "id",
+                Arc::clone(&view) as Arc<dyn TransactionOverlayView>,
+                None,
+                None,
+                None,
+                None,
+            )
+            .expect("overlay exec"),
+        );
+
+        view.0.lock().expect("overlay lock").apply_entry(TransactionOverlayEntry {
             transaction_id,
             mutation_order: 0,
-            table_id: table_id.clone(),
+            table_id,
             table_type: TableType::Shared,
             user_id: None,
             operation_kind: OperationKind::Insert,
@@ -859,20 +956,6 @@ mod tests {
             ]),
             tombstone: false,
         });
-
-        let exec = Arc::new(
-            TransactionOverlayExec::try_new(
-                Arc::new(EmptyTwoPartitionExec::new(Arc::clone(&schema))),
-                table_id,
-                "id",
-                overlay,
-                None,
-                None,
-                None,
-                None,
-            )
-            .expect("overlay exec"),
-        );
 
         assert_eq!(exec.properties().output_partitioning().partition_count(), 1);
 

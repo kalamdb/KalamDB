@@ -5,7 +5,12 @@
 use std::sync::Arc;
 
 use kalamdb_commons::{
-    models::{StorageId, TableId, UserId},
+    constants::SystemColumnNames,
+    datatypes::KalamDataType,
+    models::{
+        schemas::{ColumnDefinition, TableDefinition},
+        StorageId, TableId, UserId,
+    },
     schemas::{ColumnDefault, TableType},
     Role,
 };
@@ -34,11 +39,9 @@ pub fn build_table_definition(
     stmt: &CreateTableStatement,
     user_id: &UserId,
     user_role: Role,
-) -> Result<kalamdb_commons::models::schemas::TableDefinition, KalamDbError> {
+) -> Result<TableDefinition, KalamDbError> {
     use kalamdb_commons::{
-        datatypes::{FromArrowType, KalamDataType},
-        models::schemas::{ColumnDefinition, TableDefinition, TableOptions},
-        schemas::ColumnDefault,
+        datatypes::FromArrowType, models::schemas::TableOptions, schemas::ColumnDefault,
     };
 
     let table_id_str = format!("{}.{}", stmt.namespace_id.as_str(), stmt.table_name.as_str());
@@ -95,20 +98,7 @@ pub fn build_table_definition(
 
     // Type-specific validation
     match stmt.table_type {
-        TableType::User | TableType::Shared => {
-            // PRIMARY KEY validation
-            if stmt.primary_key_column.is_none() {
-                log::error!(
-                    "❌ CREATE TABLE {:?} {}: PRIMARY KEY is required",
-                    stmt.table_type,
-                    table_id_str
-                );
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "{:?} tables require a PRIMARY KEY column",
-                    stmt.table_type
-                )));
-            }
-        },
+        TableType::User | TableType::Shared => {},
         TableType::Stream => {
             // TTL validation
             if stmt.ttl_seconds.is_none() {
@@ -273,6 +263,9 @@ pub fn build_table_definition(
     // Inject system columns (_version, _deleted)
     let sys_cols = app_context.system_columns_service();
     sys_cols.add_system_columns(&mut table_def)?;
+    // PostgreSQL tables may omit a primary key. Storage still addresses each
+    // row by a stable id, so synthesize one the client catalogs do not show.
+    assign_stable_row_id(&mut table_def);
 
     log::debug!(
         "✅ Built TableDefinition for {} (type: {:?}, columns: {}, version: {})",
@@ -283,6 +276,29 @@ pub fn build_table_definition(
     );
 
     Ok(table_def)
+}
+
+fn assign_stable_row_id(table_def: &mut TableDefinition) {
+    if !matches!(table_def.table_type, TableType::User | TableType::Shared) {
+        return;
+    }
+    if table_def.columns.iter().any(|column| column.is_primary_key) {
+        return;
+    }
+    let column_id = table_def.next_column_id;
+    let ordinal = table_def.columns.len() as u32 + 1;
+    table_def.columns.push(ColumnDefinition::new(
+        column_id,
+        SystemColumnNames::ROW_ID,
+        ordinal,
+        KalamDataType::BigInt,
+        false,
+        true,
+        false,
+        ColumnDefault::function("snowflake_id", Vec::new()),
+        None,
+    ));
+    table_def.next_column_id = column_id + 1;
 }
 
 fn resolve_storage_info(

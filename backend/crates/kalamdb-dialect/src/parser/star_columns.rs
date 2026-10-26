@@ -22,7 +22,29 @@ pub fn expand_stars_without_storage_columns(
     statement: &mut Statement,
     columns_by_table: &HashMap<String, Vec<String>>,
 ) {
-    let _ = statement.visit(&mut StarExpander { columns_by_table });
+    expand_stars(statement, columns_by_table, false);
+}
+
+/// Replace a plain star with every column except [`SystemColumnNames::ROW_ID`].
+///
+/// The Kalam SQL API still returns `_version` from a star. `_row_id` is not a
+/// user column on either API.
+pub fn expand_stars_without_row_id(
+    statement: &mut Statement,
+    columns_by_table: &HashMap<String, Vec<String>>,
+) {
+    expand_stars(statement, columns_by_table, true);
+}
+
+fn expand_stars(
+    statement: &mut Statement,
+    columns_by_table: &HashMap<String, Vec<String>>,
+    row_id_only: bool,
+) {
+    let _ = statement.visit(&mut StarExpander {
+        columns_by_table,
+        row_id_only,
+    });
 }
 
 /// Base tables whose star this module can expand. Callers resolve schemas for
@@ -39,13 +61,14 @@ pub fn storage_star_table_names(statement: &mut Statement) -> Vec<ObjectName> {
 
 struct StarExpander<'a> {
     columns_by_table: &'a HashMap<String, Vec<String>>,
+    row_id_only:      bool,
 }
 
 impl VisitorMut for StarExpander<'_> {
     type Break = ();
 
     fn pre_visit_query(&mut self, query: &mut Query) -> std::ops::ControlFlow<Self::Break> {
-        rewrite_set_expr(&mut query.body, self.columns_by_table);
+        rewrite_set_expr(&mut query.body, self.columns_by_table, self.row_id_only);
         std::ops::ControlFlow::Continue(())
     }
 }
@@ -64,12 +87,16 @@ impl VisitorMut for StarTableCollector<'_> {
     }
 }
 
-fn rewrite_set_expr(expr: &mut SetExpr, columns_by_table: &HashMap<String, Vec<String>>) {
+fn rewrite_set_expr(
+    expr: &mut SetExpr,
+    columns_by_table: &HashMap<String, Vec<String>>,
+    row_id_only: bool,
+) {
     match expr {
-        SetExpr::Select(select) => rewrite_select(select, columns_by_table),
+        SetExpr::Select(select) => rewrite_select(select, columns_by_table, row_id_only),
         SetExpr::SetOperation { left, right, .. } => {
-            rewrite_set_expr(left, columns_by_table);
-            rewrite_set_expr(right, columns_by_table);
+            rewrite_set_expr(left, columns_by_table, row_id_only);
+            rewrite_set_expr(right, columns_by_table, row_id_only);
         },
         _ => {},
     }
@@ -136,7 +163,11 @@ fn single_base_table(select: &Select) -> Option<BaseTable> {
     })
 }
 
-fn rewrite_select(select: &mut Select, columns_by_table: &HashMap<String, Vec<String>>) {
+fn rewrite_select(
+    select: &mut Select,
+    columns_by_table: &HashMap<String, Vec<String>>,
+    row_id_only: bool,
+) {
     let Some(table) = single_base_table(select) else {
         return;
     };
@@ -151,10 +182,16 @@ fn rewrite_select(select: &mut Select, columns_by_table: &HashMap<String, Vec<St
     };
     let visible: Vec<SelectItem> = columns
         .iter()
-        .filter(|name| !SystemColumnNames::is_system_column(name))
+        .filter(|name| {
+            if row_id_only {
+                name.as_str() != SystemColumnNames::ROW_ID
+            } else {
+                !SystemColumnNames::is_system_column(name)
+            }
+        })
         .map(|name| SelectItem::UnnamedExpr(Expr::Identifier(Ident::new(name.clone()))))
         .collect();
-    if visible.is_empty() {
+    if visible.is_empty() || visible.len() == columns.len() {
         return;
     }
     let table_leaf = object_name_leaf(&table.name);

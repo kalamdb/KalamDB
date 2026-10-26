@@ -31,8 +31,7 @@ use kalamdb_system::{
     ClusterCoordinator as ClusterCoordinatorTrait, SchemaRegistry as SchemaRegistryTrait,
 };
 use kalamdb_transactions::{
-    extract_transaction_query_context, TransactionAccessError, TransactionOverlay,
-    TransactionOverlayExec,
+    extract_transaction_query_context, TransactionAccessError, TransactionOverlayExec,
 };
 
 use super::deferred::{
@@ -505,7 +504,6 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
-        overlay: Option<TransactionOverlay>,
         overlay_user: Option<UserId>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>>
     where
@@ -513,7 +511,13 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         K: Clone + Send + Sync + 'static,
         V: ScanRow + Send + Sync + 'static,
     {
-        let Some(overlay) = overlay else {
+        // The plan keeps the view, not an overlay snapshot. UPDATE and DELETE
+        // stage rows while their input plan is alive, and a held snapshot would
+        // make every staged row copy the whole overlay.
+        let Some(overlay_view) = extract_transaction_query_context(state)
+            .filter(|context| context.overlay_view.overlay_for_table(self.table_id()).is_some())
+            .map(|context| Arc::clone(&context.overlay_view))
+        else {
             return self.base_scan(state, projection, filters, limit).await;
         };
 
@@ -526,7 +530,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
             base_plan,
             self.table_id().clone(),
             self.primary_key_field_name().to_string(),
-            overlay,
+            overlay_view,
             overlay_user,
             projection.cloned(),
             None,

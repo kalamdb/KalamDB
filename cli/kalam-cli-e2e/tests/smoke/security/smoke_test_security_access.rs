@@ -4,7 +4,7 @@ use kalam_client::{models::ChangeEvent, KalamLinkTimeouts};
 
 use crate::common::*;
 
-const MAX_SQL_QUERY_LENGTH: usize = 1024 * 1024;
+const MAX_SQL_QUERY_LENGTH: usize = 4 * 1024 * 1024;
 
 fn expect_unauthorized(result: Result<String, Box<dyn std::error::Error>>, context: &str) {
     assert!(result.is_err(), "Expected authorization failure: {}", context);

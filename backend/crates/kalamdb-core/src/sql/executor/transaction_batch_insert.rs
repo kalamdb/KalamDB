@@ -11,6 +11,7 @@ use arrow::{
 use chrono::Utc;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::{
+    constants::SystemColumnNames,
     conversions::{
         arrow_json_conversion::{
             coerce_rows, coerce_scalar_to_field, materialize_domain_default_for_field,
@@ -58,6 +59,14 @@ use crate::{
 
 static INSERT_DEFAULT_SNOWFLAKE_GENERATOR: OnceLock<SnowflakeGenerator> = OnceLock::new();
 
+/// User columns, plus the synthetic `_row_id` primary key.
+///
+/// Other `_` columns are filled by the storage envelope. `_row_id` is payload
+/// and has to be generated when the client did not name it.
+fn column_receives_generated_default(column_name: &str) -> bool {
+    !column_name.starts_with('_') || column_name == SystemColumnNames::ROW_ID
+}
+
 fn insert_default_snowflake_generator() -> &'static SnowflakeGenerator {
     INSERT_DEFAULT_SNOWFLAKE_GENERATOR.get_or_init(|| SnowflakeGenerator::new(0))
 }
@@ -92,7 +101,7 @@ fn build_insert_metadata(
         .table
         .columns
         .iter()
-        .filter(|column| !column.column_name.starts_with('_'))
+        .filter(|column| column_receives_generated_default(&column.column_name))
         .filter(|column| !column_names.iter().any(|name| name == &column.column_name))
         .filter(|column| !column.default_value.is_none())
         .map(|column| {
@@ -646,7 +655,7 @@ fn build_default_values_metadata(
         .table
         .columns
         .iter()
-        .filter(|column| !column.column_name.starts_with('_'))
+        .filter(|column| column_receives_generated_default(&column.column_name))
         .filter(|column| !column.default_value.is_none())
         .map(|column| {
             Ok(FastInsertDefaultEntry::new(

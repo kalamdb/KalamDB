@@ -42,20 +42,11 @@ impl TableProvider for UserTableProvider {
         check_user_table_access(state, self.core.table_id())
             .map_err(session_error_to_datafusion)?;
 
-        let table_overlay = extract_transaction_query_context(state)
-            .and_then(|context| context.overlay_view.overlay_for_table(self.core.table_id()));
         let (user_id, _role) = extract_user_context(state)
             .map_err(crate::error::into_datafusion)?;
 
-        self.base_scan_with_overlay(
-            state,
-            projection,
-            filters,
-            limit,
-            table_overlay,
-            Some(user_id.clone()),
-        )
-        .await
+        self.base_scan_with_overlay(state, projection, filters, limit, Some(user_id.clone()))
+            .await
     }
 
     async fn insert_into(
