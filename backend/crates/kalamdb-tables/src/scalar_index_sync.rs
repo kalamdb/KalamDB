@@ -58,7 +58,7 @@ pub fn sync_scalar_indexes_with_arrow(
     }
 
     let added: Vec<&str> = table_def.scalar_indexes.iter()
-        .filter(|index| previous_indexes.get(index.name.as_str()).is_none_or(|old| *old != index))
+        .filter(|index| previous_indexes.get(index.name.as_str()).is_none_or(|old| *old != *index))
         .map(|index| index.name.as_str()).collect();
     if added.is_empty() {
         return Ok(());
