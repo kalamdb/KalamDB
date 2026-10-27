@@ -161,7 +161,8 @@ async fn test_audit_log_for_table_access_change() {
     }
 
     // Shared tables are FORCE RLS; grant visibility with CREATE POLICY.
-    let table_name = format!("analytics.events_{}", chrono::Utc::now().timestamp_millis());
+    let table = format!("events_{}", chrono::Utc::now().timestamp_millis());
+    let table_name = format!("analytics.{table}");
 
     // Note: If this fails due to missing column families, we might need to skip this part of the
     // test or update TestServer to support shared tables.
@@ -188,7 +189,8 @@ async fn test_audit_log_for_table_access_change() {
         .scan_all()
         .expect("Failed to read audit log");
 
-    let target = format!("{policy_name} ON {table_name}");
+    // Audit targets use TableId's display, `schema:table`.
+    let target = format!("{policy_name} ON analytics:{table}");
     let entry = find_audit_entry(&logs, "CREATE_POLICY", &target);
     assert_eq!(entry.action, "CREATE_POLICY");
 }
