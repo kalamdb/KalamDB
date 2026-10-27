@@ -30,10 +30,10 @@ Client SDK documentation.
 - **[sdk.md](sdk/sdk.md)** – TypeScript/JavaScript SDK guide
 
 ### [releases/](releases/)
-GitHub Releases body copy. One file per version; paste into the GitHub release when cutting a tag.
+GitHub Releases body copy. One file per version. Paste into the release workflow with `\n` between lines.
 
 - **[README.md](releases/README.md)** – Index (newest first)
-- **[0.8.0.md](releases/0.8.0.md)** – PostgreSQL session settings and one SQL path for HTTP and pgwire
+- **[0.8.0.md](releases/0.8.0.md)** – PostgreSQL grammar and wire clients, one binary frame, index seeks
 - **[0.7.1.md](releases/0.7.1.md)** – Raft-derived row versions and one persisted owner per shared table
 - **[0.7.0-beta.0.md](releases/0.7.0-beta.0.md)** – Typed nested data, scalar indexes, server functions, everyday CLI
 
