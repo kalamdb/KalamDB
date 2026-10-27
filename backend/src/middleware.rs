@@ -224,7 +224,7 @@ where
 /// The actual middleware service that checks each request.
 pub struct ConnectionProtectionMiddleware<S> {
     service: S,
-    guard:   Arc<ConnectionGuard>,
+    guard: Arc<ConnectionGuard>,
 }
 
 impl<S, B> Service<ServiceRequest> for ConnectionProtectionMiddleware<S>
@@ -240,6 +240,14 @@ where
     forward_ready!(service);
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
+        if !self.guard.is_enabled() {
+            let fut = self.service.call(req);
+            return Box::pin(async move {
+                let res = fut.await?;
+                Ok(res.map_into_left_body())
+            });
+        }
+
         // Extract client IP
         let client_ip = extract_client_ip(&req);
 

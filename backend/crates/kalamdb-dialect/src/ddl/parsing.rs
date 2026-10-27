@@ -3,7 +3,9 @@
 //! This module provides reusable parsing functions to eliminate code duplication
 //! across DDL statement parsers.
 
-use crate::ddl::DdlResult;
+use sqlparser::{parser::Parser, tokenizer::Token};
+
+use crate::{ddl::DdlResult, dialect::KalamDbDialect};
 
 /// True when `input` begins with ASCII `prefix`, compared without allocating.
 #[inline]
@@ -13,15 +15,169 @@ pub fn starts_with_ci(input: &str, prefix: &str) -> bool {
     input.len() >= prefix.len() && input[..prefix.len()].eq_ignore_ascii_case(prefix)
 }
 
+/// Advance past leading ASCII whitespace, `--` line comments, and nested `/* ... */` block
+/// comments.
+///
+/// If an unterminated `/*` block comment is encountered, returns the slice starting at `/*` so
+/// the caller sees remaining unparsed input and fails cleanly.
+pub fn skip_ws_and_comments(mut input: &str) -> &str {
+    loop {
+        input = input.trim_start();
+        if let Some(after_line) = input.strip_prefix("--") {
+            match after_line.find('\n') {
+                Some(nl) => input = &after_line[nl + 1..],
+                None => return "",
+            }
+            continue;
+        }
+        if input.starts_with("/*") {
+            let bytes = input.as_bytes();
+            let mut i = 2;
+            let mut depth = 1usize;
+            while i + 1 < bytes.len() && depth > 0 {
+                if bytes[i] == b'/' && bytes[i + 1] == b'*' {
+                    depth += 1;
+                    i += 2;
+                } else if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                    depth -= 1;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            if depth == 0 {
+                input = &input[i..];
+                continue;
+            }
+            return input;
+        }
+        return input;
+    }
+}
+
+/// Strip leading/trailing whitespace, SQL comments, and optional trailing semicolons.
+pub fn trim_sql_comments_and_semicolons(sql: &str) -> DdlResult<&str> {
+    let mut s = skip_ws_and_comments(sql);
+    if s.starts_with("/*") {
+        return Err("Unterminated block comment".to_string());
+    }
+    // Find where the statement content ends before any trailing `;` and trailing
+    // comments/whitespace. Scan top-level tokens to track the last non-trivia, non-semicolon
+    // byte offset.
+    let bytes = s.as_bytes();
+    let mut i = 0usize;
+    let mut last_content_end = 0usize;
+    let mut saw_semicolon_after_content = false;
+    while i < bytes.len() {
+        let rem = &s[i..];
+        let after_ws = skip_ws_and_comments(rem);
+        let skipped = rem.len() - after_ws.len();
+        if skipped > 0 {
+            i += skipped;
+            continue;
+        }
+        if after_ws.starts_with("/*") {
+            return Err("Unterminated block comment".to_string());
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        if bytes[i] == b';' {
+            saw_semicolon_after_content = true;
+            i += 1;
+            continue;
+        }
+        if saw_semicolon_after_content {
+            return Err(format!("Unexpected tokens after ';': '{}'", &s[i..]));
+        }
+        // Advance past string literals, quoted identifiers, dollar-quoted strings, or one char
+        if bytes[i] == b'\'' {
+            i += 1;
+            while i < bytes.len() {
+                if bytes[i] == b'\'' {
+                    i += 1;
+                    if i < bytes.len() && bytes[i] == b'\'' {
+                        i += 1;
+                        continue;
+                    }
+                    break;
+                }
+                i += 1;
+            }
+            last_content_end = i;
+            continue;
+        }
+        if (bytes[i] == b'e' || bytes[i] == b'E') && i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+            i += 2;
+            while i < bytes.len() {
+                if bytes[i] == b'\\' {
+                    i = (i + 2).min(bytes.len());
+                    continue;
+                }
+                if bytes[i] == b'\'' {
+                    i += 1;
+                    if i < bytes.len() && bytes[i] == b'\'' {
+                        i += 1;
+                        continue;
+                    }
+                    break;
+                }
+                i += 1;
+            }
+            last_content_end = i;
+            continue;
+        }
+        if bytes[i] == b'"' {
+            i += 1;
+            while i < bytes.len() {
+                if bytes[i] == b'"' {
+                    i += 1;
+                    if i < bytes.len() && bytes[i] == b'"' {
+                        i += 1;
+                        continue;
+                    }
+                    break;
+                }
+                i += 1;
+            }
+            last_content_end = i;
+            continue;
+        }
+        if bytes[i] == b'$' {
+            let after_dollar = &s[i + 1..];
+            if let Some(tag_end) = after_dollar.find('$') {
+                let tag_inner = &after_dollar[..tag_end];
+                let valid_tag = tag_inner.is_empty()
+                    || (tag_inner.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
+                        && tag_inner.chars().all(|c| c.is_alphanumeric() || c == '_'));
+                if valid_tag {
+                    let tag = &s[i..i + tag_end + 2];
+                    let body_start = i + tag.len();
+                    if let Some(close_rel) = s[body_start..].find(tag) {
+                        i = body_start + close_rel + tag.len();
+                        last_content_end = i;
+                        continue;
+                    }
+                }
+            }
+        }
+        let ch_len = s[i..].chars().next().map_or(1, char::len_utf8);
+        i += ch_len;
+        last_content_end = i;
+    }
+    s = &s[..last_content_end];
+    Ok(s)
+}
+
 /// If `input` starts with an ASCII keyword (or keyword phrase), return the remainder.
 ///
-/// Words in `keyword` may be separated by any ASCII whitespace in `input`. The match
-/// is rejected when the next character is still an identifier character (`A-Z`, `0-9`, `_`).
+/// Words in `keyword` may be separated by any ASCII whitespace or SQL comments in `input`. The
+/// match is rejected when the next character is still an identifier character (`A-Z`, `0-9`, `_`).
 #[inline]
 pub fn strip_keyword_ci<'a>(input: &'a str, keyword: &str) -> Option<&'a str> {
-    let mut rest = input.trim_start();
+    let mut rest = skip_ws_and_comments(input);
     for word in keyword.split_ascii_whitespace() {
-        rest = rest.trim_start();
+        rest = skip_ws_and_comments(rest);
         if !starts_with_ci(rest, word) {
             return None;
         }
@@ -30,7 +186,7 @@ pub fn strip_keyword_ci<'a>(input: &'a str, keyword: &str) -> Option<&'a str> {
             return None;
         }
     }
-    Some(rest.trim_start())
+    Some(skip_ws_and_comments(rest))
 }
 
 /// Consume `keyword` from the start of `input` when present.
@@ -58,22 +214,45 @@ pub(crate) fn parse_optional_comment(input: &str) -> DdlResult<(Option<String>, 
     Ok((Some(value), leftover))
 }
 
-/// Parse a SQL string literal and return leftover input after the closing quote.
+/// Parse a SQL string literal (including PostgreSQL `E'...'` escape strings) and return leftover
+/// input.
 pub(crate) fn parse_sql_string_prefix(input: &str) -> DdlResult<(String, &str)> {
-    let input = input.trim_start();
-    let mut chars = input.char_indices();
-    let Some((_, '\'')) = chars.next() else {
-        return Err(format!("Expected string literal, got '{input}'"));
-    };
+    let input = skip_ws_and_comments(input);
+    let (escaped_mode, body_input) =
+        if let Some(after_e) = input.strip_prefix("E'").or_else(|| input.strip_prefix("e'")) {
+            (true, after_e)
+        } else if let Some(after_q) = input.strip_prefix('\'') {
+            (false, after_q)
+        } else {
+            return Err(format!("Expected string literal, got '{input}'"));
+        };
+    let mut chars = body_input.char_indices();
     let mut out = String::new();
     while let Some((idx, ch)) = chars.next() {
+        if escaped_mode && ch == '\\' {
+            let Some((_, esc)) = chars.next() else {
+                return Err("Unterminated escape sequence in E'...' string literal".to_string());
+            };
+            match esc {
+                'n' => out.push('\n'),
+                'r' => out.push('\r'),
+                't' => out.push('\t'),
+                'b' => out.push('\u{0008}'),
+                'f' => out.push('\u{000c}'),
+                '\\' => out.push('\\'),
+                '\'' => out.push('\''),
+                '"' => out.push('"'),
+                other => out.push(other),
+            }
+            continue;
+        }
         if ch == '\'' {
             if chars.as_str().starts_with('\'') {
                 chars.next();
                 out.push('\'');
                 continue;
             }
-            return Ok((out, &input[idx + 1..]));
+            return Ok((out, &body_input[idx + 1..]));
         }
         out.push(ch);
     }
@@ -119,12 +298,12 @@ pub fn normalize_and_upper(sql: &str) -> String {
     result
 }
 
-/// Parse a simple statement with no arguments (e.g., "SHOW NAMESPACES")
+/// Parse a simple statement with no arguments (e.g., "SHOW SCHEMAS")
 ///
 /// # Examples
 ///
 /// ```ignore
-/// parse_simple_statement(sql, "SHOW NAMESPACES")?;
+/// parse_simple_statement(sql, "SHOW SCHEMAS")?;
 /// ```
 pub fn parse_simple_statement(sql: &str, expected: &str) -> DdlResult<()> {
     let normalized = normalize_and_upper(sql);
@@ -179,10 +358,10 @@ pub fn parse_optional_in_clause(sql: &str, command: &str) -> DdlResult<Option<St
             let ns = parts_orig
                 .next()
                 .ok_or_else(|| "Namespace name required after IN NAMESPACE".to_string())?;
-            Ok(Some(unquote_sql_identifier(ns)))
+            Ok(Some(parse_one_identifier(ns)?))
         } else {
             // Classic form: IN <namespace>
-            Ok(Some(unquote_sql_identifier(first_token_orig)))
+            Ok(Some(parse_one_identifier(first_token_orig)?))
         }
     } else if sql_upper.ends_with(" IN") {
         Err("Namespace name required after IN".to_string())
@@ -201,7 +380,7 @@ pub fn parse_optional_in_clause(sql: &str, command: &str) -> DdlResult<Option<St
 ///
 /// ```ignore
 /// let (name, if_not_exists) = parse_create_drop_statement(sql, "CREATE NAMESPACE", "IF NOT EXISTS")?;
-/// let (name, if_exists) = parse_create_drop_statement(sql, "DROP NAMESPACE", "IF EXISTS")?;
+/// let (name, if_exists) = parse_create_drop_statement(sql, "DROP SCHEMA", "IF EXISTS")?;
 /// ```
 pub fn parse_create_drop_statement(
     sql: &str,
@@ -245,12 +424,53 @@ pub fn parse_create_drop_statement(
         } else {
             0
         };
-    let name = tokens
+    let raw_name = tokens
         .get(skip_tokens)
-        .ok_or_else(|| format!("Entity name is required after {}", command))?
-        .to_string();
+        .ok_or_else(|| format!("Entity name is required after {}", command))?;
+    let name = unquote_qualified_ident(raw_name);
 
     Ok((name, has_if_clause))
+}
+
+/// Strip PostgreSQL double quotes from an identifier, including `"schema"."table"`.
+fn unquote_qualified_ident(name: &str) -> String {
+    split_qualified_ident(name)
+        .into_iter()
+        .map(unquote_sql_ident)
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn split_qualified_ident(name: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut in_quotes = false;
+    let bytes = name.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'"' {
+            if in_quotes && i + 1 < bytes.len() && bytes[i + 1] == b'"' {
+                i += 2;
+                continue;
+            }
+            in_quotes = !in_quotes;
+        } else if bytes[i] == b'.' && !in_quotes {
+            parts.push(&name[start..i]);
+            start = i + 1;
+        }
+        i += 1;
+    }
+    parts.push(&name[start..]);
+    parts
+}
+
+fn unquote_sql_ident(name: &str) -> String {
+    let bytes = name.as_bytes();
+    if bytes.len() >= 2 && bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"' {
+        name[1..name.len() - 1].replace("\"\"", "\"")
+    } else {
+        name.to_string()
+    }
 }
 
 /// Extract an identifier from a specific token position
@@ -296,90 +516,55 @@ pub fn validate_no_extra_tokens(
     Ok(())
 }
 
-/// Parse a potentially qualified table reference (namespace.table or just table)
+/// Parse `table` or `namespace.table` with `KalamDbDialect`.
 ///
-/// # Returns
-///
-/// Tuple of (Option<namespace>, table_name)
-///
-/// # Examples
-///
-/// ```ignore
-/// let (ns, table) = parse_table_reference("prod.events")?;
-/// assert_eq!(ns, Some("prod"));
-/// assert_eq!(table, "events");
-///
-/// let (ns, table) = parse_table_reference("users")?;
-/// assert_eq!(ns, None);
-/// assert_eq!(table, "users");
-/// ```
+/// Quoted identifiers, including hyphens, come from the parser. This does not
+/// split on `.` or strip quotes by hand.
 pub fn parse_table_reference(table_ref: &str) -> DdlResult<(Option<String>, String)> {
-    // Basic validation: table reference should not contain SQL keywords or complex expressions
     let trimmed = table_ref.trim();
     if trimmed.is_empty() {
         return Err("Table reference cannot be empty".to_string());
     }
 
-    // Check for SQL keywords that indicate this is not a simple table reference
-    let sql_keywords = [
-        "SELECT", "FROM", "WHERE", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER",
-    ];
-    let upper_ref = trimmed.to_uppercase();
-    for keyword in &sql_keywords {
-        if upper_ref.contains(&format!(" {}", keyword)) || upper_ref.starts_with(keyword) {
-            return Err(format!(
-                "Invalid table reference '{}'. Table references should be simple identifiers like \
-                 'table' or 'namespace.table', not SQL statements",
-                table_ref
-            ));
-        }
-    }
-
-    // Check for spaces (indicates complex expression)
-    if trimmed.contains(' ') {
+    let dialect = KalamDbDialect::new();
+    let mut parser =
+        Parser::new(&dialect).try_with_sql(trimmed).map_err(|error| error.to_string())?;
+    let name = parser.parse_object_name(false).map_err(|_| {
+        format!("Invalid table reference '{table_ref}'. Expected 'table' or 'namespace.table'")
+    })?;
+    if parser.peek_token().token != Token::EOF {
         return Err(format!(
-            "Invalid table reference '{}'. Table references should not contain spaces",
-            table_ref
+            "Invalid table reference '{table_ref}'. Table references should be simple identifiers \
+             like 'table' or 'namespace.table', not SQL statements"
         ));
     }
 
-    let mut parts = trimmed.split('.');
-    let first = parts.next();
-    let second = parts.next();
-    let third = parts.next();
-    match (first, second, third) {
-        (Some(table), None, None) => {
-            let table = unquote_sql_identifier(table);
-            if table.is_empty() {
-                return Err("Table name cannot be empty".to_string());
-            }
-            Ok((None, table))
-        },
-        (Some(namespace), Some(table), None) => {
-            let namespace = unquote_sql_identifier(namespace);
-            let table = unquote_sql_identifier(table);
-            if namespace.is_empty() {
-                return Err("Namespace name cannot be empty".to_string());
-            }
-            if table.is_empty() {
-                return Err("Table name cannot be empty".to_string());
-            }
-            Ok((Some(namespace), table))
-        },
+    let mut idents = Vec::with_capacity(name.0.len());
+    for part in &name.0 {
+        let Some(ident) = part.as_ident() else {
+            return Err("Function-based table references are not supported".to_string());
+        };
+        if ident.value.is_empty() {
+            return Err("Table name cannot be empty".to_string());
+        }
+        idents.push(ident.value.clone());
+    }
+
+    match idents.as_slice() {
+        [table] => Ok((None, table.clone())),
+        [namespace, table] => Ok((Some(namespace.clone()), table.clone())),
         _ => Err(format!(
-            "Invalid table reference '{}'. Expected 'table' or 'namespace.table'",
-            table_ref
+            "Invalid table reference '{table_ref}'. Expected 'table' or 'namespace.table'"
         )),
     }
 }
 
-fn unquote_sql_identifier(value: &str) -> String {
-    let trimmed = value.trim();
-    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
-        trimmed[1..trimmed.len() - 1].replace("\"\"", "\"")
-    } else {
-        trimmed.to_string()
+fn parse_one_identifier(value: &str) -> DdlResult<String> {
+    let (namespace, name) = parse_table_reference(value)?;
+    if namespace.is_some() {
+        return Err(format!("Invalid identifier '{value}'. Expected a single name"));
     }
+    Ok(name)
 }
 
 /// Extract table reference after a command prefix
@@ -448,9 +633,9 @@ mod tests {
 
     #[test]
     fn test_parse_simple_statement() {
-        assert!(parse_simple_statement("SHOW NAMESPACES", "SHOW NAMESPACES").is_ok());
-        assert!(parse_simple_statement("show namespaces", "SHOW NAMESPACES").is_ok());
-        assert!(parse_simple_statement("SHOW TABLES", "SHOW NAMESPACES").is_err());
+        assert!(parse_simple_statement("SHOW SCHEMAS", "SHOW SCHEMAS").is_ok());
+        assert!(parse_simple_statement("show schemas", "SHOW SCHEMAS").is_ok());
+        assert!(parse_simple_statement("SHOW TABLES", "SHOW SCHEMAS").is_err());
     }
 
     #[test]
@@ -495,14 +680,28 @@ mod tests {
         assert!(!has_if);
 
         // DROP with IF EXISTS
+        let (name, has_if) =
+            parse_create_drop_statement("DROP SCHEMA IF EXISTS app", "DROP SCHEMA", "IF EXISTS")
+                .unwrap();
+        assert_eq!(name, "app");
+        assert!(has_if);
+
         let (name, has_if) = parse_create_drop_statement(
-            "DROP NAMESPACE IF EXISTS app",
-            "DROP NAMESPACE",
+            "DROP TABLE \"directus_webhooks\" CASCADE",
+            "DROP TABLE",
             "IF EXISTS",
         )
         .unwrap();
-        assert_eq!(name, "app");
-        assert!(has_if);
+        assert_eq!(name, "directus_webhooks");
+        assert!(!has_if);
+
+        let (name, _) = parse_create_drop_statement(
+            "DROP TABLE \"app\".\"directus_webhooks\"",
+            "DROP TABLE",
+            "IF EXISTS",
+        )
+        .unwrap();
+        assert_eq!(name, "app.directus_webhooks");
 
         // Preserve case
         let (name, _) = parse_create_drop_statement(
@@ -560,6 +759,11 @@ mod tests {
         let (ns, table) = parse_table_reference("\"test_kalam_60\".\"users\"").unwrap();
         assert_eq!(ns, Some("test_kalam_60".to_string()));
         assert_eq!(table, "users");
+
+        // A name that merely starts with a keyword is still one identifier.
+        let (ns, table) = parse_table_reference("selection").unwrap();
+        assert_eq!(ns, None);
+        assert_eq!(table, "selection");
     }
 
     #[test]
@@ -568,6 +772,9 @@ mod tests {
         assert!(parse_table_reference("select * from users").is_err());
         assert!(parse_table_reference("SELECT * FROM users").is_err());
         assert!(parse_table_reference("users where id > 1").is_err());
+
+        // An unquoted hyphen is the minus operator, not part of the name.
+        assert!(parse_table_reference("my-table").is_err());
 
         // Spaces should be rejected
         assert!(parse_table_reference("my table").is_err());

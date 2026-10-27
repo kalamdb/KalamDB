@@ -39,7 +39,6 @@ actix-rt = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
-rmp-serde = { workspace = true }
 
 
 # Bytes
@@ -82,6 +81,7 @@ parking_lot = { workspace = true }
 [features]
 default = []
 embedded-ui = ["rust-embed"]
+traceability = ["kalamdb-observability/traceability"]
 
 [build-dependencies]
 chrono = { workspace = true }

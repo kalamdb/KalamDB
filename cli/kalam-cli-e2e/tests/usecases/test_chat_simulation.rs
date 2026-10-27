@@ -226,7 +226,7 @@ fn test_chat_simulation_memory_leak() {
 }
 
 fn setup_chat_tables(namespace: &str) -> Result<(), Box<dyn std::error::Error>> {
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))?;
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))?;
 
     // Conversations Table
     execute_sql_as_root_via_client(&format!(
@@ -270,6 +270,5 @@ fn cleanup(namespace: &str, creds: &[(String, String)]) {
     for (username, _) in creds {
         let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", username));
     }
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }

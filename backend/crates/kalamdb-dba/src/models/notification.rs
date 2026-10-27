@@ -1,6 +1,6 @@
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    models::{NamespaceId, TableId, TableName, UserId},
+    models::{SchemaId, TableId, TableName, UserId},
 };
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
@@ -24,7 +24,7 @@ pub struct NotificationRow {
         default = "None",
         comment = "Notification identifier"
     )]
-    pub id:         String,
+    pub id: String,
     #[column(
         id = 2,
         ordinal = 2,
@@ -34,7 +34,7 @@ pub struct NotificationRow {
         default = "None",
         comment = "Related user identifier for the notification"
     )]
-    pub user_id:    UserId,
+    pub user_id: UserId,
     #[column(
         id = 3,
         ordinal = 3,
@@ -44,7 +44,7 @@ pub struct NotificationRow {
         default = "None",
         comment = "Notification title"
     )]
-    pub title:      String,
+    pub title: String,
     #[column(
         id = 4,
         ordinal = 4,
@@ -54,7 +54,7 @@ pub struct NotificationRow {
         default = "None",
         comment = "Notification body"
     )]
-    pub body:       Option<String>,
+    pub body: Option<String>,
     #[column(
         id = 5,
         ordinal = 5,
@@ -64,7 +64,7 @@ pub struct NotificationRow {
         default = "Literal(false)",
         comment = "Read flag"
     )]
-    pub is_read:    bool,
+    pub is_read: bool,
     #[column(
         id = 6,
         ordinal = 6,
@@ -89,7 +89,7 @@ pub struct NotificationRow {
 
 impl NotificationRow {
     pub fn table_id() -> TableId {
-        TableId::new(NamespaceId::new(DBA_NAMESPACE), TableName::new("notifications"))
+        TableId::new(SchemaId::new(DBA_NAMESPACE), TableName::new("notifications"))
     }
 }
 

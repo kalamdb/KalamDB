@@ -181,20 +181,20 @@ impl OidcClientHandle {
             .map_err(|error| OidcError::JwtValidationFailed(error.to_string()))?;
 
         Ok(JwtClaims {
-            sub:            claims.subject().as_str().to_string(),
-            iss:            claims.issuer().as_str().to_string(),
-            exp:            claims.expiration().timestamp() as usize,
-            iat:            claims.issue_time().timestamp() as usize,
-            name:           claims
+            sub: claims.subject().as_str().to_string(),
+            iss: claims.issuer().as_str().to_string(),
+            exp: claims.expiration().timestamp() as usize,
+            iat: claims.issue_time().timestamp() as usize,
+            name: claims
                 .name()
                 .and_then(|value| value.get(None))
                 .map(|value| value.as_str().to_string())
                 .or_else(|| claims.preferred_username().map(|value| value.as_str().to_string())),
-            email:          claims.email().map(|email| email.as_str().to_string()),
+            email: claims.email().map(|email| email.as_str().to_string()),
             email_verified: claims.email_verified(),
-            role:           None,
-            auth_type:      Some(KalamAuthType::Oidc),
-            token_type:     None,
+            role: None,
+            auth_type: Some(KalamAuthType::Oidc),
+            token_type: None,
         })
     }
 }
@@ -379,11 +379,11 @@ mod tests {
 
     #[derive(serde::Serialize)]
     struct TestIdTokenClaims {
-        sub:   String,
-        iss:   String,
-        aud:   String,
-        exp:   usize,
-        iat:   usize,
+        sub: String,
+        iss: String,
+        aud: String,
+        exp: usize,
+        iat: usize,
         email: String,
     }
 
@@ -557,11 +557,11 @@ mod tests {
 
         let now = chrono::Utc::now().timestamp() as usize;
         let claims = TestIdTokenClaims {
-            sub:   subject.to_string(),
-            iss:   issuer.to_string(),
-            aud:   audience.to_string(),
-            exp:   now + 3600,
-            iat:   now.saturating_sub(1),
+            sub: subject.to_string(),
+            iss: issuer.to_string(),
+            aud: audience.to_string(),
+            exp: now + 3600,
+            iat: now.saturating_sub(1),
             email: format!("{}@example.org", subject),
         };
         let mut header = Header::new(Algorithm::RS256);

@@ -1,6 +1,4 @@
-use std::collections::HashMap;
-use std::fs;
-use std::path::Path;
+use std::{collections::HashMap, fs, path::Path};
 
 use crate::metrics::{BenchmarkReport, BenchmarkResult};
 
@@ -8,17 +6,17 @@ use crate::metrics::{BenchmarkReport, BenchmarkResult};
 #[derive(Debug)]
 pub struct PreviousRun {
     pub timestamp: String,
-    pub results: HashMap<String, PreviousBenchmark>,
+    pub results:   HashMap<String, PreviousBenchmark>,
 }
 
 /// A single benchmark's previous metrics.
 #[derive(Debug, Clone)]
 pub struct PreviousBenchmark {
     pub description: String,
-    pub mean_us: f64,
-    pub median_us: f64,
-    pub p95_us: f64,
-    pub p99_us: f64,
+    pub mean_us:     f64,
+    pub median_us:   f64,
+    pub p95_us:      f64,
+    pub p99_us:      f64,
     pub ops_per_sec: f64,
 }
 
@@ -26,9 +24,9 @@ pub struct PreviousBenchmark {
 #[derive(Debug)]
 pub struct Comparison {
     /// Percentage change in mean latency (negative = faster = better)
-    pub mean_pct: f64,
+    pub mean_pct:     f64,
     /// Percentage change in ops/sec (positive = better)
-    pub ops_pct: f64,
+    pub ops_pct:      f64,
     /// Previous mean for display
     pub prev_mean_us: f64,
 }
@@ -61,19 +59,19 @@ impl Comparison {
         match self.trend() {
             ComparisonTrend::Same => {
                 format!("\x1b[90m~ {:.0}µs prior\x1b[0m", self.prev_mean_us)
-            }
+            },
             ComparisonTrend::Faster => {
                 format!(
                     "\x1b[32m↑{:.0}% faster\x1b[0m \x1b[90m(was {:.0}µs)\x1b[0m",
                     abs_pct, self.prev_mean_us
                 )
-            }
+            },
             ComparisonTrend::Slower => {
                 format!(
                     "\x1b[31m↓{:.0}% slower\x1b[0m \x1b[90m(was {:.0}µs)\x1b[0m",
                     abs_pct, self.prev_mean_us
                 )
-            }
+            },
         }
     }
 
@@ -136,10 +134,10 @@ pub fn load_previous_run(output_dir: &str) -> Option<PreviousRun> {
             r.name.clone(),
             PreviousBenchmark {
                 description: r.description.clone(),
-                mean_us: r.mean_us,
-                median_us: r.median_us,
-                p95_us: r.p95_us,
-                p99_us: r.p99_us,
+                mean_us:     r.mean_us,
+                median_us:   r.median_us,
+                p95_us:      r.p95_us,
+                p99_us:      r.p99_us,
                 ops_per_sec: r.ops_per_sec,
             },
         );
@@ -181,18 +179,111 @@ mod tests {
     fn previous(description: &str) -> PreviousRun {
         PreviousRun {
             timestamp: "2026-08-24T00:00:00Z".to_string(),
-            results: HashMap::from([(
+            results:   HashMap::from([(
                 "reconnect_subscribe".to_string(),
                 PreviousBenchmark {
                     description: description.to_string(),
-                    mean_us: 10_000.0,
-                    median_us: 10_000.0,
-                    p95_us: 10_000.0,
-                    p99_us: 10_000.0,
+                    mean_us:     10_000.0,
+                    median_us:   10_000.0,
+                    p95_us:      10_000.0,
+                    p99_us:      10_000.0,
                     ops_per_sec: 100.0,
                 },
             )]),
         }
+    }
+
+    #[test]
+    fn domain_function_payload_beats_json_on_the_comparison_mark() {
+        use std::{hint::black_box, time::Instant};
+
+        use kalamdb_serialization::{
+            decode_domain_frame_for_surface, encode_domain_frame, DomainDecodeBudget,
+            DomainMessageKind, DomainValue, EndpointSurface,
+        };
+
+        const ITERATIONS: usize = 20_000;
+        const DESCRIPTION: &str = "function rpc payload encode and decode";
+
+        fn payload(id: i64) -> DomainValue {
+            DomainValue::Composite(vec![
+                (1, DomainValue::Int32(id as i32)),
+                (2, DomainValue::Utf8("user1".to_string())),
+                (3, DomainValue::Utf8("room0".to_string())),
+                (4, DomainValue::Utf8(format!("a message {id}"))),
+            ])
+        }
+
+        fn measure(encode_decode: impl Fn(i64)) -> BenchmarkResult {
+            for id in 0..1_000 {
+                encode_decode(id);
+            }
+            let mut durations = Vec::with_capacity(ITERATIONS);
+            for id in 0..ITERATIONS {
+                let started = Instant::now();
+                encode_decode(id as i64);
+                durations.push(started.elapsed());
+            }
+            BenchmarkResult::from_durations(
+                "function_payload_codec",
+                "Codec",
+                DESCRIPTION,
+                durations,
+            )
+        }
+
+        let json = measure(|id| {
+            let body = serde_json::json!({
+                "id": id,
+                "owner": "user1",
+                "room": "room0",
+                "data": format!("a message {id}"),
+            });
+            let encoded = serde_json::to_vec(&body).expect("json encode");
+            let decoded: serde_json::Value = serde_json::from_slice(&encoded).expect("json decode");
+            black_box(decoded);
+        });
+        let domain = measure(|id| {
+            let encoded = encode_domain_frame(DomainMessageKind::RpcRequest, 0, 0, &payload(id))
+                .expect("domain encode");
+            let decoded = decode_domain_frame_for_surface(
+                &encoded,
+                EndpointSurface::PublicRpc,
+                DomainDecodeBudget::default(),
+            )
+            .expect("domain decode");
+            black_box(decoded);
+        });
+
+        let previous = PreviousRun {
+            timestamp: "json-baseline".to_string(),
+            results: HashMap::from([(
+                domain.name.clone(),
+                PreviousBenchmark {
+                    description: DESCRIPTION.to_string(),
+                    mean_us: json.mean_us,
+                    median_us: json.median_us,
+                    p95_us: json.p95_us,
+                    p99_us: json.p99_us,
+                    ops_per_sec: json.ops_per_sec,
+                },
+            )]),
+        };
+        let mark = compare(&domain, &previous).expect("same benchmark description");
+        eprintln!(
+            "comparison mark: {} domain_mean={:.3}µs json_mean={:.3}µs",
+            mark.display(),
+            domain.mean_us,
+            json.mean_us
+        );
+        assert_eq!(
+            mark.trend(),
+            ComparisonTrend::Faster,
+            "domain mean {:.3}µs was not faster than json {:.3}µs ({:.1}%)",
+            domain.mean_us,
+            json.mean_us,
+            mark.mean_pct
+        );
     }
 
     #[test]

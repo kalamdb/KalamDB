@@ -312,10 +312,10 @@ export default function Dashboard() {
       icon: Clock3,
     },
     {
-      title: "Tables & Namespaces",
+      title: "Tables & Schemas",
       items: [
         buildCountMetricItem("Tables", currentStats.total_tables),
-        buildCountMetricItem("Namespaces", currentStats.total_namespaces),
+        buildCountMetricItem("Schemas", currentStats.total_namespaces),
       ],
       icon: Database,
     },

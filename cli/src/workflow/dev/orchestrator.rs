@@ -54,9 +54,9 @@ pub enum SchemaPipelineState {
 }
 
 pub struct DevSessionOptions {
-    pub force:        bool,
+    pub force: bool,
     pub display_mode: WorkflowDisplayMode,
-    pub agent:        bool,
+    pub agent: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,10 +67,10 @@ enum DevLoopAction {
 
 #[derive(Debug)]
 struct DevSchemaLoop {
-    force:           bool,
-    schema_mtime:    Option<SystemTime>,
+    force: bool,
+    schema_mtime: Option<SystemTime>,
     functions_stamp: Option<SystemTime>,
-    last_state:      SchemaPipelineState,
+    last_state: SchemaPipelineState,
 }
 
 impl DevSchemaLoop {
@@ -632,7 +632,7 @@ async fn apply_confirmed_schema_draft(
     }
 
     if config.dev.generate_types {
-        generate_schema_artifacts(ctx, &GenerateOptions { languages: None }, output)?;
+        generate_schema_artifacts(ctx, &GenerateOptions::default(), output)?;
     }
 
     if !config.dev.apply_schema {

@@ -36,9 +36,9 @@ dependencies = [
 
 [[package]]
 name = "actix-files"
-version = "0.7.0"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed87c765e9e5be096cc29b43d04b932209892ec871d05fe255f0ae1ccfed9a06"
+checksum = "db96438ec043d438f36bc211e260f0bec3de11dd0921feebe6b776e5a77ff3f9"
 dependencies = [
  "actix-http",
  "actix-service",
@@ -55,26 +55,24 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "v_htmlescape",
+ "winapi-util",
 ]
 
 [[package]]
 name = "actix-http"
-version = "3.13.3"
+version = "3.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11004b0e9b44b4eb3d15e0c3132b96fb178c7e50a74758b2f17bb9cc9a7fb4f6"
+checksum = "b796ba3c974e5133f6ca1a2c4e97c5941ea1a46d202df83344afaa18219f1a62"
 dependencies = [
  "actix-codec",
- "actix-rt",
  "actix-service",
  "actix-utils",
  "base64 0.22.1",
  "bitflags 2.13.0",
- "brotli",
  "bytes",
  "bytestring",
  "derive_more 2.1.1",
  "encoding_rs",
- "flate2",
  "foldhash 0.2.0",
  "futures-core",
  "h2 0.3.27",
@@ -93,7 +91,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "zstd",
 ]
 
 [[package]]
@@ -141,7 +138,7 @@ dependencies = [
  "darling 0.24.1",
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -209,9 +206,9 @@ dependencies = [
 
 [[package]]
 name = "actix-web"
-version = "4.15.0"
+version = "4.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbacab3593b6b4f7be815076fc52d60a83c873426824675417e2abdd229e2e36"
+checksum = "67756b0fc99e07b8702b9a856e3d6ec036387243c2ce6310070d1e8f02680bb0"
 dependencies = [
  "actix-codec",
  "actix-http",
@@ -246,20 +243,21 @@ dependencies = [
  "smallvec",
  "socket2 0.6.3",
  "time",
+ "tokio",
  "tracing",
  "url",
 ]
 
 [[package]]
 name = "actix-web-codegen"
-version = "4.3.0"
+version = "4.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f591380e2e68490b5dfaf1dd1aa0ebe78d84ba7067078512b4ea6e4492d622b8"
+checksum = "b96b09c4878563f8ab4a5fd0c59f9f0d6e0e9f60eb9b748526a0b9604fd89c50"
 dependencies = [
  "actix-router",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -492,9 +490,9 @@ dependencies = [
 
 [[package]]
 name = "arc-swap"
-version = "1.9.2"
+version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c049c0be4daef0b145cb3555416b3b8ef5b7888a38aea1a3a155801fe7b0810b"
+checksum = "380962b3d93b99642e50b9febf72c071e97e8b32d86eae9cf4ef582bb960ae6e"
 dependencies = [
  "rustversion",
 ]
@@ -846,7 +844,7 @@ checksum = "82f6aeea286b8eb4dd3431a1be1b59d290ace00f5bfd8e2a159bc2a05e2c1667"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -1531,7 +1529,7 @@ dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -2129,7 +2127,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "strsim",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -2162,7 +2160,7 @@ checksum = "2ac7135c3ef02b2f7833bbeb1be5ba7f966dcde8a87c6b87f65a778d71a02785"
 dependencies = [
  "darling_core 0.24.1",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -2612,7 +2610,9 @@ dependencies = [
 
 [[package]]
 name = "datafusion-functions-json"
-version = "0.55.0"
+version = "0.55.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3edcc7d53e84d8a9e05e50b58a153f616ea11d5a07eabcdf5559b532a14119b"
 dependencies = [
  "datafusion",
  "jiter",
@@ -2697,7 +2697,7 @@ checksum = "14d6df9763c8fb968b2417d797aef4c55ac2e4a895aaef38c72c16a287aa4a40"
 dependencies = [
  "datafusion-doc",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -3053,7 +3053,7 @@ dependencies = [
  "diplomat_core",
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -3073,7 +3073,7 @@ dependencies = [
  "serde",
  "smallvec",
  "strck",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -3583,7 +3583,7 @@ checksum = "9fb9654ba8355388abeb8dcb4fc62f511300867002afc858860463bdd9fe0c44"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -4453,9 +4453,9 @@ checksum = "4d3667095d64c3ecffc96463a21157b04bf3e252f6e8d5750b20c02e33c194e3"
 
 [[package]]
 name = "jiter"
-version = "0.15.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7866f284df68dbc242796251ed9768bde2b58ebc4d7d32cc07cc7fd993e3ed6c"
+checksum = "bc2f2b4e673d798b3dbad0af24bc23b92013e680a6b9ad300b4e5e52fafe0586"
 dependencies = [
  "ahash 0.8.12",
  "bitvec",
@@ -4527,7 +4527,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-cli"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -4560,7 +4560,7 @@ dependencies = [
  "rustyline",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "shlex 2.0.1",
  "tar",
  "tempfile",
@@ -4574,7 +4574,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-cli-e2e"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -4601,7 +4601,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "sysinfo",
  "tar",
  "tempfile",
@@ -4616,14 +4616,14 @@ dependencies = [
 
 [[package]]
 name = "kalam-client"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "link-common",
 ]
 
 [[package]]
 name = "kalam-client-e2e"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "kalam-client",
  "kalamdb-configs",
@@ -4638,7 +4638,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-consumer-wasm"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "js-sys",
  "link-common",
@@ -4651,7 +4651,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-link-dart"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "flutter_rust_bridge",
@@ -4663,14 +4663,13 @@ dependencies = [
 
 [[package]]
 name = "kalam-link-wasm"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "base64 0.23.1",
  "js-sys",
  "link-common",
  "log",
  "miniz_oxide 0.9.1",
- "rmp-serde",
  "serde",
  "serde_json",
  "wasm-bindgen",
@@ -4681,7 +4680,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-pg-api"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -4693,7 +4692,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-pg-client"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
  "arrow-ipc",
@@ -4715,7 +4714,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-pg-common"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "datafusion-common",
  "serde",
@@ -4724,7 +4723,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-pg-extension"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -4757,7 +4756,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-pg-fdw"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "datafusion-common",
  "kalam-pg-api",
@@ -4768,7 +4767,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-pg-types"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "kalam-pg-common",
  "kalamdb-commons",
@@ -4776,7 +4775,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-schema-diff"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "kalamdb-commons",
  "kalamdb-dialect",
@@ -4787,7 +4786,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-api"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "actix-files",
  "actix-multipart",
@@ -4824,7 +4823,6 @@ dependencies = [
  "openidconnect",
  "parking_lot",
  "reqwest 0.12.28",
- "rmp-serde",
  "rust-embed",
  "serde",
  "serde_json",
@@ -4837,11 +4835,12 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-auth"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "actix-rt",
  "actix-web",
  "anyhow",
+ "arc-swap",
  "async-trait",
  "base64 0.23.1",
  "bcrypt",
@@ -4850,6 +4849,7 @@ dependencies = [
  "jsonwebtoken",
  "kalamdb-commons",
  "kalamdb-configs",
+ "kalamdb-observability",
  "kalamdb-session",
  "kalamdb-system",
  "log",
@@ -4867,7 +4867,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-backend"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "dashmap 6.2.1",
@@ -4881,12 +4881,14 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-commons"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
  "arrow-schema",
  "chrono",
+ "chrono-tz",
  "criterion",
+ "croner",
  "dashmap 6.2.1",
  "datafusion-common",
  "hex",
@@ -4895,8 +4897,6 @@ dependencies = [
  "nanoid",
  "once_cell",
  "parking_lot",
- "rmp",
- "rmp-serde",
  "serde",
  "serde_json",
  "smallvec",
@@ -4908,7 +4908,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-configs"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "ipnet",
@@ -4919,7 +4919,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-core"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -4984,7 +4984,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-datafusion-sources"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
  "arrow-schema",
@@ -4999,7 +4999,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-dba"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "datafusion",
@@ -5018,7 +5018,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-dialect"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "arrow",
@@ -5026,19 +5026,18 @@ dependencies = [
  "humantime",
  "kalamdb-commons",
  "kalamdb-session",
- "kalamdb-system",
  "log",
  "once_cell",
  "regex",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "sqlparser",
 ]
 
 [[package]]
 name = "kalamdb-filestore"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
  "bytes",
@@ -5060,7 +5059,7 @@ dependencies = [
  "rand 0.10.3",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "sysinfo",
  "tempfile",
  "thiserror 2.0.21",
@@ -5070,7 +5069,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-flush"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5098,7 +5097,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-functions"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arc-swap",
  "arrow",
@@ -5112,6 +5111,7 @@ dependencies = [
  "kalamdb-configs",
  "kalamdb-filestore",
  "kalamdb-functions-host",
+ "kalamdb-observability",
  "kalamdb-serialization",
  "kalamdb-store",
  "kalamdb-system",
@@ -5122,18 +5122,19 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "smallvec",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
+ "tracing",
  "v8",
 ]
 
 [[package]]
 name = "kalamdb-functions-host"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5141,7 +5142,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-handlers"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "kalamdb-commons",
  "kalamdb-core",
@@ -5156,7 +5157,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-handlers-admin"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
  "chrono",
@@ -5176,7 +5177,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-handlers-ddl"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
  "chrono",
@@ -5202,7 +5203,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-handlers-stream"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
  "chrono",
@@ -5219,7 +5220,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-handlers-support"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "datafusion",
@@ -5236,7 +5237,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-handlers-user"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "kalamdb-auth",
@@ -5246,13 +5247,13 @@ dependencies = [
  "kalamdb-handlers-support",
  "kalamdb-system",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "tokio",
 ]
 
 [[package]]
 name = "kalamdb-jobs"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -5284,7 +5285,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-live"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5310,16 +5311,16 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-macros"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
 name = "kalamdb-observability"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "cc",
  "chrono",
@@ -5333,7 +5334,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-pg"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
  "arrow-ipc",
@@ -5362,7 +5363,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-pg-bridge"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5386,7 +5387,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-plan-cache"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "datafusion",
  "kalamdb-commons",
@@ -5395,7 +5396,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-postgres-wire"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5408,13 +5409,16 @@ dependencies = [
  "kalamdb-configs",
  "kalamdb-core",
  "kalamdb-dialect",
+ "kalamdb-handlers",
+ "kalamdb-jobs",
  "kalamdb-observability",
+ "kalamdb-session",
+ "kalamdb-store",
  "kalamdb-system",
  "log",
  "ntest",
  "parking_lot",
  "pgwire",
- "sqlparser",
  "tokio",
  "tokio-postgres",
  "tracing",
@@ -5423,7 +5427,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-publisher"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "dashmap 6.2.1",
@@ -5442,7 +5446,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-python"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "kalam-client",
  "pyo3",
@@ -5454,7 +5458,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-raft"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -5492,7 +5496,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-rls"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
  "dashmap 6.2.1",
@@ -5504,10 +5508,11 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-row-filter"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "datafusion-common",
  "kalamdb-commons",
+ "kalamdb-dialect",
  "regex",
  "sqlparser",
  "thiserror 2.0.21",
@@ -5515,9 +5520,10 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-serialization"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
+ "base64 0.23.1",
  "criterion",
  "datafusion-common",
  "flexbuffers",
@@ -5525,12 +5531,13 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "kalamdb-server"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -5578,7 +5585,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serial_test",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "tempfile",
  "testcontainers-modules",
  "tokio",
@@ -5594,7 +5601,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-server-auth"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "log",
  "rcgen",
@@ -5604,14 +5611,14 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-session"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "kalamdb-commons",
 ]
 
 [[package]]
 name = "kalamdb-session-datafusion"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5623,7 +5630,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-sharding"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "kalamdb-commons",
  "kalamdb-configs",
@@ -5632,7 +5639,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-store"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5644,6 +5651,7 @@ dependencies = [
  "kalamdb-serialization",
  "kalamdb-sharding",
  "kalamdb-system",
+ "libc",
  "log",
  "rocksdb",
  "serde",
@@ -5656,7 +5664,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-streams"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "dashmap 6.2.1",
@@ -5670,13 +5678,11 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-system"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
  "async-trait",
  "chrono",
- "chrono-tz",
- "croner",
  "dashmap 6.2.1",
  "datafusion",
  "kalamdb-commons",
@@ -5696,7 +5702,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-tables"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5733,7 +5739,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-transactions"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "datafusion",
@@ -5749,7 +5755,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-transfer"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "flate2",
@@ -5766,7 +5772,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-vector"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -5776,6 +5782,7 @@ dependencies = [
  "kalamdb-commons",
  "kalamdb-datafusion-sources",
  "kalamdb-filestore",
+ "kalamdb-serialization",
  "kalamdb-session-datafusion",
  "kalamdb-store",
  "kalamdb-system",
@@ -5788,7 +5795,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-views"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5800,6 +5807,7 @@ dependencies = [
  "kalamdb-raft",
  "kalamdb-session",
  "kalamdb-session-datafusion",
+ "kalamdb-store",
  "kalamdb-system",
  "parking_lot",
  "serde",
@@ -5911,9 +5919,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.190"
+version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
+checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "libflate"
@@ -6006,7 +6014,7 @@ dependencies = [
 
 [[package]]
 name = "link-common"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -6014,10 +6022,10 @@ dependencies = [
  "http-body",
  "http-body-util",
  "kalamdb-commons",
+ "kalamdb-serialization",
  "log",
  "miniz_oxide 0.9.1",
  "reqwest 0.12.28",
- "rmp-serde",
  "rustls",
  "rustls-native-certs",
  "serde",
@@ -6287,9 +6295,9 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.31.2"
+version = "0.31.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d6d0705320c1e6ba1d912b5e37cf18071b6c2e9b7fa8215a1e8a7651966f5d3"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
 dependencies = [
  "bitflags 2.13.0",
  "cfg-if",
@@ -7655,7 +7663,7 @@ dependencies = [
  "md-5 0.11.0",
  "memchr",
  "rand 0.10.3",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "stringprep",
 ]
 
@@ -7785,7 +7793,7 @@ dependencies = [
  "proc-macro-error-attr3",
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -7861,9 +7869,9 @@ dependencies = [
 
 [[package]]
 name = "pyo3"
-version = "0.28.3"
+version = "0.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91fd8e38a3b50ed1167fb981cd6fd60147e091784c427b8f7183a7ee32c31c12"
+checksum = "700d18fa267b73b9b521fd7e13580e2f446916f176cacee1ab63fcc8191f1655"
 dependencies = [
  "libc",
  "num-bigint 0.4.6",
@@ -7877,9 +7885,9 @@ dependencies = [
 
 [[package]]
 name = "pyo3-async-runtimes"
-version = "0.28.0"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e7364a95bf00e8377bbf9b0f09d7ff9715a29d8fcf93b47d1a967363b973178"
+checksum = "b3ef68daa7316a3fac65e5e18b2203f010346de1c1c53456811a2624673ab046"
 dependencies = [
  "futures-channel",
  "futures-util",
@@ -7891,18 +7899,18 @@ dependencies = [
 
 [[package]]
 name = "pyo3-build-config"
-version = "0.28.3"
+version = "0.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e368e7ddfdeb98c9bca7f8383be1648fd84ab466bf2bc015e94008db6d35611e"
+checksum = "7b3fc0c4d08f6bb10e71fe39dfb9e2f59c6eb6854e22ec8092f50c69a4499adb"
 dependencies = [
  "target-lexicon",
 ]
 
 [[package]]
 name = "pyo3-ffi"
-version = "0.28.3"
+version = "0.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f29e10af80b1f7ccaf7f69eace800a03ecd13e883acfacc1e5d0988605f651e"
+checksum = "dfc0b8e19df29aad7086cf977bb0c2a2f143e30567eb113e9cf72b62ca698330"
 dependencies = [
  "libc",
  "pyo3-build-config",
@@ -7910,9 +7918,9 @@ dependencies = [
 
 [[package]]
 name = "pyo3-macros"
-version = "0.28.3"
+version = "0.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df6e520eff47c45997d2fc7dd8214b25dd1310918bbb2642156ef66a67f29813"
+checksum = "6100e8a4b5eba53afaa5ed078364851a0b2499c553a44c31026b929049b49dc6"
 dependencies = [
  "proc-macro2",
  "pyo3-macros-backend",
@@ -7922,13 +7930,12 @@ dependencies = [
 
 [[package]]
 name = "pyo3-macros-backend"
-version = "0.28.3"
+version = "0.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4cdc218d835738f81c2338f822078af45b4afdf8b2e33cbb5916f108b813acb"
+checksum = "6143877a16e82b5a727b7127ff4cd86858a24a28d745d72f43e6f227c7b1bdb3"
 dependencies = [
  "heck",
  "proc-macro2",
- "pyo3-build-config",
  "quote",
  "syn 2.0.119",
 ]
@@ -8526,7 +8533,7 @@ checksum = "0d84e8ba78bd384263e5922f084cbe1b081c3b7e69add59c8fb097b879ba968a"
 dependencies = [
  "globset",
  "include-flate",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "walkdir",
 ]
 
@@ -8610,9 +8617,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.45"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -8626,9 +8633,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-native-certs"
-version = "0.8.4"
+version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dab5152771c58876a2146916e53e35057e1a4dfa2b9df0f0305b07f611fdea4d"
+checksum = "4a073f5dc7469f984c52ad2752b63b0807745133b6de880b7b64c1ac4c48aec4"
 dependencies = [
  "openssl-probe",
  "rustls-pki-types",
@@ -8874,14 +8881,14 @@ checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
 name = "serde_json"
-version = "1.0.151"
+version = "1.0.154"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
+checksum = "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6"
 dependencies = [
  "itoa",
  "memchr",
@@ -8996,7 +9003,7 @@ checksum = "a22144e767da4ddd8416dbf383700542ffd8a5dc493dfecedfe1fe3ad03c98ae"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -9023,9 +9030,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
+checksum = "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
@@ -9120,9 +9127,9 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "smallvec"
-version = "1.16.2"
+version = "1.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"
+checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
 dependencies = [
  "serde",
 ]
@@ -9367,9 +9374,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "3.0.6"
+version = "3.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8593e8e72159ed2257d083c7a454a85cbf854f37a0966d8d483aff8c8a3ebcee"
+checksum = "d78c8dee4c7bf0e14673097256fed6142ce9d3b85a408189d07482442145823b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9602,7 +9609,7 @@ checksum = "fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -9713,9 +9720,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.53.2"
+version = "1.53.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e95f91fcc7a621e8b030f6aa23c71fe9838ae2fb4d8118b75602a328f5144044"
+checksum = "ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e"
 dependencies = [
  "bytes",
  "libc",
@@ -10336,9 +10343,9 @@ dependencies = [
 
 [[package]]
 name = "usearch"
-version = "2.26.4"
+version = "2.26.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1086fc5e6b4ee87a5bac4fd80fcf66670526ca21b77d5f95b68de01b15329c67"
+checksum = "caf2c7d2696bad5e99d1d722e371afd83937a6c53d7032caa1c46380210aa6ba"
 dependencies = [
  "cxx",
  "cxx-build",
@@ -10553,7 +10560,7 @@ dependencies = [
  "bumpalo",
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
  "wasm-bindgen-shared",
 ]
 
@@ -10596,7 +10603,7 @@ checksum = "3b84b5ac638bfb168196a1a461fcc8f46a294a18b1b6be52133b4e0db122cc9f"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -11388,19 +11395,20 @@ checksum = "34df6fc39dbd26ddc9c10e6a2984476e13acce22e64e4487636ef494369225da"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
 name = "zip"
-version = "9.0.0"
+version = "9.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "711e8c9646791c49b7eb799a19c4ae70a9b8372ddc6a1fa4778defd1e2aa5d5e"
+checksum = "6e04976da629d3b04204ba8105b396a193af8ad2583b2c79bfb3ab8af580a11e"
 dependencies = [
  "crc32fast",
  "flate2",
  "indexmap 2.14.0",
  "memchr",
+ "nix",
  "typed-path",
  "zopfli",
 ]
@@ -11462,9 +11470,9 @@ dependencies = [
 
 [[package]]
 name = "zstd-sys"
-version = "2.1.0+zstd.1.5.7"
+version = "2.1.2+zstd.1.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ef0a8027ec3ee71300ab3bcbcd0393f434aa72b91ca6d635a39941deae8eea0"
+checksum = "481ada9c543b2323cbb7bbdbb5249177fbf0188ed959ed2c15e4b22421c84ed3"
 dependencies = [
  "cc",
  "pkg-config",

@@ -25,7 +25,7 @@ async fn test_explain_command_admin_allowed() {
     let dba = insert_user(&server, "admin_user", Role::Dba).await;
 
     // Create namespace and table for testing
-    server.execute_sql("CREATE NAMESPACE df_test").await;
+    server.execute_sql("CREATE SCHEMA df_test").await;
     let create_sql =
         "CREATE TABLE df_test.test_table (id INT PRIMARY KEY, name TEXT) WITH (TYPE = 'SHARED')";
     server.execute_sql(create_sql).await;
@@ -51,7 +51,7 @@ async fn test_explain_command_user_denied() {
     let user = insert_user(&server, "regular_user", Role::User).await;
 
     // Create namespace and table for testing
-    server.execute_sql("CREATE NAMESPACE df_test2").await;
+    server.execute_sql("CREATE SCHEMA df_test2").await;
     let create_sql =
         "CREATE TABLE df_test2.test_table (id INT PRIMARY KEY, name TEXT) WITH (TYPE = 'SHARED')";
     server.execute_sql(create_sql).await;
@@ -136,7 +136,7 @@ async fn test_show_columns_admin_allowed() {
     let dba = insert_user(&server, "admin_cols", Role::Dba).await;
 
     // Create namespace and table
-    server.execute_sql("CREATE NAMESPACE df_cols_test").await;
+    server.execute_sql("CREATE SCHEMA df_cols_test").await;
     let create_sql = "CREATE TABLE df_cols_test.test_table (id INT PRIMARY KEY, name TEXT, age \
                       INT) WITH (TYPE = 'SHARED')";
     server.execute_sql(create_sql).await;
@@ -159,7 +159,7 @@ async fn test_show_columns_user_denied() {
     let user = insert_user(&server, "regular_cols_user", Role::User).await;
 
     // Create namespace and table
-    server.execute_sql("CREATE NAMESPACE df_cols_test2").await;
+    server.execute_sql("CREATE SCHEMA df_cols_test2").await;
     let create_sql = "CREATE TABLE df_cols_test2.test_table (id INT PRIMARY KEY, name TEXT) WITH \
                       (TYPE = 'SHARED')";
     server.execute_sql(create_sql).await;
@@ -183,7 +183,7 @@ async fn test_describe_datafusion_style_admin_allowed() {
     let dba = insert_user(&server, "admin_desc", Role::Dba).await;
 
     // Create namespace and table
-    server.execute_sql("CREATE NAMESPACE df_desc_test").await;
+    server.execute_sql("CREATE SCHEMA df_desc_test").await;
     let create_sql = "CREATE TABLE df_desc_test.test_table (id INT PRIMARY KEY, name TEXT) WITH \
                       (TYPE = 'SHARED')";
     server.execute_sql(create_sql).await;
@@ -206,7 +206,7 @@ async fn test_describe_datafusion_style_user_denied() {
     let user = insert_user(&server, "regular_desc_user", Role::User).await;
 
     // Create namespace and table
-    server.execute_sql("CREATE NAMESPACE df_desc_test2").await;
+    server.execute_sql("CREATE SCHEMA df_desc_test2").await;
     let create_sql = "CREATE TABLE df_desc_test2.test_table (id INT PRIMARY KEY, name TEXT) WITH \
                       (TYPE = 'SHARED')";
     server.execute_sql(create_sql).await;
@@ -226,7 +226,7 @@ async fn test_system_role_datafusion_commands() {
     let system = insert_user(&server, "system_user", Role::System).await;
 
     // Create namespace and table
-    server.execute_sql("CREATE NAMESPACE df_sys_test").await;
+    server.execute_sql("CREATE SCHEMA df_sys_test").await;
     let create_sql = "CREATE TABLE df_sys_test.test_table (id INT PRIMARY KEY, name TEXT) WITH \
                       (TYPE = 'SHARED')";
     server.execute_sql(create_sql).await;
@@ -259,7 +259,7 @@ async fn test_service_role_datafusion_commands_denied() {
     let service = insert_user(&server, "service_user", Role::Service).await;
 
     // Create namespace and table
-    server.execute_sql("CREATE NAMESPACE df_svc_test").await;
+    server.execute_sql("CREATE SCHEMA df_svc_test").await;
     let create_sql = "CREATE TABLE df_svc_test.test_table (id INT PRIMARY KEY, name TEXT) WITH \
                       (TYPE = 'SHARED')";
     server.execute_sql(create_sql).await;

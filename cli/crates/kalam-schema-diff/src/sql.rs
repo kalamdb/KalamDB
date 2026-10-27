@@ -151,9 +151,9 @@ fn find_top_level_char(input: &str, target: char) -> Option<usize> {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WordSpan<'a> {
-    pub(crate) text:  &'a str,
+    pub(crate) text: &'a str,
     pub(crate) start: usize,
-    pub(crate) end:   usize,
+    pub(crate) end: usize,
 }
 
 pub(crate) fn word_spans(input: &str) -> Vec<WordSpan<'_>> {
@@ -167,9 +167,9 @@ pub(crate) fn word_spans(input: &str) -> Vec<WordSpan<'_>> {
             (None, true) => start = Some(i),
             (Some(s), false) => {
                 words.push(WordSpan {
-                    text:  &input[s..i],
+                    text: &input[s..i],
                     start: s,
-                    end:   i,
+                    end: i,
                 });
                 start = None;
             },
@@ -179,9 +179,9 @@ pub(crate) fn word_spans(input: &str) -> Vec<WordSpan<'_>> {
 
     if let Some(s) = start {
         words.push(WordSpan {
-            text:  &input[s..],
+            text: &input[s..],
             start: s,
-            end:   input.len(),
+            end: input.len(),
         });
     }
 
@@ -283,18 +283,28 @@ pub(crate) fn is_contract_ddl(sql: &str) -> bool {
     starts_ci(sql, "CREATE TYPE")
         || starts_ci(sql, "ALTER TYPE")
         || starts_ci(sql, "DROP TYPE")
+        || starts_ci(sql, "CREATE DOMAIN")
+        || starts_ci(sql, "CREATE OR REPLACE DOMAIN")
+        || starts_ci(sql, "ALTER DOMAIN")
+        || starts_ci(sql, "DROP DOMAIN")
         || starts_ci(sql, "CREATE PROCEDURE")
         || starts_ci(sql, "CREATE OR REPLACE PROCEDURE")
+        || starts_ci(sql, "ALTER PROCEDURE")
         || starts_ci(sql, "DROP PROCEDURE")
+        || starts_ci(sql, "CREATE FUNCTION")
+        || starts_ci(sql, "CREATE OR REPLACE FUNCTION")
+        || starts_ci(sql, "ALTER FUNCTION")
+        || starts_ci(sql, "DROP FUNCTION")
+        || starts_ci(sql, "COMMENT ON")
         || starts_ci(sql, "GRANT EXECUTE")
         || starts_ci(sql, "REVOKE EXECUTE")
         || starts_ci(sql, "CREATE TRIGGER")
         || starts_ci(sql, "DROP TRIGGER")
         || starts_ci(sql, "ALTER TRIGGER")
         || starts_ci(sql, "SET SEARCH_PATH")
+        || starts_ci(sql, "SET SCHEMA")
         || starts_ci(sql, "SET NAMESPACE")
         || starts_ci(sql, "USE ")
-        || starts_ci(sql, "USE NAMESPACE")
 }
 
 fn starts_ci(sql: &str, prefix: &str) -> bool {

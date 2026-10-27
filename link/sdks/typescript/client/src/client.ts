@@ -6,10 +6,20 @@
  * fetch() + FormData for better browser compatibility.
  */
 
-import init, { KalamClient as WasmClient } from '../wasm/kalam_client.js';
+import init, {
+  decodeRoutineResult,
+  encodeRoutineRequest,
+  KalamClient as WasmClient,
+} from '../wasm/kalam_client.js';
 
 import type { AuthCredentials, AuthProvider } from './auth.js';
 import { buildAuthHeader } from './auth.js';
+import {
+  routineArgumentsJson,
+  routineErrorFromPayload,
+  routineInvokeHeaders,
+  routineRequestBody,
+} from './routine_codec.js';
 import { resolveAuthProviderWithRetry } from './helpers/auth_provider_retry.js';
 import {
   defaultRowKey,
@@ -207,6 +217,9 @@ const BUNDLED_BROWSER_WASM_URL = new URL('../wasm/kalam_client_bg.wasm', import.
  * await client.disconnect();
  * ```
  */
+
+export { KalamRoutineError } from './routine_codec.js';
+
 export class KalamDBClient {
   private wasmClient: WasmClient | null = null;
   private initialized = false;
@@ -786,6 +799,89 @@ export class KalamDBClient {
     return JSON.parse(resultStr) as QueryResponse;
   }
 
+  /**
+   * Invoke a generated routine through the function HTTP route.
+   *
+   * JSON is the explicit external representation. The descriptor names the
+   * routine; this method does not build SQL.
+   */
+  async invokeRoutine<I, O>(
+    descriptor: {
+      readonly epoch: number;
+      readonly schema: string;
+      readonly name: string;
+      readonly revision?: string;
+      readonly params?: readonly { readonly name: string; readonly slot: number; readonly json?: boolean }[];
+    },
+    input: I,
+    options?: {
+      readonly signal?: AbortSignal;
+      readonly timeoutMs?: number;
+      readonly idempotencyKey?: string;
+      readonly format?: 'binary' | 'json';
+    },
+  ): Promise<O> {
+    await this.initialize();
+    await this.ensureJwtForBasicAuth();
+    const binary = options?.format !== 'json';
+    const headers = routineInvokeHeaders({
+      epoch: descriptor.epoch,
+      revision: descriptor.revision,
+      idempotencyKey: options?.idempotencyKey,
+      binary,
+    });
+    const authHeader = buildAuthHeader(this.auth);
+    if (authHeader) headers.Authorization = authHeader;
+
+    const controller = new AbortController();
+    if (options?.signal) {
+      if (options.signal.aborted) controller.abort();
+      else options.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+    const timer = options?.timeoutMs === undefined
+      ? undefined
+      : setTimeout(() => controller.abort(), options.timeoutMs);
+
+    try {
+      const response = await fetch(
+        `${this.url}/v1/functions/${encodeURIComponent(descriptor.schema)}/${encodeURIComponent(descriptor.name)}`,
+        {
+          method: 'POST',
+          headers,
+          body: binary
+            ? routineRequestBody(encodeRoutineRequest(
+              routineArgumentsJson(input),
+              JSON.stringify(descriptor.params ?? []),
+            ))
+            : JSON.stringify({
+              epoch: descriptor.epoch,
+              arguments: input ?? null,
+            }),
+          signal: controller.signal,
+        },
+      );
+      if (!response.ok) {
+        const text = await response.text();
+        let payload: unknown = null;
+        if (text.length > 0) {
+          try {
+            payload = JSON.parse(text) as unknown;
+          } catch {
+            payload = { message: text };
+          }
+        }
+        throw routineErrorFromPayload(response.status, payload);
+      }
+      if (binary) {
+        return decodeRoutineResult(new Uint8Array(await response.arrayBuffer())) as O;
+      }
+      const text = await response.text();
+      return (text.length === 0 ? null : JSON.parse(text)) as O;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+
   private static escapeSqlStringLiteral(value: string): string {
     return value.replace(/'/g, "''");
   }
@@ -1349,7 +1445,7 @@ export class KalamDBClient {
         }
 
         if (normalizedEvent.type === 'initial_data_batch') {
-          rows = upsertLimited([], (normalizedEvent.rows ?? []).map(mapRow), getKey, options.limit);
+          rows = upsertLimited(rows, (normalizedEvent.rows ?? []).map(mapRow), getKey, options.limit);
           callback([...rows]);
           this.emitLiveCheckpoint(options.onCheckpoint, normalizedEvent.subscription_id);
           return;

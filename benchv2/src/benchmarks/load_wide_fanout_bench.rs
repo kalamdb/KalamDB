@@ -1,9 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 /// Queries that return large result sets under concurrent load.
 /// Tests serialization overhead, memory pressure, and network throughput.
@@ -34,7 +31,8 @@ impl Benchmark for WideFanoutQueryBench {
                 .await;
             client
                 .sql_ok(&format!(
-                    "CREATE TABLE {}.fanout_bench (id INT PRIMARY KEY, col_a TEXT, col_b TEXT, col_c DOUBLE, col_d BIGINT)",
+                    "CREATE TABLE {}.fanout_bench (id INT PRIMARY KEY, col_a TEXT, col_b TEXT, \
+                     col_c DOUBLE, col_d BIGINT)",
                     config.namespace
                 ))
                 .await?;

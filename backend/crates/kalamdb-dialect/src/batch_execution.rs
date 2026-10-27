@@ -9,11 +9,7 @@ use sqlparser::{
     tokenizer::{Location, Span},
 };
 
-use crate::{
-    dialect::KalamDbDialect,
-    execute_as::parse_execute_as,
-    parser::utils::{parse_single_statement, parse_sql_statements},
-};
+use crate::{execute_as::parse_execute_as, parser::utils::parse_single_statement};
 
 /// Error produced when parsing a batch SQL string fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,16 +36,16 @@ impl std::error::Error for BatchParseError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedExecutionStatement {
-    pub sql:                 String,
+    pub sql: String,
     pub execute_as_username: Option<String>,
-    pub parsed_statement:    Option<Statement>,
+    pub parsed_statement: Option<Statement>,
 }
 
 #[derive(Debug, Clone)]
 pub struct PreparedExecutionBatchStatement<T> {
     pub execute_as_username: Option<String>,
-    pub parsed_statement:    Option<Statement>,
-    pub prepared_statement:  T,
+    pub parsed_statement: Option<Statement>,
+    pub prepared_statement: T,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,7 +53,7 @@ pub enum ExecutionBatchParseError {
     Batch(BatchParseError),
     Statement {
         statement_index: usize,
-        message:         String,
+        message: String,
     },
 }
 
@@ -78,10 +74,7 @@ impl std::error::Error for ExecutionBatchParseError {}
 #[derive(Debug)]
 pub enum ExecutionBatchPrepareError<E> {
     Parse(ExecutionBatchParseError),
-    Prepare {
-        statement_index: usize,
-        error:           E,
-    },
+    Prepare { statement_index: usize, error: E },
 }
 
 impl<E: std::fmt::Display> std::fmt::Display for ExecutionBatchPrepareError<E> {
@@ -110,14 +103,14 @@ pub fn parse_execution_statement(statement: &str) -> Result<ParsedExecutionState
 
     match parse_execute_as(statement)? {
         Some(envelope) => Ok(ParsedExecutionStatement {
-            sql:                 envelope.inner_sql.clone(),
+            sql: envelope.inner_sql.clone(),
             execute_as_username: Some(envelope.username),
-            parsed_statement:    parse_single_statement(&envelope.inner_sql).ok().flatten(),
+            parsed_statement: parse_single_statement(&envelope.inner_sql).ok().flatten(),
         }),
         None => Ok(ParsedExecutionStatement {
-            sql:                 trimmed.to_string(),
+            sql: trimmed.to_string(),
             execute_as_username: None,
-            parsed_statement:    parse_single_statement(trimmed).ok().flatten(),
+            parsed_statement: parse_single_statement(trimmed).ok().flatten(),
         }),
     }
 }
@@ -253,10 +246,45 @@ fn tail_has_separator_or_eof(mut tail: &str) -> bool {
     }
 }
 
+/// sqlparser statement spans can start at the table name and omit `CREATE TABLE`.
+/// Pull the slice back to the previous statement boundary when that prefix is real SQL.
+fn include_statement_prefix(sql: &str, span_start: usize) -> usize {
+    let prefix = sql[..span_start].trim_end();
+    let boundary = prefix.rfind(';').map(|index| index + 1).unwrap_or(0);
+    let missing = sql[boundary..span_start].trim();
+    if missing.is_empty() || is_comment_only(missing) {
+        return span_start;
+    }
+    let after_boundary = &sql[boundary..];
+    let trimmed = after_boundary.trim_start();
+    boundary + (after_boundary.len() - trimmed.len())
+}
+
+fn is_comment_only(text: &str) -> bool {
+    let mut rest = text.trim_start();
+    while !rest.is_empty() {
+        if let Some(after) = rest.strip_prefix("--") {
+            rest = match after.find('\n') {
+                Some(index) => after[index + 1..].trim_start(),
+                None => "",
+            };
+            continue;
+        }
+        if let Some(after) = rest.strip_prefix("/*") {
+            let Some(index) = after.find("*/") else {
+                return false;
+            };
+            rest = after[index + 2..].trim_start();
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
 fn parse_batch_with_sqlparser(sql: &str) -> Result<Vec<ParsedExecutionStatement>, BatchParseError> {
-    let dialect = KalamDbDialect::default();
-    let statements =
-        parse_sql_statements(sql, &dialect).map_err(|err| BatchParseError::new(err.to_string()))?;
+    let statements = crate::parser::KalamParser::parse(sql)
+        .map_err(|err| BatchParseError::new(err.to_string()))?;
 
     if statements.is_empty() {
         return Ok(Vec::new());
@@ -266,8 +294,9 @@ fn parse_batch_with_sqlparser(sql: &str) -> Result<Vec<ParsedExecutionStatement>
     let mut parsed = Vec::with_capacity(statements.len());
 
     for statement in statements {
-        let (start, end) = byte_range_for_span(sql, &line_starts, statement.span())
+        let (span_start, end) = byte_range_for_span(sql, &line_starts, statement.span())
             .ok_or_else(|| BatchParseError::new("Failed to resolve sqlparser statement span"))?;
+        let start = include_statement_prefix(sql, span_start);
         let raw_slice = sql[start..end].trim();
         if !raw_slice.ends_with(';') && !tail_has_separator_or_eof(&sql[end..]) {
             return Err(BatchParseError::new(
@@ -277,20 +306,10 @@ fn parse_batch_with_sqlparser(sql: &str) -> Result<Vec<ParsedExecutionStatement>
 
         let slice = raw_slice.trim_end_matches(';').trim_end();
         if !slice.is_empty() {
-            let reparsed = parse_sql_statements(slice, &dialect).map_err(|_| {
-                BatchParseError::new(
-                    "sqlparser statement span did not contain a valid standalone statement",
-                )
-            })?;
-            if reparsed.len() != 1 {
-                return Err(BatchParseError::new(
-                    "sqlparser statement span resolved to multiple statements",
-                ));
-            }
             parsed.push(ParsedExecutionStatement {
-                sql:                 slice.to_string(),
+                sql: slice.to_string(),
                 execute_as_username: None,
-                parsed_statement:    reparsed.into_iter().next(),
+                parsed_statement: Some(statement),
             });
         }
     }
@@ -623,7 +642,7 @@ mod tests {
             err,
             ExecutionBatchParseError::Statement {
                 statement_index: 2,
-                message:         "EXECUTE AS username cannot be empty".to_string(),
+                message: "EXECUTE AS username cannot be empty".to_string(),
             }
         );
     }

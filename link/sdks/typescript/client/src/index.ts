@@ -101,7 +101,7 @@ export type {
 } from './types.js';
 
 // Client
-export { createClient, KalamDBClient } from './client.js';
+export { createClient, KalamDBClient, KalamRoutineError } from './client.js';
 
 export {
   createLiveQueryDescriptor,
@@ -167,6 +167,7 @@ export {
 export type {
   FileRefContext,
   FileRefData,
+  PgCatalogFile,
 } from './file_ref.js';
 
 // WASM bindings (re-exported so advanced users can access low-level API)

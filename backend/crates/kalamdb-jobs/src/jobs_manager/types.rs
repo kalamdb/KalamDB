@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Weak,
@@ -24,7 +24,7 @@ use crate::executors::JobRegistry;
 /// instant job dispatch rather than relying on polling intervals.
 pub struct JobsManager {
     /// System table provider for job persistence
-    pub(crate) jobs_provider:      Arc<JobsTableProvider>,
+    pub(crate) jobs_provider: Arc<JobsTableProvider>,
     /// System table provider for per-node job state
     pub(crate) job_nodes_provider: Arc<JobNodesTableProvider>,
 
@@ -35,21 +35,23 @@ pub struct JobsManager {
     pub(crate) node_id: NodeId,
 
     /// Flag for graceful shutdown (AtomicBool for lock-free access in hot loop)
-    pub(crate) shutdown:        AtomicBool,
+    pub(crate) shutdown: AtomicBool,
     /// Wakes the run loop immediately so it does not wait for the next tick while shutting down.
     pub(crate) shutdown_notify: Notify,
     /// AppContext for global services - uses Weak to avoid Arc cycle
     /// (AppContext holds Arc<JobsManager>, so we use Weak here)
-    pub(crate) app_context:     Weak<AppContext>,
+    pub(crate) app_context: Weak<AppContext>,
 
     /// Channel sender for awakening jobs immediately when CreateJobNode is applied.
     /// The state machine applier sends job_ids here to wake up the run_loop.
-    pub(crate) awake_sender:   mpsc::UnboundedSender<JobId>,
+    pub(crate) awake_sender: mpsc::UnboundedSender<JobId>,
     /// Channel receiver for job awakening (consumed by run_loop)
     pub(crate) awake_receiver: parking_lot::Mutex<Option<mpsc::UnboundedReceiver<JobId>>>,
     /// Job IDs currently executing on this process. Used to fail zombies whose
     /// executor task dropped while `system.jobs.status` stayed Running.
     pub(crate) executing_jobs: parking_lot::Mutex<HashSet<JobId>>,
+    /// Waiters blocked on a job reaching a terminal status.
+    job_finished: parking_lot::Mutex<HashMap<JobId, Arc<Notify>>>,
 }
 
 impl JobsManager {
@@ -78,6 +80,22 @@ impl JobsManager {
             awake_sender,
             awake_receiver: parking_lot::Mutex::new(Some(awake_receiver)),
             executing_jobs: parking_lot::Mutex::new(HashSet::new()),
+            job_finished: parking_lot::Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Subscribe before reading job status so a completion cannot be missed.
+    pub fn job_finished_subscription(&self, job_id: &JobId) -> Arc<Notify> {
+        self.job_finished
+            .lock()
+            .entry(job_id.clone())
+            .or_insert_with(|| Arc::new(Notify::new()))
+            .clone()
+    }
+
+    pub(crate) fn notify_job_finished(&self, job_id: &JobId) {
+        if let Some(notify) = self.job_finished.lock().remove(job_id) {
+            notify.notify_waiters();
         }
     }
 
@@ -125,7 +143,7 @@ impl JobsManager {
 /// or the task is dropped.
 pub(crate) struct ExecutingJobGuard<'a> {
     manager: &'a JobsManager,
-    job_id:  JobId,
+    job_id: JobId,
 }
 
 impl Drop for ExecutingJobGuard<'_> {

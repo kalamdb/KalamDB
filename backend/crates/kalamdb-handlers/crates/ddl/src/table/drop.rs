@@ -5,11 +5,16 @@
 
 use std::sync::Arc;
 
-use kalamdb_commons::{models::TableId, schemas::TableType, JobId};
+use kalamdb_commons::{
+    models::{StorageId, TableId},
+    schemas::{TableDefinition, TableType},
+    JobId,
+};
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
     operations::table_cleanup::cleanup_table_data_internal,
+    schema_registry::CachedTableData,
     sql::{
         context::{ExecutionContext, ExecutionResult, ScalarValue},
         executor::handlers::TypedStatementHandler,
@@ -34,24 +39,21 @@ pub struct DropTableHandler {
     app_context: Arc<AppContext>,
 }
 
-const CLEANUP_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const CLEANUP_WAIT_FALLBACK: Duration = Duration::from_millis(20);
 const CLEANUP_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
+
+pub(crate) fn storage_id_for_cleanup(table: &TableDefinition) -> StorageId {
+    CachedTableData::extract_storage_id(table).unwrap_or_else(StorageId::local)
+}
 
 pub(crate) fn capture_storage_cleanup_details(
     app_context: &Arc<AppContext>,
-    table_id: &TableId,
+    storage_id: &StorageId,
     table_type: TableType,
 ) -> Result<StorageCleanupDetails, KalamDbError> {
-    let registry = app_context.schema_registry();
-    let cached = registry.get(table_id).ok_or_else(|| {
-        KalamDbError::InvalidOperation(format!("Table cache entry not found for {}", table_id))
-    })?;
-
-    let storage_id = cached.storage_id.clone();
-
     let storage = app_context
         .storage_registry()
-        .get_storage(&storage_id)
+        .get_storage(storage_id)
         .map_err(|e| KalamDbError::Other(format!("Failed to get storage: {}", e)))?
         .ok_or_else(|| {
             KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
@@ -77,12 +79,13 @@ pub(crate) fn capture_storage_cleanup_details(
     };
 
     Ok(StorageCleanupDetails {
-        storage_id,
+        storage_id: storage_id.clone(),
         base_directory: base_dir,
         relative_path_template: relative_template,
     })
 }
 
+#[allow(dead_code)]
 pub(crate) async fn schedule_drop_table_cleanup(
     app_context: &Arc<AppContext>,
     table_id: &TableId,
@@ -119,6 +122,7 @@ pub(crate) async fn wait_for_cleanup_job(
             )));
         }
 
+        let notify = job_manager.job_finished_subscription(&job_id);
         let Some(job) = job_manager.get_job(&job_id).await? else {
             return Err(KalamDbError::ExecutionError(format!(
                 "Cleanup job {} for {} was not found",
@@ -135,13 +139,18 @@ pub(crate) async fn wait_for_cleanup_job(
                 )));
             },
             JobStatus::New | JobStatus::Queued | JobStatus::Running | JobStatus::Retrying => {
-                sleep(CLEANUP_WAIT_POLL_INTERVAL).await;
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                let slice = CLEANUP_WAIT_FALLBACK.min(remaining);
+                tokio::select! {
+                    _ = notify.notified() => {},
+                    _ = sleep(slice) => {},
+                }
             },
         }
     }
 }
 
-async fn enqueue_drop_table_cleanup_job(
+pub(crate) async fn enqueue_drop_table_cleanup_job(
     app_context: &Arc<AppContext>,
     table_id: &TableId,
     table_type: TableType,
@@ -255,6 +264,12 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             }
         }
 
+        let storage_id = table_metadata
+            .as_ref()
+            .or(registry_def.as_deref())
+            .map(storage_id_for_cleanup)
+            .unwrap_or_else(StorageId::local);
+
         // Log table details before dropping
         if let Some(metadata) = table_metadata {
             log::debug!(
@@ -266,10 +281,38 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         }
 
         let app_ctx = self.app_context.clone();
-        let tid = table_id.clone();
+        let ns_for_type = statement.namespace_id.clone();
+        let tn_for_type = statement.table_name.as_str().to_string();
+        let implicit_row_type_id = run_blocking(move || {
+            let stores = app_ctx.system_tables().catalog_stores();
+            if let Some(catalog_type) = stores
+                .find_type(&ns_for_type, &tn_for_type)
+                .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+            {
+                if catalog_type.kind == kalamdb_commons::models::CatalogTypeKind::ImplicitTableRow {
+                    if let Some(dependent) = stores
+                        .type_is_referenced(&catalog_type.type_id)
+                        .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?
+                    {
+                        return Err(KalamDbError::InvalidOperation(format!(
+                            "cannot drop table {}.{}: row type is referenced by {dependent}",
+                            ns_for_type, tn_for_type
+                        )));
+                    }
+                    return Ok::<Option<kalamdb_commons::models::TypeId>, KalamDbError>(Some(
+                        catalog_type.type_id,
+                    ));
+                }
+            }
+            Ok(None)
+        })
+        .await?;
+
+        let app_ctx = self.app_context.clone();
         let at = actual_type;
         let storage_details =
-            run_blocking(move || capture_storage_cleanup_details(&app_ctx, &tid, at)).await?;
+            run_blocking(move || capture_storage_cleanup_details(&app_ctx, &storage_id, at))
+                .await?;
 
         // Cancel any active flush jobs for this table before dropping
         let job_manager = self.app_context.job_manager();
@@ -348,6 +391,19 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             .await
             .map_err(|e| KalamDbError::ExecutionError(format!("DROP TABLE failed: {}", e)))?;
 
+        if let Some(type_id) = implicit_row_type_id {
+            let app_ctx = self.app_context.clone();
+            let tid = type_id.clone();
+            let _ = run_blocking(move || {
+                let stores = app_ctx.system_tables().catalog_stores();
+                let _ = stores.drop_type(&tid);
+                app_ctx.schema_registry().type_registry().invalidate(&tid);
+                Ok::<(), KalamDbError>(())
+            })
+            .await;
+            let _ = crate::catalog_type::replicate_dropped_type(&self.app_context, type_id).await;
+        }
+
         self.app_context
             .system_tables()
             .table_policies()
@@ -425,7 +481,7 @@ mod tests {
 
     use arrow::datatypes::{DataType, Field, Schema};
     use kalamdb_commons::{
-        models::{NamespaceId, TableName, UserId},
+        models::{SchemaId, TableName, UserId},
         schemas::TableType,
         Role,
     };
@@ -453,7 +509,7 @@ mod tests {
         ]));
 
         CreateTableStatement {
-            namespace_id: NamespaceId::default(),
+            namespace_id: SchemaId::default(),
             table_name,
             table_type: TableType::User,
             schema,
@@ -477,7 +533,7 @@ mod tests {
         let app_ctx = test_app_context_simple();
         let table_name =
             TableName::new(format!("cleanup_drop_{}", chrono::Utc::now().timestamp_millis()));
-        let table_id = kalamdb_commons::models::TableId::new(NamespaceId::default(), table_name);
+        let table_id = kalamdb_commons::models::TableId::new(SchemaId::default(), table_name);
 
         let store = kalamdb_tables::new_indexed_user_table_store(
             app_ctx.storage_backend(),
@@ -517,7 +573,7 @@ mod tests {
         assert!(create_result.is_ok(), "CREATE TABLE failed: {:?}", create_result);
 
         let table_id =
-            kalamdb_commons::models::TableId::new(NamespaceId::default(), table_name.clone());
+            kalamdb_commons::models::TableId::new(SchemaId::default(), table_name.clone());
         let main_partition =
             kalamdb_store::storage_trait::Partition::new(format!("user_{}", table_id));
         let pk_partition =
@@ -529,7 +585,7 @@ mod tests {
         let drop_result = drop_handler
             .execute(
                 DropTableStatement {
-                    namespace_id: NamespaceId::default(),
+                    namespace_id: SchemaId::default(),
                     table_name,
                     table_type: TableKind::User,
                     if_exists: false,

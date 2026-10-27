@@ -124,21 +124,21 @@ mod tests {
 
     fn test_context(root: &std::path::Path) -> WorkflowContext {
         WorkflowContext {
-            project_root:       root.to_path_buf(),
-            config:             parse_minimal_project_config(),
-            cli_config:         crate::config::CLIConfiguration::default(),
-            use_color:          false,
-            animations:         true,
-            agent:              false,
-            json:               false,
-            project_dir:        None,
-            env_override:       None,
+            project_root: root.to_path_buf(),
+            config: parse_minimal_project_config(),
+            cli_config: crate::config::CLIConfiguration::default(),
+            use_color: false,
+            animations: true,
+            agent: false,
+            json: false,
+            project_dir: None,
+            env_override: None,
             namespace_override: None,
-            url_override:       None,
-            global:             false,
-            host:               None,
-            port:               None,
-            instance:           None,
+            url_override: None,
+            global: false,
+            host: None,
+            port: None,
+            instance: None,
         }
     }
 

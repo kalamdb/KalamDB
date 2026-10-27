@@ -28,33 +28,33 @@ use crate::{error::FlushResultExt, FlushError, FlushManifestHelper, ManifestServ
 
 #[derive(Debug, Clone)]
 pub struct SmallSegmentCompactionSelection {
-    pub segments:            Vec<SegmentMetadata>,
+    pub segments: Vec<SegmentMetadata>,
     pub eligible_tail_count: usize,
-    pub total_rows:          u64,
+    pub total_rows: u64,
     pub target_segment_rows: u64,
-    pub schema_version:      u32,
+    pub schema_version: u32,
     pub older_segment_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmallSegmentCompactionResult {
-    pub merged_segments:     usize,
-    pub rows_merged:         u64,
-    pub output_path:         Option<String>,
+    pub merged_segments: usize,
+    pub rows_merged: u64,
+    pub output_path: Option<String>,
     pub eligible_tail_count: usize,
 }
 
 #[derive(Clone)]
 pub struct SmallSegmentCompactionContext {
-    pub manifest_service:     Arc<ManifestService>,
-    pub storage_cached:       Arc<StorageCached>,
-    pub settings:             FlushCompactionSettings,
-    pub schema_version:       u32,
-    pub schema:               SchemaRef,
-    pub primary_key_field:    String,
+    pub manifest_service: Arc<ManifestService>,
+    pub storage_cached: Arc<StorageCached>,
+    pub settings: FlushCompactionSettings,
+    pub schema_version: u32,
+    pub schema: SchemaRef,
+    pub primary_key_field: String,
     pub bloom_filter_columns: Vec<String>,
-    pub indexed_columns:      Vec<(u64, String)>,
-    pub compression:          TableCompression,
+    pub indexed_columns: Vec<(u64, String)>,
+    pub compression: TableCompression,
 }
 
 impl SmallSegmentCompactionContext {
@@ -85,35 +85,35 @@ impl SmallSegmentCompactionContext {
 
     fn schema_context(&self) -> CompactionSchemaContext {
         CompactionSchemaContext {
-            schema:               Arc::clone(&self.schema),
-            primary_key_field:    self.primary_key_field.clone(),
+            schema: Arc::clone(&self.schema),
+            primary_key_field: self.primary_key_field.clone(),
             bloom_filter_columns: self.bloom_filter_columns.clone(),
-            indexed_columns:      self.indexed_columns.clone(),
-            compression:          self.compression,
+            indexed_columns: self.indexed_columns.clone(),
+            compression: self.compression,
         }
     }
 }
 
 struct CompactionSchemaContext {
-    schema:               SchemaRef,
-    primary_key_field:    String,
+    schema: SchemaRef,
+    primary_key_field: String,
     bloom_filter_columns: Vec<String>,
-    indexed_columns:      Vec<(u64, String)>,
-    compression:          TableCompression,
+    indexed_columns: Vec<(u64, String)>,
+    compression: TableCompression,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct LatestVersion {
-    seq:     i64,
+    seq: i64,
     deleted: bool,
 }
 
 struct CompactedWriteResult {
-    filename:     String,
-    row_count:    u64,
-    size_bytes:   u64,
-    min_version:      kalamdb_commons::ids::VersionId,
-    max_version:      kalamdb_commons::ids::VersionId,
+    filename: String,
+    row_count: u64,
+    size_bytes: u64,
+    min_version: kalamdb_commons::ids::VersionId,
+    max_version: kalamdb_commons::ids::VersionId,
     column_stats: HashMap<u64, ColumnStats>,
 }
 
@@ -370,9 +370,9 @@ pub async fn compact_small_segments(
     );
 
     Ok(Some(SmallSegmentCompactionResult {
-        merged_segments:     selection.segments.len(),
-        rows_merged:         write_result.as_ref().map_or(0, |write| write.row_count),
-        output_path:         write_result.map(|write| write.filename),
+        merged_segments: selection.segments.len(),
+        rows_merged: write_result.as_ref().map_or(0, |write| write.row_count),
+        output_path: write_result.map(|write| write.filename),
         eligible_tail_count: selection.eligible_tail_count,
     }))
 }
@@ -631,7 +631,7 @@ async fn write_compacted_winners(
     let writer_compression = schema_context.compression;
     let writer_options = storage_cached.parquet_writer_options(writer_compression);
     let writer_handle = tokio::task::spawn_blocking(move || {
-        kalamdb_filestore::parquet::writer::serialize_record_batch_receiver_to_parquet_with_options(
+        kalamdb_filestore::parquet::writer::serialize_record_batch_receiver_to_temp_parquet(
             writer_schema,
             receiver,
             writer_bloom_columns,
@@ -710,7 +710,7 @@ async fn write_compacted_winners(
 
     drop(sender);
 
-    let parquet_bytes = writer_handle
+    let temp_file = writer_handle
         .await
         .map_err(|error| FlushError::Other(format!("Compacted writer join failed: {error}")))?
         .into_flush_error("Failed to serialize compacted Parquet batches")?;
@@ -719,8 +719,19 @@ async fn write_compacted_winners(
         return Ok(None);
     }
 
-    let put_result = storage_cached
-        .put(table_type, table_id, user_id, &compact_temp_filename, parquet_bytes)
+    let size_bytes = temp_file
+        .as_file()
+        .metadata()
+        .map_err(|error| FlushError::Other(format!("compacted parquet metadata: {error}")))?
+        .len();
+    storage_cached
+        .upload_file(
+            table_type,
+            table_id,
+            user_id,
+            &compact_temp_filename,
+            temp_file.as_file(),
+        )
         .await
         .into_flush_error("Failed to write compacted Parquet temp file")?;
 
@@ -728,7 +739,7 @@ async fn write_compacted_winners(
     Ok(Some(CompactedWriteResult {
         filename: compact_filename,
         row_count: accumulator.row_count,
-        size_bytes: put_result.size as u64,
+        size_bytes,
         min_version,
         max_version,
         column_stats: accumulator.column_stats,
@@ -802,7 +813,9 @@ fn optional_column_index(batch: &RecordBatch, column_name: &str) -> Option<usize
 fn seq_at(batch: &RecordBatch, seq_idx: usize, row_idx: usize) -> Result<i64> {
     let seq_col = batch.column(seq_idx);
     if seq_col.is_null(row_idx) {
-        return Err(FlushError::InvalidOperation("Compaction input row has NULL _version".to_string()));
+        return Err(FlushError::InvalidOperation(
+            "Compaction input row has NULL _version".to_string(),
+        ));
     }
 
     if let Some(array) = seq_col.as_any().downcast_ref::<Int64Array>() {
@@ -859,16 +872,17 @@ fn primary_key_at(
 
 #[derive(Default)]
 struct CompactionWriteAccumulator {
-    row_count:    u64,
-    min_version:      Option<kalamdb_commons::ids::VersionId>,
-    max_version:      Option<kalamdb_commons::ids::VersionId>,
+    row_count: u64,
+    min_version: Option<kalamdb_commons::ids::VersionId>,
+    max_version: Option<kalamdb_commons::ids::VersionId>,
     column_stats: HashMap<u64, ColumnStats>,
 }
 
 impl CompactionWriteAccumulator {
     fn observe(&mut self, batch: &RecordBatch, indexed_columns: &[(u64, String)]) {
         self.row_count = self.row_count.saturating_add(batch.num_rows() as u64);
-        let (batch_min_version, batch_max_version) = FlushManifestHelper::extract_version_range(batch);
+        let (batch_min_version, batch_max_version) =
+            FlushManifestHelper::extract_version_range(batch);
         self.min_version = Some(
             self.min_version
                 .map_or(batch_min_version, |current| std::cmp::min(current, batch_min_version)),
@@ -882,7 +896,9 @@ impl CompactionWriteAccumulator {
         merge_column_stats(&mut self.column_stats, batch_stats);
     }
 
-    fn version_range(&self) -> Result<(kalamdb_commons::ids::VersionId, kalamdb_commons::ids::VersionId)> {
+    fn version_range(
+        &self,
+    ) -> Result<(kalamdb_commons::ids::VersionId, kalamdb_commons::ids::VersionId)> {
         match (self.min_version, self.max_version) {
             (Some(min_version), Some(max_version)) => Ok((min_version, max_version)),
             _ => Err(FlushError::InvalidOperation(
@@ -928,12 +944,12 @@ fn is_missing_parquet_file_error_msg(message: &str) -> bool {
 mod tests {
     use std::collections::HashMap;
 
-    use kalamdb_commons::{ids::SeqId, NamespaceId, TableName};
+    use kalamdb_commons::{ids::SeqId, SchemaId, TableName};
 
     use super::*;
 
     fn manifest_with_segments(row_counts: &[u64]) -> Manifest {
-        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("events"));
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("events"));
         let mut manifest = Manifest::new(table_id, None);
 
         for (index, row_count) in row_counts.iter().enumerate() {

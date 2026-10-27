@@ -96,11 +96,18 @@ impl DdlExecutor {
                 }
                 // Index keys live in each replica's RocksDB. Backfill before the
                 // new schema is published so a reader never sees the index empty.
-                kalamdb_tables::sync_scalar_indexes(
+                let stores = app_context.system_tables().catalog_stores();
+                let resolved_arrow = app_context
+                    .schema_registry()
+                    .type_registry()
+                    .arrow_schema_for_table(&stores, &table_def)
+                    .ok();
+                kalamdb_tables::sync_scalar_indexes_with_arrow(
                     app_context.storage_backend(),
                     &table_id,
                     previous.as_deref(),
                     &table_def,
+                    resolved_arrow.as_deref(),
                 )
                 .map_err(|e| {
                     ApplierError::Execution(format!(
@@ -151,6 +158,26 @@ impl DdlExecutor {
         let table_id = table_id.clone();
         with_plan_cache_invalidation(app_context, move |app_context: Arc<AppContext>| async move {
             run_blocking_applier(move || {
+                if let Ok(Some(table_def)) =
+                    app_context.schema_registry().get_table_if_exists(&table_id)
+                {
+                    if table_def.table_type != TableType::System {
+                        if let Err(e) =
+                            crate::operations::table_cleanup::cleanup_table_partitions_sync(
+                                app_context.as_ref(),
+                                &table_id,
+                                table_def.table_type,
+                            )
+                        {
+                            log::warn!(
+                                "CommandExecutorImpl: Failed to clean up partitions for {}: {}",
+                                table_id.full_name(),
+                                e
+                            );
+                        }
+                    }
+                }
+
                 app_context
                     .schema_registry()
                     .delete_table_definition(&table_id)
@@ -173,7 +200,7 @@ mod tests {
         models::{
             datatypes::KalamDataType,
             schemas::{ColumnDefinition, TableDefinition, TableOptions},
-            NamespaceId, TableId, TableName,
+            SchemaId, TableId, TableName,
         },
         schemas::{ColumnDefault, TableType},
         Role, UserId,
@@ -197,7 +224,7 @@ mod tests {
         app_ctx.set_sql_executor(sql_executor.clone());
 
         // Build a minimal STREAM table definition (avoids storage registry requirements).
-        let namespace = NamespaceId::new("test_ns");
+        let namespace = SchemaId::new("test_ns");
         let table_name = TableName::new("test_table");
         let table_id = TableId::new(namespace.clone(), table_name.clone());
 

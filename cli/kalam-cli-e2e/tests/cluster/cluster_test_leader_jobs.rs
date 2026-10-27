@@ -34,10 +34,9 @@ fn cluster_test_leader_only_flush_jobs() {
 
     // Step 0: Setup namespace
     let namespace = generate_unique_namespace("leader_jobs");
-    let _ =
-        execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     thread::sleep(Duration::from_millis(20));
-    execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     thread::sleep(Duration::from_millis(20));
 
@@ -284,11 +283,10 @@ fn cluster_test_job_claiming() {
     let table_name = format!("claim_{}", rand_suffix());
     let full_table = format!("{}.{}", namespace, table_name);
 
-    let _ =
-        execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     thread::sleep(Duration::from_millis(20));
 
-    execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     thread::sleep(Duration::from_millis(20));
 
@@ -345,11 +343,10 @@ fn cluster_test_flush_job_nodes_completion() {
     let table_name = format!("flush_nodes_{}", rand_suffix());
     let full_table = format!("{}.{}", namespace, table_name);
 
-    let _ =
-        execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     thread::sleep(Duration::from_millis(20));
 
-    execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     thread::sleep(Duration::from_millis(20));
 
@@ -386,7 +383,7 @@ fn cluster_test_flush_job_nodes_completion() {
         );
     }
 
-    let _ = execute_on_node(&leader_url, &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&leader_url, &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Flush job_nodes completion test passed\n");
 }

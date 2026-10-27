@@ -23,27 +23,14 @@ use sqlparser::ast::{
     TableFactor, UnaryOperator, Value, Visit, VisitMut, Visitor, VisitorMut,
 };
 
-use crate::{dialect::KalamDbDialect, parser::utils::parse_sql_statements};
-
-pub fn apply_pg_table_function_rewrites(statements: &mut Vec<Statement>) {
-    let mut int_alias_visitor = PgIntAliasRewriter;
-    let _ = statements.visit(&mut int_alias_visitor);
-
-    let mut indkey_visitor = PgIndkeyExpandRewriter;
-    let _ = statements.visit(&mut indkey_visitor);
-
-    // Replace Tabularis `EXISTS (… pg_constraint … unnest(conkey) …)` before UNNEST
-    // rewrite: DataFusion plans EXISTS logically but cannot execute it physically.
-    let mut pk_exists_visitor = PgPkExistsRewriter;
-    let _ = statements.visit(&mut pk_exists_visitor);
-
-    let mut unnest_visitor = PgUnnestRewriter;
-    let _ = statements.visit(&mut unnest_visitor);
+pub fn apply_pg_table_function_rewrite(statement: &mut Statement) {
+    let mut visitor = PgTableFunctionCombinedRewriter;
+    let _ = statement.visit(&mut visitor);
 }
 
-struct PgIntAliasRewriter;
+struct PgTableFunctionCombinedRewriter;
 
-impl VisitorMut for PgIntAliasRewriter {
+impl VisitorMut for PgTableFunctionCombinedRewriter {
     type Break = ();
 
     fn post_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
@@ -52,40 +39,14 @@ impl VisitorMut for PgIntAliasRewriter {
             Expr::TypedString(typed) => rewrite_pg_int_aliases_in_data_type(&mut typed.data_type),
             _ => {},
         }
-        ControlFlow::Continue(())
-    }
-}
-
-struct PgIndkeyExpandRewriter;
-
-impl VisitorMut for PgIndkeyExpandRewriter {
-    type Break = ();
-
-    fn post_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
         if let Some(simplified) = simplify_indkey_string_to_array(expr) {
             *expr = simplified;
         }
-        ControlFlow::Continue(())
-    }
-}
-
-struct PgPkExistsRewriter;
-
-impl VisitorMut for PgPkExistsRewriter {
-    type Break = ();
-
-    fn post_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
         if let Some(rewritten) = rewrite_pg_pk_exists(expr) {
             *expr = rewritten;
         }
         ControlFlow::Continue(())
     }
-}
-
-struct PgUnnestRewriter;
-
-impl VisitorMut for PgUnnestRewriter {
-    type Break = ();
 
     fn post_visit_table_factor(
         &mut self,
@@ -223,7 +184,7 @@ fn rewrite_pg_pk_exists(expr: &Expr) -> Option<Expr> {
     };
     if *negated {
         Some(Expr::UnaryOp {
-            op:   UnaryOperator::Not,
+            op: UnaryOperator::Not,
             expr: Box::new(pk_column),
         })
     } else {
@@ -384,8 +345,7 @@ fn quoted_ident(ident: &Ident) -> String {
 }
 
 fn parse_single_table_factor(sql: &str) -> Option<TableFactor> {
-    let dialect = KalamDbDialect::default();
-    let statements = parse_sql_statements(sql, &dialect).ok()?;
+    let statements = super::KalamParser::parse(sql).ok()?;
     let Statement::Query(query) = statements.into_iter().next()? else {
         return None;
     };
@@ -431,14 +391,15 @@ fn function_arg_expr(arg: &FunctionArg) -> Option<&Expr> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{super::KalamParser, apply_pg_table_function_rewrite};
 
     #[test]
     fn unnest_rewrite_quotes_hostile_column_aliases() {
         let sql = r#"SELECT 1 FROM unnest(xs) AS t("col; DROP TABLE secrets")"#;
-        let mut statements =
-            parse_sql_statements(sql, &KalamDbDialect::default()).expect("parse unnest");
-        apply_pg_table_function_rewrites(&mut statements);
+        let mut statements = KalamParser::parse(sql).expect("parse unnest");
+        for statement in &mut statements {
+            apply_pg_table_function_rewrite(statement);
+        }
         let rewritten = statements[0].to_string();
         assert!(
             rewritten.contains("\"col; DROP TABLE secrets\""),

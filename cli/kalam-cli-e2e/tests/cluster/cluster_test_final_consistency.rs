@@ -33,8 +33,8 @@ fn cluster_test_final_row_count_consistency() {
     let namespace = generate_unique_namespace("final_cnt");
 
     // Setup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create multiple tables
@@ -121,7 +121,7 @@ fn cluster_test_final_row_count_consistency() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ All tables have consistent row counts across nodes\n");
 }
@@ -144,7 +144,7 @@ fn cluster_test_final_metadata_consistency() {
     // Create namespaces
     let namespaces: Vec<String> = (0..3).map(|i| format!("{}_{}", base_ns, i)).collect();
     for ns in &namespaces {
-        execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", ns))
+        execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", ns))
             .expect(&format!("Failed to create namespace {}", ns));
     }
 
@@ -223,7 +223,7 @@ fn cluster_test_final_metadata_consistency() {
 
     // Cleanup
     for ns in namespaces.iter().rev() {
-        let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", ns));
+        let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", ns));
     }
 
     println!("\n  ✅ Metadata is consistent across all nodes\n");
@@ -242,8 +242,8 @@ fn cluster_test_final_mixed_workload_consistency() {
     let namespace = generate_unique_namespace("final_mixed");
 
     // Setup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_on_node(
@@ -425,7 +425,7 @@ fn cluster_test_final_mixed_workload_consistency() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Final consistency verified after mixed workload\n");
 }
@@ -505,8 +505,8 @@ fn cluster_test_final_empty_table_consistency() {
     let namespace = generate_unique_namespace("final_empty");
 
     // Setup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table but don't insert anything
@@ -556,7 +556,7 @@ fn cluster_test_final_empty_table_consistency() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Empty table consistency verified\n");
 }

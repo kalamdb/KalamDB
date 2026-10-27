@@ -7,9 +7,9 @@ use crate::epochs::MembershipEpoch;
 /// Captures the membership generation used by a bound live evaluator.
 #[derive(Clone)]
 pub struct AuthorizationDependencyGuard {
-    relation_table:      TableId,
+    relation_table: TableId,
     expected_generation: u64,
-    source:              Arc<dyn MembershipEpoch>,
+    source: Arc<dyn MembershipEpoch>,
 }
 
 impl std::fmt::Debug for AuthorizationDependencyGuard {

@@ -26,8 +26,8 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    decode as bincode_decode, encode as bincode_encode, get_coordinator, ApplyResult,
-    KalamStateMachine, PendingBuffer, PendingCommand, StateMachineSnapshot,
+    decode, encode, get_coordinator, ApplyResult, KalamStateMachine, PendingBuffer, PendingCommand,
+    StateMachineSnapshot,
 };
 use crate::{
     applier::SharedDataApplier, assign_entry_versions, DataResponse, GroupId, RaftCommand,
@@ -37,7 +37,7 @@ use crate::{
 /// Row operation tracking (for metrics)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SharedOperation {
-    table_id:  TableId,
+    table_id: TableId,
     operation: OperationKind,
     row_count: u64,
 }
@@ -46,20 +46,20 @@ struct SharedOperation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SharedDataSnapshot {
     /// Total operations count
-    total_operations:  u64,
+    total_operations: u64,
     /// Recent operations for metrics
     recent_operations: Vec<SharedOperation>,
     /// Pending commands waiting for Meta to catch up (for crash recovery)
     #[serde(default)]
-    pending_commands:  Vec<PendingCommand>,
+    pending_commands: Vec<PendingCommand>,
 }
 
 enum SharedApplyCommand {
     Shared(SharedDataCommand),
     TransactionCommit {
         required_meta_index: u64,
-        transaction_id:      TransactionId,
-        mutations:           Vec<StagedMutation>,
+        transaction_id: TransactionId,
+        mutations: Vec<StagedMutation>,
     },
 }
 
@@ -97,23 +97,23 @@ impl SharedApplyCommand {
 /// are drained once Meta is satisfied.
 pub struct SharedDataStateMachine {
     /// Shard number (always 0 for shared tables in Phase 1)
-    shard:              u32,
+    shard: u32,
     /// Last applied log index (for idempotency)
     last_applied_index: AtomicU64,
     /// Last applied log term
-    last_applied_term:  AtomicU64,
+    last_applied_term: AtomicU64,
     /// Notifies waiters when the applied index advances.
-    last_applied_tx:    tokio::sync::watch::Sender<u64>,
+    last_applied_tx: tokio::sync::watch::Sender<u64>,
     /// Approximate data size in bytes
-    approximate_size:   AtomicU64,
+    approximate_size: AtomicU64,
     /// Total operations processed
-    total_operations:   AtomicU64,
+    total_operations: AtomicU64,
     /// Recent operations for metrics
-    recent_operations:  RwLock<Vec<SharedOperation>>,
+    recent_operations: RwLock<Vec<SharedOperation>>,
     /// Optional applier for persisting data to providers
-    applier:            RwLock<Option<Arc<dyn SharedDataApplier>>>,
+    applier: RwLock<Option<Arc<dyn SharedDataApplier>>>,
     /// Buffer for commands waiting for Meta to catch up
-    pending_buffer:     PendingBuffer,
+    pending_buffer: PendingBuffer,
 }
 
 impl std::fmt::Debug for SharedDataStateMachine {
@@ -522,10 +522,10 @@ impl KalamStateMachine for SharedDataStateMachine {
                     current_meta
                 );
                 self.pending_buffer.add(PendingCommand {
-                    log_index:           index,
-                    log_term:            term,
+                    log_index: index,
+                    log_term: term,
                     required_meta_index: required_meta,
-                    command_bytes:       command.to_vec(),
+                    command_bytes: command.to_vec(),
                 });
 
                 // Mark as applied (buffered) to satisfy Raft log progress
@@ -599,7 +599,7 @@ impl KalamStateMachine for SharedDataStateMachine {
             pending_commands,
         };
 
-        let data = bincode_encode(&snapshot)?;
+        let data = encode(&snapshot)?;
 
         Ok(StateMachineSnapshot::new(
             self.group_id(),
@@ -615,7 +615,7 @@ impl KalamStateMachine for SharedDataStateMachine {
                 "Cannot restore another shared shard's history".into(),
             ));
         }
-        let data: SharedDataSnapshot = bincode_decode(&snapshot.data)?;
+        let data: SharedDataSnapshot = decode(&snapshot.data)?;
 
         {
             let mut ops = self.recent_operations.write();
@@ -653,7 +653,7 @@ mod tests {
 
     use async_trait::async_trait;
     use kalamdb_commons::{
-        models::{rows::Row, NamespaceId, OperationKind, UserId},
+        models::{rows::Row, OperationKind, SchemaId, UserId},
         TableId,
     };
     use parking_lot::Mutex;
@@ -717,11 +717,11 @@ mod tests {
             versions: &[kalamdb_commons::ids::VersionId],
         ) -> Result<crate::TransactionApplyResult, RaftError> {
             Ok(crate::TransactionApplyResult {
-                rows_affected:      mutations.len(),
-                log_index:          versions.first().map(|v| v.as_u64() >> 16).unwrap_or(1),
+                rows_affected: mutations.len(),
+                log_index: versions.first().map(|v| v.as_u64() >> 16).unwrap_or(1),
                 notifications_sent: 0,
-                manifest_updates:   0,
-                publisher_events:   0,
+                manifest_updates: 0,
+                publisher_events: 0,
             })
         }
     }
@@ -774,11 +774,11 @@ mod tests {
             versions: &[kalamdb_commons::ids::VersionId],
         ) -> Result<crate::TransactionApplyResult, RaftError> {
             Ok(crate::TransactionApplyResult {
-                rows_affected:      mutations.len(),
-                log_index:          versions.first().map(|v| v.as_u64() >> 16).unwrap_or(1),
+                rows_affected: mutations.len(),
+                log_index: versions.first().map(|v| v.as_u64() >> 16).unwrap_or(1),
                 notifications_sent: 0,
-                manifest_updates:   0,
-                publisher_events:   0,
+                manifest_updates: 0,
+                publisher_events: 0,
             })
         }
     }
@@ -800,12 +800,12 @@ mod tests {
     async fn apply_rejects_non_owning_group_before_mutating() {
         let sm = SharedDataStateMachine::with_applier(1, Arc::new(TransactionBatchSharedApplier));
         let insert = SharedDataCommand::Insert {
-            table_id:            TableId::new("app".into(), "owned_by_zero".into()),
-            rows:                vec![],
-            encoded_fields:      vec![],
+            table_id: TableId::new("app".into(), "owned_by_zero".into()),
+            rows: vec![],
+            encoded_fields: vec![],
             required_meta_index: 0,
-            transaction_id:      None,
-            actor_user_id:       None,
+            transaction_id: None,
+            actor_user_id: None,
         };
         assert!(sm.apply_command(insert, &[]).await.is_err());
         assert_eq!(sm.total_operations.load(Ordering::Relaxed), 0);
@@ -816,12 +816,12 @@ mod tests {
         let sm = SharedDataStateMachine::default();
 
         let cmd = SharedDataCommand::Insert {
-            table_id:            TableId::new(NamespaceId::default(), "config".into()),
-            rows:                vec![],
-            encoded_fields:      Vec::new(),
+            table_id: TableId::new(SchemaId::default(), "config".into()),
+            rows: vec![],
+            encoded_fields: Vec::new(),
             required_meta_index: 0,
-            transaction_id:      None,
-            actor_user_id:       None,
+            transaction_id: None,
+            actor_user_id: None,
         };
         let cmd_bytes = crate::codec::command_codec::encode_shared_data_command(&cmd).unwrap();
 
@@ -837,12 +837,12 @@ mod tests {
 
         // Insert
         let insert = SharedDataCommand::Insert {
-            table_id:            TableId::new(NamespaceId::default(), "settings".into()),
-            rows:                vec![],
-            encoded_fields:      Vec::new(),
+            table_id: TableId::new(SchemaId::default(), "settings".into()),
+            rows: vec![],
+            encoded_fields: Vec::new(),
             required_meta_index: 0,
-            transaction_id:      None,
-            actor_user_id:       None,
+            transaction_id: None,
+            actor_user_id: None,
         };
         sm.apply(1, 1, &crate::codec::command_codec::encode_shared_data_command(&insert).unwrap())
             .await
@@ -850,13 +850,13 @@ mod tests {
 
         // Update
         let update = SharedDataCommand::Update {
-            table_id:            TableId::new(NamespaceId::default(), "settings".into()),
-            updates:             vec![],
-            pk_values:           None,
-            filter:              None,
+            table_id: TableId::new(SchemaId::default(), "settings".into()),
+            updates: vec![],
+            pk_values: None,
+            filter: None,
             required_meta_index: 0,
-            transaction_id:      None,
-            actor_user_id:       None,
+            transaction_id: None,
+            actor_user_id: None,
         };
         sm.apply(2, 1, &crate::codec::command_codec::encode_shared_data_command(&update).unwrap())
             .await
@@ -864,11 +864,11 @@ mod tests {
 
         // Delete
         let delete = SharedDataCommand::Delete {
-            table_id:            TableId::new(NamespaceId::default(), "settings".into()),
-            pk_values:           None,
+            table_id: TableId::new(SchemaId::default(), "settings".into()),
+            pk_values: None,
             required_meta_index: 0,
-            transaction_id:      None,
-            actor_user_id:       None,
+            transaction_id: None,
+            actor_user_id: None,
         };
         sm.apply(3, 1, &crate::codec::command_codec::encode_shared_data_command(&delete).unwrap())
             .await
@@ -884,7 +884,7 @@ mod tests {
             assert_eq!(ops[0].operation, OperationKind::Insert);
             assert_eq!(ops[1].operation, OperationKind::Update);
             assert_eq!(ops[2].operation, OperationKind::Delete);
-            assert_eq!(ops[0].table_id, TableId::new(NamespaceId::default(), "settings".into()));
+            assert_eq!(ops[0].table_id, TableId::new(SchemaId::default(), "settings".into()));
         }
     }
 
@@ -895,31 +895,31 @@ mod tests {
             0,
             Arc::new(RecordingSharedDataApplier::new(actor_records.clone())),
         );
-        let table_id = TableId::new(NamespaceId::default(), "settings".into());
+        let table_id = TableId::new(SchemaId::default(), "settings".into());
         let insert_actor = UserId::from("insert_actor");
         let update_actor = UserId::from("update_actor");
         let delete_actor = UserId::from("delete_actor");
 
         let insert = SharedDataCommand::Insert {
-            table_id:            table_id.clone(),
-            rows:                vec![],
-            encoded_fields:      Vec::new(),
+            table_id: table_id.clone(),
+            rows: vec![],
+            encoded_fields: Vec::new(),
             required_meta_index: 0,
-            transaction_id:      None,
-            actor_user_id:       Some(insert_actor.clone()),
+            transaction_id: None,
+            actor_user_id: Some(insert_actor.clone()),
         };
         sm.apply(1, 1, &crate::codec::command_codec::encode_shared_data_command(&insert).unwrap())
             .await
             .unwrap();
 
         let update = SharedDataCommand::Update {
-            table_id:            table_id.clone(),
-            updates:             vec![],
-            pk_values:           None,
-            filter:              Some("1".to_string()),
+            table_id: table_id.clone(),
+            updates: vec![],
+            pk_values: None,
+            filter: Some("1".to_string()),
             required_meta_index: 0,
-            transaction_id:      None,
-            actor_user_id:       Some(update_actor.clone()),
+            transaction_id: None,
+            actor_user_id: Some(update_actor.clone()),
         };
         sm.apply(2, 1, &crate::codec::command_codec::encode_shared_data_command(&update).unwrap())
             .await
@@ -951,12 +951,12 @@ mod tests {
     async fn test_shared_data_state_machine_transaction_commit() {
         let sm = SharedDataStateMachine::with_applier(0, Arc::new(TransactionBatchSharedApplier));
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::default(), "config".into());
+        let table_id = TableId::new(SchemaId::default(), "config".into());
 
         let cmd = RaftCommand::TransactionCommit {
             required_meta_index: 0,
-            transaction_id:      transaction_id.clone(),
-            mutations:           vec![StagedMutation::new(
+            transaction_id: transaction_id.clone(),
+            mutations: vec![StagedMutation::new(
                 transaction_id,
                 table_id,
                 TableType::Shared,

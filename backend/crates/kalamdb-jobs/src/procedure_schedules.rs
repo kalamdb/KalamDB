@@ -19,12 +19,16 @@ use kalamdb_system::{providers::catalog::schedule_timing::advance_schedule_run, 
 use tokio::task::JoinSet;
 
 const MAX_RUNNING: usize = 8;
-const MISFIRE_GRACE_MS: i64 = 2000;
+/// A due firing still runs if the scheduler sees it within this window.
+/// The wakeup interval is one second, but a busy leader can spend several
+/// seconds inside a tick. Two seconds caused every one-second schedule to
+/// skip for the whole busy period.
+const MISFIRE_GRACE_MS: i64 = 15_000;
 const CLAIM_GRACE_MS: i64 = 60_000;
 
 #[derive(Default)]
 pub(crate) struct ProcedureSchedules {
-    running:      JoinSet<()>,
+    running: JoinSet<()>,
     leader_since: Option<i64>,
 }
 
@@ -68,9 +72,9 @@ impl ProcedureSchedules {
                     let id = row.schedule_id.clone();
                     pending.push((
                         ScheduleUpdate {
-                            schedule_id:      id,
+                            schedule_id: id,
                             expected_version: Some(old_version),
-                            replacement:      Some(row),
+                            replacement: Some(row),
                         },
                         None,
                     ));
@@ -114,9 +118,9 @@ impl ProcedureSchedules {
             let id = row.schedule_id.clone();
             pending.push((
                 ScheduleUpdate {
-                    schedule_id:      id,
+                    schedule_id: id,
                     expected_version: Some(old_version),
-                    replacement:      Some(row),
+                    replacement: Some(row),
                 },
                 (!skip).then_some(scheduled_at),
             ));
@@ -157,6 +161,35 @@ fn procedure_timeout_ms(app: &AppContext) -> Result<i64, KalamDbError> {
         .config()
         .timeout;
     Ok(i64::try_from(timeout.as_millis()).unwrap_or(i64::MAX - CLAIM_GRACE_MS))
+}
+
+/// Count interval or cron slots that became due while a claim was still held
+/// and move `next_run_at` to the next slot after `now`.
+fn skip_overlapped_occurrences(row: &mut CatalogSchedule, now: i64) -> Result<(), KalamDbError> {
+    if row.next_run_at > now {
+        return Ok(());
+    }
+    row.skip_count =
+        row.skip_count
+            .saturating_add(overlapped_slots(row.interval_ms, row.next_run_at, now));
+    row.next_run_at = advance_schedule_run(
+        row.cron.as_deref(),
+        row.interval_ms,
+        &row.timezone,
+        row.next_run_at,
+        now,
+    )
+    .map_err(KalamDbError::InvalidSql)?;
+    Ok(())
+}
+
+fn overlapped_slots(interval_ms: Option<i64>, next_run_at: i64, now: i64) -> i64 {
+    let Some(interval) = interval_ms.filter(|ms| *ms >= 1000) else {
+        return 1;
+    };
+    let overdue = i128::from(now).saturating_sub(i128::from(next_run_at));
+    let slots = overdue / i128::from(interval) + 1;
+    i64::try_from(slots).unwrap_or(i64::MAX)
 }
 
 fn should_skip(
@@ -243,9 +276,13 @@ async fn complete_schedule(
             return Ok(());
         }
         let version = row.version.clone();
+        let now = Utc::now().timestamp_millis();
+        // The next tick may not run until after this claim ends. Occurrences
+        // that came due while it was held are overlaps, not a new run.
+        skip_overlapped_occurrences(&mut row, now)?;
         row.running_until = None;
         row.owner = None;
-        row.last_finished_at = Some(Utc::now().timestamp_millis());
+        row.last_finished_at = Some(now);
         row.last_error = error.clone();
         row.version = uuid::Uuid::new_v4().to_string();
         if compare_exchange_schedule(app, &claimed.schedule_id, Some(version), Some(row)).await? {
@@ -257,7 +294,7 @@ async fn complete_schedule(
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::{JobId, NamespaceId, RoutineId, ScheduleId, UserId};
+    use kalamdb_commons::{JobId, RoutineId, ScheduleId, SchemaId, UserId};
     use kalamdb_core::test_helpers::test_app_context_simple;
     use kalamdb_raft::{MetaCommand, MetaResponse, RaftExecutor};
     use kalamdb_system::JobType;
@@ -311,14 +348,14 @@ mod tests {
         // Exercise the real Raft codec/applier: one conflict must not cancel other CASes.
         let schedule = row();
         let update = ScheduleUpdate {
-            schedule_id:      schedule.schedule_id.clone(),
+            schedule_id: schedule.schedule_id.clone(),
             expected_version: None,
-            replacement:      Some(schedule.clone()),
+            replacement: Some(schedule.clone()),
         };
         let delete = ScheduleUpdate {
-            schedule_id:      schedule.schedule_id.clone(),
+            schedule_id: schedule.schedule_id.clone(),
             expected_version: Some(schedule.version),
-            replacement:      None,
+            replacement: None,
         };
         let executor = app.executor();
         let raft = executor.as_any().downcast_ref::<RaftExecutor>().unwrap();
@@ -406,25 +443,25 @@ mod tests {
 
     fn row() -> CatalogSchedule {
         CatalogSchedule {
-            schedule_id:       ScheduleId::new("app.clock"),
-            namespace_id:      NamespaceId::new("app"),
-            name:              "clock".into(),
-            routine_id:        RoutineId::new("app.tick"),
+            schedule_id: ScheduleId::new("app.clock"),
+            namespace_id: SchemaId::new("app"),
+            name: "clock".into(),
+            routine_id: RoutineId::new("app.tick"),
             principal_user_id: UserId::system(),
-            cron:              None,
-            interval_ms:       Some(1000),
-            timezone:          "UTC".into(),
-            enabled:           true,
-            next_run_at:       1000,
-            run_id:            None,
-            owner:             None,
-            running_until:     None,
-            last_started_at:   None,
-            last_finished_at:  None,
-            last_error:        None,
-            run_count:         0,
-            skip_count:        0,
-            version:           "created".into(),
+            cron: None,
+            interval_ms: Some(1000),
+            timezone: "UTC".into(),
+            enabled: true,
+            next_run_at: 1000,
+            run_id: None,
+            owner: None,
+            running_until: None,
+            last_started_at: None,
+            last_finished_at: None,
+            last_error: None,
+            run_count: 0,
+            skip_count: 0,
+            version: "created".into(),
         }
     }
 
@@ -433,10 +470,27 @@ mod tests {
         let mut row = row();
         assert!(!should_skip(&row, 1000, 1500, 0, 0));
         assert!(should_skip(&row, 1000, 1500, 1100, 0));
-        assert!(should_skip(&row, 1000, 4000, 0, 0));
+        assert!(!should_skip(&row, 1000, 4000, 0, 0));
+        assert!(should_skip(&row, 1000, 1000 + MISFIRE_GRACE_MS + 1, 0, 0));
         assert!(should_skip(&row, 1000, 1500, 0, MAX_RUNNING));
         row.running_until = Some(5000);
         assert!(should_skip(&row, 1000, 1500, 0, 0));
+    }
+
+    #[test]
+    fn completion_counts_slots_that_came_due_during_the_run() {
+        let mut due = row();
+        due.next_run_at = 1_000;
+        skip_overlapped_occurrences(&mut due, 3_843).unwrap();
+        assert_eq!(due.skip_count, 3);
+        assert!(due.next_run_at > 3_843, "next run must be in the future");
+
+        let mut future = row();
+        future.next_run_at = 5_000;
+        future.skip_count = 4;
+        skip_overlapped_occurrences(&mut future, 1_500).unwrap();
+        assert_eq!(future.skip_count, 4);
+        assert_eq!(future.next_run_at, 5_000);
     }
 
     #[tokio::test]
@@ -446,17 +500,17 @@ mod tests {
         assert!(compare_exchange_schedules(&app, Vec::new()).await.unwrap().is_empty());
         let initial = row();
         let update = ScheduleUpdate {
-            schedule_id:      initial.schedule_id.clone(),
+            schedule_id: initial.schedule_id.clone(),
             expected_version: None,
-            replacement:      Some(initial.clone()),
+            replacement: Some(initial.clone()),
         };
         assert!(compare_exchange_schedules(&app, vec![update.clone(); SCHEDULE_BATCH_SIZE + 1])
             .await
             .is_err());
         let delete = ScheduleUpdate {
-            schedule_id:      initial.schedule_id.clone(),
+            schedule_id: initial.schedule_id.clone(),
             expected_version: Some(initial.version),
-            replacement:      None,
+            replacement: None,
         };
         assert_eq!(
             compare_exchange_schedules(&app, vec![update.clone(), update, delete])

@@ -202,8 +202,8 @@ pub(crate) async fn resubscribe_all(
 
         let subscribe_msg = ClientMessage::Subscribe {
             subscription: SubscriptionRequest {
-                id:      subscription_id.clone(),
-                sql:     state.sql.clone(),
+                id: subscription_id.clone(),
+                sql: state.sql.clone(),
                 options: Some(options),
             },
         };

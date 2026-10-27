@@ -13,30 +13,30 @@ use std::{
 };
 
 const POSTGRESQL_JAR: MavenJar = MavenJar {
-    group:    "org/postgresql",
+    group: "org/postgresql",
     artifact: "postgresql",
-    version:  "42.7.5",
+    version: "42.7.5",
 };
 const HIKARI_JAR: MavenJar = MavenJar {
-    group:    "com/zaxxer",
+    group: "com/zaxxer",
     artifact: "HikariCP",
-    version:  "5.1.0",
+    version: "5.1.0",
 };
 const SLF4J_API_JAR: MavenJar = MavenJar {
-    group:    "org/slf4j",
+    group: "org/slf4j",
     artifact: "slf4j-api",
-    version:  "1.7.36",
+    version: "1.7.36",
 };
 const SLF4J_NOP_JAR: MavenJar = MavenJar {
-    group:    "org/slf4j",
+    group: "org/slf4j",
     artifact: "slf4j-nop",
-    version:  "1.7.36",
+    version: "1.7.36",
 };
 
 struct MavenJar {
-    group:    &'static str,
+    group: &'static str,
     artifact: &'static str,
-    version:  &'static str,
+    version: &'static str,
 }
 
 impl MavenJar {

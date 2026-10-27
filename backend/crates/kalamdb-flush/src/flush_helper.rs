@@ -7,10 +7,14 @@ use std::{collections::HashMap, sync::Arc};
 
 use datafusion::arrow::{array::*, compute, record_batch::RecordBatch};
 use kalamdb_commons::{
-    arrow_utils::compute_min_max, constants::SystemColumnNames, ids::{SeqId, VersionId}, TableId, UserId,
+    arrow_utils::compute_min_max,
+    constants::SystemColumnNames,
+    ids::{SeqId, VersionId},
+    PkBucketKey, TableId, UserId,
 };
 use kalamdb_store::StorageError;
-use kalamdb_system::{ColumnStats, Manifest, SegmentMetadata};
+use kalamdb_system::{ColumnStats, Manifest, ManifestCacheEntry, SegmentMetadata};
+use kalamdb_tables::manifest::ManifestAccessPlanner;
 
 use super::ManifestService;
 use crate::error::FlushError;
@@ -49,6 +53,17 @@ impl FlushManifestHelper {
     /// - Manifest with Syncing state indicates incomplete flush
     /// - Temp files (.parquet.tmp) can be cleaned up
     /// - Data remains safely in RocksDB
+    /// Restart the interval clock after superseded hot versions were dropped.
+    pub fn note_retained_hot(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<(), FlushError> {
+        self.manifest_service.note_retained_hot_window(table_id, user_id).map_err(|e| {
+            FlushError::Other(format!("Failed to restart flush interval for {}: {}", table_id, e))
+        })
+    }
+
     pub fn mark_syncing(
         &self,
         table_id: &TableId,
@@ -81,6 +96,26 @@ impl FlushManifestHelper {
         }
 
         Ok(0)
+    }
+
+    /// Decide which hot tombstones still mask a cold segment.
+    ///
+    /// A load failure keeps every tombstone. An empty or missing manifest means nothing
+    /// cold exists, so every tombstone can leave hot storage.
+    pub fn cold_mask(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        pk_column_id: Option<u64>,
+    ) -> TombstoneColdMask {
+        let Some(pk_column_id) = pk_column_id else {
+            return TombstoneColdMask::preserve_all();
+        };
+        match self.manifest_service.get_or_load(table_id, user_id) {
+            Ok(Some(entry)) => TombstoneColdMask::from_manifest(pk_column_id, entry),
+            Ok(None) => TombstoneColdMask::drop_all(),
+            Err(_) => TombstoneColdMask::preserve_all(),
+        }
     }
 
     pub fn with_flush_scope_lock<T, F>(
@@ -119,8 +154,10 @@ impl FlushManifestHelper {
             let min = compute::min(version_arr).unwrap_or(0);
             let max = compute::max(version_arr).unwrap_or(0);
             (
-                VersionId::try_from_i64(min).unwrap_or_else(|_| VersionId::try_from_local_sequence(1).expect("1")),
-                VersionId::try_from_i64(max).unwrap_or_else(|_| VersionId::try_from_local_sequence(1).expect("1")),
+                VersionId::try_from_i64(min)
+                    .unwrap_or_else(|_| VersionId::try_from_local_sequence(1).expect("1")),
+                VersionId::try_from_i64(max)
+                    .unwrap_or_else(|_| VersionId::try_from_local_sequence(1).expect("1")),
             )
         } else {
             // Placeholder for empty batches; SegmentMetadata still accepts SeqId(0).
@@ -217,6 +254,127 @@ impl FlushManifestHelper {
         );
 
         Ok(updated_manifest)
+    }
+
+    /// Reserve a batch filename by publishing an unreadable in-progress segment.
+    ///
+    /// Caller holds the flush scope lock. The Parquet upload happens after the lock
+    /// is released; `update_manifest_after_flush_with_stats_in_locked_scope` replaces
+    /// this segment by id once the file is durable.
+    pub fn reserve_flush_batch(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        min_version: VersionId,
+        max_version: VersionId,
+        schema_version: u32,
+    ) -> Result<(String, String), FlushError> {
+        let batch_number = self.get_next_batch_number(table_id, user_id)?;
+        let batch_filename = Self::generate_batch_filename(batch_number);
+        let temp_filename = Self::generate_temp_filename(batch_number);
+        let segment = SegmentMetadata::in_progress(
+            batch_filename.clone(),
+            batch_filename.clone(),
+            SeqId::from(min_version.as_i64()),
+            SeqId::from(max_version.as_i64()),
+            schema_version,
+        );
+        self.manifest_service
+            .persist_flushed_segment_in_locked_scope(table_id, user_id, segment)
+            .map_err(|error| {
+                FlushError::Other(format!(
+                    "Failed to reserve flush segment for {table_id} (user_id={:?}): {error}",
+                    user_id.map(UserId::as_str)
+                ))
+            })?;
+        Ok((batch_filename, temp_filename))
+    }
+
+    /// Mark a reserved segment unreadable after the upload fails.
+    ///
+    /// Caller holds the flush scope lock.
+    pub fn abandon_reserved_batch(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        batch_filename: &str,
+        min_version: VersionId,
+        max_version: VersionId,
+        schema_version: u32,
+    ) {
+        let mut segment = SegmentMetadata::in_progress(
+            batch_filename.to_string(),
+            batch_filename.to_string(),
+            SeqId::from(min_version.as_i64()),
+            SeqId::from(max_version.as_i64()),
+            schema_version,
+        );
+        segment.mark_tombstone();
+        if let Err(error) = self.manifest_service.persist_flushed_segment_in_locked_scope(
+            table_id,
+            user_id,
+            segment,
+        ) {
+            log::warn!(
+                "failed to tombstone reserved flush segment {batch_filename} for {table_id}: {error}"
+            );
+        }
+    }
+}
+
+/// Hot tombstones kept only while a cold segment can still contain the primary key.
+pub struct TombstoneColdMask {
+    column_id: Option<u64>,
+    manifest: Option<Arc<ManifestCacheEntry>>,
+    drop_all: bool,
+}
+
+impl TombstoneColdMask {
+    fn preserve_all() -> Self {
+        Self {
+            column_id: None,
+            manifest: None,
+            drop_all: false,
+        }
+    }
+
+    fn drop_all() -> Self {
+        Self {
+            column_id: None,
+            manifest: None,
+            drop_all: true,
+        }
+    }
+
+    fn from_manifest(column_id: u64, entry: Arc<ManifestCacheEntry>) -> Self {
+        Self {
+            column_id: Some(column_id),
+            manifest: Some(entry),
+            drop_all: false,
+        }
+    }
+
+    pub fn pk_column_id(indexed_columns: &[(u64, String)], pk_field: &str) -> Option<u64> {
+        indexed_columns
+            .iter()
+            .find(|(_, name)| name == pk_field)
+            .map(|(column_id, _)| *column_id)
+    }
+
+    /// True when this tombstone must stay in hot storage.
+    pub fn preserves(&self, pk: &PkBucketKey) -> bool {
+        if self.drop_all {
+            return false;
+        }
+        let (Some(column_id), Some(entry)) = (self.column_id, self.manifest.as_ref()) else {
+            return true;
+        };
+        if entry.manifest.segments.is_empty() {
+            return false;
+        }
+        !ManifestAccessPlanner::new()
+            .plan_by_pk_value(&entry.manifest, column_id, &pk.to_string())
+            .is_empty()
     }
 }
 

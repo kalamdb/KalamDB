@@ -9,7 +9,7 @@ pub(super) async fn handle_deploy(cli: &Cli, args: &DeployArgs) -> Result<()> {
     deploy::run_deploy(
         &ctx,
         &deploy::DeployOptions {
-            env:     cli.env.clone(),
+            env: cli.env.clone(),
             dry_run: args.dry_run,
         },
     )

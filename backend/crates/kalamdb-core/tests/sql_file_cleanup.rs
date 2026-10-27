@@ -1,5 +1,3 @@
-mod support;
-
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -10,7 +8,7 @@ use kalamdb_commons::{
     models::{
         datatypes::KalamDataType,
         schemas::{ColumnDefinition, TableDefinition, TableOptions},
-        NamespaceId, TableId, TableName, UserId,
+        SchemaId, TableId, TableName, UserId,
     },
     schemas::ColumnDefault,
     TableAccess, TableType,
@@ -18,11 +16,11 @@ use kalamdb_commons::{
 use kalamdb_core::{app_context::AppContext, sql::context::ExecutionContext};
 use kalamdb_store::test_utils::TestDb;
 use kalamdb_system::FileRef;
-use support::{create_cluster_app_context, create_executor, execute_ok, unique_namespace};
+use crate::support::{create_cluster_app_context, create_executor, execute_ok, unique_namespace};
 
 async fn create_user_file_table(
     app_ctx: &Arc<AppContext>,
-    namespace: &NamespaceId,
+    namespace: &SchemaId,
     table_name: &str,
 ) -> TableId {
     let table_id = TableId::new(namespace.clone(), TableName::new(table_name));
@@ -62,7 +60,7 @@ async fn create_user_file_table(
 
 async fn create_shared_file_table(
     app_ctx: &Arc<AppContext>,
-    namespace: &NamespaceId,
+    namespace: &SchemaId,
     table_name: &str,
 ) -> TableId {
     let table_id = TableId::new(namespace.clone(), TableName::new(table_name));

@@ -24,21 +24,21 @@ const RUST_TEMPLATE: &str = "src/generated/kalam.rs";
 #[derive(Serialize)]
 struct RustContext {
     #[serde(flatten)]
-    file:  GeneratedHeader,
+    file: GeneratedHeader,
     decls: Vec<RustDecl>,
 }
 
 #[derive(Serialize, Default)]
 struct RustDecl {
-    doc:       String,
-    ident:     String,
-    is_enum:   bool,
+    doc: String,
+    ident: String,
+    is_enum: bool,
     is_struct: bool,
-    is_alias:  bool,
-    is_topic:  bool,
-    alias_of:  String,
-    variants:  Vec<RustVariant>,
-    fields:    Vec<RustField>,
+    is_alias: bool,
+    is_topic: bool,
+    alias_of: String,
+    variants: Vec<RustVariant>,
+    fields: Vec<RustField>,
 }
 
 #[derive(Serialize)]
@@ -49,7 +49,7 @@ struct RustVariant {
 #[derive(Serialize)]
 struct RustField {
     name: String,
-    ty:   String,
+    ty: String,
 }
 
 pub fn write_rust_schema(input: &SchemaEmitInput<'_>) -> Result<()> {
@@ -78,7 +78,7 @@ fn render_rust_source(
         "rust",
         RUST_TEMPLATE,
         &RustContext {
-            file:  GeneratedHeader::from_hash(hash),
+            file: GeneratedHeader::from_hash(hash),
             decls: rust_decls(snapshot, names, procedures),
         },
     )
@@ -108,6 +108,15 @@ fn rust_decls(
             },
             ContractTypeKind::Composite { fields } => {
                 decls.push(struct_decl(names.type_ident(id), fields, names, ty.comment.as_deref()));
+            },
+            ContractTypeKind::Domain { base_type, .. } => {
+                decls.push(RustDecl {
+                    doc: line_docs(ty.comment.as_deref(), "/// "),
+                    ident: names.type_ident(id).to_string(),
+                    is_alias: true,
+                    alias_of: render_field_type(base_type, names, TargetLang::Rust),
+                    ..RustDecl::default()
+                });
             },
             ContractTypeKind::ImplicitTableRow { .. }
             | ContractTypeKind::RowAlias { .. }
@@ -193,7 +202,7 @@ fn struct_decl(
 fn rust_field(field: &ContractField, names: &AssignedNames) -> RustField {
     RustField {
         name: rust_field_name(&field.name),
-        ty:   render_field_type(field, names, TargetLang::Rust),
+        ty: render_field_type(field, names, TargetLang::Rust),
     }
 }
 
@@ -283,8 +292,10 @@ ALTER TOPIC chat.ai_inbox ADD SOURCE chat.direct_messages ON INSERT;
     fn comments_emit_rust_docs() {
         let snapshot = compile_contract_sql(
             "CREATE SCHEMA chat;
-             CREATE TYPE chat.address AS (city TEXT NOT NULL) COMMENT 'Postal address';
-             CREATE PROCEDURE chat.ping() RETURNS TEXT COMMENT 'Liveness probe';",
+             CREATE TYPE chat.address AS (city TEXT);
+             COMMENT ON TYPE chat.address IS 'Postal address';
+             CREATE FUNCTION chat.ping() RETURNS TEXT;
+             COMMENT ON FUNCTION chat.ping IS 'Liveness probe';",
             "public",
         )
         .unwrap();

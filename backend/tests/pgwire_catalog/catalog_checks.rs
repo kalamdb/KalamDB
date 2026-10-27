@@ -11,84 +11,84 @@ pub const FIXTURE_TABLE: &str = "items";
 
 /// Catalog surfaces clients rely on (pg_catalog shims + information_schema).
 pub struct CatalogQuery {
-    pub label:    &'static str,
-    pub sql:      &'static str,
+    pub label: &'static str,
+    pub sql: &'static str,
     pub min_rows: usize,
 }
 
 pub fn required_pg_catalog_queries() -> &'static [CatalogQuery] {
     &[
         CatalogQuery {
-            label:    "pg_namespace",
-            sql:      "SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname NOT IN \
+            label: "pg_namespace",
+            sql: "SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname NOT IN \
                        ('pg_catalog', 'information_schema', 'pg_toast') ORDER BY 1",
             min_rows: 1,
         },
         CatalogQuery {
-            label:    "pg_class_fixture",
-            sql:      "SELECT relname FROM pg_catalog.pg_class WHERE relname = 'items'",
+            label: "pg_class_fixture",
+            sql: "SELECT relname FROM pg_catalog.pg_class WHERE relname = 'items'",
             min_rows: 1,
         },
         CatalogQuery {
-            label:    "pg_attribute_fixture",
-            sql:      "SELECT a.attname FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c \
+            label: "pg_attribute_fixture",
+            sql: "SELECT a.attname FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c \
                        ON a.attrelid = c.oid WHERE c.relname = 'items' AND a.attnum > 0 ORDER BY \
                        a.attnum",
             min_rows: 2,
         },
         CatalogQuery {
-            label:    "pg_database",
-            sql:      "SELECT datname FROM pg_catalog.pg_database WHERE datistemplate = false",
+            label: "pg_database",
+            sql: "SELECT datname FROM pg_catalog.pg_database WHERE datistemplate = false",
             min_rows: 1,
         },
         CatalogQuery {
-            label:    "pg_database_tabularis",
-            sql:      "SELECT datname::text FROM pg_database WHERE datistemplate = false ORDER BY \
+            label: "pg_database_tabularis",
+            sql: "SELECT datname::text FROM pg_database WHERE datistemplate = false ORDER BY \
                        datname",
             min_rows: 1,
         },
         CatalogQuery {
-            label:    "pg_database_allowconn",
-            sql:      "SELECT datname FROM pg_catalog.pg_database WHERE datallowconn AND NOT \
+            label: "pg_database_allowconn",
+            sql: "SELECT datname FROM pg_catalog.pg_database WHERE datallowconn AND NOT \
                        datistemplate",
             min_rows: 1,
         },
         CatalogQuery {
-            label:    "current_setting_server_version_num",
-            sql:      "SELECT current_setting('server_version_num')::int4 AS v",
+            label: "current_setting_server_version_num",
+            sql: "SELECT current_setting('server_version_num')::int4 AS v",
             min_rows: 1,
         },
         CatalogQuery {
-            label:    "information_schema_triggers",
-            sql:      "SELECT trigger_name FROM information_schema.triggers LIMIT 1",
+            label: "information_schema_triggers",
+            sql: "SELECT trigger_name FROM information_schema.triggers LIMIT 1",
             min_rows: 0,
         },
         CatalogQuery {
-            label:    "pg_proc_routines",
-            sql:      "SELECT proname, prokind FROM pg_proc WHERE pronamespace = (SELECT oid FROM \
+            label: "pg_proc_routines",
+            sql: "SELECT proname, prokind FROM pg_proc WHERE pronamespace = (SELECT oid FROM \
                        pg_namespace WHERE nspname = 'catalog_e2e') AND prokind IN ('f', 'p') \
                        ORDER BY proname",
             min_rows: 1,
         },
         CatalogQuery {
-            label:    "pg_settings_max_index_keys",
-            sql:      "SELECT setting FROM pg_catalog.pg_settings WHERE name = 'max_index_keys'",
+            label: "pg_settings_max_index_keys",
+            sql: "SELECT setting FROM pg_catalog.pg_settings WHERE name = 'max_index_keys'",
             min_rows: 1,
         },
         CatalogQuery {
-            label:    "pg_roles_empty",
-            sql:      "SELECT rolname FROM pg_roles LIMIT 1",
+            label: "pg_roles_empty",
+            sql: "SELECT rolname FROM pg_roles LIMIT 1",
             min_rows: 0,
         },
         CatalogQuery {
-            label:    "columns_is_identity",
-            sql:      "SELECT column_name, is_identity FROM information_schema.columns WHERE \
+            label: "columns_is_identity",
+            sql: "SELECT column_name, is_identity FROM information_schema.columns WHERE \
                        table_schema = 'catalog_e2e' AND table_name = 'items' LIMIT 1",
             min_rows: 1,
         },
         CatalogQuery {
-            label:    "pg_type_unqualified_dbeaver",
-            sql:      "SELECT n.nspname as schema, t.typname as typename, t.oid::integer as \
+            label: "pg_type_unqualified_dbeaver",
+            sql: "SELECT n.nspname as schema, t.typname as typename, t.oid::integer as \
                        typeid FROM pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = \
                        t.typnamespace WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM \
                        pg_catalog.pg_class c WHERE c.oid = t.typrelid)) AND n.nspname NOT IN \
@@ -96,21 +96,21 @@ pub fn required_pg_catalog_queries() -> &'static [CatalogQuery] {
             min_rows: 1,
         },
         CatalogQuery {
-            label:    "pg_class_pk_index",
-            sql:      "SELECT relname FROM pg_catalog.pg_class WHERE relname = 'items_pkey' AND \
+            label: "pg_class_pk_index",
+            sql: "SELECT relname FROM pg_catalog.pg_class WHERE relname = 'items_pkey' AND \
                        relkind = 'i'",
             min_rows: 1,
         },
         CatalogQuery {
-            label:    "tabularis_columns",
-            sql:      "SELECT c.column_name::text FROM information_schema.columns c WHERE \
+            label: "tabularis_columns",
+            sql: "SELECT c.column_name::text FROM information_schema.columns c WHERE \
                        c.table_schema = 'catalog_e2e' AND c.table_name = 'items' ORDER BY \
                        c.ordinal_position",
             min_rows: 2,
         },
         CatalogQuery {
-            label:    "tabularis_column_pk",
-            sql:      "SELECT c.column_name::text, EXISTS ( SELECT 1 FROM pg_constraint pk_con \
+            label: "tabularis_column_pk",
+            sql: "SELECT c.column_name::text, EXISTS ( SELECT 1 FROM pg_constraint pk_con \
                        JOIN pg_class pk_table ON pk_table.oid = pk_con.conrelid JOIN pg_namespace \
                        pk_schema ON pk_schema.oid = pk_table.relnamespace JOIN \
                        unnest(pk_con.conkey) AS pk_col(attnum) ON true JOIN pg_attribute pk_att \
@@ -123,8 +123,8 @@ pub fn required_pg_catalog_queries() -> &'static [CatalogQuery] {
             min_rows: 2,
         },
         CatalogQuery {
-            label:    "tabularis_indexes",
-            sql:      "SELECT i.relname AS index_name, COALESCE(a.attname::text, \
+            label: "tabularis_indexes",
+            sql: "SELECT i.relname AS index_name, COALESCE(a.attname::text, \
                        pg_get_indexdef(ix.indexrelid, k.n::int, true)) AS column_name, \
                        ix.indisunique AS is_unique, ix.indisprimary AS is_primary FROM pg_class t \
                        JOIN pg_namespace n ON t.relnamespace = n.oid JOIN pg_index ix ON t.oid = \
@@ -136,8 +136,8 @@ pub fn required_pg_catalog_queries() -> &'static [CatalogQuery] {
             min_rows: 1,
         },
         CatalogQuery {
-            label:    "tabularis_fkeys",
-            sql:      "SELECT con.conname::text AS constraint_name FROM pg_constraint con JOIN \
+            label: "tabularis_fkeys",
+            sql: "SELECT con.conname::text AS constraint_name FROM pg_constraint con JOIN \
                        pg_class src_cl ON src_cl.oid = con.conrelid JOIN pg_namespace src_nsp ON \
                        src_nsp.oid = src_cl.relnamespace JOIN pg_class ref_cl ON ref_cl.oid = \
                        con.confrelid JOIN pg_namespace ref_nsp ON ref_nsp.oid = \
@@ -152,8 +152,8 @@ pub fn required_pg_catalog_queries() -> &'static [CatalogQuery] {
             min_rows: 0,
         },
         CatalogQuery {
-            label:    "pg_get_indexdef",
-            sql:      "SELECT COALESCE(pg_get_indexdef(1, 1, true), '') AS indexdef",
+            label: "pg_get_indexdef",
+            sql: "SELECT COALESCE(pg_get_indexdef(1, 1, true), '') AS indexdef",
             min_rows: 1,
         },
     ]
@@ -162,48 +162,48 @@ pub fn required_pg_catalog_queries() -> &'static [CatalogQuery] {
 pub fn required_information_schema_queries() -> &'static [CatalogQuery] {
     &[
         CatalogQuery {
-            label:    "schemata",
-            sql:      "SELECT schema_name FROM information_schema.schemata WHERE schema_name = \
+            label: "schemata",
+            sql: "SELECT schema_name FROM information_schema.schemata WHERE schema_name = \
                        'catalog_e2e'",
             min_rows: 1,
         },
         CatalogQuery {
-            label:    "tables",
-            sql:      "SELECT table_name FROM information_schema.tables WHERE table_schema = \
+            label: "tables",
+            sql: "SELECT table_name FROM information_schema.tables WHERE table_schema = \
                        'catalog_e2e' AND table_name = 'items'",
             min_rows: 1,
         },
         CatalogQuery {
-            label:    "columns_udt_name",
-            sql:      "SELECT column_name, udt_name FROM information_schema.columns WHERE \
+            label: "columns_udt_name",
+            sql: "SELECT column_name, udt_name FROM information_schema.columns WHERE \
                        table_schema = 'catalog_e2e' AND table_name = 'items' ORDER BY \
                        ordinal_position",
             min_rows: 2,
         },
         CatalogQuery {
-            label:    "routines",
-            sql:      "SELECT routine_name, routine_type FROM information_schema.routines WHERE \
+            label: "routines",
+            sql: "SELECT routine_name, routine_type FROM information_schema.routines WHERE \
                        routine_schema = 'catalog_e2e' AND routine_name = 'ping'",
             min_rows: 1,
         },
         CatalogQuery {
-            label:    "parameters",
-            sql:      "SELECT p.parameter_name FROM information_schema.parameters p JOIN \
+            label: "parameters",
+            sql: "SELECT p.parameter_name FROM information_schema.parameters p JOIN \
                        information_schema.routines r ON p.specific_name = r.specific_name WHERE \
                        r.routine_schema = 'catalog_e2e' AND r.routine_name = 'ping' ORDER BY \
                        p.ordinal_position",
             min_rows: 1,
         },
         CatalogQuery {
-            label:    "routine_definition",
-            sql:      "SELECT pg_get_functiondef(p.oid) FROM pg_proc p JOIN pg_namespace n ON \
+            label: "routine_definition",
+            sql: "SELECT pg_get_functiondef(p.oid) FROM pg_proc p JOIN pg_namespace n ON \
                        p.pronamespace = n.oid WHERE n.nspname = 'catalog_e2e' AND p.proname = \
                        'ping'",
             min_rows: 1,
         },
         CatalogQuery {
-            label:    "columns",
-            sql:      "SELECT column_name FROM information_schema.columns WHERE table_schema = \
+            label: "columns",
+            sql: "SELECT column_name FROM information_schema.columns WHERE table_schema = \
                        'catalog_e2e' AND table_name = 'items' ORDER BY ordinal_position",
             min_rows: 2,
         },

@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use kalamdb_commons::{
     models::{
-        rows::Row, schemas::TableType, JobId, NamespaceId, NodeId, StorageId, TableName, UserId,
+        rows::Row, schemas::TableType, JobId, NodeId, SchemaId, StorageId, TableName, UserId,
     },
     TableId,
 };
@@ -46,8 +46,8 @@ fn make_test_row() -> Row {
 
 /// A test node in the cluster
 struct TestNode {
-    node_id:  NodeId,
-    manager:  Arc<RaftManager>,
+    node_id: NodeId,
+    manager: Arc<RaftManager>,
     rpc_port: u16,
 }
 
@@ -108,7 +108,7 @@ impl TestNode {
 
 /// A test cluster with multiple nodes
 struct TestCluster {
-    nodes:       Vec<TestNode>,
+    nodes: Vec<TestNode>,
     user_shards: u32,
 }
 
@@ -118,9 +118,9 @@ struct TestCluster {
 
 #[derive(Debug)]
 struct SnapshotTestStateMachine {
-    state:              std::sync::Arc<AtomicU64>,
+    state: std::sync::Arc<AtomicU64>,
     last_applied_index: AtomicU64,
-    last_applied_term:  AtomicU64,
+    last_applied_term: AtomicU64,
 }
 
 impl SnapshotTestStateMachine {
@@ -205,11 +205,11 @@ async fn test_snapshot_restore_via_storage_install_snapshot() {
 
     let entries = vec![
         Entry {
-            log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
+            log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
             payload: EntryPayload::Normal(4u64.to_le_bytes().to_vec()),
         },
         Entry {
-            log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 2),
+            log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 2),
             payload: EntryPayload::Normal(6u64.to_le_bytes().to_vec()),
         },
     ];
@@ -244,9 +244,9 @@ impl TestCluster {
         // Build peer configs for all nodes
         let all_peers: Vec<PeerNode> = (1..=node_count as u64)
             .map(|id| PeerNode {
-                node_id:         NodeId::new(id),
-                rpc_addr:        format!("127.0.0.1:{}", base_rpc_port + id as u16 - 1),
-                api_addr:        format!("127.0.0.1:{}", base_api_port + id as u16 - 1),
+                node_id: NodeId::new(id),
+                rpc_addr: format!("127.0.0.1:{}", base_rpc_port + id as u16 - 1),
+                api_addr: format!("127.0.0.1:{}", base_api_port + id as u16 - 1),
                 rpc_server_name: None,
             })
             .collect();
@@ -479,8 +479,8 @@ async fn test_command_proposal_to_leader() {
 
     // Propose a meta command
     let command = MetaCommand::CreateNamespace {
-        namespace_id: NamespaceId::from("test_ns"),
-        created_by:   Some(UserId::from("tester")),
+        namespace_id: SchemaId::from("test_ns"),
+        created_by: Some(UserId::from("tester")),
     };
 
     let result = leader.manager.propose_meta(command).await;
@@ -517,8 +517,8 @@ async fn test_proposal_forwarding_to_leader() {
 
     // Propose a command to follower - should be automatically forwarded to leader
     let command = MetaCommand::CreateNamespace {
-        namespace_id: NamespaceId::from("forwarded_ns"),
-        created_by:   None,
+        namespace_id: SchemaId::from("forwarded_ns"),
+        created_by: None,
     };
 
     let result = follower.manager.propose_meta(command).await;
@@ -549,8 +549,8 @@ async fn test_all_groups_accept_proposals() {
 
         // Test namespace creation
         let cmd = MetaCommand::CreateNamespace {
-            namespace_id: NamespaceId::from("ns1"),
-            created_by:   Some(UserId::from("admin")),
+            namespace_id: SchemaId::from("ns1"),
+            created_by: Some(UserId::from("admin")),
         };
         let result = leader.manager.propose_meta(cmd).await;
         assert!(result.is_ok(), "Meta should accept namespace proposals");
@@ -561,26 +561,26 @@ async fn test_all_groups_accept_proposals() {
             "table_name": "t1"
         });
         let job = Job {
-            job_id:          JobId::from("job1"),
-            job_type:        JobType::Flush,
-            status:          JobStatus::New,
-            leader_status:   None,
-            parameters:      Some(params),
+            job_id: JobId::from("job1"),
+            job_type: JobType::Flush,
+            status: JobStatus::New,
+            leader_status: None,
+            parameters: Some(params),
             idempotency_key: None,
-            max_retries:     3,
-            retry_count:     0,
-            queue:           None,
-            priority:        None,
-            node_id:         NodeId::from(1),
-            leader_node_id:  None,
-            message:         None,
+            max_retries: 3,
+            retry_count: 0,
+            queue: None,
+            priority: None,
+            node_id: NodeId::from(1),
+            leader_node_id: None,
+            message: None,
             exception_trace: None,
-            memory_used:     None,
-            cpu_used:        None,
-            created_at:      Utc::now().timestamp_millis(),
-            updated_at:      Utc::now().timestamp_millis(),
-            started_at:      None,
-            finished_at:     None,
+            memory_used: None,
+            cpu_used: None,
+            created_at: Utc::now().timestamp_millis(),
+            updated_at: Utc::now().timestamp_millis(),
+            started_at: None,
+            finished_at: None,
         };
         let cmd = MetaCommand::CreateJob { job };
         let result = leader.manager.propose_meta(cmd).await;
@@ -592,14 +592,14 @@ async fn test_all_groups_accept_proposals() {
         let leader = cluster.get_leader_node(GroupId::DataUserShard(shard)).unwrap();
         let cmd = UserDataCommand::Insert {
             required_meta_index: 0,
-            transaction_id:      None,
-            table_id:            TableId::new(
-                NamespaceId::from("ns1"),
+            transaction_id: None,
+            table_id: TableId::new(
+                SchemaId::from("ns1"),
                 TableName::from(format!("table{}", shard)),
             ),
-            user_id:             UserId::from(format!("user_{}", shard)),
-            rows:                vec![make_test_row()],
-            encoded_fields:      Vec::new(),
+            user_id: UserId::from(format!("user_{}", shard)),
+            rows: vec![make_test_row()],
+            encoded_fields: Vec::new(),
         };
         let result = leader.manager.propose_user_data(shard, cmd).await;
         assert!(result.is_ok(), "UserDataShard({}) should accept proposals", shard);
@@ -610,11 +610,11 @@ async fn test_all_groups_accept_proposals() {
         let leader = cluster.get_leader_node(GroupId::DataSharedShard(0)).unwrap();
         let cmd = SharedDataCommand::Insert {
             required_meta_index: 0,
-            transaction_id:      None,
-            actor_user_id:       None,
-            table_id:            TableId::new(NamespaceId::from("shared"), TableName::from("data")),
-            rows:                vec![make_test_row()],
-            encoded_fields:      Vec::new(),
+            transaction_id: None,
+            actor_user_id: None,
+            table_id: TableId::new(SchemaId::from("shared"), TableName::from("data")),
+            rows: vec![make_test_row()],
+            encoded_fields: Vec::new(),
         };
         let result = leader.manager.propose_shared_data(0, cmd).await;
         assert!(result.is_ok(), "SharedDataShard should accept proposals");
@@ -675,8 +675,8 @@ async fn test_data_consistency_after_network_delay() {
     let mut successful_proposals = 0;
     for i in 0..10 {
         let cmd = MetaCommand::CreateNamespace {
-            namespace_id: NamespaceId::from(format!("consistency_ns_{}", i)),
-            created_by:   None,
+            namespace_id: SchemaId::from(format!("consistency_ns_{}", i)),
+            created_by: None,
         };
         if leader.manager.propose_meta(cmd).await.is_ok() {
             successful_proposals += 1;
@@ -715,16 +715,16 @@ async fn test_meta_group_operations() {
 
     // Test CreateNamespace
     let cmd = MetaCommand::CreateNamespace {
-        namespace_id: NamespaceId::from("test_ns"),
-        created_by:   Some(UserId::from("tester")),
+        namespace_id: SchemaId::from("test_ns"),
+        created_by: Some(UserId::from("tester")),
     };
     let result = leader.manager.propose_meta(cmd).await;
     assert!(result.is_ok(), "CreateNamespace should succeed");
 
     // Test CreateTable
-    let table_id = TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table"));
+    let table_id = TableId::new(SchemaId::from("test_ns"), TableName::from("test_table"));
     let table_def = kalamdb_commons::models::schemas::TableDefinition::new_with_defaults(
-        NamespaceId::from("test_ns"),
+        SchemaId::from("test_ns"),
         TableName::from("test_table"),
         TableType::User,
         vec![],
@@ -742,18 +742,17 @@ async fn test_meta_group_operations() {
     // Test RegisterStorage
     let storage_id = StorageId::new("storage1".to_string());
     let storage = kalamdb_system::Storage {
-        storage_id:             storage_id.clone(),
-        storage_name:           "test_storage".to_string(),
-        description:            None,
-        storage_type:
-            kalamdb_system::providers::storages::models::StorageType::Filesystem,
-        base_directory:         "/tmp/test".to_string(),
-        credentials:            None,
-        config_json:            None,
+        storage_id: storage_id.clone(),
+        storage_name: "test_storage".to_string(),
+        description: None,
+        storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
+        base_directory: "/tmp/test".to_string(),
+        credentials: None,
+        config_json: None,
         shared_tables_template: "shared".to_string(),
-        user_tables_template:   "user".to_string(),
-        created_at:             0,
-        updated_at:             0,
+        user_tables_template: "user".to_string(),
+        created_at: 0,
+        updated_at: 0,
     };
     let cmd = MetaCommand::RegisterStorage {
         storage_id,
@@ -765,26 +764,26 @@ async fn test_meta_group_operations() {
     // Test CreateJob
     let params = serde_json::json!({"namespace_id": "ns1", "table_name": "t1"});
     let job = Job {
-        job_id:          JobId::from("j1"),
-        job_type:        JobType::Flush,
-        status:          JobStatus::New,
-        leader_status:   None,
-        parameters:      Some(params),
+        job_id: JobId::from("j1"),
+        job_type: JobType::Flush,
+        status: JobStatus::New,
+        leader_status: None,
+        parameters: Some(params),
         idempotency_key: None,
-        max_retries:     3,
-        retry_count:     0,
-        queue:           None,
-        priority:        None,
-        node_id:         NodeId::from(1),
-        leader_node_id:  None,
-        message:         None,
+        max_retries: 3,
+        retry_count: 0,
+        queue: None,
+        priority: None,
+        node_id: NodeId::from(1),
+        leader_node_id: None,
+        message: None,
         exception_trace: None,
-        memory_used:     None,
-        cpu_used:        None,
-        created_at:      Utc::now().timestamp_millis(),
-        updated_at:      Utc::now().timestamp_millis(),
-        started_at:      None,
-        finished_at:     None,
+        memory_used: None,
+        cpu_used: None,
+        created_at: Utc::now().timestamp_millis(),
+        updated_at: Utc::now().timestamp_millis(),
+        started_at: None,
+        finished_at: None,
     };
     let cmd = MetaCommand::CreateJob { job };
     let result = leader.manager.propose_meta(cmd).await;
@@ -792,8 +791,8 @@ async fn test_meta_group_operations() {
 
     // Test ClaimJob
     let cmd = MetaCommand::ClaimJob {
-        job_id:     JobId::from("j1"),
-        node_id:    NodeId::from(1u64),
+        job_id: JobId::from("j1"),
+        node_id: NodeId::from(1u64),
         claimed_at: Utc::now(),
     };
     let result = leader.manager.propose_meta(cmd).await;
@@ -801,8 +800,8 @@ async fn test_meta_group_operations() {
 
     // Test UpdateJobStatus
     let cmd = MetaCommand::UpdateJobStatus {
-        job_id:     JobId::from("j1"),
-        status:     kalamdb_system::JobStatus::Completed,
+        job_id: JobId::from("j1"),
+        status: kalamdb_system::JobStatus::Completed,
         updated_at: Utc::now(),
     };
     let result = leader.manager.propose_meta(cmd).await;
@@ -824,20 +823,18 @@ async fn test_user_data_shard_operations() {
     // Test all 4 user data shards
     for shard in 0..4 {
         let leader = cluster.get_leader_node(GroupId::DataUserShard(shard)).unwrap();
-        let table_id = TableId::new(
-            NamespaceId::from("ns1"),
-            TableName::from(format!("user_table_{}", shard)),
-        );
+        let table_id =
+            TableId::new(SchemaId::from("ns1"), TableName::from(format!("user_table_{}", shard)));
         let user_id = UserId::from(format!("user_{}", shard));
 
         // Test Insert
         let cmd = UserDataCommand::Insert {
             required_meta_index: 0,
-            transaction_id:      None,
-            table_id:            table_id.clone(),
-            user_id:             user_id.clone(),
-            rows:                vec![make_test_row()],
-            encoded_fields:      Vec::new(),
+            transaction_id: None,
+            table_id: table_id.clone(),
+            user_id: user_id.clone(),
+            rows: vec![make_test_row()],
+            encoded_fields: Vec::new(),
         };
         let result = leader.manager.propose_user_data(shard, cmd).await;
         assert!(result.is_ok(), "Insert shard {} should succeed", shard);
@@ -845,11 +842,11 @@ async fn test_user_data_shard_operations() {
         // Test Update
         let cmd = UserDataCommand::Update {
             required_meta_index: 0,
-            transaction_id:      None,
-            table_id:            table_id.clone(),
-            user_id:             user_id.clone(),
-            updates:             vec![make_test_row()],
-            filter:              None,
+            transaction_id: None,
+            table_id: table_id.clone(),
+            user_id: user_id.clone(),
+            updates: vec![make_test_row()],
+            filter: None,
         };
         let result = leader.manager.propose_user_data(shard, cmd).await;
         assert!(result.is_ok(), "Update shard {} should succeed", shard);
@@ -857,10 +854,10 @@ async fn test_user_data_shard_operations() {
         // Test Delete
         let cmd = UserDataCommand::Delete {
             required_meta_index: 0,
-            transaction_id:      None,
-            table_id:            table_id.clone(),
-            user_id:             user_id.clone(),
-            pk_values:           None,
+            transaction_id: None,
+            table_id: table_id.clone(),
+            user_id: user_id.clone(),
+            pk_values: None,
         };
         let result = leader.manager.propose_user_data(shard, cmd).await;
         assert!(result.is_ok(), "Delete shard {} should succeed", shard);
@@ -882,16 +879,16 @@ async fn test_shared_data_shard_operations() {
     sleep(Duration::from_millis(200)).await;
 
     let leader = cluster.get_leader_node(GroupId::DataSharedShard(0)).unwrap();
-    let table_id = TableId::new(NamespaceId::from("shared"), TableName::from("global_config"));
+    let table_id = TableId::new(SchemaId::from("shared"), TableName::from("global_config"));
 
     // Test Insert
     let cmd = SharedDataCommand::Insert {
         required_meta_index: 0,
-        transaction_id:      None,
-        actor_user_id:       None,
-        table_id:            table_id.clone(),
-        rows:                vec![make_test_row()],
-        encoded_fields:      Vec::new(),
+        transaction_id: None,
+        actor_user_id: None,
+        table_id: table_id.clone(),
+        rows: vec![make_test_row()],
+        encoded_fields: Vec::new(),
     };
     let result = leader.manager.propose_shared_data(0, cmd).await;
     assert!(result.is_ok(), "SharedData Insert should succeed");
@@ -899,12 +896,12 @@ async fn test_shared_data_shard_operations() {
     // Test Update
     let cmd = SharedDataCommand::Update {
         required_meta_index: 0,
-        transaction_id:      None,
-        actor_user_id:       None,
-        table_id:            table_id.clone(),
-        updates:             vec![make_test_row()],
-        pk_values:           None,
-        filter:              None,
+        transaction_id: None,
+        actor_user_id: None,
+        table_id: table_id.clone(),
+        updates: vec![make_test_row()],
+        pk_values: None,
+        filter: None,
     };
     let result = leader.manager.propose_shared_data(0, cmd).await;
     assert!(result.is_ok(), "SharedData Update should succeed");
@@ -912,10 +909,10 @@ async fn test_shared_data_shard_operations() {
     // Test Delete
     let cmd = SharedDataCommand::Delete {
         required_meta_index: 0,
-        transaction_id:      None,
-        actor_user_id:       None,
-        table_id:            table_id.clone(),
-        pk_values:           None,
+        transaction_id: None,
+        actor_user_id: None,
+        table_id: table_id.clone(),
+        pk_values: None,
     };
     let result = leader.manager.propose_shared_data(0, cmd).await;
     assert!(result.is_ok(), "SharedData Delete should succeed");
@@ -946,11 +943,11 @@ async fn test_proposal_throughput() {
     for i in 0..total_proposals {
         let cmd = UserDataCommand::Insert {
             required_meta_index: 0,
-            transaction_id:      None,
-            table_id:            TableId::new(NamespaceId::from("perf"), TableName::from("test")),
-            user_id:             UserId::from(format!("user_{}", i)),
-            rows:                vec![make_test_row()],
-            encoded_fields:      Vec::new(),
+            transaction_id: None,
+            table_id: TableId::new(SchemaId::from("perf"), TableName::from("test")),
+            user_id: UserId::from(format!("user_{}", i)),
+            rows: vec![make_test_row()],
+            encoded_fields: Vec::new(),
         };
         if leader.manager.propose_user_data(0, cmd).await.is_ok() {
             success_count += 1;
@@ -996,14 +993,14 @@ async fn test_concurrent_multi_group_proposals() {
                 for i in 0..25 {
                     let cmd = UserDataCommand::Insert {
                         required_meta_index: 0,
-                        transaction_id:      None,
-                        table_id:            TableId::new(
-                            NamespaceId::from("concurrent"),
+                        transaction_id: None,
+                        table_id: TableId::new(
+                            SchemaId::from("concurrent"),
                             TableName::from(format!("shard{}", shard)),
                         ),
-                        user_id:             UserId::from(format!("user_{}_{}", shard, i)),
-                        rows:                vec![make_test_row()],
-                        encoded_fields:      Vec::new(),
+                        user_id: UserId::from(format!("user_{}_{}", shard, i)),
+                        rows: vec![make_test_row()],
+                        encoded_fields: Vec::new(),
                     };
                     if manager.propose_user_data(shard, cmd).await.is_ok() {
                         success.fetch_add(1, Ordering::Relaxed);
@@ -1054,7 +1051,7 @@ async fn test_shard_routing_consistency() {
     ];
 
     for (ns, table) in test_tables {
-        let table_id = TableId::new(NamespaceId::from(ns), TableName::from(table));
+        let table_id = TableId::new(SchemaId::from(ns), TableName::from(table));
 
         // Compute shard multiple times
         let shard1 = shard_router.table_shard_id(&table_id);
@@ -1123,12 +1120,12 @@ async fn test_invalid_shard_error() {
 
     // Try to propose to invalid shard
     let cmd = UserDataCommand::Insert {
-        table_id:            TableId::new(NamespaceId::from("test"), TableName::from("table")),
-        user_id:             UserId::from("user1"),
-        rows:                vec![make_test_row()],
-        encoded_fields:      Vec::new(),
+        table_id: TableId::new(SchemaId::from("test"), TableName::from("table")),
+        user_id: UserId::from("user1"),
+        rows: vec![make_test_row()],
+        encoded_fields: Vec::new(),
         required_meta_index: 0,
-        transaction_id:      None,
+        transaction_id: None,
     };
 
     let result = node.manager.propose_user_data(99, cmd).await; // Invalid shard
@@ -1154,8 +1151,8 @@ async fn test_proposal_before_start_error() {
 
     // Try to propose before starting
     let cmd = MetaCommand::CreateNamespace {
-        namespace_id: NamespaceId::from("ns1"),
-        created_by:   None,
+        namespace_id: SchemaId::from("ns1"),
+        created_by: None,
     };
     let result = manager.propose_meta(cmd).await;
     assert!(result.is_err(), "Proposal before start should fail");

@@ -4,7 +4,7 @@
 //! - SHOW STATS FOR TABLE table_name
 //! - SHOW STATS FOR TABLE namespace.table_name
 
-use kalamdb_commons::models::{NamespaceId, TableName};
+use kalamdb_commons::models::{SchemaId, TableName};
 
 use crate::ddl::DdlResult;
 
@@ -12,7 +12,7 @@ use crate::ddl::DdlResult;
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShowTableStatsStatement {
     /// Optional namespace (if qualified name used)
-    pub namespace_id: Option<NamespaceId>, // TODO: consider making this mandatory
+    pub namespace_id: Option<SchemaId>, // TODO: consider making this mandatory
 
     /// Table name to show statistics for
     pub table_name: TableName,
@@ -31,8 +31,8 @@ impl ShowTableStatsStatement {
         let (namespace, table) = parsing::parse_table_reference(&table_ref)?;
 
         Ok(Self {
-            namespace_id: namespace.map(|ns| NamespaceId::new(&ns)),
-            table_name:   TableName::new(&table),
+            namespace_id: namespace.map(|ns| SchemaId::new(&ns)),
+            table_name: TableName::new(&table),
         })
     }
 }

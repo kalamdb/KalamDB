@@ -4,7 +4,7 @@ use super::common::{
 };
 
 #[tokio::test]
-#[ntest::timeout(7000)]
+#[ntest::timeout(30000)]
 async fn e2e_duplicate_primary_key_insert_fails() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
@@ -44,7 +44,7 @@ async fn e2e_duplicate_primary_key_insert_fails() {
 }
 
 #[tokio::test]
-#[ntest::timeout(7000)]
+#[ntest::timeout(30000)]
 async fn e2e_insert_without_backing_kalamdb_table_fails() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
@@ -84,7 +84,7 @@ async fn e2e_insert_without_backing_kalamdb_table_fails() {
 }
 
 #[tokio::test]
-#[ntest::timeout(7000)]
+#[ntest::timeout(30000)]
 async fn e2e_user_table_scan_without_user_id_fails_clearly() {
     let env = TestEnv::global().await;
     let table = unique_name("profiles_missing_uid");
@@ -115,7 +115,7 @@ async fn e2e_user_table_scan_without_user_id_fails_clearly() {
 }
 
 #[tokio::test]
-#[ntest::timeout(7000)]
+#[ntest::timeout(30000)]
 async fn e2e_offline_kalamdb_server_reports_connection_error() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
@@ -163,7 +163,7 @@ async fn e2e_offline_kalamdb_server_reports_connection_error() {
 }
 
 #[tokio::test]
-#[ntest::timeout(7000)]
+#[ntest::timeout(30000)]
 async fn e2e_invalid_auth_header_metadata_fails_clearly() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;

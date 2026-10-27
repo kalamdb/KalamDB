@@ -24,14 +24,7 @@ fn settled_promise_returns_its_value() {
 
 #[test]
 fn transfer_safe_int64_is_js_number_so_plus_one_is_arithmetic() {
-    let encoded = kalamdb_commons::conversions::arrow_json_conversion::scalar_value_to_js_json(
-        &ScalarValue::Int64(Some(41)),
-    )
-    .expect("js json");
-    let bytes = kalamdb_serialization::encode_function_value("", &encoded.0).unwrap();
-    let mut arg = RoutineValue::new(ScalarValue::Int64(Some(41)));
-    arg.transfer = Some(bytes.into());
-    arg.contract_hash = Some(String::new());
+    let arg = RoutineValue::new(ScalarValue::Int64(Some(41)));
     let mut session = V8Session::load(
         ModuleRevision::typescript_fixture(kalamdb_functions::wrap_procedure_source(
             "return input + 1;",
@@ -161,4 +154,94 @@ fn throwing_result_accessors_fail_conversion() {
     assert!(session
         .invoke(&RoutineId::new("getter"), &[], &CancellationToken::new())
         .is_err());
+}
+
+#[test]
+fn unsafe_int64_uses_bigint_and_numeric_uses_decimal_string() {
+    let mut session = V8Session::load(
+        ModuleRevision::typescript_fixture(kalamdb_functions::wrap_procedure_source(
+            "return { big: typeof input.big === 'bigint' ? input.big + 1n : 0n, price: \
+             input.price };",
+        )),
+        RuntimeLimits::default(),
+    )
+    .unwrap();
+    let big_val = (1i64 << 53) + 7;
+    let arg = RoutineValue::named_object(vec![
+        ("big".to_string(), RoutineValue::new(ScalarValue::Int64(Some(big_val)))),
+        (
+            "price".to_string(),
+            RoutineValue::new(ScalarValue::Decimal128(Some(12345), 10, 2)),
+        ),
+    ]);
+    let result = session
+        .invoke(&RoutineId::new("num"), &[arg], &CancellationToken::new())
+        .unwrap();
+    let ScalarValue::Struct(struct_arr) = result.value else {
+        panic!("expected struct");
+    };
+    let big_col = struct_arr.column_by_name("big").expect("big col");
+    let price_col = struct_arr.column_by_name("price").expect("price col");
+    assert_eq!(
+        ScalarValue::try_from_array(big_col, 0).unwrap(),
+        ScalarValue::Int64(Some(big_val + 1))
+    );
+    assert_eq!(
+        ScalarValue::try_from_array(price_col, 0).unwrap(),
+        ScalarValue::Utf8(Some("123.45".to_string()))
+    );
+}
+
+#[test]
+fn read_view_supports_lazy_projection_and_materialization() {
+    use std::sync::Arc;
+
+    use arrow::{
+        array::{Int64Array, RecordBatch, StringArray},
+        datatypes::{DataType, Field, Schema},
+    };
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int64Array::from(vec![10, 20, 30])),
+            Arc::new(StringArray::from(vec!["alice", "bob", "carol"])),
+        ],
+    )
+    .unwrap();
+    let view_arg = RoutineValue::from_read_view_batches(vec![batch]);
+    let mut session = V8Session::load(
+        ModuleRevision::typescript_fixture(kalamdb_functions::wrap_procedure_source(
+            "const second = input.at(1); const all = input.materialize(); return { len: \
+             input.length, secondName: second.name, allCount: all.length, firstId: all[0].id };",
+        )),
+        RuntimeLimits::default(),
+    )
+    .unwrap();
+    let result = session
+        .invoke(&RoutineId::new("view"), &[view_arg], &CancellationToken::new())
+        .unwrap();
+    let ScalarValue::Struct(struct_arr) = result.value else {
+        panic!("expected struct");
+    };
+    assert_eq!(
+        ScalarValue::try_from_array(struct_arr.column_by_name("len").unwrap(), 0).unwrap(),
+        ScalarValue::Int32(Some(3))
+    );
+    assert_eq!(
+        ScalarValue::try_from_array(struct_arr.column_by_name("secondName").unwrap(), 0).unwrap(),
+        ScalarValue::Utf8(Some("bob".to_string()))
+    );
+    assert_eq!(
+        ScalarValue::try_from_array(struct_arr.column_by_name("allCount").unwrap(), 0).unwrap(),
+        ScalarValue::Int32(Some(3))
+    );
+    assert_eq!(
+        ScalarValue::try_from_array(struct_arr.column_by_name("firstId").unwrap(), 0).unwrap(),
+        ScalarValue::Int32(Some(10))
+    );
 }

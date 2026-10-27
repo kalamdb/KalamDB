@@ -22,9 +22,8 @@
 //! # Core Types
 //!
 //! - **`TableDefinition`**: Complete table schema (columns, options, versioning)
-//! - **`ColumnDefinition`**: Individual column schema (name, type, constraints). Named `CREATE
-//!   TYPE` columns reuse the same struct via `named_type_id` / [`crate::LogicalTypeRef`] — they are
-//!   not a parallel schema crate.
+//! - **`ColumnDefinition`**: Individual column schema (name, type, constraints). The type is one
+//!   [`crate::LogicalTypeRef`]. Named `CREATE TYPE` columns are not a parallel schema crate.
 //! - **`SchemaVersion`**: Schema evolution tracking (version, changes, timestamp)
 //! - **`TableOptions`**: Type-specific settings (User, Shared, Stream, System)
 //! - **`TableType`**: Table category (User, Shared, Stream, System)
@@ -82,6 +81,8 @@
 pub mod column_default;
 pub mod column_definition;
 pub mod field_flag;
+#[cfg(feature = "table-definition")]
+pub mod foreign_key_definition;
 pub mod policy;
 #[cfg(feature = "table-definition")]
 pub mod scalar_index_definition;
@@ -95,9 +96,11 @@ pub mod table_name;
 pub mod table_options;
 pub mod table_type;
 
-pub use column_default::ColumnDefault;
+pub use column_default::{serial_sequence_name, ColumnDefault};
 pub use column_definition::ColumnDefinition;
 pub use field_flag::{FieldFlag, FieldFlags};
+#[cfg(feature = "table-definition")]
+pub use foreign_key_definition::{ForeignKeyAction, ForeignKeyDefinition};
 #[cfg(feature = "table-definition")]
 pub use scalar_index_definition::ScalarIndexDefinition;
 pub use schema_field::SchemaField;

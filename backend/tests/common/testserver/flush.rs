@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use kalam_client::models::{QueryResponse, ResponseStatus};
-use kalamdb_commons::{NamespaceId, TableId, TableName};
+use kalamdb_commons::{SchemaId, TableId, TableName};
 use kalamdb_jobs::{
     executors::{
         flush::{FlushExecutor, FlushParams},
@@ -16,15 +16,15 @@ use super::http_server::HttpTestServer;
 
 async fn force_flush_table(server: &HttpTestServer, ns: &str, table: &str) -> Result<()> {
     let app_ctx = server.app_context();
-    let table_id = TableId::new(NamespaceId::from(ns), TableName::from(table));
+    let table_id = TableId::new(SchemaId::from(ns), TableName::from(table));
     let table_def = app_ctx
         .schema_registry()
         .get_table_if_exists(&table_id)?
         .ok_or_else(|| anyhow::anyhow!("Table not found for forced flush: {}.{}", ns, table))?;
 
     let params = FlushParams {
-        table_id:        table_id.clone(),
-        table_type:      table_def.table_type,
+        table_id: table_id.clone(),
+        table_type: table_def.table_type,
         flush_threshold: None,
     };
 

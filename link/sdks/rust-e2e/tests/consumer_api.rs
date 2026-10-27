@@ -20,7 +20,7 @@ async fn consumer_polls_and_commits_topic_messages() {
     let group_id = format!("group_{suffix}");
 
     let _ = client
-        .execute_query("CREATE NAMESPACE IF NOT EXISTS default", None, None, None)
+        .execute_query("CREATE SCHEMA IF NOT EXISTS default", None, None, None)
         .await;
 
     client

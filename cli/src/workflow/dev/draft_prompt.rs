@@ -70,7 +70,7 @@ pub fn prompt_for_draft_application(
 
 struct DraftMigrationPrompt {
     context_lines: Vec<String>,
-    destructive:   bool,
+    destructive: bool,
 }
 
 impl WorkflowModalPrompt for DraftMigrationPrompt {
@@ -225,7 +225,7 @@ mod tests {
     fn draft_prompt_maps_apply_reset_cancel() {
         let prompt = DraftMigrationPrompt {
             context_lines: vec!["CREATE TABLE users (id INTEGER);".into()],
-            destructive:   false,
+            destructive: false,
         };
         assert_eq!(prompt.decision_from_selected_index(0).unwrap(), DraftPromptDecision::Apply);
         assert_eq!(prompt.decision_from_selected_index(1).unwrap(), DraftPromptDecision::Reset);
@@ -234,7 +234,7 @@ mod tests {
 
         let destructive = DraftMigrationPrompt {
             context_lines: Vec::new(),
-            destructive:   true,
+            destructive: true,
         };
         assert_eq!(destructive.default_index(), 2);
     }

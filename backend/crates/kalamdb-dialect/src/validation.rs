@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use kalamdb_commons::{
     constants::{SystemColumnNames, CRITICAL_RESERVED_SQL_KEYWORDS, RESERVED_NAMESPACE_NAMES},
     helpers::naming::{
-        is_reserved_sql_keyword, validate_sql_identifier, validate_user_namespace_name,
+        is_reserved_sql_keyword, validate_relation_identifier, validate_user_namespace_name,
         SqlIdentifierError, MAX_SQL_IDENTIFIER_LENGTH,
     },
 };
@@ -115,13 +115,15 @@ pub fn validate_column_name(name: &str) -> Result<(), ValidationError> {
         return Err(ValidationError::ReservedColumnName(name.to_string()));
     }
 
-    validate_identifier_base(name)?;
-    ensure_not_reserved_sql_keyword(name)?;
-    Ok(())
+    // PostgreSQL accepts reserved words as column names when they are quoted
+    // (`"sort"`, `"limit"`). Clients such as Knex always quote identifiers, so
+    // non-critical keywords are stored as ordinary columns. Critical keywords
+    // (`DROP`, `TABLE`, …) still fail in `validate_identifier_base`.
+    validate_identifier_base(name)
 }
 
 fn validate_identifier_base(name: &str) -> Result<(), ValidationError> {
-    validate_sql_identifier(name).map_err(map_sql_identifier_error)
+    validate_relation_identifier(name).map_err(map_sql_identifier_error)
 }
 
 fn ensure_not_reserved_sql_keyword(name: &str) -> Result<(), ValidationError> {
@@ -232,6 +234,16 @@ mod tests {
         assert_eq!(
             validate_column_name("_ID"),
             Err(ValidationError::ReservedColumnName("_ID".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_postgres_quoted_keywords_are_valid_column_names() {
+        assert!(validate_column_name("sort").is_ok());
+        assert!(validate_column_name("limit").is_ok());
+        assert_eq!(
+            validate_column_name("drop"),
+            Err(ValidationError::ReservedSqlKeyword("drop".to_string()))
         );
     }
 

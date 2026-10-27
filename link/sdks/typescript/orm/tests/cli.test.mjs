@@ -14,7 +14,7 @@ let client;
 before(async () => {
   client = createTestClient();
   await client.initialize();
-  await client.query('CREATE NAMESPACE IF NOT EXISTS test_cli_gen');
+  await client.query('CREATE SCHEMA IF NOT EXISTS test_cli_gen');
   await client.query('DROP TABLE IF EXISTS test_cli_gen.cli_options');
   await client.query(`
     CREATE TABLE test_cli_gen.cli_options (
@@ -28,7 +28,7 @@ before(async () => {
 after(async () => {
   if (existsSync(outFile)) unlinkSync(outFile);
   await client?.query('DROP TABLE IF EXISTS test_cli_gen.cli_options').catch(() => {});
-  await client?.query('DROP NAMESPACE IF EXISTS test_cli_gen').catch(() => {});
+  await client?.query('DROP SCHEMA IF EXISTS test_cli_gen').catch(() => {});
   await client?.disconnect();
 });
 

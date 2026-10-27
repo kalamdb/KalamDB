@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use kalamdb_commons::{
     models::{rows::Row, OperationKind, TableId, TransactionId, UserId},
@@ -10,7 +13,7 @@ use crate::query_context::TransactionOverlayView;
 /// Scope + PK identity for overlay and write-set maps without `format!` keys.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ScopedPkKey {
-    pub user_id:     Option<UserId>,
+    pub user_id: Option<UserId>,
     pub primary_key: String,
 }
 
@@ -18,9 +21,20 @@ impl ScopedPkKey {
     #[inline]
     pub fn new(user_id: Option<&UserId>, primary_key: impl Into<String>) -> Self {
         Self {
-            user_id:     user_id.cloned(),
+            user_id: user_id.cloned(),
             primary_key: primary_key.into(),
         }
+    }
+
+    /// Overlay identity of a row. Shared and system rows have no owner, so the
+    /// primary key alone identifies them.
+    #[inline]
+    pub fn for_entry(entry: &TransactionOverlayEntry) -> Self {
+        let owner = match entry.table_type {
+            TableType::User | TableType::Stream => entry.user_id.as_ref(),
+            TableType::Shared | TableType::System => None,
+        };
+        Self::new(owner, entry.primary_key.clone())
     }
 }
 
@@ -29,13 +43,13 @@ impl ScopedPkKey {
 pub struct TransactionOverlayEntry {
     pub transaction_id: TransactionId,
     pub mutation_order: u64,
-    pub table_id:       TableId,
-    pub table_type:     TableType,
-    pub user_id:        Option<UserId>,
+    pub table_id: TableId,
+    pub table_type: TableType,
+    pub user_id: Option<UserId>,
     pub operation_kind: OperationKind,
-    pub primary_key:    String,
-    pub payload:        Row,
-    pub tombstone:      bool,
+    pub primary_key: String,
+    pub payload: Row,
+    pub tombstone: bool,
 }
 
 impl TransactionOverlayEntry {
@@ -46,13 +60,22 @@ impl TransactionOverlayEntry {
 }
 
 /// Query-time overlay for transaction-local read visibility.
+///
+/// The maps are reference-counted. A scan clones the overlay in constant time
+/// and keeps that snapshot. The next staged row copies a map only when a scan
+/// still holds the previous one.
 #[derive(Debug, Clone)]
 pub struct TransactionOverlay {
-    pub transaction_id:   TransactionId,
-    pub entries_by_table: HashMap<TableId, HashMap<ScopedPkKey, TransactionOverlayEntry>>,
-    pub inserted_keys:    HashMap<TableId, HashSet<ScopedPkKey>>,
-    pub deleted_keys:     HashMap<TableId, HashSet<ScopedPkKey>>,
-    pub updated_keys:     HashMap<TableId, HashSet<ScopedPkKey>>,
+    pub transaction_id: TransactionId,
+    pub entries_by_table: Arc<HashMap<TableId, HashMap<ScopedPkKey, TransactionOverlayEntry>>>,
+    pub inserted_keys: Arc<HashMap<TableId, HashSet<ScopedPkKey>>>,
+    pub deleted_keys: Arc<HashMap<TableId, HashSet<ScopedPkKey>>>,
+    pub updated_keys: Arc<HashMap<TableId, HashSet<ScopedPkKey>>>,
+    /// Columns assigned by staged updates. Inserts are tracked separately.
+    ///
+    /// An equality seek on a column in this set is not safe: the secondary
+    /// index still points at the pre-transaction value.
+    pub updated_columns: Arc<HashMap<TableId, HashSet<String>>>,
 }
 
 impl TransactionOverlay {
@@ -60,21 +83,29 @@ impl TransactionOverlay {
     pub fn new(transaction_id: TransactionId) -> Self {
         Self {
             transaction_id,
-            entries_by_table: HashMap::new(),
-            inserted_keys: HashMap::new(),
-            deleted_keys: HashMap::new(),
-            updated_keys: HashMap::new(),
+            entries_by_table: Arc::new(HashMap::new()),
+            inserted_keys: Arc::new(HashMap::new()),
+            deleted_keys: Arc::new(HashMap::new()),
+            updated_keys: Arc::new(HashMap::new()),
+            updated_columns: Arc::new(HashMap::new()),
         }
     }
 
     pub fn apply_entry(&mut self, entry: TransactionOverlayEntry) {
         let table_id = entry.table_id.clone();
-        let entry_key = ScopedPkKey::new(entry.user_id.as_ref(), entry.primary_key.clone());
+        let entry_key = ScopedPkKey::for_entry(&entry);
         let effective_entry = self.merge_visible_entry(&table_id, &entry_key, entry);
         let is_deleted = effective_entry.is_deleted();
         let operation_kind = effective_entry.operation_kind;
+        if matches!(operation_kind, OperationKind::Update) && !is_deleted {
+            let columns =
+                Arc::make_mut(&mut self.updated_columns).entry(table_id.clone()).or_default();
+            for column in effective_entry.payload.values.keys() {
+                columns.insert(column.clone());
+            }
+        }
 
-        self.entries_by_table
+        Arc::make_mut(&mut self.entries_by_table)
             .entry(table_id.clone())
             .or_default()
             .insert(entry_key.clone(), effective_entry);
@@ -91,7 +122,7 @@ impl TransactionOverlay {
             }
         };
 
-        target_map.entry(table_id).or_default().insert(entry_key);
+        Arc::make_mut(target_map).entry(table_id).or_default().insert(entry_key);
     }
 
     pub fn merge_from(&mut self, other: &TransactionOverlay) {
@@ -134,19 +165,28 @@ impl TransactionOverlay {
         let entries = self.entries_by_table.get(table_id)?.clone();
 
         let mut overlay = TransactionOverlay::new(self.transaction_id.clone());
-        overlay.entries_by_table.insert(table_id.clone(), entries);
+        Arc::make_mut(&mut overlay.entries_by_table).insert(table_id.clone(), entries);
 
         if let Some(keys) = self.inserted_keys.get(table_id) {
-            overlay.inserted_keys.insert(table_id.clone(), keys.clone());
+            Arc::make_mut(&mut overlay.inserted_keys).insert(table_id.clone(), keys.clone());
         }
         if let Some(keys) = self.deleted_keys.get(table_id) {
-            overlay.deleted_keys.insert(table_id.clone(), keys.clone());
+            Arc::make_mut(&mut overlay.deleted_keys).insert(table_id.clone(), keys.clone());
         }
         if let Some(keys) = self.updated_keys.get(table_id) {
-            overlay.updated_keys.insert(table_id.clone(), keys.clone());
+            Arc::make_mut(&mut overlay.updated_keys).insert(table_id.clone(), keys.clone());
+        }
+        if let Some(columns) = self.updated_columns.get(table_id) {
+            Arc::make_mut(&mut overlay.updated_columns).insert(table_id.clone(), columns.clone());
         }
 
         Some(overlay)
+    }
+
+    /// True when a staged update in this overlay assigned `column`.
+    #[inline]
+    pub fn column_was_updated(&self, table_id: &TableId, column: &str) -> bool {
+        self.updated_columns.get(table_id).is_some_and(|columns| columns.contains(column))
     }
 
     fn clear_key_membership(&mut self, table_id: &TableId, entry_key: &ScopedPkKey) {
@@ -155,10 +195,11 @@ impl TransactionOverlay {
             &mut self.deleted_keys,
             &mut self.updated_keys,
         ] {
-            if let Some(keys) = key_set.get_mut(table_id) {
+            let map = Arc::make_mut(key_set);
+            if let Some(keys) = map.get_mut(table_id) {
                 keys.remove(entry_key);
                 if keys.is_empty() {
-                    key_set.remove(table_id);
+                    map.remove(table_id);
                 }
             }
         }
@@ -214,7 +255,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use datafusion::scalar::ScalarValue;
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{SchemaId, TableName};
 
     use super::*;
 
@@ -229,23 +270,23 @@ mod tests {
     #[test]
     fn update_after_insert_preserves_inserted_columns() {
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("items"));
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
         let mut overlay = TransactionOverlay::new(transaction_id.clone());
 
         overlay.apply_entry(TransactionOverlayEntry {
             transaction_id: transaction_id.clone(),
             mutation_order: 0,
-            table_id:       table_id.clone(),
-            table_type:     TableType::Shared,
-            user_id:        None,
+            table_id: table_id.clone(),
+            table_type: TableType::Shared,
+            user_id: None,
             operation_kind: OperationKind::Insert,
-            primary_key:    "1".to_string(),
-            payload:        row(&[
+            primary_key: "1".to_string(),
+            payload: row(&[
                 ("id", ScalarValue::Int64(Some(1))),
                 ("name", ScalarValue::Utf8(Some("before".to_string()))),
                 ("color", ScalarValue::Utf8(Some("red".to_string()))),
             ]),
-            tombstone:      false,
+            tombstone: false,
         });
 
         overlay.apply_entry(TransactionOverlayEntry {
@@ -276,7 +317,7 @@ mod tests {
     #[test]
     fn preserves_distinct_user_scopes_for_same_primary_key() {
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("items"));
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
         let first_user = UserId::new("user-a");
         let second_user = UserId::new("user-b");
         let mut overlay = TransactionOverlay::new(transaction_id.clone());
@@ -284,13 +325,13 @@ mod tests {
         overlay.apply_entry(TransactionOverlayEntry {
             transaction_id: transaction_id.clone(),
             mutation_order: 0,
-            table_id:       table_id.clone(),
-            table_type:     TableType::User,
-            user_id:        Some(first_user.clone()),
+            table_id: table_id.clone(),
+            table_type: TableType::User,
+            user_id: Some(first_user.clone()),
             operation_kind: OperationKind::Insert,
-            primary_key:    "1".to_string(),
-            payload:        row(&[("name", ScalarValue::Utf8(Some("alice".to_string())))]),
-            tombstone:      false,
+            primary_key: "1".to_string(),
+            payload: row(&[("name", ScalarValue::Utf8(Some("alice".to_string())))]),
+            tombstone: false,
         });
 
         overlay.apply_entry(TransactionOverlayEntry {
@@ -324,5 +365,39 @@ mod tests {
                 .get("name"),
             Some(&ScalarValue::Utf8(Some("bob".to_string())))
         );
+    }
+
+    #[test]
+    fn update_records_assigned_columns_and_leaves_other_columns_unmarked() {
+        let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
+        let mut overlay = TransactionOverlay::new(transaction_id.clone());
+
+        overlay.apply_entry(TransactionOverlayEntry {
+            transaction_id: transaction_id.clone(),
+            mutation_order: 0,
+            table_id: table_id.clone(),
+            table_type: TableType::Shared,
+            user_id: None,
+            operation_kind: OperationKind::Update,
+            primary_key: "1".to_string(),
+            payload: row(&[("b", ScalarValue::Int64(Some(2)))]),
+            tombstone: false,
+        });
+        overlay.apply_entry(TransactionOverlayEntry {
+            transaction_id,
+            mutation_order: 1,
+            table_id: table_id.clone(),
+            table_type: TableType::Shared,
+            user_id: None,
+            operation_kind: OperationKind::Update,
+            primary_key: "2".to_string(),
+            payload: row(&[("c", ScalarValue::Utf8(Some("x".to_string())))]),
+            tombstone: false,
+        });
+
+        assert!(overlay.column_was_updated(&table_id, "b"));
+        assert!(overlay.column_was_updated(&table_id, "c"));
+        assert!(!overlay.column_was_updated(&table_id, "a"));
     }
 }

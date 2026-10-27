@@ -1,7 +1,7 @@
 -- Soft-delete topic routing with delete and update filters.
 
-DROP NAMESPACE IF EXISTS sql_file_case_03 CASCADE;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_03;
+DROP SCHEMA IF EXISTS sql_file_case_03 CASCADE;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_03;
 USE sql_file_case_03;
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -23,4 +23,4 @@ DELETE FROM projects WHERE id = 3101;
 CONSUME FROM project_cleanup LIMIT 10;
 
 DROP TOPIC project_cleanup;
-DROP NAMESPACE IF EXISTS sql_file_case_03 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_03 CASCADE;

@@ -6,8 +6,8 @@
 //! - DROP STORAGE: Remove a storage backend
 //! - SHOW STORAGES: List all registered storages
 
+use kalamdb_commons::models::StorageType;
 use kalamdb_commons::StorageId;
-use kalamdb_system::providers::storages::models::StorageType;
 use serde::{Deserialize, Serialize};
 
 /// CREATE STORAGE command
@@ -94,7 +94,7 @@ impl CreateStorageStatement {
                 return Err(format!(
                     "Invalid storage type '{}'. Must be 'filesystem', 's3', 'gcs', or 'azure'",
                     other
-                ))
+                ));
             },
         }
 

@@ -27,10 +27,353 @@ pub fn routine_to_v8<'s>(
     scope: &PinScope<'s, '_>,
     value: &RoutineValue,
 ) -> Result<Local<'s, v8::Value>> {
+    if let Some(batches) = &value.read_view_batches {
+        if let Some(row_index) = value.read_view_row {
+            return read_view_row_to_v8(scope, batches, row_index);
+        }
+        return read_view_batches_to_v8(scope, batches);
+    }
+    if let Some(batches) = &value.row_batches {
+        return row_batches_to_v8(scope, batches);
+    }
+    if let Some(fields) = &value.named_fields {
+        let object = v8::Object::new(scope);
+        for (index, (name, field_value)) in fields.iter().enumerate() {
+            let js_value = routine_to_v8(scope, field_value)?;
+            let idx_str = index.to_string();
+            object_set(scope, object, &idx_str, js_value)?;
+            if !name.is_empty() {
+                object_set(scope, object, name, js_value)?;
+            }
+        }
+        return Ok(object.into());
+    }
     if value.json_sql {
         return json_text_to_v8(scope, &value.value);
     }
     scalar_to_v8(scope, &value.value)
+}
+
+fn row_batches_to_v8<'s>(
+    scope: &PinScope<'s, '_>,
+    batches: &[arrow::array::RecordBatch],
+) -> Result<Local<'s, v8::Value>> {
+    let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+    let js_array = v8::Array::new(scope, total_rows as i32);
+    let mut out_idx = 0u32;
+    for batch in batches {
+        let schema = batch.schema();
+        let fields = schema.fields();
+        for row in 0..batch.num_rows() {
+            let object = batch_row_to_v8_object(scope, batch, fields, row)?;
+            js_array
+                .set_index(scope, out_idx, object.into())
+                .ok_or_else(|| FunctionsError::Invalid("failed to set row element".into()))?;
+            out_idx += 1;
+        }
+    }
+    Ok(js_array.into())
+}
+
+fn batch_row_to_v8_object<'s>(
+    scope: &PinScope<'s, '_>,
+    batch: &arrow::array::RecordBatch,
+    fields: &arrow::datatypes::Fields,
+    row: usize,
+) -> Result<Local<'s, v8::Object>> {
+    let object = v8::Object::new(scope);
+    for (col_idx, field) in fields.iter().enumerate() {
+        let column = batch.column(col_idx);
+        let scalar = ScalarValue::try_from_array(column, row).map_err(|error| {
+            FunctionsError::Invalid(format!("row field '{}': {error}", field.name()))
+        })?;
+        let js_value = scalar_to_v8(scope, &scalar)?;
+        object_set(scope, object, field.name(), js_value)?;
+    }
+    Ok(object)
+}
+
+const MAX_READ_VIEW_HANDLES: usize = 4_096;
+const MAX_READ_VIEW_PINNED_BYTES: usize = 16 * 1024 * 1024;
+
+static NEXT_READ_VIEW_GENERATION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+
+#[derive(Clone)]
+struct NativeReadViewHandle {
+    batches: Arc<[arrow::array::RecordBatch]>,
+    row_index: Option<usize>,
+}
+
+/// Isolate-scoped registry owning `NativeReadViewHandle`s for the active invocation (`T066`).
+///
+/// Replaces `Box::into_raw` + `v8::External` (which leaked `Arc<[RecordBatch]>` on every view
+/// creation and `.at(i)` access) with a generation-fenced, byte-budgeted slot that is dropped
+/// deterministically when the invocation finishes or cancels.
+pub(crate) struct ReadViewRegistry {
+    inner: std::cell::RefCell<ReadViewRegistryInner>,
+    generation: u64,
+}
+
+#[derive(Default)]
+struct ReadViewRegistryInner {
+    entries: Vec<NativeReadViewHandle>,
+    seen_batch_ptrs: Vec<usize>,
+    pinned_bytes: usize,
+}
+
+impl Default for ReadViewRegistry {
+    fn default() -> Self {
+        Self {
+            inner: std::cell::RefCell::new(ReadViewRegistryInner::default()),
+            generation: NEXT_READ_VIEW_GENERATION
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+}
+
+impl ReadViewRegistry {
+    fn register(&self, handle: NativeReadViewHandle) -> Result<(usize, u64)> {
+        let mut inner = self.inner.borrow_mut();
+        if inner.entries.len() >= MAX_READ_VIEW_HANDLES {
+            return Err(FunctionsError::ResourceLimit("read view handles".into()));
+        }
+        let batch_ptr = Arc::as_ptr(&handle.batches) as *const () as usize;
+        if !inner.seen_batch_ptrs.contains(&batch_ptr) {
+            let batch_bytes: usize = handle
+                .batches
+                .iter()
+                .map(arrow::array::RecordBatch::get_array_memory_size)
+                .fold(0usize, usize::saturating_add);
+            let next_bytes = inner
+                .pinned_bytes
+                .checked_add(batch_bytes)
+                .ok_or_else(|| FunctionsError::ResourceLimit("read view pinned bytes".into()))?;
+            if next_bytes > MAX_READ_VIEW_PINNED_BYTES {
+                return Err(FunctionsError::ResourceLimit("read view pinned bytes".into()));
+            }
+            inner.pinned_bytes = next_bytes;
+            inner.seen_batch_ptrs.push(batch_ptr);
+        }
+        let idx = inner.entries.len();
+        inner.entries.push(handle);
+        Ok((idx, self.generation))
+    }
+
+    fn get(&self, index: usize) -> Option<NativeReadViewHandle> {
+        self.inner.borrow().entries.get(index).cloned()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pinned_bytes(&self) -> usize {
+        self.inner.borrow().pinned_bytes
+    }
+
+    #[cfg(test)]
+    pub(crate) fn handle_count(&self) -> usize {
+        self.inner.borrow().entries.len()
+    }
+}
+
+fn read_view_batches_to_v8<'s>(
+    scope: &PinScope<'s, '_>,
+    batches: &Arc<[arrow::array::RecordBatch]>,
+) -> Result<Local<'s, v8::Value>> {
+    let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+    let object = v8::Object::new(scope);
+    let len_val = v8::Integer::new(scope, total_rows as i32).into();
+    object_set(scope, object, "length", len_val)?;
+    attach_read_view_handle(
+        scope,
+        object,
+        NativeReadViewHandle {
+            batches: Arc::clone(batches),
+            row_index: None,
+        },
+    )?;
+    let global = scope.get_current_context().global(scope);
+    if let Ok(key) = string_to_v8(scope, "__kalamReadViewAt") {
+        if let Some(val) = global.get(scope, key.into()) {
+            let _ = object.create_data_property(scope, string_to_v8(scope, "at")?.into(), val);
+        }
+    }
+    if let Ok(key) = string_to_v8(scope, "__kalamReadViewMaterialize") {
+        if let Some(val) = global.get(scope, key.into()) {
+            let _ =
+                object.create_data_property(scope, string_to_v8(scope, "materialize")?.into(), val);
+            let _ = object.create_data_property(scope, string_to_v8(scope, "toArray")?.into(), val);
+        }
+    }
+    Ok(object.into())
+}
+
+fn read_view_row_to_v8<'s>(
+    scope: &PinScope<'s, '_>,
+    batches: &Arc<[arrow::array::RecordBatch]>,
+    row_index: usize,
+) -> Result<Local<'s, v8::Value>> {
+    let Some((batch, local_row)) = locate_batch_row(batches, row_index) else {
+        return Ok(v8::undefined(scope).into());
+    };
+    let schema = batch.schema();
+    let fields = schema.fields();
+    let object = batch_row_to_v8_object(scope, batch, fields, local_row)?;
+    attach_read_view_handle(
+        scope,
+        object,
+        NativeReadViewHandle {
+            batches: Arc::clone(batches),
+            row_index: Some(row_index),
+        },
+    )?;
+    let global = scope.get_current_context().global(scope);
+    if let Ok(key) = string_to_v8(scope, "__kalamReadViewRowMaterialize") {
+        if let Some(mat_fn) = global.get(scope, key.into()) {
+            let mat_key = string_to_v8(scope, "materialize")?;
+            object.define_own_property(
+                scope,
+                mat_key.into(),
+                mat_fn,
+                v8::PropertyAttribute::DONT_ENUM,
+            );
+        }
+    }
+    Ok(object.into())
+}
+
+fn locate_batch_row(
+    batches: &[arrow::array::RecordBatch],
+    mut row_index: usize,
+) -> Option<(&arrow::array::RecordBatch, usize)> {
+    for batch in batches {
+        let len = batch.num_rows();
+        if row_index < len {
+            return Some((batch, row_index));
+        }
+        row_index -= len;
+    }
+    None
+}
+
+fn attach_read_view_handle<'s>(
+    scope: &PinScope<'s, '_>,
+    object: Local<'s, v8::Object>,
+    handle: NativeReadViewHandle,
+) -> Result<()> {
+    if scope.is_execution_terminating() {
+        return Err(FunctionsError::Cancelled);
+    }
+    let (index, generation) = {
+        let registry = scope
+            .get_slot::<ReadViewRegistry>()
+            .ok_or_else(|| FunctionsError::Invalid("read view registry missing".into()))?;
+        registry.register(handle)?
+    };
+    let key_name = string_to_v8(scope, "__kalam_read_view_handle")?;
+    let key = v8::Private::for_api(scope, Some(key_name));
+    let payload = v8::Array::new(scope, 2);
+    let idx_val = v8::Number::new(scope, index as f64);
+    let gen_val = v8::Number::new(scope, generation as f64);
+    payload.set_index(scope, 0, idx_val.into());
+    payload.set_index(scope, 1, gen_val.into());
+    object.set_private(scope, key, payload.into());
+    Ok(())
+}
+
+fn extract_read_view_handle<'s>(
+    scope: &PinScope<'s, '_>,
+    value: Local<'s, v8::Value>,
+) -> Option<NativeReadViewHandle> {
+    if scope.is_execution_terminating() {
+        return None;
+    }
+    let object = v8::Local::<v8::Object>::try_from(value).ok()?;
+    let key_name = string_to_v8(scope, "__kalam_read_view_handle").ok()?;
+    let key = v8::Private::for_api(scope, Some(key_name));
+    let prop = object.get_private(scope, key)?;
+    let payload = v8::Local::<v8::Array>::try_from(prop).ok()?;
+    let index = payload.get_index(scope, 0)?.number_value(scope)? as usize;
+    let generation = payload.get_index(scope, 1)?.number_value(scope)? as u64;
+    let registry = scope.get_slot::<ReadViewRegistry>()?;
+    if registry.generation != generation {
+        return None;
+    }
+    registry.get(index)
+}
+
+pub(crate) fn try_extract_read_view_routine_value<'s>(
+    scope: &PinScope<'s, '_>,
+    value: Local<'s, v8::Value>,
+) -> Option<RoutineValue> {
+    let handle = extract_read_view_handle(scope, value)?;
+    match handle.row_index {
+        Some(row_index) => Some(RoutineValue::from_read_view_row(handle.batches, row_index)),
+        None => {
+            let mut value = RoutineValue::new(ScalarValue::Null);
+            value.read_view_batches = Some(handle.batches);
+            Some(value)
+        },
+    }
+}
+
+pub(crate) fn read_view_batches_at_callback(
+    scope: &mut v8::PinScope,
+    args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue,
+) {
+    let this: Local<v8::Value> = args.this().into();
+    let Some(handle) = extract_read_view_handle(scope, this) else {
+        rv.set(v8::undefined(scope).into());
+        return;
+    };
+    let idx = args.get(0).int32_value(scope).unwrap_or(-1);
+    if idx < 0 {
+        rv.set(v8::undefined(scope).into());
+        return;
+    }
+    match read_view_row_to_v8(scope, &handle.batches, idx as usize) {
+        Ok(val) => rv.set(val),
+        Err(_) => rv.set(v8::undefined(scope).into()),
+    }
+}
+
+pub(crate) fn read_view_batches_materialize_callback(
+    scope: &mut v8::PinScope,
+    args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue,
+) {
+    let this: Local<v8::Value> = args.this().into();
+    let Some(handle) = extract_read_view_handle(scope, this) else {
+        rv.set(v8::undefined(scope).into());
+        return;
+    };
+    if let Ok(val) = row_batches_to_v8(scope, &handle.batches) {
+        rv.set(val);
+    }
+}
+
+pub(crate) fn read_view_row_materialize_callback(
+    scope: &mut v8::PinScope,
+    args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue,
+) {
+    let this: Local<v8::Value> = args.this().into();
+    let Some(handle) = extract_read_view_handle(scope, this) else {
+        rv.set(v8::undefined(scope).into());
+        return;
+    };
+    let Some(row_index) = handle.row_index else {
+        rv.set(v8::undefined(scope).into());
+        return;
+    };
+    let Some((batch, local_row)) = locate_batch_row(&handle.batches, row_index) else {
+        rv.set(v8::undefined(scope).into());
+        return;
+    };
+    let schema = batch.schema();
+    if let Ok(obj) = batch_row_to_v8_object(scope, batch, schema.fields(), local_row) {
+        rv.set(obj.into());
+    }
 }
 
 pub(crate) fn string_to_v8<'s>(
@@ -71,7 +414,7 @@ pub(crate) fn object_set(
 ) -> Result<()> {
     let key = string_to_v8(scope, key)?;
     object
-        .set(scope, key.into(), value)
+        .create_data_property(scope, key.into(), value)
         .ok_or_else(|| FunctionsError::Invalid("failed to set object field".into()))?;
     Ok(())
 }
@@ -106,25 +449,58 @@ pub fn v8_to_routine<'s>(
     value: Local<'s, v8::Value>,
     template: &RoutineValue,
 ) -> Result<RoutineValue> {
+    if !template.json_sql {
+        if let Some(read_view) = try_extract_read_view_routine_value(scope, value) {
+            if let Some(batches) = &read_view.read_view_batches {
+                if let Some(row_idx) = read_view.read_view_row {
+                    if let DataType::Struct(expected_fields) = template.value.data_type() {
+                        if let Some((batch, local_row)) = locate_batch_row(batches, row_idx) {
+                            let mut columns = Vec::with_capacity(expected_fields.len());
+                            let mut fields_match = true;
+                            for field in expected_fields.iter() {
+                                if let Some((col_idx, _)) =
+                                    batch.schema().column_with_name(field.name())
+                                {
+                                    let col = batch.column(col_idx);
+                                    if col.data_type() == field.data_type() {
+                                        columns.push(col.slice(local_row, 1));
+                                        continue;
+                                    }
+                                }
+                                fields_match = false;
+                                break;
+                            }
+                            if fields_match {
+                                let struct_array = StructArray::try_new_with_length(
+                                    expected_fields,
+                                    columns,
+                                    None,
+                                    1,
+                                )
+                                .map_err(|error| {
+                                    FunctionsError::Invalid(format!("struct slice: {error}"))
+                                })?;
+                                return Ok(RoutineValue::new(ScalarValue::Struct(Arc::new(
+                                    struct_array,
+                                )))
+                                .with_type_id(template.type_id.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+            if matches!(template.value, ScalarValue::Null) {
+                return Ok(read_view);
+            }
+        }
+    }
     if template.json_sql {
         let parsed = v8_to_json_sql(scope, value)?;
-        return Ok(RoutineValue {
-            type_id:       template.type_id.clone(),
-            value:         parsed,
-            json_sql:      true,
-            transfer:      None,
-            contract_hash: None,
-        });
+        return Ok(RoutineValue::json(parsed).with_type_id(template.type_id.clone()));
     }
     let mut budget = ConversionBudget::new(scope);
     let scalar = v8_to_scalar(scope, value, &template.value.data_type(), &mut budget, 0)?;
-    Ok(RoutineValue {
-        type_id:       template.type_id.clone(),
-        value:         scalar,
-        json_sql:      false,
-        transfer:      None,
-        contract_hash: None,
-    })
+    Ok(RoutineValue::new(scalar).with_type_id(template.type_id.clone()))
 }
 
 fn v8_to_json_sql<'s>(
@@ -193,12 +569,20 @@ fn scalar_to_v8<'s>(scope: &PinScope<'s, '_>, value: &ScalarValue) -> Result<Loc
         ScalarValue::TimestampNanosecond(Some(ns), _) => i64_to_v8(scope, ns.div_euclid(1_000_000)),
         ScalarValue::Date32(Some(days)) => i64_to_v8(scope, i64::from(*days) * 86_400_000),
         ScalarValue::Date64(Some(ms)) => i64_to_v8(scope, *ms),
+        ScalarValue::Time32Second(Some(sec)) => i64_to_v8(scope, i64::from(*sec) * 1000),
+        ScalarValue::Time32Millisecond(Some(ms)) => i64_to_v8(scope, i64::from(*ms)),
+        ScalarValue::Time64Microsecond(Some(us)) => i64_to_v8(scope, *us),
+        ScalarValue::Time64Nanosecond(Some(ns)) => i64_to_v8(scope, ns.div_euclid(1000)),
         ScalarValue::TimestampSecond(None, _)
         | ScalarValue::TimestampMillisecond(None, _)
         | ScalarValue::TimestampMicrosecond(None, _)
         | ScalarValue::TimestampNanosecond(None, _)
         | ScalarValue::Date32(None)
-        | ScalarValue::Date64(None) => v8::null(scope).into(),
+        | ScalarValue::Date64(None)
+        | ScalarValue::Time32Second(None)
+        | ScalarValue::Time32Millisecond(None)
+        | ScalarValue::Time64Microsecond(None)
+        | ScalarValue::Time64Nanosecond(None) => v8::null(scope).into(),
         ScalarValue::Struct(array) => struct_to_v8(scope, array)?,
         ScalarValue::List(array) => list_to_v8(scope, array.as_ref())?,
         ScalarValue::LargeList(array) => list_to_v8(scope, array.as_ref())?,
@@ -404,8 +788,39 @@ fn v8_to_scalar<'s>(
         },
         DataType::Struct(fields) => v8_object_to_struct(scope, value, fields, budget, depth),
         DataType::List(field) => v8_array_to_list(scope, value, field, budget, depth),
+        DataType::Timestamp(TimeUnit::Second, tz) => {
+            Ok(ScalarValue::TimestampSecond(Some(js_to_i64(scope, value)), tz.clone()))
+        },
+        DataType::Timestamp(TimeUnit::Millisecond, tz) => {
+            Ok(ScalarValue::TimestampMillisecond(Some(js_to_i64(scope, value)), tz.clone()))
+        },
         DataType::Timestamp(TimeUnit::Microsecond, tz) => {
             Ok(ScalarValue::TimestampMicrosecond(Some(js_to_i64(scope, value)), tz.clone()))
+        },
+        DataType::Timestamp(TimeUnit::Nanosecond, tz) => {
+            Ok(ScalarValue::TimestampNanosecond(Some(js_to_i64(scope, value)), tz.clone()))
+        },
+        DataType::Date32 => {
+            let v = js_to_i64(scope, value);
+            let days = if v.abs() >= 86_400_000 {
+                (v / 86_400_000) as i32
+            } else {
+                v as i32
+            };
+            Ok(ScalarValue::Date32(Some(days)))
+        },
+        DataType::Date64 => Ok(ScalarValue::Date64(Some(js_to_i64(scope, value)))),
+        DataType::Time32(TimeUnit::Second) => {
+            Ok(ScalarValue::Time32Second(Some(js_to_i64(scope, value) as i32)))
+        },
+        DataType::Time32(TimeUnit::Millisecond) => {
+            Ok(ScalarValue::Time32Millisecond(Some(js_to_i64(scope, value) as i32)))
+        },
+        DataType::Time64(TimeUnit::Microsecond) => {
+            Ok(ScalarValue::Time64Microsecond(Some(js_to_i64(scope, value))))
+        },
+        DataType::Time64(TimeUnit::Nanosecond) => {
+            Ok(ScalarValue::Time64Nanosecond(Some(js_to_i64(scope, value))))
         },
         DataType::Null => infer_value(scope, value, budget, depth),
         other => Err(FunctionsError::Invalid(format!("unsupported function return type: {other}"))),
@@ -434,6 +849,18 @@ pub(crate) fn infer_value<'s>(
     }
     if value.is_int32() {
         return Ok(ScalarValue::Int32(Some(value.int32_value(scope).unwrap_or(0))));
+    }
+    if value.is_big_int() {
+        if let Some(bigint) = value.to_big_int(scope) {
+            let (i64_val, lossless_i64) = bigint.i64_value();
+            if lossless_i64 {
+                return Ok(ScalarValue::Int64(Some(i64_val)));
+            }
+            let (u64_val, lossless_u64) = bigint.u64_value();
+            if lossless_u64 {
+                return Ok(ScalarValue::UInt64(Some(u64_val)));
+            }
+        }
     }
     if value.is_number() {
         let number = value.number_value(scope).unwrap_or(0.0);
@@ -489,6 +916,24 @@ fn infer_v8_object<'s>(
     budget: &mut ConversionBudget,
     depth: usize,
 ) -> Result<ScalarValue> {
+    if let Some(read_view) = try_extract_read_view_routine_value(scope, value) {
+        if let Some(batches) = &read_view.read_view_batches {
+            if let Some(row_idx) = read_view.read_view_row {
+                if let Some((batch, local_row)) = locate_batch_row(batches, row_idx) {
+                    let schema = batch.schema();
+                    let columns: Vec<_> = (0..batch.num_columns())
+                        .map(|col_idx| batch.column(col_idx).slice(local_row, 1))
+                        .collect();
+                    let struct_array =
+                        StructArray::try_new_with_length(schema.fields().clone(), columns, None, 1)
+                            .map_err(|error| {
+                                FunctionsError::Invalid(format!("struct slice: {error}"))
+                            })?;
+                    return Ok(ScalarValue::Struct(Arc::new(struct_array)));
+                }
+            }
+        }
+    }
     let object = value
         .to_object(scope)
         .ok_or_else(|| FunctionsError::Invalid("expected object".to_string()))?;
@@ -496,8 +941,8 @@ fn infer_v8_object<'s>(
         .get_own_property_names(scope, v8::GetPropertyNamesArgsBuilder::new().build())
         .ok_or_else(|| FunctionsError::Invalid("failed to list object keys".to_string()))?;
     budget.items(names.length() as usize)?;
-    let mut columns: Vec<(Arc<Field>, arrow::array::ArrayRef)> =
-        Vec::with_capacity(names.length() as usize);
+    let mut fields = Vec::with_capacity(names.length() as usize);
+    let mut arrays = Vec::with_capacity(names.length() as usize);
     for index in 0..names.length() {
         let key_value = names
             .get_index(scope, index)
@@ -511,9 +956,12 @@ fn infer_v8_object<'s>(
         let array = scalar
             .to_array()
             .map_err(|error| FunctionsError::Invalid(format!("object field '{key}': {error}")))?;
-        columns.push((field, array));
+        fields.push(field);
+        arrays.push(array);
     }
-    Ok(ScalarValue::Struct(Arc::new(StructArray::from(columns))))
+    let struct_array = StructArray::try_new_with_length(fields.into(), arrays, None, 1)
+        .map_err(|error| FunctionsError::Invalid(format!("object struct construction: {error}")))?;
+    Ok(ScalarValue::Struct(Arc::new(struct_array)))
 }
 
 fn js_to_i64(scope: &PinScope<'_, '_>, value: Local<'_, v8::Value>) -> i64 {
@@ -592,7 +1040,7 @@ fn v8_object_to_struct<'s>(
         .to_object(scope)
         .ok_or_else(|| FunctionsError::Invalid("expected object for struct".to_string()))?;
     budget.items(fields.len())?;
-    let mut columns: Vec<(Arc<Field>, arrow::array::ArrayRef)> = Vec::with_capacity(fields.len());
+    let mut columns = Vec::with_capacity(fields.len());
     for field in fields.iter() {
         let key = string_to_v8(scope, field.name())?;
         let property = object
@@ -602,9 +1050,11 @@ fn v8_object_to_struct<'s>(
         let array = scalar.to_array().map_err(|error| {
             FunctionsError::Invalid(format!("struct field '{}': {error}", field.name()))
         })?;
-        columns.push((Arc::clone(field), array));
+        columns.push(array);
     }
-    Ok(ScalarValue::Struct(Arc::new(StructArray::from(columns))))
+    let struct_array = StructArray::try_new_with_length(fields.clone(), columns, None, 1)
+        .map_err(|error| FunctionsError::Invalid(format!("struct construction: {error}")))?;
+    Ok(ScalarValue::Struct(Arc::new(struct_array)))
 }
 
 fn v8_array_to_list<'s>(
@@ -630,22 +1080,9 @@ fn v8_array_to_list<'s>(
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_serialization::encode_function_value;
     use serde_json::json;
 
     use super::*;
-
-    #[test]
-    fn transfer_buffer_roundtrips_through_encoder() {
-        let json = json!({"n": 7});
-        let bytes = encode_function_value("c1", &json).unwrap();
-        let decoded = kalamdb_serialization::decode_function_value(&bytes, "c1").unwrap();
-        assert_eq!(decoded, json);
-        let value = RoutineValue::new(ScalarValue::Int32(Some(7)))
-            .with_transfer(bytes::Bytes::from(bytes), "c1");
-        assert!(value.transfer.is_some());
-        assert_eq!(value.contract_hash.as_deref(), Some("c1"));
-    }
 
     #[test]
     fn js_boundary_json_keeps_safe_int64_as_number() {
@@ -654,9 +1091,6 @@ mod tests {
         )
         .expect("js json");
         assert_eq!(encoded.0, json!(41));
-        let bytes = encode_function_value("", &encoded.0).unwrap();
-        let decoded = kalamdb_serialization::decode_function_value(&bytes, "").unwrap();
-        assert_eq!(decoded, json!(41));
     }
 
     #[test]
@@ -672,5 +1106,51 @@ mod tests {
             super::parse_decimal128("-0.75", 10, 2).unwrap(),
             ScalarValue::Decimal128(Some(-75), 10, 2)
         );
+    }
+
+    #[test]
+    fn t066_read_view_registry_releases_pinned_batches_and_fences_generations() {
+        use arrow::{
+            array::Int64Array,
+            datatypes::{Field, Schema},
+            record_batch::RecordBatch,
+        };
+
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        let batch =
+            RecordBatch::try_new(schema, vec![Arc::new(Int64Array::from(vec![10, 20, 30]))])
+                .unwrap();
+        let batches: Arc<[RecordBatch]> = Arc::from(vec![batch]);
+        assert_eq!(Arc::strong_count(&batches), 1);
+
+        let reg1 = super::ReadViewRegistry::default();
+        let gen1 = reg1.generation;
+        let (idx0, g0) = reg1
+            .register(super::NativeReadViewHandle {
+                batches: Arc::clone(&batches),
+                row_index: None,
+            })
+            .unwrap();
+        let (idx1, g1) = reg1
+            .register(super::NativeReadViewHandle {
+                batches: Arc::clone(&batches),
+                row_index: Some(0),
+            })
+            .unwrap();
+        assert_eq!(idx0, 0);
+        assert_eq!(idx1, 1);
+        assert_eq!(g0, gen1);
+        assert_eq!(g1, gen1);
+        assert_eq!(reg1.handle_count(), 2);
+        assert!(reg1.pinned_bytes() > 0);
+        assert_eq!(Arc::strong_count(&batches), 3);
+
+        // Dropping the registry at invocation end releases all cloned Arcs immediately.
+        drop(reg1);
+        assert_eq!(Arc::strong_count(&batches), 1);
+
+        // Next invocation gets a strictly newer generation.
+        let reg2 = super::ReadViewRegistry::default();
+        assert!(reg2.generation > gen1);
     }
 }

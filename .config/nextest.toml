@@ -324,7 +324,8 @@ junit.path = "junit.xml"
 # Show output for failed tests immediately
 failure-output = "immediate-final"
 
-# Fail fast so a dead Fresh server cannot cascade through the suite.
+# Stop on the first unrecoverable failure instead of cascading against a dead
+# shared Fresh server for the remainder of the workspace suite.
 fail-fast = true
 
 # Retry flaky tests once

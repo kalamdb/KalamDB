@@ -20,10 +20,6 @@ pub fn render_field_type(field: &ContractField, names: &AssignedNames, lang: Tar
             TargetLang::Rust => format!("Vec<{inner}>"),
         };
     }
-    // drizzle `file()` customType always includes `| null` in `data`.
-    if inner == "KalamFileColumn" || inner == "KalamFileColumn[]" {
-        return inner;
-    }
     if field.not_null {
         inner
     } else {
@@ -36,17 +32,30 @@ pub fn render_field_type(field: &ContractField, names: &AssignedNames, lang: Tar
 }
 
 fn named_or_builtin(field: &ContractField, names: &AssignedNames, lang: TargetLang) -> String {
+    if is_file_field(field) {
+        return match lang {
+            // Dart already has the FILE column type in kalam_link, exported by kalam_sync.
+            TargetLang::Dart => "KalamFileRef".to_string(),
+            TargetLang::TypeScript | TargetLang::Rust => "File".to_string(),
+        };
+    }
     if let Some(type_id) = &field.type_id {
         return names.type_ident(type_id.as_str()).to_string();
-    }
-    if field.type_name.eq_ignore_ascii_case("FILE") {
-        return builtin("FILE", lang).to_string();
     }
     let sql_name = field
         .data_type
         .map(|data_type| data_type.sql_name())
         .unwrap_or_else(|| field.type_name.clone());
     builtin(&sql_name, lang).to_string()
+}
+
+pub fn is_file_field(field: &ContractField) -> bool {
+    field.type_name.eq_ignore_ascii_case("FILE")
+        || field.type_name.eq_ignore_ascii_case("pg_catalog.file")
+        || field
+            .type_id
+            .as_ref()
+            .is_some_and(|type_id| type_id.as_str() == "pg_catalog.file")
 }
 
 pub fn builtin(sql_type: &str, lang: TargetLang) -> &'static str {
@@ -62,7 +71,7 @@ pub fn builtin(sql_type: &str, lang: TargetLang) -> &'static str {
         (TargetLang::TypeScript, "BYTES" | "BYTEA" | "BLOB" | "BINARY") => "Uint8Array",
         (TargetLang::TypeScript, "JSON" | "JSONB") => "JsonValue",
         (TargetLang::TypeScript, "TIMESTAMP" | "TIMESTAMPTZ" | "DATETIME") => "Date",
-        (TargetLang::TypeScript, "FILE") => "KalamFileColumn",
+        (TargetLang::TypeScript, "FILE") => "File",
         (TargetLang::TypeScript, _) => "string",
 
         (TargetLang::Dart, "BOOLEAN" | "BOOL") => "bool",
@@ -78,7 +87,8 @@ pub fn builtin(sql_type: &str, lang: TargetLang) -> &'static str {
         (TargetLang::Dart, "TIMESTAMP" | "TIMESTAMPTZ" | "DATETIME" | "DATE" | "TIME") => {
             "DateTime"
         },
-        (TargetLang::Dart, "JSON" | "JSONB" | "FILE") => "Map<String, Object?>",
+        (TargetLang::Dart, "JSON" | "JSONB") => "Map<String, Object?>",
+        (TargetLang::Dart, "FILE") => "File",
         (TargetLang::Dart, "BYTES" | "BYTEA" | "BLOB" | "BINARY") => "String",
         (TargetLang::Dart, "EMBEDDING") => "List<double>",
         (TargetLang::Dart, _) => "String",
@@ -91,6 +101,7 @@ pub fn builtin(sql_type: &str, lang: TargetLang) -> &'static str {
         (TargetLang::Rust, "DOUBLE" | "FLOAT8") => "f64",
         (TargetLang::Rust, "BYTES" | "BYTEA" | "BLOB" | "BINARY") => "Vec<u8>",
         (TargetLang::Rust, "JSON" | "JSONB") => "serde_json::Value",
+        (TargetLang::Rust, "FILE") => "File",
         (TargetLang::Rust, _) => "String",
     }
 }
@@ -105,6 +116,6 @@ mod tests {
         assert_eq!(builtin("TIMESTAMPTZ", TargetLang::TypeScript), "Date");
         assert_eq!(builtin("DATETIME", TargetLang::TypeScript), "Date");
         assert_eq!(builtin("TEXT", TargetLang::TypeScript), "string");
-        assert_eq!(builtin("FILE", TargetLang::TypeScript), "KalamFileColumn");
+        assert_eq!(builtin("FILE", TargetLang::TypeScript), "File");
     }
 }

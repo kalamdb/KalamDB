@@ -52,7 +52,7 @@ mod tests {
 
     use kalamdb_commons::{
         models::{
-            NamespaceId, RoutineGrantId, RoutineGrantee, RoutineId, RoutineSecurityMode, UserId,
+            RoutineGrantId, RoutineGrantee, RoutineId, RoutineSecurityMode, SchemaId, UserId,
         },
         Role,
     };
@@ -66,23 +66,30 @@ mod tests {
     }
 
     fn routine() -> CatalogRoutine {
-        let ns = NamespaceId::new("api");
+        let ns = SchemaId::new("api");
         CatalogRoutine {
-            routine_id:         RoutineId::from_parts(Some(&ns), "health"),
-            namespace_id:       ns,
-            name:               "health".to_string(),
-            owner:              UserId::new("owner"),
-            security:           RoutineSecurityMode::Invoker,
-            language:           None,
-            body:               None,
-            return_type_id:     None,
-            return_type_name:   None,
-            return_is_array:    false,
-            return_not_null:    false,
-            comment:            None,
-            return_data_type:   None,
+            routine_id: RoutineId::from_parts(Some(&ns), "health"),
+            namespace_id: ns,
+            name: "health".to_string(),
+            owner: UserId::new("owner"),
+            security: RoutineSecurityMode::Invoker,
+            language: None,
+            body: None,
+            return_type_id: None,
+            return_type_name: None,
+            return_is_array: false,
+            return_not_null: false,
+            comment: None,
+            return_data_type: None,
             inline_source_hash: None,
             inline_artifact_id: None,
+            kind: kalamdb_commons::models::RoutineKind::default(),
+            volatility: kalamdb_commons::models::RoutineVolatility::default(),
+            null_safety: kalamdb_commons::models::RoutineNullSafety::default(),
+            parallel_safety: kalamdb_commons::models::RoutineParallelSafety::default(),
+            cost: None,
+            rows: None,
+            config_params: None,
         }
     }
 

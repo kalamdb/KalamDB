@@ -205,7 +205,7 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
 mod tests {
     use arrow::datatypes::{DataType, Field, Schema};
     use kalamdb_commons::{
-        models::{NamespaceId, UserId},
+        models::{SchemaId, UserId},
         schemas::TableType,
         Role,
     };
@@ -226,18 +226,17 @@ mod tests {
         // Check if "local" storage exists, create if not
         if storages_provider.get_storage_by_id(&storage_id).unwrap().is_none() {
             let storage = Storage {
-                storage_id:             storage_id.clone(),
-                storage_name:           "Local Storage".to_string(),
-                description:            Some("Default local storage".to_string()),
-                storage_type:
-                    kalamdb_system::providers::storages::models::StorageType::Filesystem,
-                base_directory:         "/tmp/kalamdb_test".to_string(),
-                credentials:            None,
-                config_json:            None,
+                storage_id: storage_id.clone(),
+                storage_name: "Local Storage".to_string(),
+                description: Some("Default local storage".to_string()),
+                storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
+                base_directory: "/tmp/kalamdb_test".to_string(),
+                credentials: None,
+                config_json: None,
                 shared_tables_template: "shared/{namespace}/{table}".to_string(),
-                user_tables_template:   "user/{namespace}/{table}/{userId}".to_string(),
-                created_at:             chrono::Utc::now().timestamp_millis(),
-                updated_at:             chrono::Utc::now().timestamp_millis(),
+                user_tables_template: "user/{namespace}/{table}/{userId}".to_string(),
+                created_at: chrono::Utc::now().timestamp_millis(),
+                updated_at: chrono::Utc::now().timestamp_millis(),
             };
             storages_provider.create_storage(storage).unwrap();
         }
@@ -251,7 +250,7 @@ mod tests {
         ]));
 
         CreateTableStatement {
-            namespace_id: NamespaceId::default(),
+            namespace_id: SchemaId::default(),
             table_name: format!("test_table_{}", chrono::Utc::now().timestamp_millis()).into(),
             table_type,
             schema,
@@ -278,14 +277,14 @@ mod tests {
     async fn test_create_table_if_not_exists_existing_table_skips_audit() {
         let app_ctx = test_app_context_simple();
         let namespaces_provider = app_ctx.system_tables().namespaces();
-        let namespace_id = NamespaceId::default();
+        let namespace_id = SchemaId::default();
         if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
             let namespace = kalamdb_system::Namespace {
                 namespace_id: namespace_id.clone(),
-                name:         "default".to_string(),
-                created_at:   chrono::Utc::now().timestamp_millis(),
-                options:      None,
-                table_count:  0,
+                name: "default".to_string(),
+                created_at: chrono::Utc::now().timestamp_millis(),
+                options: None,
+                table_count: 0,
             };
             namespaces_provider.create_namespace(namespace).unwrap();
         }
@@ -371,14 +370,14 @@ mod tests {
         // Ensure default storage and namespace exist
         ensure_default_storage();
         let namespaces_provider = app_ctx.system_tables().namespaces();
-        let namespace_id = NamespaceId::default();
+        let namespace_id = SchemaId::default();
         if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
             let namespace = kalamdb_system::Namespace {
                 namespace_id: namespace_id.clone(),
-                name:         "default".to_string(),
-                created_at:   chrono::Utc::now().timestamp_millis(),
-                options:      None,
-                table_count:  0,
+                name: "default".to_string(),
+                created_at: chrono::Utc::now().timestamp_millis(),
+                options: None,
+                table_count: 0,
             };
             namespaces_provider.create_namespace(namespace).unwrap();
         }
@@ -405,14 +404,14 @@ mod tests {
         // Ensure default storage and namespace exist
         ensure_default_storage();
         let namespaces_provider = app_ctx.system_tables().namespaces();
-        let namespace_id = NamespaceId::default();
+        let namespace_id = SchemaId::default();
         if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
             let namespace = kalamdb_system::Namespace {
                 namespace_id: namespace_id.clone(),
-                name:         "default".to_string(),
-                created_at:   chrono::Utc::now().timestamp_millis(),
-                options:      None,
-                table_count:  0,
+                name: "default".to_string(),
+                created_at: chrono::Utc::now().timestamp_millis(),
+                options: None,
+                table_count: 0,
             };
             namespaces_provider.create_namespace(namespace).unwrap();
         }

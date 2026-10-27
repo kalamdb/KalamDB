@@ -59,34 +59,34 @@ mod tests {
     use crate::limiter::RateLimiter;
 
     struct WsTestContext {
-        server:   actix_web::dev::ServerHandle,
+        server: actix_web::dev::ServerHandle,
         base_url: String,
         registry: Arc<ConnectionsManager>,
-        user_id:  UserId,
-        token:    String,
+        user_id: UserId,
+        token: String,
     }
 
     fn test_user() -> User {
         let now = chrono::Utc::now().timestamp_millis();
         User {
-            user_id:               UserId::new("ws-test-user"),
-            password_hash:         "$2b$12$hash".to_string(),
-            role:                  Role::Dba,
-            name:                  None,
-            email:                 Some("ws-test@example.com".to_string()),
-            auth_type:             AuthType::Password,
-            auth_data:             None,
-            storage_mode:          StorageMode::Table,
-            storage_id:            Some(kalamdb_commons::StorageId::new("local")),
+            user_id: UserId::new("ws-test-user"),
+            password_hash: "$2b$12$hash".to_string(),
+            role: Role::Dba,
+            name: None,
+            email: Some("ws-test@example.com".to_string()),
+            auth_type: AuthType::Password,
+            auth_data: None,
+            storage_mode: StorageMode::Table,
+            storage_id: Some(kalamdb_commons::StorageId::new("local")),
             failed_login_attempts: 0,
-            locked_until:          None,
-            last_login_at:         None,
-            created_at:            now,
-            updated_at:            now,
-            last_seen:             None,
-            deleted_at:            None,
-            invite_expires_at:     None,
-            invited_by:            None,
+            locked_until: None,
+            last_login_at: None,
+            created_at: now,
+            updated_at: now,
+            last_seen: None,
+            deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         }
     }
 
@@ -147,11 +147,7 @@ mod tests {
 
         WireNotification {
             subscription_id: Arc::from(subscription_id),
-            payload:         Arc::new(SharedChangePayload::new(
-                ChangeType::Insert,
-                Some(vec![row]),
-                None,
-            )),
+            payload: Arc::new(SharedChangePayload::new(ChangeType::Insert, Some(vec![row]), None)),
         }
     }
 
@@ -224,25 +220,44 @@ mod tests {
     }
 
     #[actix_rt::test]
-    async fn websocket_handler_sends_binary_notification_frames_for_msgpack_connections() {
+    async fn websocket_handler_sends_binary_notification_frames_for_domain_connections() {
         let ctx = start_ws_test_server().await;
         let mut stream =
-            connect(&ctx.base_url, &ctx.token, "?serialization=msgpack&compress=false").await;
+            connect(&ctx.base_url, &ctx.token, "?serialization=domain&compress=false").await;
 
-        expect_auth_success(&mut stream).await;
+        let auth = stream.next().await.unwrap().unwrap();
+        let Message::Binary(auth_bytes) = auth else {
+            panic!("expected domain auth frame, got {auth:?}");
+        };
+        let auth_message = kalamdb_serialization::decode_server_message(&auth_bytes).unwrap();
+        assert!(matches!(
+            auth_message,
+            kalamdb_commons::websocket_messages::ServerMessage::AuthSuccess { .. }
+        ));
         assert!(ctx
             .registry
-            .notify_connections_for_user(&ctx.user_id, make_notification("sub-msgpack")));
+            .notify_connections_for_user(&ctx.user_id, make_notification("sub-domain")));
 
         let frame = stream.next().await.unwrap().unwrap();
         let Message::Binary(bytes) = frame else {
-            panic!("expected MessagePack binary frame, got {frame:?}");
+            panic!("expected domain binary frame, got {frame:?}");
         };
-        let value: serde_json::Value = rmp_serde::from_slice(&bytes).unwrap();
-        assert_eq!(value["type"], "change");
-        assert_eq!(value["subscription_id"], "sub-msgpack");
-        assert_eq!(value["change_type"], "insert");
-        assert_eq!(value["rows"][0]["body"], "hello");
+        let message = kalamdb_serialization::decode_server_message(&bytes).unwrap();
+        match message {
+            kalamdb_commons::websocket_messages::ServerMessage::Change {
+                subscription_id,
+                change_type,
+                rows,
+                ..
+            } => {
+                assert_eq!(subscription_id, "sub-domain");
+                assert_eq!(change_type, kalamdb_commons::ChangeTypeRaw::Insert);
+                let rows = rows.unwrap();
+                let body = rows[0].get("body").unwrap();
+                assert_eq!(body.as_str(), Some("hello"));
+            },
+            other => panic!("expected change, got {other:?}"),
+        }
 
         let _ = stream.close(None).await;
         ctx.server.stop(true).await;

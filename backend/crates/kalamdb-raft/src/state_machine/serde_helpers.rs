@@ -29,7 +29,7 @@ mod tests {
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     struct TestData {
-        id:   u64,
+        id: u64,
         name: String,
     }
 
@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn test_encode_decode_roundtrip() {
         let data = TestData {
-            id:   42,
+            id: 42,
             name: "test".to_string(),
         };
         let bytes = encode(&data).unwrap();

@@ -14,7 +14,9 @@ use datafusion::{
     common::DFSchema,
     datasource::{source::DataSourceExec, TableProvider},
     error::{DataFusionError, Result as DataFusionResult},
-    logical_expr::{utils::expr_to_columns, Expr},
+    logical_expr::{
+        utils::expr_to_columns, Expr, ExprSchemable, Operator, TableProviderFilterPushDown,
+    },
     physical_plan::{collect, filter::FilterExec, projection::ProjectionExec, ExecutionPlan},
     scalar::ScalarValue,
 };
@@ -34,7 +36,7 @@ use kalamdb_transactions::{
 
 pub struct OverlayScanProjection {
     pub effective_projection: Option<Vec<usize>>,
-    pub final_projection:     Option<Vec<usize>>,
+    pub final_projection: Option<Vec<usize>>,
 }
 
 #[derive(Debug)]
@@ -250,6 +252,18 @@ fn try_read_memory_source_batches(
     Ok(Some(batches))
 }
 
+fn residual_filter_required(provider: &dyn TableProvider, filters: &[Expr]) -> bool {
+    if filters.is_empty() {
+        return false;
+    }
+    let references: Vec<&Expr> = filters.iter().collect();
+    !provider.supports_filters_pushdown(&references).is_ok_and(|capabilities| {
+        capabilities
+            .iter()
+            .all(|capability| matches!(capability, TableProviderFilterPushDown::Exact))
+    })
+}
+
 pub async fn collect_matching_rows_with_projection(
     provider: &dyn TableProvider,
     state: &dyn Session,
@@ -257,13 +271,11 @@ pub async fn collect_matching_rows_with_projection(
     projection: Option<&Vec<usize>>,
 ) -> DataFusionResult<Vec<Row>> {
     // Pass filters to scan() which may apply partial or full filtering.
-    // However, when called directly (not through the SQL planner), DataFusion does NOT
-    // automatically add a FilterExec for Inexact pushdown — the planner does that.
-    // We explicitly wrap with FilterExec to guarantee correct row-level filtering
-    // regardless of whether the underlying scan implementation applied the filter.
+    // MVCC providers report Exact and apply the predicate on resolved rows.
+    // A second FilterExec is only required when pushdown is not Exact.
     let scan_plan = provider.scan(state, projection, filters, None).await?;
 
-    let plan: Arc<dyn ExecutionPlan> = if !filters.is_empty() {
+    let plan: Arc<dyn ExecutionPlan> = if residual_filter_required(provider, filters) {
         let schema = scan_plan.schema();
         let df_schema = DFSchema::try_from(Arc::clone(&schema))?;
         let predicate = filters[1..].iter().cloned().fold(filters[0].clone(), |acc, f| acc.and(f));
@@ -309,6 +321,22 @@ pub fn dml_scan_projection(
     }
 }
 
+/// Schema of a DML scan. Assignment evaluation has to use this schema:
+/// a projected row is missing columns, and the full table schema rejects
+/// those gaps on non-nullable fields.
+pub fn projected_schema(
+    schema: &SchemaRef,
+    projection: Option<&[usize]>,
+) -> DataFusionResult<SchemaRef> {
+    let Some(indices) = projection else {
+        return Ok(Arc::clone(schema));
+    };
+    schema
+        .project(indices)
+        .map(Arc::new)
+        .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))
+}
+
 pub fn row_matches_filters(
     state: &dyn Session,
     schema: &SchemaRef,
@@ -327,31 +355,274 @@ pub fn row_matches_filters(
     Ok(true)
 }
 
-pub fn validate_where_clause(filters: &[Expr], op_name: &str) -> DataFusionResult<()> {
-    if filters.is_empty() {
-        return Err(DataFusionError::Plan(format!("{} requires a WHERE clause", op_name)));
+pub fn validate_update_assignments(assignments: &[(String, Expr)]) -> DataFusionResult<()> {
+    if assignments.is_empty() {
+        return Err(DataFusionError::Plan("UPDATE requires at least one assignment".to_string()));
     }
     Ok(())
 }
 
-pub fn validate_update_assignments(
-    assignments: &[(String, Expr)],
+/// New primary-key text when `updates` changes `pk_column`.
+///
+/// `Ok(None)` means the primary key is unchanged. A null assignment is rejected.
+pub fn relocated_primary_key(
+    updates: &Row,
     pk_column: &str,
-) -> DataFusionResult<()> {
-    if assignments.is_empty() {
-        return Err(DataFusionError::Plan("UPDATE requires at least one assignment".to_string()));
+    current_pk: &str,
+) -> DataFusionResult<Option<String>> {
+    let Some(value) = updates.values.get(pk_column) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Err(DataFusionError::Plan(format!(
+            "UPDATE cannot set primary key column '{}' to null",
+            pk_column
+        )));
     }
+    let new_pk = scalar_to_pk_string(value).map_err(|error| {
+        DataFusionError::Execution(format!("Invalid primary key value: {}", error))
+    })?;
+    if new_pk == current_pk {
+        Ok(None)
+    } else {
+        Ok(Some(new_pk))
+    }
+}
 
-    for (column, _) in assignments {
-        if column.eq_ignore_ascii_case(pk_column) {
-            return Err(DataFusionError::Plan(format!(
-                "UPDATE cannot modify primary key column '{}'",
-                pk_column
-            )));
+/// Full non-system row after applying `updates`, used when the primary key moves.
+pub fn row_for_primary_key_move(existing: &Row, updates: &Row) -> Row {
+    let mut values = BTreeMap::new();
+    for (name, value) in &existing.values {
+        if !name.starts_with('_') {
+            values.insert(name.clone(), value.clone());
         }
     }
+    for (name, value) in &updates.values {
+        if !name.starts_with('_') {
+            values.insert(name.clone(), value.clone());
+        }
+    }
+    Row::new(values)
+}
 
+/// Reject an insert whose non-null foreign key does not match a live row.
+///
+/// Null columns follow PostgreSQL `MATCH SIMPLE` and are not checked. Rows
+/// already staged in this transaction are visible through the referenced
+/// table scan.
+pub async fn reject_missing_foreign_keys<E>(
+    registry: &dyn kalamdb_system::SchemaRegistry<Error = E>,
+    state: &dyn Session,
+    table_id: &TableId,
+    foreign_keys: &[kalamdb_commons::models::schemas::ForeignKeyDefinition],
+    rows: &[Row],
+) -> DataFusionResult<()>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    if foreign_keys.is_empty() || rows.is_empty() {
+        return Ok(());
+    }
+    for (index, row) in rows.iter().enumerate() {
+        for foreign_key in foreign_keys {
+            if foreign_key_is_null(row, foreign_key) {
+                continue;
+            }
+            if foreign_key.referenced_namespace.as_str() == table_id.namespace_id().as_str()
+                && foreign_key.referenced_table.as_str() == table_id.table_name().as_str()
+                && rows[..=index]
+                    .iter()
+                    .any(|candidate| row_satisfies_foreign_key(candidate, foreign_key, row))
+            {
+                continue;
+            }
+            if !foreign_key_target_exists(registry, state, foreign_key, row).await? {
+                return Err(DataFusionError::Execution(foreign_key_violation_message(
+                    table_id.table_name().as_str(),
+                    foreign_key,
+                    row,
+                )));
+            }
+        }
+    }
     Ok(())
+}
+
+fn foreign_key_is_null(
+    row: &Row,
+    foreign_key: &kalamdb_commons::models::schemas::ForeignKeyDefinition,
+) -> bool {
+    foreign_key
+        .columns
+        .iter()
+        .any(|column| row.values.get(column).is_none_or(ScalarValue::is_null))
+}
+
+fn row_satisfies_foreign_key(
+    candidate: &Row,
+    foreign_key: &kalamdb_commons::models::schemas::ForeignKeyDefinition,
+    source: &Row,
+) -> bool {
+    foreign_key.columns.iter().zip(foreign_key.referenced_columns.iter()).all(
+        |(local, referenced)| match (source.values.get(local), candidate.values.get(referenced)) {
+            (Some(source_value), Some(candidate_value)) => {
+                source_value == candidate_value && !source_value.is_null()
+            },
+            _ => false,
+        },
+    )
+}
+
+async fn foreign_key_target_exists<E>(
+    registry: &dyn kalamdb_system::SchemaRegistry<Error = E>,
+    state: &dyn Session,
+    foreign_key: &kalamdb_commons::models::schemas::ForeignKeyDefinition,
+    row: &Row,
+) -> DataFusionResult<bool>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let referenced_id = TableId::new(
+        foreign_key.referenced_namespace.clone(),
+        foreign_key.referenced_table.clone(),
+    );
+    let Some(provider) = registry.get_table_provider(&referenced_id) else {
+        return Ok(false);
+    };
+    let schema = provider.schema();
+    let mut filters = Vec::with_capacity(foreign_key.referenced_columns.len());
+    for (local, referenced) in foreign_key.columns.iter().zip(foreign_key.referenced_columns.iter())
+    {
+        let Some(value) = row.values.get(local) else {
+            return Ok(false);
+        };
+        let field = schema.field_with_name(referenced).map_err(|error| {
+            DataFusionError::Execution(format!(
+                "foreign key column '{}' is missing on {}: {}",
+                referenced,
+                foreign_key.referenced_table.as_str(),
+                error
+            ))
+        })?;
+        let data_type = field.data_type().clone();
+        let df_schema = DFSchema::try_from(Arc::clone(&schema))?;
+        let literal = datafusion::logical_expr::lit(value.clone())
+            .cast_to(&data_type, &df_schema)
+            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+        filters.push(datafusion::logical_expr::col(referenced).eq(literal));
+    }
+    let matches =
+        collect_matching_rows_with_projection(provider.as_ref(), state, &filters, None).await?;
+    Ok(!matches.is_empty())
+}
+
+fn foreign_key_violation_message(
+    table_name: &str,
+    foreign_key: &kalamdb_commons::models::schemas::ForeignKeyDefinition,
+    row: &Row,
+) -> String {
+    let columns = foreign_key.columns.join(", ");
+    let values = foreign_key
+        .columns
+        .iter()
+        .map(|column| {
+            row.values
+                .get(column)
+                .map(|value| scalar_to_pk_string(value).unwrap_or_else(|_| value.to_string()))
+                .unwrap_or_else(|| "null".to_string())
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "foreign key violation on table \"{table_name}\" detail Key ({columns})=({values}) is not \
+         present in table \"{}\".",
+        foreign_key.referenced_table.as_str()
+    )
+}
+
+/// Primary-key values from a filter that is only `pk = lit`, `pk IN (lits)`, or `pk = a OR pk = b`.
+///
+/// Anything else, including an extra predicate, returns `None` so DELETE still scans.
+pub fn pk_membership_literals(filters: &[Expr], pk_name: &str) -> Option<Vec<String>> {
+    if filters.len() != 1 {
+        return None;
+    }
+    let mut values = Vec::new();
+    if !collect_pk_membership(&filters[0], pk_name, &mut values) || values.is_empty() {
+        return None;
+    }
+    Some(values)
+}
+
+fn collect_pk_membership(expr: &Expr, pk_name: &str, values: &mut Vec<String>) -> bool {
+    match unwrap_cast(expr) {
+        Expr::InList(in_list) if !in_list.negated => {
+            if !is_pk_column(unwrap_cast(&in_list.expr), pk_name) {
+                return false;
+            }
+            let start = values.len();
+            for item in &in_list.list {
+                let Some(text) = literal_pk(unwrap_cast(item)) else {
+                    values.truncate(start);
+                    return false;
+                };
+                values.push(text);
+            }
+            values.len() > start
+        },
+        Expr::BinaryExpr(binary) if binary.op == Operator::Or => {
+            let start = values.len();
+            if collect_pk_membership(&binary.left, pk_name, values)
+                && collect_pk_membership(&binary.right, pk_name, values)
+            {
+                true
+            } else {
+                values.truncate(start);
+                false
+            }
+        },
+        Expr::BinaryExpr(binary) if binary.op == Operator::Eq => {
+            literal_pk_eq(binary, pk_name).map(|text| values.push(text)).is_some()
+        },
+        _ => false,
+    }
+}
+
+fn unwrap_cast(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Cast(cast) => unwrap_cast(&cast.expr),
+        _ => expr,
+    }
+}
+
+fn is_pk_column(expr: &Expr, pk_name: &str) -> bool {
+    match expr {
+        Expr::Column(column) => column.name.eq_ignore_ascii_case(pk_name),
+        _ => false,
+    }
+}
+
+fn literal_pk(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Literal(value, _) => scalar_to_pk_string(value).ok(),
+        _ => None,
+    }
+}
+
+fn literal_pk_eq(binary: &datafusion::logical_expr::BinaryExpr, pk_name: &str) -> Option<String> {
+    match (unwrap_cast(&binary.left), unwrap_cast(&binary.right)) {
+        (Expr::Column(column), Expr::Literal(value, _))
+            if column.name.eq_ignore_ascii_case(pk_name) =>
+        {
+            scalar_to_pk_string(value).ok()
+        },
+        (Expr::Literal(value, _), Expr::Column(column))
+            if column.name.eq_ignore_ascii_case(pk_name) =>
+        {
+            scalar_to_pk_string(value).ok()
+        },
+        _ => None,
+    }
 }
 
 pub fn extract_pk_value(row: &Row, pk_column: &str) -> DataFusionResult<String> {
@@ -573,9 +844,19 @@ mod tests {
         prelude::SessionContext,
         scalar::ScalarValue,
     };
-    use kalamdb_commons::models::rows::Row;
+    use kalamdb_commons::{
+        models::{
+            rows::Row,
+            schemas::{ForeignKeyAction, ForeignKeyDefinition, TableName},
+        },
+        SchemaId,
+    };
 
-    use super::{dml_scan_projection, evaluate_assignment_values, row_matches_filters};
+    use super::{
+        dml_scan_projection, evaluate_assignment_values, foreign_key_violation_message,
+        pk_membership_literals, relocated_primary_key, row_for_primary_key_move,
+        row_matches_filters,
+    };
 
     fn test_schema() -> SchemaRef {
         Arc::new(Schema::new(vec![
@@ -634,6 +915,33 @@ mod tests {
         assert_eq!(evaluator.evaluate(&rows).unwrap(), expected);
         assert_eq!(evaluator.evaluate(&rows[1..]).unwrap(), expected[1..]);
         assert!(evaluator.evaluate(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn prepared_assignments_evaluate_a_projected_row() {
+        let ctx = SessionContext::new();
+        let projected = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new("used_at", DataType::Utf8, true),
+        ]));
+        let rows = vec![Row::from_vec(vec![
+            ("id".into(), ScalarValue::Utf8(Some("1".into()))),
+            ("used_at".into(), ScalarValue::Utf8(None)),
+        ])];
+        let assignments = vec![("used_at".to_string(), lit("2026-10-22"))];
+        let evaluator = crate::utils::prepared_update_assignments::PreparedUpdateAssignments::new(
+            &ctx.state(),
+            &projected,
+            &assignments,
+        )
+        .unwrap();
+
+        let updates = evaluator.evaluate(&rows).unwrap();
+
+        assert_eq!(
+            updates[0].values.get("used_at"),
+            Some(&ScalarValue::Utf8(Some("2026-10-22".into())))
+        );
     }
 
     #[test]
@@ -713,6 +1021,27 @@ mod tests {
     }
 
     #[test]
+    fn pk_membership_literals_reads_in_list_and_or_chain() {
+        let filters = vec![col("id").in_list(vec![lit(1_i64), lit(2_i64)], false)];
+        assert_eq!(
+            pk_membership_literals(&filters, "id").as_deref(),
+            Some(["1".to_string(), "2".to_string()].as_slice())
+        );
+
+        let or_filters = vec![col("id").eq(lit(3_i64)).or(col("id").eq(lit(4_i64)))];
+        assert_eq!(
+            pk_membership_literals(&or_filters, "id").unwrap(),
+            vec!["3".to_string(), "4".to_string()]
+        );
+
+        let mixed = vec![col("id").eq(lit(1_i64)).or(col("name").eq(lit("a")))];
+        assert!(pk_membership_literals(&mixed, "id").is_none());
+
+        let extra = vec![col("id").eq(lit(1_i64)), col("name").eq(lit("a"))];
+        assert!(pk_membership_literals(&extra, "id").is_none());
+    }
+
+    #[test]
     fn dml_scan_projection_only_keeps_columns_needed_for_delete() {
         let schema = test_schema();
         let filters = vec![col("name").eq(lit("alice"))];
@@ -736,5 +1065,68 @@ mod tests {
         let projection = dml_scan_projection(&schema, &filters, &assignments, &["id"]).unwrap();
 
         assert_eq!(projection, None);
+    }
+
+    #[test]
+    fn relocated_primary_key_reports_a_change_and_rejects_null() {
+        let unchanged =
+            Row::from_vec(vec![("id".to_string(), ScalarValue::Utf8(Some("row-1".to_string())))]);
+        assert_eq!(relocated_primary_key(&unchanged, "id", "row-1").unwrap(), None);
+
+        let moved =
+            Row::from_vec(vec![("id".to_string(), ScalarValue::Utf8(Some("row-2".to_string())))]);
+        assert_eq!(
+            relocated_primary_key(&moved, "id", "row-1").unwrap(),
+            Some("row-2".to_string())
+        );
+
+        let missing =
+            Row::from_vec(vec![("name".to_string(), ScalarValue::Utf8(Some("alice".to_string())))]);
+        assert_eq!(relocated_primary_key(&missing, "id", "row-1").unwrap(), None);
+
+        let null_key = Row::from_vec(vec![("id".to_string(), ScalarValue::Utf8(None))]);
+        let error = relocated_primary_key(&null_key, "id", "row-1").unwrap_err();
+        assert!(error.to_string().contains("cannot set primary key"));
+    }
+
+    #[test]
+    fn row_for_primary_key_move_keeps_user_columns_and_drops_system_columns() {
+        let mut existing = test_row();
+        existing
+            .values
+            .insert("_deleted".to_string(), ScalarValue::Boolean(Some(false)));
+        let updates = Row::from_vec(vec![
+            ("id".to_string(), ScalarValue::Utf8(Some("row-2".to_string()))),
+            ("name".to_string(), ScalarValue::Utf8(Some("bob".to_string()))),
+            ("_version".to_string(), ScalarValue::Int64(Some(9))),
+        ]);
+
+        let moved = row_for_primary_key_move(&existing, &updates);
+
+        assert_eq!(moved.values.get("id"), Some(&ScalarValue::Utf8(Some("row-2".to_string()))));
+        assert_eq!(moved.values.get("name"), Some(&ScalarValue::Utf8(Some("bob".to_string()))));
+        assert_eq!(moved.values.get("value"), Some(&ScalarValue::Int64(Some(10))));
+        assert!(!moved.values.contains_key("_deleted"));
+        assert!(!moved.values.contains_key("_version"));
+    }
+
+    #[test]
+    fn foreign_key_violation_message_names_the_missing_key() {
+        let foreign_key = ForeignKeyDefinition {
+            name: "posts_author_fkey".to_string(),
+            columns: vec!["author".to_string()],
+            referenced_namespace: SchemaId::new("public"),
+            referenced_table: TableName::new("authors"),
+            referenced_columns: vec!["id".to_string()],
+            on_update: ForeignKeyAction::NoAction,
+            on_delete: ForeignKeyAction::NoAction,
+        };
+        let row = Row::from_vec(vec![("author".to_string(), ScalarValue::Int64(Some(999)))]);
+
+        assert_eq!(
+            foreign_key_violation_message("posts", &foreign_key, &row),
+            "foreign key violation on table \"posts\" detail Key (author)=(999) is not present in \
+             table \"authors\"."
+        );
     }
 }

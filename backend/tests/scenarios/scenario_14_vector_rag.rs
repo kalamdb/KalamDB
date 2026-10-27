@@ -178,8 +178,8 @@ async fn test_scenario_14_rag_docs_with_files_and_vector_search() -> anyhow::Res
     let vectors_table = "documents_vectors";
     let username = format!("{}_rag_user", ns);
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    assert_success(&resp, "CREATE NAMESPACE");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    assert_success(&resp, "CREATE SCHEMA");
 
     let create_files_table_sql = format!(
         "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, \
@@ -535,6 +535,6 @@ async fn test_scenario_14_rag_docs_with_files_and_vector_search() -> anyhow::Res
         "second flush should rotate vector snapshot version for doc_embedding"
     );
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }

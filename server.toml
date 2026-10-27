@@ -32,10 +32,6 @@ workers = 0
 # - Server push support (for future features)
 enable_http2 = true
 
-# API version (default: "v1")
-# Controls the versioned endpoint prefix (e.g., /v1/api/sql)
-api_version = "v1"
-
 [storage]
 # Base data directory for all KalamDB storage
 # Subdirectories are automatically created:
@@ -107,13 +103,6 @@ max_entries = 500
 eviction_ttl_days = 7
 
 [flush]
-# Default row limit for flush policies (default: 10000 rows)
-# Tables without explicit flush policy will use this value
-default_row_limit = 10000
-
-# Default time interval for flush in seconds (default: 300s = 5 minutes)
-# Tables will flush to Parquet after this duration
-default_time_interval = 300
 
 # Batch size for flush operations (default: 10000 rows)
 # Controls how many rows are loaded into memory at once during flush
@@ -143,21 +132,12 @@ user_max_segment_rows = 10000
 shared_max_segment_rows = 25000
 
 [stream]
-# Default TTL for stream table rows in seconds (default: 10 seconds)
-# Stream tables are ephemeral - rows expire after this duration
-default_ttl_seconds = 10
-
-# Default maximum buffer size for stream tables (default: 10000 rows)
-# Oldest rows are evicted when buffer exceeds this limit
-default_max_buffer = 10000
 
 # Stream eviction interval in seconds (default: 60 seconds = 1 minute)
 # How often the background task checks and evicts expired events
 eviction_interval_seconds = 60
 
 [limits]
-# Maximum message size for REST API requests in bytes (default: 1MB)
-max_message_size = 1048576
 
 # Maximum rows that can be returned in a single query (default: 1000)
 max_query_limit = 1000
@@ -193,9 +173,6 @@ service_name = "kalamdb-server"
 timeout_ms = 3000
 
 [performance]
-# Request timeout in seconds (default: 30s)
-# Requests exceeding this duration will be terminated
-request_timeout = 30
 
 # Keep-alive timeout in seconds (default: 75s)
 keepalive_timeout = 75
@@ -228,9 +205,6 @@ max_auth_requests_per_ip_per_sec = 50
 # CORS, WebSocket, and request limit configuration
 
 [security]
-# Maximum request body size in bytes (default: 10MB)
-# Prevents memory exhaustion from large payloads
-max_request_body_size = 10485760
 
 # Maximum WebSocket message size in bytes (default: 1MB)
 # Prevents memory exhaustion from large WebSocket messages
@@ -264,22 +238,18 @@ allowed_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
 
 # Allowed HTTP headers
 # Use ["*"] to allow any header
-allowed_headers = ["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"]
+allowed_headers = ["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With", "X-Kalam-Epoch", "X-Kalam-Descriptor-Revision", "Idempotency-Key"]
 
 # Headers to expose to the browser (default: none)
 # Example: ["X-Custom-Header", "X-Request-Id"]
 expose_headers = []
 
-# Allow credentials (cookies, authorization headers) (default: true)
+# Allow credentials (cookies, authorization headers) (default: false)
 # Note: If true, allowed_origins cannot be ["*"] in browsers
 allow_credentials = true
 
 # Preflight request cache max age in seconds (default: 3600 = 1 hour)
 max_age = 3600
-
-# Allow private network requests (default: false)
-# Enables Access-Control-Request-Private-Network header support
-allow_private_network = false
 
 [auth]
 # JWT configuration (session tokens for local login, OIDC exchange, and API bearer auth)
@@ -328,9 +298,6 @@ broker_device_flow_enabled = false
 # Enable only when your Dex/provider config advertises or supports device auth.
 # device_authorization_endpoint = "http://127.0.0.1:5556/device/code"
 
-[shutdown]
-# Timeout settings for graceful shutdown
-
 [shutdown.flush]
 # Timeout in seconds to wait for flush jobs to complete during graceful shutdown (default: 300)
 timeout = 300
@@ -339,14 +306,6 @@ timeout = 300
 # Maximum number of concurrent jobs (default: 10)
 # Controls how many jobs can execute simultaneously
 max_concurrent = 10
-
-# Maximum number of retry attempts per job (default: 3)
-# Jobs will be retried this many times before being marked as permanently failed
-max_retries = 3
-
-# Initial retry backoff delay in milliseconds (default: 100ms)
-# Delay increases exponentially with each retry (100ms, 200ms, 400ms, etc.)
-retry_backoff_ms = 100
 
 # How often the jobs runner flushes all RocksDB memtables so stale WAL files
 # can be reclaimed (default: 300 seconds). Set to 0 to disable.
@@ -365,20 +324,7 @@ history_retention_days = 7
 # blocking work may still finish while holding the transfer lock.
 max_runtime_seconds = 1800
 
-# Phase 11, T026: SQL Handler Execution Configuration
 [execution]
-# Handler execution timeout in seconds (default: 30)
-# Maximum time allowed for a single SQL statement to execute
-# Prevents hung requests from blocking resources
-handler_timeout_seconds = 30
-
-# Maximum number of parameters per statement (default: 50)
-# Prevents memory exhaustion from excessive parameter arrays
-max_parameters = 50
-
-# Maximum size per parameter in bytes (default: 524288 = 512KB)
-# Prevents memory exhaustion from individual large parameters
-max_parameter_size_bytes = 524288
 
 # Maximum number of cached SQL logical plans (default: 200)
 # Bound memory used by SQL plan cache

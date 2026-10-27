@@ -10,7 +10,7 @@
 //! - T101: cache eviction and re-population
 use std::sync::Arc;
 
-use kalamdb_commons::{NamespaceId, TableId, TableName, UserId};
+use kalamdb_commons::{SchemaId, TableId, TableName, UserId};
 use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_core::manifest::ManifestService;
 use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
@@ -25,13 +25,13 @@ fn create_test_service_with_config(config: ManifestCacheSettings) -> ManifestSer
 fn create_test_service() -> ManifestService {
     create_test_service_with_config(ManifestCacheSettings {
         eviction_interval_seconds: 300,
-        max_entries:               1000,
-        eviction_ttl_days:         7,
+        max_entries: 1000,
+        eviction_ttl_days: 7,
     })
 }
 
 fn create_test_manifest(namespace: &str, table_name: &str, user_id: Option<&str>) -> Manifest {
-    let table_id = TableId::new(NamespaceId::new(namespace), TableName::new(table_name));
+    let table_id = TableId::new(SchemaId::new(namespace), TableName::new(table_name));
     let user_id_opt = user_id.map(UserId::from);
     Manifest::new(table_id, user_id_opt)
 }
@@ -40,7 +40,7 @@ fn create_test_manifest(namespace: &str, table_name: &str, user_id: Option<&str>
 #[test]
 fn test_get_or_load_cache_miss() {
     let service = create_test_service();
-    let namespace = NamespaceId::new("ns1");
+    let namespace = SchemaId::new("ns1");
     let table = TableName::new("products");
     let table_id = TableId::new(namespace.clone(), table.clone());
 
@@ -52,7 +52,7 @@ fn test_get_or_load_cache_miss() {
 #[test]
 fn test_get_or_load_cache_hit() {
     let service = create_test_service();
-    let namespace = NamespaceId::new("ns1");
+    let namespace = SchemaId::new("ns1");
     let table = TableName::new("products");
     let table_id = TableId::new(namespace.clone(), table.clone());
     let manifest = create_test_manifest("ns1", "products", None);
@@ -81,7 +81,7 @@ fn test_get_or_load_cache_hit() {
 #[test]
 fn test_update_after_flush_atomic_write() {
     let service = create_test_service();
-    let namespace = NamespaceId::new("ns1");
+    let namespace = SchemaId::new("ns1");
     let table = TableName::new("orders");
     let table_id = TableId::new(namespace.clone(), table.clone());
     let manifest = create_test_manifest("ns1", "orders", Some("u_456"));
@@ -119,12 +119,12 @@ fn test_update_after_flush_atomic_write() {
 
 //     // Service 1: Add entries
 //     let service1 = ManifestService::new(Arc::clone(&backend), "/tmp/test".to_string(),
-// config.clone());     let namespace1 = NamespaceId::new("ns1");
+// config.clone());     let namespace1 = SchemaId::new("ns1");
 //     let table1 = TableName::new("products");
 //     let table_id1 = TableId::new(namespace1.clone(), table1.clone());
 //     let manifest1 = create_test_manifest("ns1", "products", Some("u_123"));
 
-//     let namespace2 = NamespaceId::new("ns2");
+//     let namespace2 = SchemaId::new("ns2");
 //     let table2 = TableName::new("orders");
 //     let table_id2 = TableId::new(namespace2.clone(), table2.clone());
 //     let manifest2 = create_test_manifest("ns2", "orders", None);
@@ -177,7 +177,7 @@ fn test_update_after_flush_atomic_write() {
 #[test]
 fn test_cache_eviction_and_repopulation() {
     let service = create_test_service();
-    let namespace = NamespaceId::new("ns1");
+    let namespace = SchemaId::new("ns1");
     let table = TableName::new("products");
     let table_id = TableId::new(namespace.clone(), table.clone());
     let manifest = create_test_manifest("ns1", "products", Some("u_789"));
@@ -225,7 +225,7 @@ fn test_cache_eviction_and_repopulation() {
 #[test]
 fn test_multiple_updates_same_key() {
     let service = create_test_service();
-    let namespace = NamespaceId::new("ns1");
+    let namespace = SchemaId::new("ns1");
     let table = TableName::new("products");
     let table_id = TableId::new(namespace.clone(), table.clone());
 
@@ -265,7 +265,7 @@ fn test_multiple_updates_same_key() {
 #[test]
 fn test_invalidate_table_removes_all_user_entries() {
     let service = create_test_service();
-    let namespace = NamespaceId::new("ns1");
+    let namespace = SchemaId::new("ns1");
     let table = TableName::new("products");
     let table_id = TableId::new(namespace.clone(), table.clone());
 
@@ -337,7 +337,7 @@ fn test_invalidate_table_removes_all_user_entries() {
 #[test]
 fn test_invalidate_table_preserves_other_tables() {
     let service = create_test_service();
-    let namespace = NamespaceId::new("ns1");
+    let namespace = SchemaId::new("ns1");
 
     let table1 = TableName::new("products");
     let table2 = TableName::new("orders");
@@ -386,7 +386,7 @@ fn test_invalidate_table_preserves_other_tables() {
 #[test]
 fn test_invalidate_table_shared() {
     let service = create_test_service();
-    let namespace = NamespaceId::new("ns1");
+    let namespace = SchemaId::new("ns1");
     let table = TableName::new("shared_data");
     let table_id = TableId::new(namespace.clone(), table.clone());
 
@@ -419,12 +419,12 @@ fn test_invalidate_table_shared() {
 fn test_user_manifests_do_not_enter_memory_cache() {
     let config = ManifestCacheSettings {
         eviction_interval_seconds: 300,
-        max_entries:               2,
-        eviction_ttl_days:         7,
+        max_entries: 2,
+        eviction_ttl_days: 7,
     };
     let service = create_test_service_with_config(config);
 
-    let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("products"));
+    let table_id = TableId::new(SchemaId::new("ns1"), TableName::new("products"));
 
     // Add a shared table entry (weight = 1)
     let shared_manifest = Manifest::new(table_id.clone(), None);
@@ -459,12 +459,12 @@ fn test_user_manifests_do_not_enter_memory_cache() {
 fn test_shared_and_user_manifest_tiers_stay_separate() {
     let config = ManifestCacheSettings {
         eviction_interval_seconds: 300,
-        max_entries:               10,
-        eviction_ttl_days:         7,
+        max_entries: 10,
+        eviction_ttl_days: 7,
     };
     let service = create_test_service_with_config(config);
 
-    let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("data"));
+    let table_id = TableId::new(SchemaId::new("ns1"), TableName::new("data"));
 
     // Add shared table
     let shared_manifest = Manifest::new(table_id.clone(), None);

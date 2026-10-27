@@ -44,12 +44,12 @@ pub fn has_any_pending_writes() -> bool {
 /// A pending batch of rows for a specific table + user context.
 struct PendingBatch {
     session_id: String,
-    table_id:   TableId,
+    table_id: TableId,
     table_type: TableType,
-    user_id:    Option<UserId>,
-    rows:       Vec<Row>,
-    executor:   Arc<dyn KalamBackendExecutor>,
-    runtime:    Arc<tokio::runtime::Runtime>,
+    user_id: Option<UserId>,
+    rows: Vec<Row>,
+    executor: Arc<dyn KalamBackendExecutor>,
+    runtime: Arc<tokio::runtime::Runtime>,
 }
 
 impl PendingBatch {
@@ -202,7 +202,7 @@ mod tests {
     use async_trait::async_trait;
     use datafusion_common::ScalarValue;
     use kalam_pg_api::{DeleteRequest, MutationResponse, ScanRequest, ScanResponse, UpdateRequest};
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{SchemaId, TableName};
 
     use super::*;
 
@@ -251,7 +251,7 @@ mod tests {
     }
 
     fn test_table_id() -> TableId {
-        TableId::new(NamespaceId::new("app"), TableName::new("profiles"))
+        TableId::new(SchemaId::new("app"), TableName::new("profiles"))
     }
 
     fn test_row(id: &str) -> Row {

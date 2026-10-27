@@ -33,8 +33,8 @@ mod tests {
     struct TestVersionedRow {
         version: VersionId,
         deleted: bool,
-        pk:      String,
-        value:   String,
+        pk: String,
+        value: String,
     }
 
     impl VersionedRow for TestVersionedRow {
@@ -75,8 +75,8 @@ mod tests {
             TestVersionedRow {
                 version: VersionId::try_from_i64(2).unwrap(),
                 deleted: false,
-                pk:      "a".to_string(),
-                value:   "hot-a".to_string(),
+                pk: "a".to_string(),
+                value: "hot-a".to_string(),
             },
         )];
         let build_calls = AtomicUsize::new(0);
@@ -146,8 +146,8 @@ mod tests {
             TestVersionedRow {
                 version: VersionId::try_from_i64(4).unwrap(),
                 deleted: false,
-                pk:      "a".to_string(),
-                value:   "hot-visible".to_string(),
+                pk: "a".to_string(),
+                value: "hot-visible".to_string(),
             },
         )];
 
@@ -191,8 +191,8 @@ mod tests {
     struct TestIntPkRow {
         version: VersionId,
         deleted: bool,
-        pk:      i64,
-        value:   String,
+        pk: i64,
+        value: String,
     }
 
     impl VersionedRow for TestIntPkRow {
@@ -237,8 +237,8 @@ mod tests {
             TestIntPkRow {
                 version: VersionId::try_from_i64(2).unwrap(),
                 deleted: false,
-                pk:      1,
-                value:   "hot-1".to_string(),
+                pk: 1,
+                value: "hot-1".to_string(),
             },
         )];
 

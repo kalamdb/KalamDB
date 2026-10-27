@@ -107,7 +107,7 @@ pub fn prefers_version(candidate: VersionId, current: VersionId) -> bool {
 
 /// Shared version candidate used by metadata-first MVCC merge helpers.
 pub struct VersionCandidate<P> {
-    pub pk_key:  PkBucketKey,
+    pub pk_key: PkBucketKey,
     pub version: VersionId,
     pub deleted: bool,
     pub payload: P,
@@ -197,10 +197,12 @@ fn consider_candidate<H, C>(
 /// cold inputs metadata-only until the caller decides which winners to
 /// materialize.
 ///
-/// Snapshot visibility is applied before choosing the winner. Same
-/// [`VersionId`] on hot and cold collapses to one row (first seen wins on
-/// equality, which is hot because hot is scanned first). Greater version wins
-/// regardless of tier. A tombstone winner hides the row unless `keep_deleted`.
+/// Hot storage has one row per primary key. That row and every cold row obey
+/// the snapshot, so a commit newer than an open transaction stays hidden and
+/// the cold row from before that commit can still win. Same [`VersionId`] on
+/// hot and cold collapses to one row (first seen wins on equality, which is
+/// hot because hot is scanned first). Greater version wins regardless of tier.
+/// A tombstone winner hides the row unless `keep_deleted`.
 pub fn select_latest_versions<H, C, HI, CI>(
     hot_candidates: HI,
     cold_candidates: CI,
@@ -273,7 +275,7 @@ where
 pub struct ParquetRowData {
     pub version: VersionId,
     pub deleted: bool,
-    pub fields:  Row,
+    pub fields: Row,
 }
 
 /// Minimal row surface required by the shared MVCC merge helpers.
@@ -336,20 +338,11 @@ pub fn candidate_pk_key<R: VersionedRow>(pk_name: &str, row: &R) -> PkBucketKey 
     row.pk_bucket_key(pk_name)
 }
 
-pub fn version_candidate_from_row<R, P>(
-    pk_name: &str,
-    row: &R,
-    payload: P,
-) -> VersionCandidate<P>
+pub fn version_candidate_from_row<R, P>(pk_name: &str, row: &R, payload: P) -> VersionCandidate<P>
 where
     R: VersionedRow,
 {
-    VersionCandidate::new(
-        candidate_pk_key(pk_name, row),
-        row.version(),
-        row.deleted(),
-        payload,
-    )
+    VersionCandidate::new(candidate_pk_key(pk_name, row), row.version(), row.deleted(), payload)
 }
 
 pub fn count_merged_rows<R, I, J>(
@@ -504,10 +497,10 @@ pub fn parquet_batch_to_metadata(
 /// cold-row materialization until after winner selection.
 #[derive(Debug)]
 pub struct ParquetBatchDecoder<'a> {
-    batch:                &'a RecordBatch,
-    version_array:        &'a Int64Array,
-    deleted_array:        Option<&'a BooleanArray>,
-    pk_column:            Option<PkColumn<'a>>,
+    batch: &'a RecordBatch,
+    version_array: &'a Int64Array,
+    deleted_array: Option<&'a BooleanArray>,
+    pk_column: Option<PkColumn<'a>>,
     value_column_indices: Vec<usize>,
 }
 
@@ -674,9 +667,12 @@ impl<'a> ParquetBatchDecoder<'a> {
                     PkBucketKey::UInt(u64::from(value))
                 })
             },
-            PkColumn::UInt64(array) => {
-                null_or_key(array.is_null(row_idx), version, array.value(row_idx), PkBucketKey::UInt)
-            },
+            PkColumn::UInt64(array) => null_or_key(
+                array.is_null(row_idx),
+                version,
+                array.value(row_idx),
+                PkBucketKey::UInt,
+            ),
             PkColumn::Utf8(array) => {
                 utf8_pk_bucket(array.is_null(row_idx), array.value(row_idx), version)
             },
@@ -693,7 +689,7 @@ impl<'a> ParquetBatchDecoder<'a> {
         let version = self.version_at(row_idx)?;
         Ok(RowMetadata {
             version,
-            deleted:   self.deleted_at(row_idx),
+            deleted: self.deleted_at(row_idx),
             pk_bucket: self.pk_bucket_at(row_idx, version),
         })
     }
@@ -724,7 +720,7 @@ impl<'a> ParquetBatchDecoder<'a> {
         Ok(ParquetRowData {
             version: metadata.version,
             deleted: metadata.deleted,
-            fields:  Row::new(values),
+            fields: Row::new(values),
         })
     }
 }
@@ -741,18 +737,18 @@ const MAX_RECORDED_SCAN_FILES: usize = 16;
 /// cheaply and accurately.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DeferredScanDiagnostics {
-    pub hot_rows_scanned:   Option<usize>,
-    pub cold_rows_scanned:  Option<usize>,
-    pub cold_files_total:   Option<usize>,
+    pub hot_rows_scanned: Option<usize>,
+    pub cold_rows_scanned: Option<usize>,
+    pub cold_files_total: Option<usize>,
     pub cold_files_skipped: Option<usize>,
     pub cold_files_scanned: Option<usize>,
-    pub cold_files:         Vec<String>,
+    pub cold_files: Vec<String>,
 }
 
 /// A materialized deferred batch with optional scan diagnostics.
 #[derive(Debug)]
 pub struct DeferredBatchOutput {
-    pub batch:       RecordBatch,
+    pub batch: RecordBatch,
     pub diagnostics: DeferredScanDiagnostics,
 }
 
@@ -772,12 +768,12 @@ impl DeferredBatchOutput {
 
 #[derive(Clone)]
 struct DeferredBatchMetrics {
-    set:                Arc<ExecutionPlanMetricsSet>,
-    output_rows:        Count,
-    output_batches:     Count,
-    hot_rows_scanned:   Count,
-    cold_rows_scanned:  Count,
-    cold_files_total:   Count,
+    set: Arc<ExecutionPlanMetricsSet>,
+    output_rows: Count,
+    output_batches: Count,
+    hot_rows_scanned: Count,
+    cold_rows_scanned: Count,
+    cold_files_total: Count,
     cold_files_skipped: Count,
     cold_files_scanned: Count,
 }
@@ -882,9 +878,9 @@ pub trait DeferredBatchSource: Send + Sync {
 /// Shared execution node for one-shot sources that defer batch creation until
 /// execution time.
 pub struct DeferredBatchExec {
-    source:     Arc<dyn DeferredBatchSource>,
+    source: Arc<dyn DeferredBatchSource>,
     properties: Arc<PlanProperties>,
-    metrics:    Option<DeferredBatchMetrics>,
+    metrics: Option<DeferredBatchMetrics>,
 }
 
 impl DeferredBatchExec {

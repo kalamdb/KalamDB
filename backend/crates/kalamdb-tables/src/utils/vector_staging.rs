@@ -154,14 +154,14 @@ mod tests {
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
         ids::SeqId,
-        models::{rows::Row, NamespaceId, TableName},
+        models::{rows::Row, SchemaId, TableName},
         TableId,
     };
 
     use super::{build_vector_delete_ops, build_vector_upsert_batch_ops};
 
     fn table_id() -> TableId {
-        TableId::new(NamespaceId::new("app"), TableName::new("items"))
+        TableId::new(SchemaId::new("app"), TableName::new("items"))
     }
 
     #[test]

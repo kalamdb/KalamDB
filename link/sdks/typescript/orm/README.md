@@ -238,7 +238,7 @@ Only pass a user id that your service account is authorized to impersonate.
 
 ## FILE uploads from Drizzle
 
-Pass upload bytes in `.values()` or `.set()` with `kalamFile()`. `kalamDriver()` detects them and routes to `queryWithFiles()` automatically — the same path as normal inserts:
+Hand-authored `file()` columns accept `kalamFile()`, `File`, or `Blob` in `.values()` or `.set()`. `kalamDriver()` detects those upload values and routes to `queryWithFiles()` automatically:
 
 ```ts
 import { kalamFile } from '@kalamdb/orm';
@@ -249,9 +249,23 @@ await db.insert(attachments).values({
 });
 ```
 
-You can also pass a `File` or `Blob` directly to a generated `file()` column; the driver uses the blob name (or `upload`) as the multipart field name.
+Generated schema files narrow FILE columns to `PgCatalogFile`. Pass a `FILE("placeholder")` SQL expression and the bytes through `queryWithFiles`:
 
-`queryWithFiles()` remains available for raw SQL strings. `compileQuery()` is exported when you need normalized SQL and params without executing.
+```ts
+import { queryWithFiles } from '@kalamdb/orm';
+import { sql } from 'drizzle-orm';
+
+await queryWithFiles(
+  client,
+  db.insert(attachments).values({
+    id: 'att_1',
+    file_data: sql.raw('FILE("upload")'),
+  }),
+  { upload: selectedFile },
+);
+```
+
+`compileQuery()` is exported when you need normalized SQL and params without executing.
 
 ## Kalam CLI workflow generation
 
@@ -269,3 +283,29 @@ During `kalam dev`, TypeScript output regenerates automatically when `dev.genera
 ## License
 
 Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See the packaged `LICENSE.txt` and `NOTICE` files.
+
+## Live query projection and generated row types
+
+`liveTable(client, table, callback, { orderBy, limit })` and
+`compileLiveTableDescriptor(table, options)` use the same projection behavior:
+Drizzle columns are mapped to their public property names, then ordered, then
+limited. Date columns sort chronologically. The transport retains the full
+matching set so deleting a visible row can reveal the next row. Narrow the SQL
+filter to bound memory; a presentation limit is not a retention bound.
+
+A disposed `LiveQueryController` is terminal. Create another controller to open
+a new view. Callbacks from obsolete subscriptions cannot update its state or
+forward stale errors/checkpoints. Custom-key live subscriptions accumulate initial
+batches rather than replacing earlier batches.
+
+The SQL-first generator preserves declared primary keys and emits array column
+builders. Its built-in `File` shape aliases the SDK's `PgCatalogFile`, and generated
+FILE columns narrow their read type to that reference shape. For uploads through
+these narrowed generated columns, use a Drizzle SQL `FILE("placeholder")` expression
+with `queryWithFiles`; hand-authored `file()` builders retain their convenience
+upload-input union. This keeps generated read models free of `Blob`/upload markers.
+
+Raw live SQL normalization preserves literal whitespace. Its v1 clause recognition
+still accepts a restricted SELECT grammar; for expressions outside that subset,
+provide explicit subscription SQL and projection via `createLiveQueryDescriptor`
+or use a Drizzle descriptor. This is not a general SQL parser.

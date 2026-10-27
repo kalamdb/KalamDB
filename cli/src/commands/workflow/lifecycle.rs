@@ -122,7 +122,7 @@ pub(super) async fn handle_logs(cli: &Cli, args: &LogsArgs) -> Result<()> {
     let named = named_target(cli, args.project_dir.as_deref())?;
     let options = lifecycle::LogsOptions {
         follow: args.follow,
-        lines:  args.lines,
+        lines: args.lines,
     };
     if let Some(instance) = named.as_ref().filter(|row| row.kind == InstanceKind::Cloud) {
         if args.local_file {
@@ -181,15 +181,15 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let cli = Cli::try_parse_from(["kalam", "status", "--instance", "analytics"]).unwrap();
         let instance = InstanceSummary {
-            name:     "analytics".into(),
-            kind:     InstanceKind::Local,
-            state:    InstanceState::Stopped,
-            url:      Some("http://127.0.0.1:2900".into()),
-            folder:   Some(temp.path().into()),
-            global:   false,
-            user:     None,
-            auth:     None,
-            aliases:  vec![],
+            name: "analytics".into(),
+            kind: InstanceKind::Local,
+            state: InstanceState::Stopped,
+            url: Some("http://127.0.0.1:2900".into()),
+            folder: Some(temp.path().into()),
+            global: false,
+            user: None,
+            auth: None,
+            aliases: vec![],
             identity: "test".into(),
         };
         let (selector, ctx) = selected_context(&cli, None, None, Some(&instance)).unwrap();
@@ -203,15 +203,15 @@ mod tests {
     fn cloud_target_cannot_fall_back_to_current_folder_for_local_operations() {
         let cli = Cli::try_parse_from(["kalam", "down", "--instance", "production"]).unwrap();
         let instance = InstanceSummary {
-            name:     "production".into(),
-            kind:     InstanceKind::Cloud,
-            state:    InstanceState::NotChecked,
-            url:      Some("https://example.com".into()),
-            folder:   None,
-            global:   false,
-            user:     None,
-            auth:     Some("Signed in".into()),
-            aliases:  vec![],
+            name: "production".into(),
+            kind: InstanceKind::Cloud,
+            state: InstanceState::NotChecked,
+            url: Some("https://example.com".into()),
+            folder: None,
+            global: false,
+            user: None,
+            auth: Some("Signed in".into()),
+            aliases: vec![],
             identity: "production".into(),
         };
         assert!(selected_context(&cli, None, None, Some(&instance)).is_err());

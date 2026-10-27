@@ -8,8 +8,16 @@ mod executor;
 mod host;
 pub(crate) mod lifecycle;
 pub mod schedule_store;
+mod sql_body;
 
-pub use convert::{bind_call_arguments, json_to_routine_value, routine_value_as_json};
+pub use bind::{
+    bind_domain_call_arguments, bind_domain_call_arguments_typed, resolve_pinned_descriptor,
+    PinnedRoutineDescriptor,
+};
+pub use convert::{
+    bind_call_arguments, domain_value_to_routine_value, json_to_routine_value,
+    routine_value_as_json, routine_value_to_domain_value,
+};
 pub use dispatcher::{start_trigger_dispatcher, TriggerDispatcherRuntime};
 pub use executor::{
     activate_module_artifact, function_storage, rebuild_active_function_set,

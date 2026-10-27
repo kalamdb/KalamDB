@@ -72,9 +72,9 @@ fn run_dev_lifecycle(
 }
 
 struct StopOnDrop<'a> {
-    isolated_home:    &'a std::path::Path,
+    isolated_home: &'a std::path::Path,
     credentials_path: &'a std::path::Path,
-    project_dir:      &'a std::path::Path,
+    project_dir: &'a std::path::Path,
 }
 
 impl Drop for StopOnDrop<'_> {
@@ -99,9 +99,9 @@ fn test_project_workflow_dev_start_status_logs_stop() {
     let project_dir =
         scaffold_lifecycle_project(&temp, &isolated_home, &credentials_path, &server_url);
     let _guard = StopOnDrop {
-        isolated_home:    &isolated_home,
+        isolated_home: &isolated_home,
         credentials_path: &credentials_path,
-        project_dir:      &project_dir,
+        project_dir: &project_dir,
     };
 
     let stopped = run_dev_lifecycle(
@@ -244,9 +244,9 @@ fn test_project_workflow_dev_start_does_not_hang_waiting_for_child() {
     let project_dir =
         scaffold_lifecycle_project(&temp, &isolated_home, &credentials_path, &server_url);
     let _guard = StopOnDrop {
-        isolated_home:    &isolated_home,
+        isolated_home: &isolated_home,
         credentials_path: &credentials_path,
-        project_dir:      &project_dir,
+        project_dir: &project_dir,
     };
 
     let mut cmd = create_isolated_cli_std_command(&isolated_home, &credentials_path);

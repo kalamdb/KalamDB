@@ -259,10 +259,10 @@ async fn topic_offset_rows(topic: &str, group_id: &str) -> Vec<HashMap<String, s
 }
 
 struct RawRecordPollConfig {
-    min_records:       usize,
-    deadline:          Duration,
-    idle_sleep:        Duration,
-    per_record_delay:  Duration,
+    min_records: usize,
+    deadline: Duration,
+    idle_sleep: Duration,
+    per_record_delay: Duration,
     commit_each_batch: bool,
 }
 
@@ -370,7 +370,7 @@ async fn test_topic_high_load_concurrent_publishers() {
     eprintln!("[TEST] Starting high-load test with namespace: {}", namespace);
 
     // Create namespace
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
         .expect("Failed to create namespace");
 
@@ -387,8 +387,8 @@ async fn test_topic_high_load_concurrent_publishers() {
 
     let user_table = format!("{}.user_profiles", namespace);
     execute_sql(&format!(
-        "CREATE USER TABLE {} (id INT PRIMARY KEY, username TEXT, score DOUBLE, level INT, \
-         verified BOOLEAN)",
+        "CREATE TABLE {} (id INT PRIMARY KEY, username TEXT, score DOUBLE, level INT, verified \
+         BOOLEAN) WITH (TYPE = 'USER')",
         user_table
     ))
     .await
@@ -415,8 +415,8 @@ async fn test_topic_high_load_concurrent_publishers() {
 
     let session_table = format!("{}.user_sessions", namespace);
     execute_sql(&format!(
-        "CREATE USER TABLE {} (session_id BIGINT PRIMARY KEY, user_id INT, duration INT, active \
-         BOOLEAN, score DOUBLE)",
+        "CREATE TABLE {} (session_id BIGINT PRIMARY KEY, user_id INT, duration INT, active \
+         BOOLEAN, score DOUBLE) WITH (TYPE = 'USER')",
         session_table
     ))
     .await
@@ -1037,7 +1037,7 @@ async fn test_topic_high_load_concurrent_publishers() {
     let _ = execute_sql(&format!("DROP TABLE {}", stream_table)).await;
     let _ = execute_sql(&format!("DROP TABLE {}", product_table)).await;
     let _ = execute_sql(&format!("DROP TABLE {}", session_table)).await;
-    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {}", namespace)).await;
 
     eprintln!("[TEST] High-load test completed successfully!");
 }
@@ -1052,7 +1052,7 @@ async fn test_topic_high_load_two_consumers_same_group_single_delivery() {
     let topic = format!("{}.{}", namespace, common::generate_unique_table("same_group"));
     let group_id = format!("same-group-{}", common::random_string(8));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
         .expect("Failed to create namespace");
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", table))
@@ -1080,11 +1080,11 @@ async fn test_topic_high_load_two_consumers_same_group_single_delivery() {
                 &mut consumer,
                 topic_test_support::UniqueOffsetPollConfig {
                     expected_messages: None,
-                    publishers_done:   Some(publishers_done),
-                    deadline:          Duration::from_secs(150),
-                    idle_break_after:  120,
-                    idle_sleep:        Duration::from_millis(100),
-                    per_record_delay:  Duration::ZERO,
+                    publishers_done: Some(publishers_done),
+                    deadline: Duration::from_secs(150),
+                    idle_break_after: 120,
+                    idle_sleep: Duration::from_millis(100),
+                    per_record_delay: Duration::ZERO,
                     commit_each_batch: true,
                 },
             )
@@ -1148,7 +1148,7 @@ async fn test_topic_high_load_two_consumers_same_group_single_delivery() {
 
     let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
     let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
-    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {}", namespace)).await;
 }
 
 /// Test fan-out: two consumer groups each receive the full message stream.
@@ -1165,9 +1165,7 @@ async fn test_topic_fan_out_different_groups_receive_all() {
     let group_a = format!("fanout-group-a-{}", common::random_string(8));
     let group_b = format!("fanout-group-b-{}", common::random_string(8));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
-        .await
-        .expect("create ns");
+    execute_sql(&format!("CREATE SCHEMA {}", namespace)).await.expect("create ns");
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, data TEXT)", table))
         .await
         .expect("create table");
@@ -1192,11 +1190,11 @@ async fn test_topic_fan_out_different_groups_receive_all() {
                     &mut consumer,
                     topic_test_support::UniqueOffsetPollConfig {
                         expected_messages: None,
-                        publishers_done:   Some(publishers_done),
-                        deadline:          Duration::from_secs(150),
-                        idle_break_after:  40,
-                        idle_sleep:        Duration::from_millis(100),
-                        per_record_delay:  Duration::ZERO,
+                        publishers_done: Some(publishers_done),
+                        deadline: Duration::from_secs(150),
+                        idle_break_after: 40,
+                        idle_sleep: Duration::from_millis(100),
+                        per_record_delay: Duration::ZERO,
                         commit_each_batch: true,
                     },
                 )
@@ -1240,7 +1238,7 @@ async fn test_topic_fan_out_different_groups_receive_all() {
 
     let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
     let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
-    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {}", namespace)).await;
 }
 
 /// Stress test: 4 consumers in the same group under high load.
@@ -1254,9 +1252,7 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
     let topic = format!("{}.{}", namespace, common::generate_unique_table("stress4"));
     let group_id = format!("stress4-group-{}", common::random_string(8));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
-        .await
-        .expect("create ns");
+    execute_sql(&format!("CREATE SCHEMA {}", namespace)).await.expect("create ns");
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, value TEXT)", table))
         .await
         .expect("create table");
@@ -1287,11 +1283,11 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
                 &mut consumer,
                 topic_test_support::UniqueOffsetPollConfig {
                     expected_messages: None,
-                    publishers_done:   Some(done),
-                    deadline:          Duration::from_secs(180),
-                    idle_break_after:  150,
-                    idle_sleep:        Duration::from_millis(80),
-                    per_record_delay:  Duration::ZERO,
+                    publishers_done: Some(done),
+                    deadline: Duration::from_secs(180),
+                    idle_break_after: 150,
+                    idle_sleep: Duration::from_millis(80),
+                    per_record_delay: Duration::ZERO,
                     commit_each_batch: true,
                 },
             )
@@ -1353,7 +1349,7 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
 
     let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
     let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
-    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {}", namespace)).await;
 }
 
 /// High-load recovery test:
@@ -1368,7 +1364,7 @@ async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
     let topic = format!("{}.{}", namespace, common::generate_unique_table("ack_topic"));
     let group_id = format!("ack-recovery-group-{}", common::random_string(8));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
         .expect("create namespace");
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", table))
@@ -1392,10 +1388,10 @@ async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
         poll_records_raw_until(
             &mut consumer_a,
             RawRecordPollConfig {
-                min_records:       consumer_a_claim_target,
-                deadline:          Duration::from_secs(35),
-                idle_sleep:        Duration::from_millis(80),
-                per_record_delay:  Duration::ZERO,
+                min_records: consumer_a_claim_target,
+                deadline: Duration::from_secs(35),
+                idle_sleep: Duration::from_millis(80),
+                per_record_delay: Duration::ZERO,
                 commit_each_batch: false,
             },
         )
@@ -1419,10 +1415,10 @@ async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
     let recovered_records = poll_records_raw_until(
         &mut consumer_b,
         RawRecordPollConfig {
-            min_records:       expected_messages,
-            deadline:          topic_recovery_deadline().await,
-            idle_sleep:        Duration::from_millis(80),
-            per_record_delay:  Duration::from_millis(2),
+            min_records: expected_messages,
+            deadline: topic_recovery_deadline().await,
+            idle_sleep: Duration::from_millis(80),
+            per_record_delay: Duration::from_millis(2),
             commit_each_batch: false,
         },
     )
@@ -1457,7 +1453,7 @@ async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
 
     let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
     let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
-    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {}", namespace)).await;
 }
 
 /// Verify that an unacked prefix is not re-delivered before the visibility
@@ -1471,7 +1467,7 @@ async fn test_topic_redelivery_waits_for_visibility_timeout_and_late_ack_does_no
     let topic = format!("{}.{}", namespace, common::generate_unique_table("late_ack_topic"));
     let group_id = format!("late-ack-group-{}", common::random_string(8));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
         .expect("create namespace");
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", table))
@@ -1494,10 +1490,10 @@ async fn test_topic_redelivery_waits_for_visibility_timeout_and_late_ack_does_no
         poll_records_raw_until(
             &mut consumer_a,
             RawRecordPollConfig {
-                min_records:       60,
-                deadline:          Duration::from_secs(20),
-                idle_sleep:        Duration::from_millis(80),
-                per_record_delay:  Duration::ZERO,
+                min_records: 60,
+                deadline: Duration::from_secs(20),
+                idle_sleep: Duration::from_millis(80),
+                per_record_delay: Duration::ZERO,
                 commit_each_batch: false,
             },
         )
@@ -1538,10 +1534,10 @@ async fn test_topic_redelivery_waits_for_visibility_timeout_and_late_ack_does_no
     let recovered_records = poll_records_raw_until(
         &mut consumer_c,
         RawRecordPollConfig {
-            min_records:       expected_messages,
-            deadline:          topic_recovery_deadline().await,
-            idle_sleep:        Duration::from_millis(80),
-            per_record_delay:  Duration::ZERO,
+            min_records: expected_messages,
+            deadline: topic_recovery_deadline().await,
+            idle_sleep: Duration::from_millis(80),
+            per_record_delay: Duration::ZERO,
             commit_each_batch: false,
         },
     )
@@ -1604,7 +1600,7 @@ async fn test_topic_redelivery_waits_for_visibility_timeout_and_late_ack_does_no
 
     let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
     let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
-    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {}", namespace)).await;
 }
 
 /// Verify that after committing an initial prefix, a crash with a later
@@ -1618,7 +1614,7 @@ async fn test_topic_partial_commit_then_crash_recovers_from_first_unacked_offset
     let topic = format!("{}.{}", namespace, common::generate_unique_table("partial_commit_topic"));
     let group_id = format!("partial-commit-group-{}", common::random_string(8));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
         .expect("create namespace");
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", table))
@@ -1642,10 +1638,10 @@ async fn test_topic_partial_commit_then_crash_recovers_from_first_unacked_offset
     let committed_records = poll_records_raw_until(
         &mut consumer_a,
         RawRecordPollConfig {
-            min_records:       committed_prefix_len,
-            deadline:          Duration::from_secs(20),
-            idle_sleep:        Duration::from_millis(80),
-            per_record_delay:  Duration::ZERO,
+            min_records: committed_prefix_len,
+            deadline: Duration::from_secs(20),
+            idle_sleep: Duration::from_millis(80),
+            per_record_delay: Duration::ZERO,
             commit_each_batch: false,
         },
     )
@@ -1678,10 +1674,10 @@ async fn test_topic_partial_commit_then_crash_recovers_from_first_unacked_offset
     let pending_records = poll_records_raw_until(
         &mut consumer_a,
         RawRecordPollConfig {
-            min_records:       unacked_claim_len,
-            deadline:          Duration::from_secs(20),
-            idle_sleep:        Duration::from_millis(80),
-            per_record_delay:  Duration::ZERO,
+            min_records: unacked_claim_len,
+            deadline: Duration::from_secs(20),
+            idle_sleep: Duration::from_millis(80),
+            per_record_delay: Duration::ZERO,
             commit_each_batch: false,
         },
     )
@@ -1702,10 +1698,10 @@ async fn test_topic_partial_commit_then_crash_recovers_from_first_unacked_offset
     let recovered_records = poll_records_raw_until(
         &mut consumer_b,
         RawRecordPollConfig {
-            min_records:       expected_messages - committed_prefix_len,
-            deadline:          topic_recovery_deadline().await,
-            idle_sleep:        Duration::from_millis(80),
-            per_record_delay:  Duration::ZERO,
+            min_records: expected_messages - committed_prefix_len,
+            deadline: topic_recovery_deadline().await,
+            idle_sleep: Duration::from_millis(80),
+            per_record_delay: Duration::ZERO,
             commit_each_batch: false,
         },
     )
@@ -1778,7 +1774,7 @@ async fn test_topic_partial_commit_then_crash_recovers_from_first_unacked_offset
 
     let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
     let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
-    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {}", namespace)).await;
 }
 
 /// Validate that a slower consumer still receives every large payload in order,
@@ -1791,7 +1787,7 @@ async fn test_topic_slow_consumer_large_payloads_preserve_order_and_no_loss() {
     let topic = format!("{}.{}", namespace, common::generate_unique_table("large_payload"));
     let group_id = format!("large-payload-group-{}", common::random_string(8));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
         .expect("create namespace");
     execute_sql(&format!(
@@ -1815,10 +1811,10 @@ async fn test_topic_slow_consumer_large_payloads_preserve_order_and_no_loss() {
     let records = poll_records_raw_until(
         &mut consumer,
         RawRecordPollConfig {
-            min_records:       expected_messages,
-            deadline:          Duration::from_secs(60),
-            idle_sleep:        Duration::from_millis(80),
-            per_record_delay:  Duration::from_millis(5),
+            min_records: expected_messages,
+            deadline: Duration::from_secs(60),
+            idle_sleep: Duration::from_millis(80),
+            per_record_delay: Duration::from_millis(5),
             commit_each_batch: true,
         },
     )
@@ -1883,15 +1879,15 @@ async fn test_topic_slow_consumer_large_payloads_preserve_order_and_no_loss() {
 
     let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
     let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
-    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {}", namespace)).await;
 }
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 struct EventInfo {
     table: String,
-    op:    TopicOp,
-    id:    i64,
+    op: TopicOp,
+    id: i64,
 }
 
 async fn record_expected_event(

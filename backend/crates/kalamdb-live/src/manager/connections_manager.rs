@@ -69,31 +69,31 @@ pub struct ConnectionsManager {
     user_table_subscriptions:
         DashMap<(UserId, TableId), Arc<DashMap<LiveQueryId, SubscriptionHandle>>>,
     /// RLS-derived exact-key index for shared-table subscriptions.
-    shared_subscribers:       IndexedSubscriberRelation,
+    shared_subscribers: IndexedSubscriberRelation,
     /// Shared empty map to avoid allocations on lookup misses
-    empty_subscriptions:      Arc<DashMap<LiveQueryId, SubscriptionHandle>>,
+    empty_subscriptions: Arc<DashMap<LiveQueryId, SubscriptionHandle>>,
 
     // === Configuration ===
     /// Node identifier for this server
-    pub node_id:        NodeId,
+    pub node_id: NodeId,
     /// Client heartbeat timeout
-    client_timeout:     Duration,
+    client_timeout: Duration,
     /// Authentication timeout
-    auth_timeout:       Duration,
+    auth_timeout: Duration,
     /// Heartbeat check interval
     heartbeat_interval: Duration,
     /// Maximum concurrent connections allowed (DoS protection)
-    max_connections:    usize,
+    max_connections: usize,
 
     // === Shutdown Coordination ===
-    shutdown_token:   CancellationToken,
+    shutdown_token: CancellationToken,
     is_shutting_down: AtomicBool,
 
     // === Metrics ===
-    total_connections:   AtomicUsize,
-    peak_connections:    AtomicUsize,
+    total_connections: AtomicUsize,
+    peak_connections: AtomicUsize,
     total_subscriptions: AtomicUsize,
-    peak_subscriptions:  AtomicUsize,
+    peak_subscriptions: AtomicUsize,
 
     /// Shared resume log for tables that have had a live subscriber.
     replay: ReplayLog,
@@ -1027,7 +1027,7 @@ mod tests {
 
     // ==================== Shared Table Subscription Tests ====================
 
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{SchemaId, TableName};
 
     use super::super::super::models::{SubscriptionFlowControl, SubscriptionRuntimeMetadata};
 
@@ -1052,14 +1052,14 @@ mod tests {
     }
 
     fn make_table_id(ns: &str, table: &str) -> TableId {
-        TableId::new(NamespaceId::from(ns), TableName::from(table))
+        TableId::new(SchemaId::from(ns), TableName::from(table))
     }
 
     fn make_wire_notification(sub_id: &str) -> WireNotification {
         use kalamdb_commons::websocket::SharedChangePayload;
         WireNotification {
             subscription_id: Arc::from(sub_id),
-            payload:         Arc::new(SharedChangePayload::new(
+            payload: Arc::new(SharedChangePayload::new(
                 kalamdb_commons::websocket::ChangeType::Insert,
                 Some(vec![]),
                 None,
@@ -1222,18 +1222,18 @@ mod tests {
 
         // Add a shared subscription to ConnectionState.subscriptions.
         let subscription_state = super::super::super::models::SubscriptionState {
-            live_id:          live_id.clone(),
-            table_id:         table_id.clone(),
-            filter_expr:      None,
-            projections:      None,
-            initial_load:     Some(super::super::super::models::InitialLoadState {
-                batch_size:              100,
-                snapshot_end_seq:        None,
+            live_id: live_id.clone(),
+            table_id: table_id.clone(),
+            filter_expr: None,
+            projections: None,
+            initial_load: Some(super::super::super::models::InitialLoadState {
+                batch_size: 100,
+                snapshot_end_seq: None,
                 snapshot_end_commit_seq: None,
-                current_batch_num:       0,
-                flow_control:            Arc::new(SubscriptionFlowControl::new()),
+                current_batch_num: 0,
+                flow_control: Arc::new(SubscriptionFlowControl::new()),
             }),
-            is_shared:        true,
+            is_shared: true,
             runtime_metadata: Arc::new(SubscriptionRuntimeMetadata::new(
                 "SELECT * FROM shared.orders",
                 None,

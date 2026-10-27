@@ -88,6 +88,103 @@ fn kobj_create_drop_index_catalog_and_errors() {
     assert_index_named(&latest_indexes_json(&ns, &table), "idx_conv");
 }
 
+/// PostgreSQL forms: `CREATE INDEX`, `ALTER INDEX ... RENAME TO`, and standalone `DROP INDEX`.
+#[ntest::timeout(240000)]
+#[test]
+fn kobj_postgres_create_alter_drop_index() {
+    if skip_if_no_server() {
+        return;
+    }
+    let ns = setup_namespace("kobj_pgidx");
+    let table = generate_unique_table("posts");
+    let full = create_indexed_shared(&ns, &table, "email TEXT, status TEXT");
+    let lookup = format!("idx_{table}_email");
+    let renamed = format!("idx_{table}_email_lookup");
+    let generated = format!("{table}_status_idx");
+
+    exec(&format!(
+        "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS {lookup} ON {full} USING btree (email \
+         DESC)"
+    ));
+    assert_index_named(&latest_indexes_json(&ns, &table), &lookup);
+
+    exec(&format!("CREATE INDEX IF NOT EXISTS {lookup} ON {full} (email)"));
+    let listed = latest_indexes_json(&ns, &table);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&listed).unwrap_or_else(|err| panic!("indexes JSON: {err}\n{listed}"));
+    assert_eq!(
+        parsed.as_array().map(|entries| entries.len()),
+        Some(1),
+        "IF NOT EXISTS must not add a second index: {listed}"
+    );
+
+    let duplicate = exec_err(&format!("CREATE INDEX {lookup} ON {full} (email)"));
+    assert!(
+        duplicate.to_ascii_lowercase().contains("exist"),
+        "duplicate CREATE INDEX must fail: {duplicate}"
+    );
+
+    exec(&format!("CREATE INDEX ON {full} USING btree (status)"));
+    assert_index_named(&latest_indexes_json(&ns, &table), &generated);
+
+    let gin = exec_err(&format!("CREATE INDEX idx_{table}_gin ON {full} USING gin (status)"));
+    assert!(
+        gin.to_ascii_lowercase().contains("gin")
+            || gin.to_ascii_lowercase().contains("not supported"),
+        "non-btree index methods must be rejected: {gin}"
+    );
+
+    exec(&format!(
+        "INSERT INTO {full} (id, email, status) VALUES (1, 'a@example.com', 'open')"
+    ));
+    assert_eq!(
+        count_sql(&format!("SELECT COUNT(*) FROM {full} WHERE email = 'a@example.com'")),
+        1
+    );
+
+    exec(&format!("ALTER INDEX {ns}.{lookup} RENAME TO {renamed}"));
+    let after_rename = latest_indexes_json(&ns, &table);
+    assert_index_named(&after_rename, &renamed);
+    assert_index_absent(&after_rename, &lookup);
+    assert_eq!(
+        count_sql(&format!("SELECT COUNT(*) FROM {full} WHERE email = 'a@example.com'")),
+        1,
+        "equality must still work after ALTER INDEX RENAME"
+    );
+
+    exec(&format!(
+        "ALTER INDEX IF EXISTS {ns}.idx_{table}_missing RENAME TO idx_{table}_unused"
+    ));
+    let missing_rename =
+        exec_err(&format!("ALTER INDEX {ns}.idx_{table}_missing RENAME TO idx_{table}_unused"));
+    assert!(
+        missing_rename.to_ascii_lowercase().contains("does not exist"),
+        "ALTER INDEX of a missing name must fail: {missing_rename}"
+    );
+
+    let collision = exec_err(&format!("ALTER INDEX {ns}.{renamed} RENAME TO {generated}"));
+    assert!(
+        collision.to_ascii_lowercase().contains("already exists"),
+        "renaming onto an existing index must fail: {collision}"
+    );
+    assert_index_named(&latest_indexes_json(&ns, &table), &renamed);
+
+    exec(&format!("DROP INDEX {ns}.{renamed}"));
+    assert_index_absent(&latest_indexes_json(&ns, &table), &renamed);
+    exec(&format!("DROP INDEX IF EXISTS {ns}.{renamed}"));
+    let drop_missing = exec_err(&format!("DROP INDEX {ns}.{renamed}"));
+    assert!(
+        drop_missing.to_ascii_lowercase().contains("does not exist"),
+        "DROP INDEX of a missing name must fail: {drop_missing}"
+    );
+    assert_eq!(
+        count_sql(&format!("SELECT COUNT(*) FROM {full} WHERE email = 'a@example.com'")),
+        1,
+        "query must still work after DROP INDEX"
+    );
+    assert_index_named(&latest_indexes_json(&ns, &table), &generated);
+}
+
 #[ntest::timeout(180000)]
 #[test]
 fn kobj_index_equality_duplicates_update_delete() {

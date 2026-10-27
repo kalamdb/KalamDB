@@ -1,0 +1,27 @@
+{
+  "host": "aarch64-apple-darwin",
+  "note": "Cargo planning only; no compilation. RUSTC_BOOTSTRAP=1 was used only to expose --unit-graph, not to build code. CI profile overrides were applied. Target was host, not Linux.",
+  "cli_units": 644,
+  "workspace_cargo_test_units": 1152,
+  "combined_build_units": 1121,
+  "missing_from_combined_by_mode": {
+    "doctest": 31
+  },
+  "combined_contains_normal_kalam_binary": true,
+  "non_doctest_dependency_signatures_identical": true,
+  "bindgen_features": {
+    "cli": [
+      [
+        "runtime"
+      ]
+    ],
+    "workspace": [
+      [
+        "default",
+        "logging",
+        "prettyplease",
+        "runtime"
+      ]
+    ]
+  }
+}

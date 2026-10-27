@@ -1,8 +1,11 @@
 use std::{
+    fs,
+    path::Path,
     sync::{Arc, Once, OnceLock, RwLock},
     time::Duration,
 };
 
+use rustls::pki_types::{pem::PemObject, CertificateDer};
 #[cfg(feature = "healthcheck")]
 use tokio::sync::Mutex;
 
@@ -27,7 +30,7 @@ fn ensure_rustls_crypto_provider() {
 
 /// Cache one rustls client config so each `reqwest::Client::build()` does not
 /// reload macOS Keychain / platform native roots (~80ms, serialized).
-fn shared_rustls_client_config() -> rustls::ClientConfig {
+pub(crate) fn shared_rustls_client_config() -> rustls::ClientConfig {
     static CONFIG: OnceLock<rustls::ClientConfig> = OnceLock::new();
     CONFIG
         .get_or_init(|| {
@@ -44,6 +47,20 @@ fn shared_rustls_client_config() -> rustls::ClientConfig {
             let mut roots = rustls::RootCertStore::empty();
             for cert in native.certs {
                 let _ = roots.add(cert);
+            }
+            // Android's system store is a directory of PEM files. rustls-native-certs
+            // only probes OpenSSL paths, which are empty inside an Android app, so
+            // wss:// fails with "no native root CA certificates found".
+            if roots.is_empty() {
+                let added = load_android_system_roots(&mut roots);
+                if added == 0 {
+                    log::warn!(
+                        "[CLIENT] No TLS roots from the native store or the Android system CA \
+                         directory"
+                    );
+                } else {
+                    log::info!("[CLIENT] Loaded {added} Android system CA certificates");
+                }
             }
             let mut config = rustls::ClientConfig::builder()
                 .with_root_certificates(roots)
@@ -62,18 +79,53 @@ fn shared_rustls_client_config() -> rustls::ClientConfig {
         .clone()
 }
 
+fn load_android_system_roots(roots: &mut rustls::RootCertStore) -> usize {
+    const DIRS: &[&str] = &[
+        "/system/etc/security/cacerts",
+        "/apex/com.android.conscrypt/cacerts",
+    ];
+    let mut added = 0;
+    for dir in DIRS {
+        added += load_pem_cert_dir(roots, Path::new(dir));
+    }
+    added
+}
+
+fn load_pem_cert_dir(roots: &mut rustls::RootCertStore, dir: &Path) -> usize {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return 0,
+    };
+    let mut added = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Ok(bytes) = fs::read(&path) else {
+            continue;
+        };
+        for cert in CertificateDer::pem_slice_iter(&bytes).flatten() {
+            if roots.add(cert).is_ok() {
+                added += 1;
+            }
+        }
+    }
+    added
+}
+
 impl KalamLinkClientBuilder {
     pub(crate) fn new() -> Self {
         Self {
-            base_url:                    None,
-            timeout:                     Duration::from_secs(30),
-            resolved_auth:               ResolvedAuth::default(),
-            max_retries:                 3,
+            base_url: None,
+            timeout: Duration::from_secs(30),
+            resolved_auth: ResolvedAuth::default(),
+            max_retries: 3,
             http_pool_max_idle_per_host: 10,
-            timeouts:                    KalamLinkTimeouts::default(),
-            connection_options:          ConnectionOptions::default(),
-            event_handlers:              crate::event_handlers::EventHandlers::default(),
-            custom_auth_refresher:       None,
+            timeouts: KalamLinkTimeouts::default(),
+            connection_options: ConnectionOptions::default(),
+            event_handlers: crate::event_handlers::EventHandlers::default(),
+            custom_auth_refresher: None,
         }
     }
 

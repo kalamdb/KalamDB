@@ -21,7 +21,7 @@ pub struct TablePolicyRecord {
         default = "None",
         comment = "Namespace-qualified table and policy identifier"
     )]
-    pub policy_id:         PolicyId,
+    pub policy_id: PolicyId,
     #[column(
         id = 2,
         ordinal = 2,
@@ -31,7 +31,7 @@ pub struct TablePolicyRecord {
         default = "None",
         comment = "Protected table identifier"
     )]
-    pub table_id:          TableId,
+    pub table_id: TableId,
     #[column(
         id = 3,
         ordinal = 3,
@@ -41,7 +41,7 @@ pub struct TablePolicyRecord {
         default = "None",
         comment = "Policy name"
     )]
-    pub policy_name:       String,
+    pub policy_name: String,
     #[column(
         id = 4,
         ordinal = 4,
@@ -51,7 +51,7 @@ pub struct TablePolicyRecord {
         default = "None",
         comment = "Policy command"
     )]
-    pub command:           PolicyCommand,
+    pub command: PolicyCommand,
     #[column(
         id = 5,
         ordinal = 5,
@@ -61,7 +61,7 @@ pub struct TablePolicyRecord {
         default = "None",
         comment = "Policy role targets"
     )]
-    pub targets:           Vec<PolicyTarget>,
+    pub targets: Vec<PolicyTarget>,
     #[column(
         id = 6,
         ordinal = 6,
@@ -71,7 +71,7 @@ pub struct TablePolicyRecord {
         default = "None",
         comment = "Original USING expression"
     )]
-    pub using_sql:         Option<String>,
+    pub using_sql: Option<String>,
     #[column(
         id = 7,
         ordinal = 7,
@@ -81,7 +81,7 @@ pub struct TablePolicyRecord {
         default = "None",
         comment = "Original WITH CHECK expression"
     )]
-    pub with_check_sql:    Option<String>,
+    pub with_check_sql: Option<String>,
     #[column(
         id = 8,
         ordinal = 8,
@@ -91,7 +91,7 @@ pub struct TablePolicyRecord {
         default = "None",
         comment = "Compiled USING authorization IR"
     )]
-    pub using_program:     Option<PolicyProgram>,
+    pub using_program: Option<PolicyProgram>,
     #[column(
         id = 9,
         ordinal = 9,
@@ -101,7 +101,7 @@ pub struct TablePolicyRecord {
         default = "None",
         comment = "Compiled WITH CHECK authorization IR"
     )]
-    pub check_program:     Option<PolicyProgram>,
+    pub check_program: Option<PolicyProgram>,
     #[column(
         id = 10,
         ordinal = 10,
@@ -131,7 +131,7 @@ pub struct TablePolicyRecord {
         default = "None",
         comment = "Tables whose mutations invalidate authorization"
     )]
-    pub dependencies:      Vec<TableId>,
+    pub dependencies: Vec<TableId>,
 }
 
 impl From<TablePolicy> for TablePolicyRecord {

@@ -1,13 +1,13 @@
-use kalamdb_commons::models::{NamespaceId, ScheduleId};
+use kalamdb_commons::models::{ScheduleId, SchemaId};
 
 use crate::ddl::{create_schedule::ScheduleParser, DdlResult};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlterScheduleStatement {
     pub schedule_id: ScheduleId,
-    pub enabled:     bool,
+    pub enabled: bool,
 }
 impl AlterScheduleStatement {
-    pub fn parse(sql: &str, namespace: &NamespaceId) -> DdlResult<Self> {
+    pub fn parse(sql: &str, namespace: &SchemaId) -> DdlResult<Self> {
         let mut p = ScheduleParser::new(sql)?;
         p.keyword("ALTER")?;
         p.keyword("SCHEDULE")?;

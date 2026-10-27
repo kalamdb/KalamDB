@@ -228,16 +228,12 @@ mod tests {
         snapshot.routines.insert(
             "api.health".into(),
             kalamdb_sql::contracts::ContractRoutine {
-                routine_id:  kalamdb_commons::models::RoutineId::new("api.health"),
-                schema:      "api".into(),
-                name:        "health".into(),
-                parameters:  Vec::new(),
-                return_type: None,
-                language:    None,
-                security:    kalamdb_commons::RoutineSecurityMode::Invoker,
-                body:        None,
-                grants:      Default::default(),
-                comment:     None,
+                routine_id: kalamdb_commons::models::RoutineId::new("api.health"),
+                schema: "api".into(),
+                name: "health".into(),
+                kind: kalamdb_commons::models::RoutineKind::Procedure,
+                security: kalamdb_commons::RoutineSecurityMode::Invoker,
+                ..Default::default()
             },
         );
         validate_registry_exports(root, &snapshot).unwrap();
@@ -258,16 +254,12 @@ mod tests {
         snapshot.routines.insert(
             "api.health".into(),
             kalamdb_sql::contracts::ContractRoutine {
-                routine_id:  kalamdb_commons::models::RoutineId::new("api.health"),
-                schema:      "api".into(),
-                name:        "health".into(),
-                parameters:  Vec::new(),
-                return_type: None,
-                language:    None,
-                security:    kalamdb_commons::RoutineSecurityMode::Invoker,
-                body:        None,
-                grants:      Default::default(),
-                comment:     None,
+                routine_id: kalamdb_commons::models::RoutineId::new("api.health"),
+                schema: "api".into(),
+                name: "health".into(),
+                kind: kalamdb_commons::models::RoutineKind::Procedure,
+                security: kalamdb_commons::RoutineSecurityMode::Invoker,
+                ..Default::default()
             },
         );
         let err = validate_registry_exports(root, &snapshot).unwrap_err();
@@ -282,9 +274,9 @@ mod tests {
             root.join("schema.sql"),
             r#"
 CREATE SCHEMA api;
-CREATE PROCEDURE api.health() RETURNS TEXT;
-CREATE PROCEDURE api.greet() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return "inline"; $$;
-CREATE PROCEDURE api.plus_one(x INT) RETURNS INT;
+CREATE FUNCTION api.health() RETURNS TEXT;
+CREATE FUNCTION api.greet() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return "inline"; $$;
+CREATE FUNCTION api.plus_one(x INT) RETURNS INT;
 "#,
         )
         .unwrap();

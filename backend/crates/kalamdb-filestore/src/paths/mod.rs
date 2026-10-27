@@ -114,7 +114,7 @@ impl PathResolver {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{SchemaId, TableName};
 
     use super::*;
 
@@ -122,7 +122,7 @@ mod tests {
 
     #[test]
     fn test_resolve_static_placeholders() {
-        let table_id = TableId::new(NamespaceId::new("myns"), TableName::new("mytable"));
+        let table_id = TableId::new(SchemaId::new("myns"), TableName::new("mytable"));
         let result = TemplateResolver::resolve_static_placeholders(
             "ns_{namespace}/tbl_{tableName}",
             &table_id,
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn test_resolve_static_leaves_dynamic() {
-        let table_id = TableId::new(NamespaceId::new("myns"), TableName::new("mytable"));
+        let table_id = TableId::new(SchemaId::new("myns"), TableName::new("mytable"));
         let result = TemplateResolver::resolve_static_placeholders(
             "ns_{namespace}/tbl_{tableName}/usr_{userId}",
             &table_id,

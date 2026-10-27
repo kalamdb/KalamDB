@@ -19,19 +19,19 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct StagedTopicPublish {
     pub topic_id: TopicId,
-    pub payload:  Vec<u8>,
-    pub user_id:  Option<UserId>,
+    pub payload: Vec<u8>,
+    pub user_id: Option<UserId>,
 }
 
 pub struct FunctionRuntimeState {
-    engine:        OnceLock<Result<Arc<FunctionEngine>, String>>,
+    engine: OnceLock<Result<Arc<FunctionEngine>, String>>,
     engine_config: EngineConfig,
-    active:        Arc<arc_swap::ArcSwap<ActiveFunctionSet>>,
+    active: Arc<arc_swap::ArcSwap<ActiveFunctionSet>>,
     /// Serializes catalog snapshots so a slower rebuild cannot publish over a newer one.
-    rebuild:       tokio::sync::Mutex<()>,
-    staged:        dashmap::DashMap<TransactionId, Vec<StagedTopicPublish>>,
-    active_runs:   dashmap::DashMap<String, ActiveProcedureRunSnapshot>,
-    lifecycle:     crate::engine::lifecycle::LifecycleSlot,
+    rebuild: tokio::sync::Mutex<()>,
+    staged: dashmap::DashMap<TransactionId, Vec<StagedTopicPublish>>,
+    active_runs: dashmap::DashMap<String, ActiveProcedureRunSnapshot>,
+    lifecycle: crate::engine::lifecycle::LifecycleSlot,
 }
 
 impl Default for FunctionRuntimeState {
@@ -134,9 +134,9 @@ impl FunctionRuntimeState {
     pub fn memory_census(&self) -> crate::FunctionMemoryCensus {
         self.try_engine().map(|engine| engine.memory_census()).unwrap_or(
             crate::FunctionMemoryCensus {
-                reserved_bytes:   0,
-                limit_bytes:      self.engine_config.max_memory_bytes as u64,
-                idle_instances:   0,
+                reserved_bytes: 0,
+                limit_bytes: self.engine_config.max_memory_bytes as u64,
+                idle_instances: 0,
                 active_instances: 0,
             },
         )
@@ -150,15 +150,15 @@ impl FunctionRuntimeState {
             .instance_snapshot()
             .into_iter()
             .map(|row| ModuleInstanceSnapshot {
-                instance_id:     i64::try_from(row.instance_id).unwrap_or(i64::MAX),
-                worker:          i64::try_from(row.worker).unwrap_or(i64::MAX),
-                module_id:       row.module_id,
-                revision_id:     row.revision_id,
-                state:           row.state.to_string(),
-                reserved_bytes:  i64::try_from(row.reserved_bytes).unwrap_or(i64::MAX),
+                instance_id: i64::try_from(row.instance_id).unwrap_or(i64::MAX),
+                worker: i64::try_from(row.worker).unwrap_or(i64::MAX),
+                module_id: row.module_id,
+                revision_id: row.revision_id,
+                state: row.state.to_string(),
+                reserved_bytes: i64::try_from(row.reserved_bytes).unwrap_or(i64::MAX),
                 used_heap_bytes: i64::try_from(row.used_heap_bytes).unwrap_or(i64::MAX),
                 peak_heap_bytes: i64::try_from(row.peak_heap_bytes).unwrap_or(i64::MAX),
-                invocations:     i64::try_from(row.invocations).unwrap_or(i64::MAX),
+                invocations: i64::try_from(row.invocations).unwrap_or(i64::MAX),
             })
             .collect()
     }
@@ -173,7 +173,7 @@ pub fn now_ms() -> i64 {
 
 fn engine_config_from_settings(settings: &FunctionsRuntimeSettings) -> EngineConfig {
     let workers = if settings.workers == 0 {
-        std::thread::available_parallelism().map_or(1, |n| n.get().min(4))
+        std::thread::available_parallelism().map_or(1, |n| n.get().min(8))
     } else {
         settings.workers
     };
@@ -216,15 +216,15 @@ mod tests {
         let state = FunctionRuntimeState::default();
         state.begin_run(ActiveProcedureRunSnapshot {
             execution_id: "exec-1".into(),
-            request_id:   "req-1".into(),
+            request_id: "req-1".into(),
             procedure_id: "api.health".into(),
-            module_id:    Some("backend".into()),
-            revision_id:  Some("backend:abc".into()),
-            actor:        "alice".into(),
-            principal:    "alice".into(),
-            origin:       "sql".into(),
-            started_at:   1,
-            depth:        0,
+            module_id: Some("backend".into()),
+            revision_id: Some("backend:abc".into()),
+            actor: "alice".into(),
+            principal: "alice".into(),
+            origin: "sql".into(),
+            started_at: 1,
+            depth: 0,
         });
         assert_eq!(state.snapshot_runs().len(), 1);
         state.end_run("exec-1");

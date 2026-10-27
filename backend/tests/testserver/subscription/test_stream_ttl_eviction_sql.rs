@@ -17,7 +17,7 @@ async fn test_stream_ttl_eviction_from_sql_script() -> anyhow::Result<()> {
     let table = "events";
 
     // Create namespace
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     // Create stream table with 2-second TTL (matching the SQL script intent)

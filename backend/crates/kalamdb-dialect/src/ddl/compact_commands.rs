@@ -22,7 +22,7 @@
 //! STORAGE COMPACT ALL IN namespace;
 //! ```
 
-use kalamdb_commons::{NamespaceId, TableName};
+use kalamdb_commons::{SchemaId, TableName};
 
 use crate::{ddl::parsing, parser::utils::normalize_sql};
 
@@ -32,7 +32,7 @@ const ERR_EXPECTED_NAMESPACE: &str = "Expected STORAGE COMPACT ALL IN namespace"
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompactTableStatement {
     /// Namespace containing the table
-    pub namespace:  NamespaceId,
+    pub namespace: SchemaId,
     /// Table name to compact
     pub table_name: TableName,
 }
@@ -58,7 +58,7 @@ impl CompactTableStatement {
         parsing::validate_no_extra_tokens(&normalized, 4, "STORAGE COMPACT TABLE")?;
 
         Ok(Self {
-            namespace:  NamespaceId::from(namespace),
+            namespace: SchemaId::from(namespace),
             table_name: TableName::from(table_name),
         })
     }
@@ -68,7 +68,7 @@ impl CompactTableStatement {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompactAllTablesStatement {
     /// Namespace to compact all tables from
-    pub namespace: NamespaceId,
+    pub namespace: SchemaId,
 }
 
 impl CompactAllTablesStatement {
@@ -96,12 +96,12 @@ impl CompactAllTablesStatement {
         parsing::validate_no_extra_tokens(&normalized, expected_tokens, command_for_error)?;
 
         Ok(Self {
-            namespace: NamespaceId::from(namespace),
+            namespace: SchemaId::from(namespace),
         })
     }
 
     /// Parse and fall back to the default namespace when no `IN` clause is provided.
-    pub fn parse_with_default(sql: &str, default_namespace: &NamespaceId) -> Result<Self, String> {
+    pub fn parse_with_default(sql: &str, default_namespace: &SchemaId) -> Result<Self, String> {
         match Self::parse(sql) {
             Ok(stmt) => Ok(stmt),
             Err(err) if err == ERR_EXPECTED_NAMESPACE => {
@@ -125,14 +125,14 @@ mod tests {
     #[test]
     fn test_parse_compact_table_basic() {
         let stmt = CompactTableStatement::parse("STORAGE COMPACT TABLE prod.events").unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("prod"));
+        assert_eq!(stmt.namespace, SchemaId::from("prod"));
         assert_eq!(stmt.table_name, TableName::from("events"));
     }
 
     #[test]
     fn test_parse_compact_table_with_semicolon() {
         let stmt = CompactTableStatement::parse("STORAGE COMPACT TABLE prod.events;").unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("prod"));
+        assert_eq!(stmt.namespace, SchemaId::from("prod"));
         assert_eq!(stmt.table_name, TableName::from("events"));
     }
 
@@ -154,20 +154,20 @@ mod tests {
     #[test]
     fn test_parse_compact_all_tables_basic() {
         let stmt = CompactAllTablesStatement::parse("STORAGE COMPACT ALL IN prod").unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("prod"));
+        assert_eq!(stmt.namespace, SchemaId::from("prod"));
     }
 
     #[test]
     fn test_parse_compact_all_tables_with_semicolon() {
         let stmt = CompactAllTablesStatement::parse("STORAGE COMPACT ALL IN prod;").unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("prod"));
+        assert_eq!(stmt.namespace, SchemaId::from("prod"));
     }
 
     #[test]
     fn test_parse_compact_all_tables_in_namespace_keyword() {
         let stmt =
             CompactAllTablesStatement::parse("STORAGE COMPACT ALL IN NAMESPACE prod").unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("prod"));
+        assert_eq!(stmt.namespace, SchemaId::from("prod"));
     }
 
     #[test]
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_parse_compact_all_tables_with_default_namespace() {
-        let default_ns = NamespaceId::from("default");
+        let default_ns = SchemaId::from("default");
         let stmt =
             CompactAllTablesStatement::parse_with_default("STORAGE COMPACT ALL", &default_ns)
                 .unwrap();

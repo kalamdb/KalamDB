@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use kalamdb_commons::quote_sql_identifier;
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -36,7 +35,7 @@ impl TypedStatementHandler<SubscribeStatement> for SubscribeHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         // Use the session's default namespace if the statement used "default"
-        // This allows SUBSCRIBE TO messages to use the current USE NAMESPACE
+        // This allows SUBSCRIBE TO messages to use the current SET SCHEMA
         let effective_namespace = if statement.namespace.is_default_namespace() {
             context.default_namespace()
         } else {
@@ -55,15 +54,16 @@ impl TypedStatementHandler<SubscribeStatement> for SubscribeHandler {
 
         // Update select_query to use effective namespace if needed
         let select_query = if effective_namespace.as_str() != statement.namespace.as_str() {
-            // Replace table reference in the query
-            statement.select_query.replace(
-                &format!("FROM {}", statement.table_name.as_str()),
-                &format!(
-                    "FROM {}.{}",
-                    quote_sql_identifier(effective_namespace.as_str()),
-                    quote_sql_identifier(statement.table_name.as_str()),
-                ),
-            )
+            let from_qualified =
+                format!("FROM {}.{}", statement.namespace.as_str(), statement.table_name.as_str());
+            let from_unqualified = format!("FROM {}", statement.table_name.as_str());
+            let replacement =
+                format!("FROM {}.{}", effective_namespace.as_str(), statement.table_name.as_str());
+            if statement.select_query.contains(&from_qualified) {
+                statement.select_query.replace(&from_qualified, &replacement)
+            } else {
+                statement.select_query.replace(&from_unqualified, &replacement)
+            }
         } else {
             statement.select_query.clone()
         };

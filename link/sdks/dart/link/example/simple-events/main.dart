@@ -22,7 +22,7 @@ Future<void> runSimpleEventsExample({String namespace = 'sdk_examples'}) async {
 
     await queryOrThrow(
       session.client,
-      'CREATE NAMESPACE IF NOT EXISTS $namespace',
+      'CREATE SCHEMA IF NOT EXISTS $namespace',
     );
     await queryOrThrow(session.client, 'DROP TABLE IF EXISTS $fullTable');
     await queryOrThrow(

@@ -33,10 +33,9 @@ fn smoke_test_snowflake_id_default() {
     println!("🧪 Testing SNOWFLAKE_ID() DEFAULT: {}", full_table);
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table with SNOWFLAKE_ID() as PRIMARY KEY default
@@ -113,10 +112,9 @@ fn smoke_test_uuid_v7_default() {
     println!("🧪 Testing UUID_V7() DEFAULT: {}", full_table);
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table with UUID_V7() as PRIMARY KEY default
@@ -196,10 +194,9 @@ fn smoke_test_ulid_default() {
     println!("🧪 Testing ULID() DEFAULT: {}", full_table);
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table with ULID() as PRIMARY KEY default
@@ -270,10 +267,9 @@ fn smoke_test_current_user_default() {
     println!("🧪 Testing CURRENT_USER() DEFAULT: {}", full_table);
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table with CURRENT_USER() as DEFAULT for created_by
@@ -328,8 +324,7 @@ fn smoke_test_current_user_default() {
     // For localhost tests, this should be "root" or the system user
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test all custom functions together in one table
@@ -353,10 +348,9 @@ fn smoke_test_all_custom_functions_combined() {
     println!("🧪 Testing all custom functions combined: {}", full_table);
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table with ALL custom functions
@@ -402,6 +396,5 @@ fn smoke_test_all_custom_functions_combined() {
     println!("✅ Verified all custom function defaults work together");
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }

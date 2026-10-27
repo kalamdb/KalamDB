@@ -10,15 +10,18 @@ use sqlparser::ast::Statement;
 /// allocate a copy of every SQL expression. Bind values stay request-local.
 #[derive(Debug, Clone)]
 pub struct PreparedExecutionStatement {
-    pub sql:                  String,
-    pub table_id:             Option<TableId>,
-    pub table_type:           Option<TableType>,
+    pub sql: String,
+    pub table_id: Option<TableId>,
+    pub table_type: Option<TableType>,
     pub classified_statement: Option<Arc<SqlStatement>>,
     /// Precomputed at prepare time; checked with a single bool on the execution hot path.
-    pub track_slow_query:     bool,
+    pub track_slow_query: bool,
     /// DML sqlparser AST parsed once at prepare; reused by literal insert, batch insert,
     /// and system.migrations handlers so execute does not re-parse.
-    pub parsed_dml:           Option<Arc<Statement>>,
+    pub parsed_dml: Option<Arc<Statement>>,
+    /// DataFusion-ready sqlparser AST (with text-compat and AST operator rewrites applied)
+    /// parsed once at prepare and reused by SELECT and DataFusion DML planning.
+    pub datafusion_statement: Option<Arc<Statement>>,
 }
 
 impl PreparedExecutionStatement {
@@ -32,13 +35,36 @@ impl PreparedExecutionStatement {
         track_slow_query: bool,
         parsed_dml: Option<Statement>,
     ) -> Self {
+        let parsed_dml = parsed_dml.map(Arc::new);
+        let datafusion_statement = parsed_dml.as_ref().map(Arc::clone);
         Self {
             sql,
             table_id,
             table_type,
             classified_statement: classified_statement.map(Arc::new),
             track_slow_query,
-            parsed_dml: parsed_dml.map(Arc::new),
+            parsed_dml,
+            datafusion_statement,
+        }
+    }
+
+    pub fn with_statements(
+        sql: String,
+        table_id: Option<TableId>,
+        table_type: Option<TableType>,
+        classified_statement: Option<SqlStatement>,
+        track_slow_query: bool,
+        parsed_dml: Option<Arc<Statement>>,
+        datafusion_statement: Option<Arc<Statement>>,
+    ) -> Self {
+        Self {
+            sql,
+            table_id,
+            table_type,
+            classified_statement: classified_statement.map(Arc::new),
+            track_slow_query,
+            parsed_dml,
+            datafusion_statement,
         }
     }
 }

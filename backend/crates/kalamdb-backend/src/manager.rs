@@ -1,15 +1,15 @@
 //! Shared backend session registry.
 
-use std::{
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-    time::{SystemTime, UNIX_EPOCH},
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
 };
 
 use dashmap::{mapref::entry::Entry, DashMap};
-use kalamdb_commons::models::{SessionOrigin, TransactionId, TransactionOrigin};
+use kalamdb_commons::{
+    models::{SessionOrigin, TransactionId, TransactionOrigin},
+    unix_time_millis,
+};
 use kalamdb_transactions::{ExecutionOwnerKey, TransactionEngine, TransactionEngineError};
 
 use crate::session::{BackendAuth, BackendSession, BackendSessionSnapshot, BackendSessionState};
@@ -20,8 +20,8 @@ const STALE_IDLE_SESSION_PRUNE_INTERVAL_MS: i64 = 1_000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackendSessionError {
     DuplicateSession {
-        session_id:       String,
-        existing_origin:  SessionOrigin,
+        session_id: String,
+        existing_origin: SessionOrigin,
         requested_origin: SessionOrigin,
     },
     SessionNotFound(String),
@@ -71,11 +71,11 @@ impl std::error::Error for BackendSessionError {}
 pub type BackendSessionResult<T> = Result<T, BackendSessionError>;
 
 pub struct BackendSessionManager {
-    sessions:                  DashMap<String, BackendSession>,
-    transaction_engine:        Arc<dyn TransactionEngine>,
-    cleanup_runs:              AtomicU64,
-    cleanup_removed_sessions:  AtomicU64,
-    closed_sessions:           AtomicU64,
+    sessions: DashMap<String, BackendSession>,
+    transaction_engine: Arc<dyn TransactionEngine>,
+    cleanup_runs: AtomicU64,
+    cleanup_removed_sessions: AtomicU64,
+    closed_sessions: AtomicU64,
     last_passive_pruned_at_ms: AtomicU64,
 }
 
@@ -260,6 +260,24 @@ impl BackendSessionManager {
         Ok(())
     }
 
+    pub fn recover_failed_transaction(&self, session_id: &str) -> BackendSessionResult<()> {
+        let mut session = self
+            .sessions
+            .get_mut(session_id)
+            .ok_or_else(|| BackendSessionError::SessionNotFound(session_id.to_string()))?;
+        session.recover_failed_transaction();
+        session.touch("ROLLBACK TO SAVEPOINT", None, current_timestamp_ms());
+        Ok(())
+    }
+
+    pub fn block_state(&self, session_id: &str) -> BackendSessionResult<BackendSessionState> {
+        let session = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| BackendSessionError::SessionNotFound(session_id.to_string()))?;
+        Ok(session.block_state())
+    }
+
     pub fn ensure_block_allows_work(&self, session_id: &str) -> BackendSessionResult<()> {
         let session = self
             .sessions
@@ -316,9 +334,9 @@ impl BackendSessionManager {
 
     pub fn cleanup_counters(&self) -> BackendSessionCleanupCounters {
         BackendSessionCleanupCounters {
-            runs:             self.cleanup_runs.load(Ordering::Relaxed),
+            runs: self.cleanup_runs.load(Ordering::Relaxed),
             removed_sessions: self.cleanup_removed_sessions.load(Ordering::Relaxed),
-            closed_sessions:  self.closed_sessions.load(Ordering::Relaxed),
+            closed_sessions: self.closed_sessions.load(Ordering::Relaxed),
         }
     }
 
@@ -460,16 +478,13 @@ impl BackendSessionManager {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BackendSessionCleanupCounters {
-    pub runs:             u64,
+    pub runs: u64,
     pub removed_sessions: u64,
-    pub closed_sessions:  u64,
+    pub closed_sessions: u64,
 }
 
 fn current_timestamp_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or_default()
+    unix_time_millis()
 }
 
 fn transaction_origin(origin: SessionOrigin) -> TransactionOrigin {

@@ -19,7 +19,7 @@ use crate::{
 #[derive(Debug, Clone, Copy)]
 pub struct LogsOptions {
     pub follow: bool,
-    pub lines:  usize,
+    pub lines: usize,
 }
 
 pub async fn print_database_logs(

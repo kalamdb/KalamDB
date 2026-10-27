@@ -10,7 +10,7 @@ use kalamdb_functions::{now_ms, FunctionLifecycleEvent, FunctionLifecycleObserve
 use crate::procedure_log_logger::{ProcedureLogLogger, ProcedureLogRecord};
 
 pub struct FunctionRuntimeLogObserver {
-    pub logger:  Arc<ProcedureLogLogger>,
+    pub logger: Arc<ProcedureLogLogger>,
     pub node_id: Arc<str>,
 }
 

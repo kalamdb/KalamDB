@@ -52,8 +52,8 @@ macro_rules! empty_config_extension {
 /// Session-level user context stored in DataFusion config extensions.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SessionUserContext {
-    pub user_id:      UserId,
-    pub role:         Role,
+    pub user_id: UserId,
+    pub role: Role,
     pub read_context: ReadContext,
 }
 
@@ -82,8 +82,8 @@ impl SessionUserContext {
 impl From<UserContext> for SessionUserContext {
     fn from(value: UserContext) -> Self {
         Self {
-            user_id:      value.user_id,
-            role:         value.role,
+            user_id: value.user_id,
+            role: value.role,
             read_context: value.read_context,
         }
     }
@@ -92,14 +92,31 @@ impl From<UserContext> for SessionUserContext {
 impl From<&UserContext> for SessionUserContext {
     fn from(value: &UserContext) -> Self {
         Self {
-            user_id:      value.user_id.clone(),
-            role:         value.role,
+            user_id: value.user_id.clone(),
+            role: value.role,
             read_context: value.read_context,
         }
     }
 }
 
 empty_config_extension!(SessionUserContext, "kalamdb_user");
+
+/// DataFusion adapter for the shared connection/request setting state.
+#[derive(Clone, Debug, Default)]
+pub struct SessionConfigValues(pub kalamdb_session::SessionSettings);
+
+impl SessionConfigValues {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+impl std::ops::Deref for SessionConfigValues {
+    type Target = kalamdb_session::SessionSettings;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+empty_config_extension!(SessionConfigValues, "kalamdb_session_config");
 
 /// Per-operation RLS command used while a provider performs DML visibility scans.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -136,3 +153,12 @@ impl ScanDiagnosticsContext {
 }
 
 empty_config_extension!(ScanDiagnosticsContext, "kalamdb_scan_diagnostics");
+
+/// Marks a session whose `SELECT *` must omit storage columns.
+///
+/// The PostgreSQL wire and the extension bridge install this. The Kalam SQL
+/// API does not, so `SELECT *` there still returns `_version` and `_deleted`.
+#[derive(Debug, Clone, Default)]
+pub struct PostgresStar;
+
+empty_config_extension!(PostgresStar, "kalamdb_postgres_star");

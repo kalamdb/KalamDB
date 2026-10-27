@@ -523,11 +523,11 @@ pub struct ClusterTableProvider {
 }
 
 struct ClusterScanSource {
-    view:            Arc<ClusterView>,
+    view: Arc<ClusterView>,
     physical_filter: Option<Arc<dyn PhysicalExpr>>,
-    projection:      Option<Vec<usize>>,
-    limit:           Option<usize>,
-    output_schema:   SchemaRef,
+    projection: Option<Vec<usize>>,
+    limit: Option<usize>,
+    output_schema: SchemaRef,
 }
 
 impl std::fmt::Debug for ClusterScanSource {

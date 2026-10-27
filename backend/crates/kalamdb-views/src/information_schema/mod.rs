@@ -28,13 +28,13 @@ pub mod views;
 /// and serves an extended `columns` view with SQL/PG types from `KalamDataType`.
 #[derive(Debug)]
 pub struct KalamInformationSchemaProvider {
-    inner:      InformationSchemaProvider,
-    columns:    Arc<dyn TableProvider>,
-    tables:     Arc<ExtendedInformationSchemaTablesProvider>,
+    inner: InformationSchemaProvider,
+    columns: Arc<dyn TableProvider>,
+    tables: Arc<ExtendedInformationSchemaTablesProvider>,
     parameters: Arc<dyn TableProvider>,
-    routines:   Arc<dyn TableProvider>,
-    views:      Arc<dyn TableProvider>,
-    triggers:   Arc<dyn TableProvider>,
+    routines: Arc<dyn TableProvider>,
+    views: Arc<dyn TableProvider>,
+    triggers: Arc<dyn TableProvider>,
 }
 
 impl KalamInformationSchemaProvider {
@@ -47,22 +47,22 @@ impl KalamInformationSchemaProvider {
             Arc::clone(&system_tables),
         ));
         Self {
-            inner:      InformationSchemaProvider::new(Arc::clone(&catalog_list)),
-            columns:    Arc::new(ExtendedInformationSchemaColumnsProvider::new(
+            inner: InformationSchemaProvider::new(Arc::clone(&catalog_list)),
+            columns: Arc::new(ExtendedInformationSchemaColumnsProvider::new(
                 Arc::clone(&catalog_list),
                 Arc::clone(&system_tables),
             )),
-            tables:     Arc::clone(&tables),
+            tables: Arc::clone(&tables),
             parameters: Arc::new(ExtendedInformationSchemaParametersProvider::new(
                 Arc::clone(&catalog_list),
                 Arc::clone(&system_tables),
             )),
-            routines:   Arc::new(routines::ExtendedInformationSchemaRoutinesProvider::new(
+            routines: Arc::new(routines::ExtendedInformationSchemaRoutinesProvider::new(
                 Arc::clone(&catalog_list),
                 system_tables,
             )),
-            views:      Arc::new(InformationSchemaViewsProvider::new(tables.inner())),
-            triggers:   triggers::empty_triggers_provider(),
+            views: Arc::new(InformationSchemaViewsProvider::new(tables.inner())),
+            triggers: triggers::empty_triggers_provider(),
         }
     }
 }

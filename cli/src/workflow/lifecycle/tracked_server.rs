@@ -7,5 +7,5 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct TrackedServer {
     pub instance_path: PathBuf,
-    pub folder:        PathBuf,
+    pub folder: PathBuf,
 }

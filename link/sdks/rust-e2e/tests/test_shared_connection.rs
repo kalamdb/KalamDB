@@ -116,12 +116,7 @@ async fn ensure_table(client: &KalamLinkClient, table: &str) {
 
 async fn query_max_seq(client: &KalamLinkClient, table: &str) -> VersionId {
     let result = client
-        .execute_query(
-            &format!("SELECT MAX(_version) AS max_seq FROM {}", table),
-            None,
-            None,
-            None,
-        )
+        .execute_query(&format!("SELECT MAX(_version) AS max_seq FROM {}", table), None, None, None)
         .await
         .expect("max seq query should succeed");
 
@@ -449,7 +444,7 @@ async fn test_shared_live_rows_subscription_materializes_snapshots() {
         .live_with_config(
             config,
             LiveRowsConfig {
-                limit:       Some(10),
+                limit: Some(10),
                 key_columns: None,
             },
         )

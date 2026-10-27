@@ -4,14 +4,13 @@ use std::collections::HashMap;
 
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions},
-    SystemTable,
+    schemas::{ColumnDefinition, TableDefinition, TableOptions},
 };
 use kalamdb_system::SystemTablesRegistry;
 
-use crate::{
-    pg_catalog::type_mapping::{info_schema_data_type, info_schema_numeric_metadata, pg_type_name},
-    system::system_view_table_definition,
+use crate::pg_catalog::{
+    supplemental_catalog_definitions,
+    type_mapping::{info_schema_data_type, info_schema_numeric_metadata, pg_type_name},
 };
 
 pub(crate) type TableKey = (String, String);
@@ -19,31 +18,35 @@ pub(crate) type ColumnKey = (String, String, String);
 
 #[derive(Debug, Clone)]
 pub(crate) struct KdbTableMetadata {
-    pub namespace_id:      String,
-    pub kalam_table_type:  String,
-    pub storage_id:        Option<String>,
-    pub version:           i64,
-    pub options:           Option<String>,
-    pub comment:           Option<String>,
+    pub namespace_id: String,
+    pub kalam_table_type: String,
+    pub storage_id: Option<String>,
+    pub version: i64,
+    pub options: Option<String>,
+    pub comment: Option<String>,
     pub updated_at_micros: i64,
     pub created_at_micros: i64,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct KdbColumnMetadata {
-    pub namespace_id:    String,
-    pub version:         i64,
-    pub column_id:       i64,
-    pub comment:         Option<String>,
-    pub default_value:   Option<String>,
-    pub primary_key:     bool,
+    pub namespace_id: String,
+    pub version: i64,
+    pub column_id: i64,
+    pub comment: Option<String>,
+    pub default_value: Option<String>,
+    pub primary_key: bool,
     pub primary_key_pos: Option<i64>,
-    pub data_type:       KalamDataType,
+    pub data_type: KalamDataType,
+    /// PostgreSQL `character_maximum_length`. `None` is unlimited `text`.
+    pub character_maximum_length: Option<u32>,
+    /// Builtin modifier such as `geometry`, when the payload type is not enough.
+    pub logical_modifier: Option<String>,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct CatalogMetadataIndex {
-    tables:  HashMap<TableKey, KdbTableMetadata>,
+    tables: HashMap<TableKey, KdbTableMetadata>,
     columns: HashMap<ColumnKey, KdbColumnMetadata>,
 }
 
@@ -57,12 +60,8 @@ impl CatalogMetadataIndex {
             }
         }
 
-        for table in registry.expected_system_table_definitions() {
-            index.insert_table(table.as_ref());
-        }
-
-        for system_table in SystemTable::all_views() {
-            index.insert_table(&system_view_table_definition(*system_table));
+        for table in supplemental_catalog_definitions(registry) {
+            index.insert_table(&table);
         }
 
         index
@@ -125,14 +124,16 @@ pub(crate) fn kdb_column_metadata_from_definition(
     column: &ColumnDefinition,
 ) -> KdbColumnMetadata {
     KdbColumnMetadata {
-        namespace_id:    table.namespace_id.as_str().to_string(),
-        version:         table.schema_version as i64,
-        column_id:       column.column_id as i64,
-        comment:         column.column_comment.clone(),
-        default_value:   format_column_default(&column.default_value),
-        primary_key:     column.is_primary_key,
+        namespace_id: table.namespace_id.as_str().to_string(),
+        version: table.schema_version as i64,
+        column_id: column.column_id as i64,
+        comment: column.column_comment.clone(),
+        default_value: format_column_default(table, column),
+        primary_key: column.is_primary_key,
         primary_key_pos: primary_key_position(table, column),
-        data_type:       column.data_type.clone(),
+        data_type: column.data_type(),
+        character_maximum_length: column.character_maximum_length,
+        logical_modifier: column.logical_type.modifier_label().map(str::to_string),
     }
 }
 
@@ -151,19 +152,20 @@ fn primary_key_position(table: &TableDefinition, column: &ColumnDefinition) -> O
         .map(|index| (index + 1) as i64)
 }
 
-fn format_column_default(default_value: &ColumnDefault) -> Option<String> {
-    match default_value {
-        ColumnDefault::None => None,
-        other => Some(other.to_sql()),
-    }
+fn format_column_default(table: &TableDefinition, column: &ColumnDefinition) -> Option<String> {
+    column.default_value.postgres_display_sql(
+        table.namespace_id.as_str(),
+        table.table_name.as_str(),
+        &column.column_name,
+    )
 }
 
 pub(crate) struct NormalizedColumnTypes {
-    pub data_type:          &'static str,
-    pub udt_name:           &'static str,
-    pub kdb_data_type:      String,
-    pub numeric_precision:  Option<u64>,
-    pub numeric_scale:      Option<u64>,
+    pub data_type: &'static str,
+    pub udt_name: &'static str,
+    pub kdb_data_type: String,
+    pub numeric_precision: Option<u64>,
+    pub numeric_scale: Option<u64>,
     pub datetime_precision: Option<u64>,
 }
 

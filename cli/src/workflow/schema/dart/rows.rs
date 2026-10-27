@@ -12,15 +12,17 @@ use crate::workflow::schema::{
     types::{render_field_type, TargetLang},
 };
 
+#[derive(Clone)]
 pub struct DartColumn {
-    pub sql_name:   String,
+    pub sql_name: String,
     pub field_name: String,
-    pub dart_type:  String,
-    pub base_type:  String,
-    pub nullable:   bool,
-    pub is_key:     bool,
+    pub dart_type: String,
+    pub base_type: String,
+    pub nullable: bool,
+    pub is_key: bool,
+    pub is_array: bool,
     pub named_type: Option<String>,
-    pub is_enum:    bool,
+    pub is_enum: bool,
 }
 
 impl DartColumn {
@@ -30,30 +32,55 @@ impl DartColumn {
         snapshot: &ContractSnapshot,
     ) -> Self {
         let dart_type = render_field_type(field, names, TargetLang::Dart);
-        let is_enum = field
-            .type_id
-            .as_ref()
-            .and_then(|id| snapshot.types.get(id.as_str()))
-            .is_some_and(|ty| matches!(ty.kind, ContractTypeKind::Enum { .. }));
-        let base_type = if let Some(type_id) = &field.type_id {
+        let is_file = crate::workflow::schema::types::is_file_field(field);
+        let resolved_type = field.type_id.as_ref().and_then(|id| snapshot.types.get(id.as_str()));
+        let is_enum =
+            resolved_type.is_some_and(|ty| matches!(ty.kind, ContractTypeKind::Enum { .. }));
+        let is_domain =
+            resolved_type.is_some_and(|ty| matches!(ty.kind, ContractTypeKind::Domain { .. }));
+        let base_type = if let Some(ContractTypeKind::Domain { base_type, .. }) =
+            resolved_type.map(|ty| &ty.kind)
+        {
+            crate::workflow::schema::types::builtin(&base_type.type_name, TargetLang::Dart)
+                .to_string()
+        } else if let Some(type_id) = &field.type_id {
             names.type_ident(type_id.as_str()).to_string()
         } else {
             crate::workflow::schema::types::builtin(&field.type_name, TargetLang::Dart).to_string()
+        };
+        let named_type = if is_domain || is_file {
+            None
+        } else {
+            field.type_id.as_ref().map(|id| names.type_ident(id.as_str()).to_string())
+        };
+        let base_type = if is_file {
+            "KalamFileRef".to_string()
+        } else {
+            base_type
         };
         Self {
             sql_name: field.name.clone(),
             field_name: dart_field_name(&field.name),
             dart_type,
-            named_type: field.type_id.as_ref().map(|id| names.type_ident(id.as_str()).to_string()),
+            named_type,
             is_enum,
             nullable: !field.not_null,
-            is_key: field.name.eq_ignore_ascii_case("id"),
+            is_key: field.primary_key,
+            is_array: field.is_array,
             base_type,
         }
     }
 
     pub fn encode(&self) -> String {
         let name = &self.field_name;
+        if self.is_array {
+            let mut element = self.clone();
+            element.is_array = false;
+            element.nullable = false;
+            element.field_name = "item".to_string();
+            let access = if self.nullable { "?" } else { "" };
+            return format!("{name}{access}.map((item) => {}).toList()", element.encode());
+        }
         if self.named_type.is_some() {
             if self.is_enum {
                 return if self.nullable {
@@ -71,6 +98,8 @@ impl DartColumn {
         match (self.base_type.as_str(), self.nullable) {
             ("DateTime", true) => format!("{name}?.toIso8601String()"),
             ("DateTime", false) => format!("{name}.toIso8601String()"),
+            ("KalamFileRef", true) => format!("{name}?.toMap()"),
+            ("KalamFileRef", false) => format!("{name}.toMap()"),
             _ => name.to_string(),
         }
     }
@@ -80,6 +109,17 @@ impl DartColumn {
     }
 
     pub fn decode_expr(&self, json: &str) -> String {
+        if self.is_array {
+            let mut element = self.clone();
+            element.is_array = false;
+            element.nullable = false;
+            let decode = format!("_asList({json}, (item) => {})", element.decode_expr("item"));
+            return if self.nullable {
+                format!("{json} == null ? null : {decode}")
+            } else {
+                decode
+            };
+        }
         if let Some(named) = &self.named_type {
             if self.is_enum {
                 return if self.nullable {
@@ -110,6 +150,10 @@ impl DartColumn {
             ("Map<String, Object?>", true) => format!("_asJsonMapOrNull({json})"),
             ("List<double>", false) => format!("_asDoubleList({json})"),
             ("List<double>", true) => format!("_asDoubleListOrNull({json})"),
+            ("KalamFileRef", true) => format!("KalamFileRef.tryParse({json})"),
+            ("KalamFileRef", false) => format!(
+                "KalamFileRef.tryParse({json}) ?? (throw FormatException('expected file ref'))"
+            ),
             (_, false) => format!("_asString({json})"),
             (_, true) => format!("_asStringOrNull({json})"),
         }
@@ -118,21 +162,21 @@ impl DartColumn {
 
 #[derive(Serialize)]
 pub struct RowClassContext {
-    pub doc:           String,
-    pub class_name:    String,
-    pub fields:        Vec<RowFieldContext>,
-    pub with_row_key:  bool,
+    pub doc: String,
+    pub class_name: String,
+    pub fields: Vec<RowFieldContext>,
+    pub with_row_key: bool,
     pub kalam_row_key: String,
 }
 
 #[derive(Serialize)]
 pub struct RowFieldContext {
-    pub sql_name:   String,
+    pub sql_name: String,
     pub field_name: String,
-    pub dart_type:  String,
-    pub required:   bool,
-    pub encode:     String,
-    pub decode:     String,
+    pub dart_type: String,
+    pub required: bool,
+    pub encode: String,
+    pub decode: String,
 }
 
 pub fn row_class_context(
@@ -153,21 +197,21 @@ pub fn row_class_context(
         fields: columns
             .iter()
             .map(|column| RowFieldContext {
-                sql_name:   escape_dart_string(&column.sql_name),
+                sql_name: escape_dart_string(&column.sql_name),
                 field_name: column.field_name.clone(),
-                dart_type:  column.dart_type.clone(),
-                required:   !column.nullable,
-                encode:     column.encode(),
-                decode:     column.decode(),
+                dart_type: column.dart_type.clone(),
+                required: !column.nullable,
+                encode: column.encode(),
+                decode: column.decode(),
             })
             .collect(),
-        with_row_key,
+        with_row_key: with_row_key && columns.iter().filter(|column| column.is_key).count() == 1,
         kalam_row_key: kalam_row_key_expr(&columns),
     }
 }
 
 fn kalam_row_key_expr(columns: &[DartColumn]) -> String {
-    match columns.iter().find(|column| column.is_key).or_else(|| columns.first()) {
+    match columns.iter().find(|column| column.is_key) {
         Some(key) if key.base_type == "String" && !key.nullable => key.field_name.clone(),
         Some(key) => format!("{}.toString()", key.field_name),
         None => "''".to_string(),

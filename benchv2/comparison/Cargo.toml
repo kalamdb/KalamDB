@@ -23,6 +23,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 comparison_common = { path = "common" }
+kalamdb-serialization = { path = "../../backend/crates/kalamdb-serialization", default-features = false }
 
 [profile.release]
 opt-level = 3

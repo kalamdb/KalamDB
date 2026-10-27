@@ -1,10 +1,10 @@
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::atomic::{AtomicU32, Ordering},
+};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 // ---------------------------------------------------------------------------
 // CREATE TABLE benchmark
@@ -100,7 +100,8 @@ impl Benchmark for DropTableBench {
             client
                 .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
                 .await?;
-            // Pre-create tables for warmup IDs (10_000..10_000+warmup) and timed IDs (0..iterations)
+            // Pre-create tables for warmup IDs (10_000..10_000+warmup) and timed IDs
+            // (0..iterations)
             for i in 0..config.warmup {
                 let id = 10_000 + i;
                 client

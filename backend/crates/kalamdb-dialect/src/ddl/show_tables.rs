@@ -4,7 +4,7 @@
 //! - SHOW TABLES
 //! - SHOW TABLES IN namespace
 
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 
 use crate::ddl::{parsing, DdlResult};
 
@@ -12,7 +12,7 @@ use crate::ddl::{parsing, DdlResult};
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShowTablesStatement {
     /// Optional namespace to filter tables
-    pub namespace_id: Option<NamespaceId>,
+    pub namespace_id: Option<SchemaId>,
 }
 
 impl ShowTablesStatement {
@@ -25,7 +25,7 @@ impl ShowTablesStatement {
         let namespace = parsing::parse_optional_in_clause(sql, "SHOW TABLES")?;
 
         Ok(Self {
-            namespace_id: namespace.map(NamespaceId::new),
+            namespace_id: namespace.map(SchemaId::new),
         })
     }
 }

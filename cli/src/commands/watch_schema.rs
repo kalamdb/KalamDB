@@ -11,7 +11,7 @@ use kalam_cli::{
     workflow::project::identifiers::{parse_namespace_id, parse_table_ref},
     CLIConfiguration, CLIError, CLISession, FileCredentialStore, Result,
 };
-use kalamdb_commons::{NamespaceId, TableId};
+use kalamdb_commons::{SchemaId, TableId};
 use tokio::time::sleep;
 
 use crate::{args::Cli, connect::create_session};
@@ -23,11 +23,11 @@ struct TableSelector {
 
 #[derive(Debug, Clone)]
 struct WatchSchemaConfig {
-    namespaces:   Vec<NamespaceId>,
-    tables:       Vec<TableSelector>,
-    run_command:  String,
+    namespaces: Vec<SchemaId>,
+    tables: Vec<TableSelector>,
+    run_command: String,
     run_on_start: bool,
-    interval:     Duration,
+    interval: Duration,
 }
 
 pub async fn handle_watch_schema(
@@ -116,7 +116,7 @@ fn describe_scope(config: &WatchSchemaConfig) -> String {
 
     if !config.namespaces.is_empty() {
         let namespaces =
-            config.namespaces.iter().map(NamespaceId::as_str).collect::<Vec<_>>().join(", ");
+            config.namespaces.iter().map(SchemaId::as_str).collect::<Vec<_>>().join(", ");
         parts.push(format!(" for namespaces {namespaces}"));
     }
 
@@ -167,7 +167,7 @@ async fn run_shell_command(command: &str) -> Result<()> {
 }
 
 fn build_schema_change_query(
-    namespaces: &[NamespaceId],
+    namespaces: &[SchemaId],
     tables: &[TableSelector],
     last_seen: &str,
 ) -> String {
@@ -179,7 +179,7 @@ fn build_schema_change_query(
     )
 }
 
-fn build_scope_predicate(namespaces: &[NamespaceId], tables: &[TableSelector]) -> String {
+fn build_scope_predicate(namespaces: &[SchemaId], tables: &[TableSelector]) -> String {
     let namespace_predicates = namespaces
         .iter()
         .map(|namespace| format!("kdb_namespace_id = '{}'", escape_sql_literal(namespace.as_str())))
@@ -265,7 +265,7 @@ mod tests {
     #[test]
     fn build_schema_change_query_filters_one_namespace() {
         let query =
-            build_schema_change_query(&[NamespaceId::new("chat")], &[], "2026-05-05T11:05:27.741Z");
+            build_schema_change_query(&[SchemaId::new("chat")], &[], "2026-05-05T11:05:27.741Z");
 
         assert_eq!(
             query,
@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn build_schema_change_query_or_filters_multiple_namespaces() {
-        let namespaces = vec![NamespaceId::new("chat"), NamespaceId::new("billing")];
+        let namespaces = vec![SchemaId::new("chat"), SchemaId::new("billing")];
         let query = build_schema_change_query(&namespaces, &[], "2026-05-05T11:05:27.741Z");
 
         assert_eq!(
@@ -331,11 +331,11 @@ mod tests {
     #[test]
     fn describe_scope_defaults_to_user_visible_namespaces() {
         let config = WatchSchemaConfig {
-            namespaces:   Vec::new(),
-            tables:       Vec::new(),
-            run_command:  "npm run schema:gen".into(),
+            namespaces: Vec::new(),
+            tables: Vec::new(),
+            run_command: "npm run schema:gen".into(),
             run_on_start: false,
-            interval:     Duration::from_secs(5),
+            interval: Duration::from_secs(5),
         };
 
         assert_eq!(describe_scope(&config), " across user-visible namespaces");

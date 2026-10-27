@@ -1,6 +1,6 @@
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    models::{CatalogTypeKind, NamespaceId, TableId, TypeId},
+    models::{CatalogTypeKind, SchemaId, TableId, TypeId},
 };
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,7 @@ pub struct CatalogType {
         default = "None",
         comment = "Schema-qualified type identity"
     )]
-    pub type_id:        TypeId,
+    pub type_id: TypeId,
     #[column(
         id = 2,
         ordinal = 2,
@@ -28,7 +28,7 @@ pub struct CatalogType {
         default = "None",
         comment = "Owning schema"
     )]
-    pub namespace_id:   NamespaceId,
+    pub namespace_id: SchemaId,
     #[column(
         id = 3,
         ordinal = 3,
@@ -38,7 +38,7 @@ pub struct CatalogType {
         default = "None",
         comment = "Unqualified type name"
     )]
-    pub name:           String,
+    pub name: String,
     #[column(
         id = 4,
         ordinal = 4,
@@ -48,7 +48,7 @@ pub struct CatalogType {
         default = "None",
         comment = "implicit_table_row | topic_payload | row_alias | composite | enum"
     )]
-    pub kind:           CatalogTypeKind,
+    pub kind: CatalogTypeKind,
     #[column(
         id = 5,
         ordinal = 5,
@@ -59,7 +59,7 @@ pub struct CatalogType {
         comment = "Source table for an implicit row type"
     )]
     #[serde(default)]
-    pub table_id:       Option<TableId>,
+    pub table_id: Option<TableId>,
     #[column(
         id = 6,
         ordinal = 6,
@@ -81,7 +81,7 @@ pub struct CatalogType {
         comment = "Optional type comment"
     )]
     #[serde(default)]
-    pub comment:        Option<String>,
+    pub comment: Option<String>,
     #[column(
         id = 8,
         ordinal = 8,
@@ -92,7 +92,7 @@ pub struct CatalogType {
         comment = "Immutable layout revision"
     )]
     #[serde(default = "default_type_revision")]
-    pub type_revision:  u32,
+    pub type_revision: u32,
     #[column(
         id = 9,
         ordinal = 9,
@@ -103,7 +103,7 @@ pub struct CatalogType {
         comment = "Next never-reused field slot"
     )]
     #[serde(default = "default_next_slot")]
-    pub next_slot:      i32,
+    pub next_slot: i32,
 }
 
 fn default_type_revision() -> u32 {
@@ -119,7 +119,7 @@ impl kalamdb_commons::KSerializable for CatalogType {}
 impl CatalogType {
     pub fn named(
         type_id: TypeId,
-        namespace_id: NamespaceId,
+        namespace_id: SchemaId,
         name: impl Into<String>,
         kind: CatalogTypeKind,
     ) -> Self {

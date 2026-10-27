@@ -30,19 +30,19 @@ pub(crate) mod cluster_common {
     use crate::common::*;
 
     struct ClusterHelperStats {
-        calls:            AtomicU64,
-        attempts:         AtomicU64,
+        calls: AtomicU64,
+        attempts: AtomicU64,
         retryable_errors: AtomicU64,
-        total_micros:     AtomicU64,
+        total_micros: AtomicU64,
     }
 
     impl ClusterHelperStats {
         const fn new() -> Self {
             Self {
-                calls:            AtomicU64::new(0),
-                attempts:         AtomicU64::new(0),
+                calls: AtomicU64::new(0),
+                attempts: AtomicU64::new(0),
                 retryable_errors: AtomicU64::new(0),
-                total_micros:     AtomicU64::new(0),
+                total_micros: AtomicU64::new(0),
             }
         }
     }
@@ -296,12 +296,12 @@ pub(crate) mod cluster_common {
 
     fn should_wait_for_cluster_after_sql(sql: &str) -> bool {
         let upper = sql.trim_start().to_ascii_uppercase();
-        upper.starts_with("CREATE NAMESPACE")
+        upper.starts_with("CREATE SCHEMA")
             || upper.starts_with("CREATE TABLE")
             || upper.starts_with("CREATE SHARED TABLE")
             || upper.starts_with("CREATE USER TABLE")
             || upper.starts_with("CREATE STREAM TABLE")
-            || upper.starts_with("DROP NAMESPACE")
+            || upper.starts_with("DROP SCHEMA")
             || upper.starts_with("DROP TABLE")
             || upper.starts_with("ALTER TABLE")
     }

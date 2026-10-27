@@ -26,7 +26,7 @@ const CALLBACK_TIMEOUT_SECS: u64 = 120;
 
 #[derive(Debug)]
 struct ResolvedRedirectUri {
-    redirect_uri:  String,
+    redirect_uri: String,
     listener_addr: String,
 }
 
@@ -41,13 +41,13 @@ pub type CliOidcClient = CoreClient<
 
 pub struct BrowserAuthorizationRequest {
     pub authorization_url: String,
-    pub csrf_state:        CsrfToken,
-    pub nonce:             Nonce,
-    pub pkce_verifier:     PkceCodeVerifier,
+    pub csrf_state: CsrfToken,
+    pub nonce: Nonce,
+    pub pkce_verifier: PkceCodeVerifier,
 }
 
 struct CallbackParams {
-    code:  String,
+    code: String,
     state: String,
 }
 

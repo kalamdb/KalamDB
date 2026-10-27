@@ -32,7 +32,7 @@ CREATE TABLE chat.users (
   nickname TEXT,
   status chat.status NOT NULL
 ) ROW TYPE chat.user;
-CREATE PROCEDURE chat.create_message(user_id TEXT, body TEXT NOT NULL)
+CREATE FUNCTION chat.create_message(user_id TEXT, body TEXT NOT NULL)
 RETURNS chat.user;
 "#;
 
@@ -123,8 +123,9 @@ fn golden_nullability_nested_struct_alias_and_codecs() {
     assert!(dart.contains("late final chat = ChatFunctions(_client);"));
     assert!(dart
         .contains("Future<ChatCreateMessageResult> createMessage(ChatCreateMessageRequest input)"));
-    assert!(dart.contains("CALL chat.create_message($1, $2)"));
-    assert!(dart.contains("final result = _kalamCallResult(response);"));
+    assert!(dart.contains("invokeRoutine("));
+    assert!(dart.contains("name: 'create_message'"));
+    assert!(!dart.contains("SELECT chat.create_message"));
     assert!(dart.contains("ChatUser.fromJson(_asJsonMap(result))"));
 
     assert!(rust.contains("pub struct ChatAddress"));
@@ -160,14 +161,14 @@ fn scaffold_writes_once_and_does_not_recreate_moved_handlers() {
     fs::write(root.join("schema.sql"), GOLDEN_SQL).unwrap();
     let mut config = minimal_sql_project_config();
     config.schema = SchemaSection {
-        mode:      SchemaMode::Sql,
-        path:      Some("schema.sql".into()),
-        watch:     false,
+        mode: SchemaMode::Sql,
+        path: Some("schema.sql".into()),
+        watch: false,
         languages: vec!["typescript".into()],
-        targets:   [(
+        targets: [(
             "typescript".into(),
             SchemaTarget {
-                output:            "src/generated/kalam.ts".into(),
+                output: "src/generated/kalam.ts".into(),
                 unqualified_names: false,
             },
         )]
@@ -270,20 +271,20 @@ fn inline_routines_skip_src_scaffold_and_get_typecheck_shim() {
         root.join("schema.sql"),
         r#"
 CREATE SCHEMA api;
-CREATE PROCEDURE api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return "ok"; $$;
+CREATE FUNCTION api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return "ok"; $$;
 "#,
     )
     .unwrap();
     let mut config = minimal_sql_project_config();
     config.schema = SchemaSection {
-        mode:      SchemaMode::Sql,
-        path:      Some("schema.sql".into()),
-        watch:     false,
+        mode: SchemaMode::Sql,
+        path: Some("schema.sql".into()),
+        watch: false,
         languages: vec!["typescript".into()],
-        targets:   [(
+        targets: [(
             "typescript".into(),
             SchemaTarget {
-                output:            "src/generated/kalam.ts".into(),
+                output: "src/generated/kalam.ts".into(),
                 unqualified_names: false,
             },
         )]
@@ -327,29 +328,29 @@ fn generate_does_not_require_a_server_url() {
     .unwrap();
     let config = KalamProjectConfig {
         schema: SchemaSection {
-            mode:      SchemaMode::Sql,
-            path:      Some("schema.sql".into()),
-            watch:     false,
+            mode: SchemaMode::Sql,
+            path: Some("schema.sql".into()),
+            watch: false,
             languages: vec!["typescript".into(), "dart".into(), "rust".into()],
-            targets:   [
+            targets: [
                 (
                     "typescript".into(),
                     SchemaTarget {
-                        output:            "src/generated/kalam.ts".into(),
+                        output: "src/generated/kalam.ts".into(),
                         unqualified_names: false,
                     },
                 ),
                 (
                     "dart".into(),
                     SchemaTarget {
-                        output:            "lib/generated/kalam.dart".into(),
+                        output: "lib/generated/kalam.dart".into(),
                         unqualified_names: false,
                     },
                 ),
                 (
                     "rust".into(),
                     SchemaTarget {
-                        output:            "src/generated/kalam.rs".into(),
+                        output: "src/generated/kalam.rs".into(),
                         unqualified_names: false,
                     },
                 ),
@@ -390,22 +391,22 @@ fn generate_does_not_require_a_server_url() {
 
 const TYPECHECK_SQL: &str = r#"
 CREATE SCHEMA chat;
-CREATE TYPE chat.user AS (id BIGINT, email TEXT NOT NULL, nickname TEXT);
-CREATE PROCEDURE chat.create_message(user_id TEXT, body TEXT NOT NULL) RETURNS chat.user;
+CREATE TYPE chat.user AS (id BIGINT, email TEXT, nickname TEXT);
+CREATE FUNCTION chat.create_message(user_id TEXT, body TEXT NOT NULL) RETURNS chat.user;
 CREATE PROCEDURE chat.ping();
 "#;
 
 fn typescript_project_config() -> KalamProjectConfig {
     let mut config = minimal_sql_project_config();
     config.schema = SchemaSection {
-        mode:      SchemaMode::Sql,
-        path:      Some("schema.sql".into()),
-        watch:     false,
+        mode: SchemaMode::Sql,
+        path: Some("schema.sql".into()),
+        watch: false,
         languages: vec!["typescript".into()],
-        targets:   [(
+        targets: [(
             "typescript".into(),
             SchemaTarget {
-                output:            "src/generated/kalam.ts".into(),
+                output: "src/generated/kalam.ts".into(),
                 unqualified_names: false,
             },
         )]
@@ -425,6 +426,13 @@ fn tsc_bin() -> Option<std::path::PathBuf> {
 }
 
 fn write_functions_tsconfig(root: &std::path::Path) {
+    // These tests isolate procedure signatures; full SDK row shapes are checked by the SDK fixture.
+    fs::create_dir_all(root.join("node_modules/@kalamdb/client")).unwrap();
+    fs::write(
+        root.join("node_modules/@kalamdb/client/index.d.ts"),
+        "export interface PgCatalogFile {}\n",
+    )
+    .unwrap();
     let functions = root.join("functions");
     fs::create_dir_all(functions.join("node_modules/@kalamdb/orm")).unwrap();
     fs::write(
@@ -475,10 +483,10 @@ fn named_builders_share_a_file_and_omit_unimplemented() {
         root.join("schema.sql"),
         r#"
 CREATE SCHEMA chat;
-CREATE PROCEDURE chat.send_message(body TEXT NOT NULL) RETURNS TEXT;
-CREATE PROCEDURE chat.join_room(room TEXT NOT NULL) RETURNS TEXT;
-CREATE PROCEDURE chat.plus_one(x INT) RETURNS INT;
-CREATE PROCEDURE chat.greet() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return "inline"; $$;
+CREATE FUNCTION chat.send_message(body TEXT NOT NULL) RETURNS TEXT;
+CREATE FUNCTION chat.join_room(room TEXT NOT NULL) RETURNS TEXT;
+CREATE FUNCTION chat.plus_one(x INT) RETURNS INT;
+CREATE FUNCTION chat.greet() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return "inline"; $$;
 "#,
     )
     .unwrap();
@@ -524,8 +532,8 @@ fn inline_procedure_types_are_checked_by_tsc() {
     }
     let temp = TempDir::new().unwrap();
     let root = temp.path();
-    let schema = "CREATE PROCEDURE chat.greet(name TEXT NOT NULL) RETURNS TEXT LANGUAGE \
-                  JAVASCRIPT AS $$ return input.name; $$;";
+    let schema = "CREATE FUNCTION chat.greet(name TEXT NOT NULL) RETURNS TEXT LANGUAGE JAVASCRIPT \
+                  AS $$ return input.name; $$;";
     fs::write(root.join("schema.sql"), schema).unwrap();
     generate_languages(root, &typescript_project_config(), &[LanguageTarget::TypeScript], None)
         .unwrap();
@@ -619,4 +627,65 @@ export const createMessage = procedure.chat.createMessage(async () => ({ id: 1n 
     .unwrap();
     let (ok, output) = run_tsc(root).expect("tsc");
     assert!(!ok, "missing required return fields should fail tsc: {output}");
+}
+
+#[test]
+fn generated_arrays_and_primary_keys_follow_the_contract() {
+    let snapshot = compile_contract_sql(
+        "CREATE TABLE inventory (id TEXT NOT NULL, sku TEXT PRIMARY KEY, tags TEXT[], dates \
+         TIMESTAMP[]);",
+        "public",
+    )
+    .unwrap();
+    let names = assign_names(
+        &snapshot,
+        NamingOptions {
+            unqualified_names: false,
+        },
+    )
+    .unwrap();
+    let dart = generate_dart_source(&snapshot, "test", &names).unwrap();
+    let ts = generate_schema_source(&snapshot, "test", &names).unwrap();
+    assert!(dart.contains("keyColumn: 'sku'"), "{dart}");
+    assert!(dart.contains("String get kalamRowKey => sku;"), "{dart}");
+    assert!(dart.contains("_asList(json['tags'], (item) => _asString(item))"), "{dart}");
+    assert!(dart.contains("dates?.map((item) => item.toIso8601String()).toList()"), "{dart}");
+    assert!(ts.contains("text(\"tags\").array()"), "{ts}");
+    assert!(ts.contains("text(\"sku\").primaryKey()"), "{ts}");
+    assert!(!ts.contains("text(\"id\").primaryKey()"), "{ts}");
+}
+
+#[test]
+fn dart_does_not_invent_sync_keys_for_keyless_tables() {
+    let snapshot = compile_contract_sql("CREATE TABLE logs (message TEXT);", "public").unwrap();
+    let names = assign_names(
+        &snapshot,
+        NamingOptions {
+            unqualified_names: false,
+        },
+    )
+    .unwrap();
+    let dart = generate_dart_source(&snapshot, "test", &names).unwrap();
+    assert!(!dart.contains("KalamTableSpec<"), "{dart}");
+    assert!(!dart.contains("get kalamRowKey"), "{dart}");
+}
+
+#[test]
+fn table_constraint_keys_are_preserved_and_unsupported_keys_fail_early() {
+    let snapshot = compile_contract_sql(
+        "CREATE TABLE inventory (id TEXT, sku TEXT, CONSTRAINT inventory_pk PRIMARY KEY (sku));",
+        "public",
+    )
+    .unwrap();
+    let table = snapshot.tables.values().next().unwrap();
+    assert!(!table.fields[0].primary_key);
+    assert!(table.fields[1].primary_key && table.fields[1].not_null);
+    for sql in [
+        "CREATE TABLE pairs (a TEXT, b TEXT, PRIMARY KEY (a, b));",
+        "CREATE TABLE bad (a TEXT, PRIMARY KEY (missing));",
+        "CREATE TABLE bad (a TEXT PRIMARY KEY, b TEXT, PRIMARY KEY (b));",
+        "CREATE TABLE bad (a TEXT PRIMARY KEY, b TEXT PRIMARY KEY);",
+    ] {
+        assert!(compile_contract_sql(sql, "public").is_err(), "{sql}");
+    }
 }

@@ -121,10 +121,10 @@ pub struct FlushJobResult {
 /// Cached table metadata needed by the flush writer.
 #[derive(Debug, Clone)]
 pub struct FlushTableMetadata {
-    pub schema_version:       u32,
+    pub schema_version: u32,
     pub bloom_filter_columns: Vec<String>,
-    pub indexed_columns:      Vec<(u64, String)>,
-    pub compression:          TableCompression,
+    pub indexed_columns: Vec<(u64, String)>,
+    pub compression: TableCompression,
 }
 
 impl FlushTableMetadata {
@@ -175,11 +175,11 @@ impl FlushScopeHook for NoopFlushScopeHook {
 #[derive(Debug, Clone, Default)]
 pub struct FlushDedupStats {
     /// Total rows scanned from hot storage (before dedup)
-    pub rows_before_dedup:   usize,
+    pub rows_before_dedup: usize,
     /// Unique rows after version resolution
-    pub rows_after_dedup:    usize,
+    pub rows_after_dedup: usize,
     /// Number of soft-deleted (tombstone) rows encountered
-    pub deleted_count:       usize,
+    pub deleted_count: usize,
     /// Number of tombstones filtered out in final output
     pub tombstones_filtered: usize,
 }
@@ -274,7 +274,8 @@ pub mod helpers {
     };
     use kalamdb_commons::{
         constants::SystemColumnNames, conversions::arrow_json_conversion::json_rows_to_arrow_batch,
-        ids::VersionId, models::rows::Row, next_storage_key_bytes, pk_bucket_key_from_row, PkBucketKey,
+        ids::VersionId, models::rows::Row, next_storage_key_bytes, pk_bucket_key_from_row,
+        PkBucketKey,
     };
     use kalamdb_tables::{SharedTableRow, UserTableRow};
 
@@ -407,7 +408,7 @@ pub mod helpers {
         row: R,
         pk_field: &str,
         stats: &mut FlushDedupStats,
-    ) {
+    ) -> Option<Vec<u8>> {
         let version = row.version_i64();
         let version_id = VersionId::try_from_i64(version).expect("flushed row version is non-zero");
         let pk_key = pk_bucket_key_from_row(row.fields(), pk_field, version_id);
@@ -419,11 +420,15 @@ pub mod helpers {
         match latest_versions.entry(pk_key) {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
                 if version > entry.get().2 {
-                    entry.insert((key_bytes, row, version));
+                    let (displaced, _, _) = entry.insert((key_bytes, row, version));
+                    Some(displaced)
+                } else {
+                    Some(key_bytes)
                 }
             },
             std::collections::hash_map::Entry::Vacant(entry) => {
                 entry.insert((key_bytes, row, version));
+                None
             },
         }
     }
@@ -439,20 +444,28 @@ pub mod helpers {
 
     /// Split latest hot versions into flushable rows and tombstones that must stay hot.
     ///
-    /// Tombstones are intentionally not written to Parquet, but the latest tombstone key must
-    /// remain in hot storage so it can continue masking older flushed segments until compaction
-    /// reconciles cold storage.
-    pub fn rows_and_tombstones_from_versions<R: FlushVersionRow>(
+    /// Tombstones are not written to Parquet. `preserve_tombstone` keeps a key only when that
+    /// primary key can still mask an older cold segment. A tombstone for a row that never
+    /// reached cold storage, or whose cold row is already gone, is deleted with the other
+    /// flushed keys so the hot keyspace stays the size of the live window.
+    pub fn rows_and_tombstones_from_versions<R, F>(
         latest_versions: LatestVersions<R>,
         stats: &mut FlushDedupStats,
-    ) -> (Vec<(Vec<u8>, Row)>, HashSet<Vec<u8>>) {
+        mut preserve_tombstone: F,
+    ) -> (Vec<(Vec<u8>, Row)>, HashSet<Vec<u8>>)
+    where
+        R: FlushVersionRow,
+        F: FnMut(&PkBucketKey) -> bool,
+    {
         let mut rows = Vec::with_capacity(latest_versions.len());
         let mut preserved_tombstone_keys = HashSet::new();
 
-        for (_pk_value, (key_bytes, row, _version)) in latest_versions {
+        for (pk_value, (key_bytes, row, _version)) in latest_versions {
             if row.is_deleted() {
                 stats.tombstones_filtered += 1;
-                preserved_tombstone_keys.insert(key_bytes);
+                if preserve_tombstone(&pk_value) {
+                    preserved_tombstone_keys.insert(key_bytes);
+                }
                 continue;
             }
 
@@ -461,6 +474,18 @@ pub mod helpers {
         }
 
         (rows, preserved_tombstone_keys)
+    }
+
+    /// Keys of the current hot row for each primary key, including the latest
+    /// delete tombstone. Superseded keys are already removed at write time.
+    pub fn live_hot_keys<R: FlushVersionRow>(
+        latest_versions: &LatestVersions<R>,
+    ) -> HashSet<Vec<u8>> {
+        let mut keys = HashSet::with_capacity(latest_versions.len());
+        for (_, (key_bytes, _, _)) in latest_versions {
+            keys.insert(key_bytes.clone());
+        }
+        keys
     }
 
     /// Remove keys that must remain hot, preserving ownership of all other cleanup keys.
@@ -480,6 +505,73 @@ pub mod helpers {
         }
         cleanup_keys
     }
+
+    #[cfg(test)]
+    mod tests {
+        use datafusion::scalar::ScalarValue;
+        use kalamdb_commons::{ids::VersionId, models::rows::Row, PkBucketKey};
+        use kalamdb_tables::SharedTableRow;
+
+        use super::{live_hot_keys, rows_and_tombstones_from_versions, LatestVersions};
+        use crate::flush::base::FlushDedupStats;
+
+        fn deleted_row(id: i64) -> (PkBucketKey, (Vec<u8>, SharedTableRow, i64)) {
+            let mut values = std::collections::BTreeMap::new();
+            values.insert("id".to_string(), ScalarValue::Int64(Some(id)));
+            (
+                PkBucketKey::Int(id),
+                (
+                    id.to_be_bytes().to_vec(),
+                    SharedTableRow {
+                        _version: VersionId::from(id),
+                        _deleted: true,
+                        fields: Row::new(values),
+                    },
+                    id,
+                ),
+            )
+        }
+
+        #[test]
+        fn live_hot_keys_keep_current_rows_and_tombstones() {
+            let mut latest = LatestVersions::new();
+            latest.extend([deleted_row(1)]);
+            let mut values = std::collections::BTreeMap::new();
+            values.insert("id".to_string(), ScalarValue::Int64(Some(2)));
+            latest.insert(
+                PkBucketKey::Int(2),
+                (
+                    2_i64.to_be_bytes().to_vec(),
+                    SharedTableRow {
+                        _version: VersionId::from(2),
+                        _deleted: false,
+                        fields: Row::new(values),
+                    },
+                    2,
+                ),
+            );
+
+            let live = live_hot_keys(&latest);
+            assert_eq!(live.len(), 2);
+            assert!(live.contains(&1_i64.to_be_bytes().to_vec()));
+            assert!(live.contains(&2_i64.to_be_bytes().to_vec()));
+        }
+
+        #[test]
+        fn tombstones_that_do_not_mask_cold_rows_are_not_preserved() {
+            let mut latest = LatestVersions::new();
+            latest.extend([deleted_row(1), deleted_row(2)]);
+            let mut stats = FlushDedupStats::default();
+
+            let (_rows, preserved) = rows_and_tombstones_from_versions(latest, &mut stats, |pk| {
+                matches!(pk, PkBucketKey::Int(1))
+            });
+
+            assert_eq!(stats.tombstones_filtered, 2);
+            assert_eq!(preserved.len(), 1);
+            assert!(preserved.contains(&1_i64.to_be_bytes().to_vec()));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -489,7 +581,7 @@ mod tests {
 
     struct MockFlushJob {
         should_fail: bool,
-        rows_count:  usize,
+        rows_count: usize,
     }
 
     impl TableFlush for MockFlushJob {
@@ -499,10 +591,10 @@ mod tests {
             }
 
             Ok(FlushJobResult {
-                rows_flushed:  self.rows_count,
+                rows_flushed: self.rows_count,
                 parquet_files: vec!["batch-123.parquet".to_string()],
-                scope_hints:   vec![FlushScopeHint::Shared],
-                metadata:      FlushMetadata::shared_table(),
+                scope_hints: vec![FlushScopeHint::Shared],
+                metadata: FlushMetadata::shared_table(),
             })
         }
 
@@ -515,7 +607,7 @@ mod tests {
     fn test_flush_execution_success() {
         let job = MockFlushJob {
             should_fail: false,
-            rows_count:  100,
+            rows_count: 100,
         };
 
         let result = job.execute();
@@ -530,7 +622,7 @@ mod tests {
     fn test_flush_execution_failure() {
         let job = MockFlushJob {
             should_fail: true,
-            rows_count:  0,
+            rows_count: 0,
         };
 
         let result = job.execute();

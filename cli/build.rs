@@ -163,15 +163,15 @@ fn generate_embedded_templates(manifest_dir: &str, out_dir: &str) {
 
 struct TemplateInfo {
     description: String,
-    version:     String,
-    author:      String,
+    version: String,
+    author: String,
 }
 
 fn parse_info_toml(path: &Path) -> TemplateInfo {
     let mut info = TemplateInfo {
         description: String::new(),
-        version:     String::new(),
-        author:      String::new(),
+        version: String::new(),
+        author: String::new(),
     };
 
     let content = match fs::read_to_string(path) {

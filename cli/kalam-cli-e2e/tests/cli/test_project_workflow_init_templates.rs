@@ -36,16 +36,16 @@ const EXPECTED_BOOT_CASES: &[(&str, &str)] = &[
 
 #[derive(Debug, Clone)]
 struct ListedTemplate {
-    id:       String,
-    kind:     String,
+    id: String,
+    kind: String,
     language: String,
 }
 
 struct StopOnDrop {
-    home:           PathBuf,
-    credentials:    PathBuf,
-    project_dir:    PathBuf,
-    server_bin:     PathBuf,
+    home: PathBuf,
+    credentials: PathBuf,
+    project_dir: PathBuf,
+    server_bin: PathBuf,
     workspace_root: PathBuf,
 }
 
@@ -167,8 +167,8 @@ fn list_init_templates() -> Vec<ListedTemplate> {
         .expect("templates array")
         .iter()
         .map(|template| ListedTemplate {
-            id:       template["id"].as_str().expect("template id").to_string(),
-            kind:     template["kind"].as_str().expect("template kind").to_string(),
+            id: template["id"].as_str().expect("template id").to_string(),
+            kind: template["kind"].as_str().expect("template kind").to_string(),
             language: template["language"].as_str().expect("template language").to_string(),
         })
         .collect()
@@ -227,10 +227,10 @@ fn verify_template(template: &ListedTemplate, server_bin: &Path, workspace: &Pat
     }
 
     let _guard = StopOnDrop {
-        home:           isolated_home.clone(),
-        credentials:    credentials_path.clone(),
-        project_dir:    project_dir.clone(),
-        server_bin:     server_bin.to_path_buf(),
+        home: isolated_home.clone(),
+        credentials: credentials_path.clone(),
+        project_dir: project_dir.clone(),
+        server_bin: server_bin.to_path_buf(),
         workspace_root: workspace.to_path_buf(),
     };
     let start = run_kalam(

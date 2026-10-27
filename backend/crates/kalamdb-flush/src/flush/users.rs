@@ -31,14 +31,15 @@ use crate::{error::FlushResultExt, FlushError, FlushManifestHelper, ManifestServ
 /// separate Parquet file for RLS isolation. Uses Bloom filters on primary key columns
 /// columns for efficient query pruning.
 pub struct UserTableFlushJob {
-    store:           Arc<UserTableIndexedStore>,
-    table_id:        Arc<TableId>,
-    schema:          SchemaRef,
-    storage_cached:  Arc<StorageCached>,
+    store: Arc<UserTableIndexedStore>,
+    table_id: Arc<TableId>,
+    schema: SchemaRef,
+    storage_cached: Arc<StorageCached>,
     manifest_helper: FlushManifestHelper,
-    metadata:        FlushTableMetadata,
+    metadata: FlushTableMetadata,
     scan_batch_size: usize,
-    scope_hook:      Arc<dyn FlushScopeHook>,
+    scope_hook: Arc<dyn FlushScopeHook>,
+    retain_latest_hot: bool,
 }
 
 impl UserTableFlushJob {
@@ -66,7 +67,14 @@ impl UserTableFlushJob {
             metadata,
             scan_batch_size: helpers::normalize_scan_batch_size(scan_batch_size),
             scope_hook,
+            retain_latest_hot: false,
         }
+    }
+
+    /// Keep the current row of each primary key in hot storage.
+    pub fn retain_latest_hot(mut self, retain: bool) -> Self {
+        self.retain_latest_hot = retain;
+        self
     }
 
     fn scope_writer(&self) -> FlushScopeWriter<'_> {
@@ -91,13 +99,40 @@ impl UserTableFlushJob {
     ) -> Result<usize, FlushError> {
         stats.rows_after_dedup += latest_versions.len();
 
+        let pk_field = helpers::extract_pk_field_name(&self.schema);
+        let pk_column_id = crate::flush_helper::TombstoneColdMask::pk_column_id(
+            &self.metadata.indexed_columns,
+            &pk_field,
+        );
+        let cold_mask =
+            self.manifest_helper
+                .cold_mask(self.table_id.as_ref(), Some(user_id), pk_column_id);
+        let live_hot_keys =
+            self.retain_latest_hot.then(|| helpers::live_hot_keys(&latest_versions));
         let (rows, preserved_tombstone_keys) =
-            helpers::rows_and_tombstones_from_versions(latest_versions, stats);
+            helpers::rows_and_tombstones_from_versions(latest_versions, stats, |pk| {
+                cold_mask.preserves(pk)
+            });
+        let mut preserved_keys = preserved_tombstone_keys;
+        if let Some(live_keys) = live_hot_keys {
+            preserved_keys.extend(live_keys);
+        }
         let keys_to_delete =
-            helpers::cleanup_keys_excluding_preserved(keys_to_delete, &preserved_tombstone_keys);
+            helpers::cleanup_keys_excluding_preserved(keys_to_delete, &preserved_keys);
 
-        if rows.is_empty() {
+        if self.retain_latest_hot || rows.is_empty() {
             self.delete_flushed_keys(&keys_to_delete)?;
+            if let Err(err) =
+                self.manifest_helper.note_retained_hot(self.table_id.as_ref(), Some(user_id))
+            {
+                log::warn!(
+                    "Retained hot rows for user {} table={} but did not restart the flush \
+                     interval: {}",
+                    user_id.as_str(),
+                    self.table_id,
+                    err
+                );
+            }
             return Ok(0);
         }
 
@@ -281,10 +316,10 @@ impl TableFlush for UserTableFlushJob {
                 self.table_id
             );
             return Ok(FlushJobResult {
-                rows_flushed:  0,
+                rows_flushed: 0,
                 parquet_files: vec![],
-                scope_hints:   vec![],
-                metadata:      FlushMetadata::user_table(0, vec![]),
+                scope_hints: vec![],
+                metadata: FlushMetadata::user_table(0, vec![]),
             });
         }
 

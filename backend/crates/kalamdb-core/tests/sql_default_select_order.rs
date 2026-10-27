@@ -1,7 +1,5 @@
-mod support;
-
 use kalamdb_core::sql::{ExecutionContext, ExecutionResult, SqlExecutor};
-use support::{
+use crate::support::{
     execute_ok, insert_sql, observer_exec_ctx, result_rows, setup_shared_table, setup_user_table,
 };
 

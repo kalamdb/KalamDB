@@ -1,0 +1,23 @@
+[package]
+name = "pgwire-speed"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "PGlite speed scripts over PostgreSQL wire, against PostgreSQL and KalamDB"
+publish = false
+
+[[bin]]
+name = "pgwire-speed"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio-postgres = "0.7"
+
+[profile.release]
+opt-level = 3
+lto = false
+codegen-units = 16

@@ -7,22 +7,23 @@ use serde::{Deserialize, Serialize};
 
 /// File reference stored as JSON in FILE columns.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FileRef {
     /// Unique file identifier.
-    pub id:     String,
+    pub id: String,
     /// Subfolder name, for example `"f0001"`.
-    pub sub:    String,
+    pub sub: String,
     /// Original filename preserved for display and download.
-    pub name:   String,
+    pub name: String,
     /// File size in bytes.
-    pub size:   u64,
+    pub size: u64,
     /// MIME type.
-    pub mime:   String,
+    pub mime: String,
     /// SHA-256 hash of file content, hex encoded.
     pub sha256: String,
     /// Optional shard ID for shared tables.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub shard:  Option<u32>,
+    pub shard: Option<u32>,
 }
 
 const SUBFOLDER_PREFIX: &str = "f";
@@ -135,6 +136,15 @@ impl FileRef {
         subfolder.len() == SUBFOLDER_PREFIX.len() + SUBFOLDER_DIGITS
             && subfolder.starts_with(SUBFOLDER_PREFIX)
             && subfolder[SUBFOLDER_PREFIX.len()..].chars().all(|c| c.is_ascii_digit())
+    }
+
+    /// Returns true if all required fields (`id`, `sub`, `name`, `mime`, `sha256`) are valid.
+    pub fn is_well_formed(&self) -> bool {
+        !self.id.trim().is_empty()
+            && Self::is_valid_subfolder(&self.sub)
+            && !self.name.trim().is_empty()
+            && !self.mime.trim().is_empty()
+            && !self.sha256.trim().is_empty()
     }
 
     /// Relative path within the table folder.

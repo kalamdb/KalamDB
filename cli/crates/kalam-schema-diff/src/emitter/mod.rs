@@ -36,44 +36,42 @@ use crate::{
     model::{Policy, Schema},
 };
 
-pub(crate) fn diff_schema(current: &Schema, target: &Schema, allow_drop: bool) -> Vec<String> {
-    let mut out = vec![
-        "-- Generated KalamDB schema evolution".to_string(),
-        "-- Review before applying in production.".to_string(),
-        String::new(),
-    ];
+pub(crate) fn diff_schema_parts(
+    current: &Schema,
+    target: &Schema,
+    allow_drop: bool,
+) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let mut namespaces = Vec::new();
+    let mut body = Vec::new();
+    let mut drops = Vec::new();
 
     for namespace in target.namespaces.difference(&current.namespaces) {
-        out.push(emit_create_namespace(namespace));
-    }
-
-    if !target.namespaces.is_empty() && out.last().map(String::as_str) != Some("") {
-        out.push(String::new());
+        namespaces.push(emit_create_namespace(namespace));
     }
 
     for (table_key, target_table) in &target.tables {
         match current.tables.get(table_key) {
             Some(current_table) => {
-                diff_existing_table(current_table, target_table, allow_drop, &mut out);
-                diff_existing_table_policies(current, target, table_key, allow_drop, &mut out);
+                diff_existing_table(current_table, target_table, allow_drop, &mut body);
+                diff_existing_table_policies(current, target, table_key, allow_drop, &mut body);
             },
             None => {
-                out.push(emit_create_table(target_table));
+                body.push(emit_create_table(target_table));
                 crate::emitter::create_index::emit_indexes_after_create_table(
                     target_table,
-                    &mut out,
+                    &mut body,
                 );
 
                 let table_policies = policies_for_table(&target.policies, table_key);
                 if table_policies.is_empty() && target_table.is_shared() {
-                    emit_starter_shared_table_policy(target_table, &mut out);
+                    emit_starter_shared_table_policy(target_table, &mut body);
                 } else {
                     for policy in table_policies {
-                        out.push(emit_create_policy(policy));
+                        body.push(emit_create_policy(policy));
                     }
                 }
 
-                out.push(String::new());
+                body.push(String::new());
             },
         }
     }
@@ -87,38 +85,57 @@ pub(crate) fn diff_schema(current: &Schema, target: &Schema, allow_drop: bool) -
             continue;
         }
 
-        emit_drop_policy(current_policy, allow_drop, &mut out);
-        out.push(String::new());
+        emit_drop_policy(current_policy, allow_drop, &mut body);
+        body.push(String::new());
     }
 
     for (topic_key, target_topic) in &target.topics {
         match current.topics.get(topic_key) {
             Some(current_topic) => {
-                diff_existing_topic(current_topic, target_topic, &mut out);
+                diff_existing_topic(current_topic, target_topic, &mut body);
             },
             None => {
-                out.push(emit_create_topic(target_topic));
+                body.push(emit_create_topic(target_topic));
 
                 for source in target_topic.sources.values() {
-                    out.push(emit_add_topic_source(target_topic, source));
+                    body.push(emit_add_topic_source(target_topic, source));
                 }
 
-                out.push(String::new());
+                body.push(String::new());
             },
         }
     }
 
     for (topic_key, current_topic) in &current.topics {
         if !target.topics.contains_key(topic_key) {
-            emit_drop_topic(current_topic, allow_drop, &mut out);
+            emit_drop_topic(current_topic, allow_drop, &mut drops);
         }
     }
 
     for (table_key, current_table) in &current.tables {
         if !target.tables.contains_key(table_key) {
-            emit_drop_table(current_table, allow_drop, &mut out);
+            emit_drop_table(current_table, allow_drop, &mut drops);
         }
     }
+
+    (namespaces, body, drops)
+}
+
+#[allow(dead_code)]
+pub(crate) fn diff_schema(current: &Schema, target: &Schema, allow_drop: bool) -> Vec<String> {
+    let mut out = vec![
+        "-- Generated KalamDB schema evolution".to_string(),
+        "-- Review before applying in production.".to_string(),
+        String::new(),
+    ];
+
+    let (namespaces, body, drops) = diff_schema_parts(current, target, allow_drop);
+    if !namespaces.is_empty() {
+        out.extend(namespaces);
+        out.push(String::new());
+    }
+    out.extend(body);
+    out.extend(drops);
 
     if out.iter().all(|line| line.starts_with("--") || line.trim().is_empty()) {
         out.push("-- No schema changes.".to_string());

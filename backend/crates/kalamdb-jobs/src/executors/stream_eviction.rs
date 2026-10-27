@@ -27,9 +27,9 @@ use std::{
 };
 
 use async_trait::async_trait;
-use kalamdb_commons::{schemas::TableType, TableId};
 #[cfg(test)]
 use kalamdb_commons::ids::VersionId;
+use kalamdb_commons::{schemas::TableType, TableId};
 #[cfg(test)]
 use kalamdb_core::schema_registry::TablesSchemaRegistryAdapter;
 use kalamdb_core::{
@@ -51,14 +51,14 @@ fn default_batch_size() -> u64 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamEvictionParams {
     /// Table identifier (required)
-    pub table_id:    TableId,
+    pub table_id: TableId,
     /// Table type (must be Stream - validated in validate())
-    pub table_type:  TableType,
+    pub table_type: TableType,
     /// TTL in seconds (required, must be > 0)
     pub ttl_seconds: u64,
     /// Batch size for eviction (optional, defaults to 10000)
     #[serde(default = "default_batch_size")]
-    pub batch_size:  u64,
+    pub batch_size: u64,
 }
 
 impl JobParams for StreamEvictionParams {
@@ -268,7 +268,7 @@ mod tests {
             schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType},
             StreamTableRow, TableId, TableName, UserId,
         },
-        ChangeNotification, JobId, NamespaceId, NodeId,
+        ChangeNotification, JobId, NodeId, SchemaId,
     };
     use kalamdb_core::{
         app_context::AppContext,
@@ -313,11 +313,11 @@ mod tests {
     }
 
     struct StreamTestHarness {
-        table_id:         TableId,
-        namespace:        NamespaceId,
+        table_id: TableId,
+        namespace: SchemaId,
         table_name_value: String,
-        provider:         Arc<StreamTableProvider>,
-        stream_base_dir:  PathBuf,
+        provider: Arc<StreamTableProvider>,
+        stream_base_dir: PathBuf,
         _stream_temp_dir: tempfile::TempDir,
     }
 
@@ -330,7 +330,7 @@ mod tests {
         storage_mode: kalamdb_tables::StreamTableStorageMode,
         ttl_seconds: u64,
     ) -> StreamTestHarness {
-        let namespace = NamespaceId::new("chat_stream_jobs");
+        let namespace = SchemaId::new("chat_stream_jobs");
         let table_name_value =
             format!("typing_events_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0));
         let tbl = TableName::new(&table_name_value);
@@ -432,23 +432,20 @@ mod tests {
         values.insert("event_id".to_string(), ScalarValue::Utf8(Some("old-event".to_string())));
         values.insert("payload".to_string(), ScalarValue::Utf8(Some("expired".to_string())));
         StreamTableRow {
-            user_id:    user.clone(),
-            _version:   version,
+            user_id: user.clone(),
+            _version: version,
             _timestamp: timestamp,
-            fields:     Row::new(values),
+            fields: Row::new(values),
         }
     }
 
     #[test]
     fn test_params_validation_success() {
         let params = StreamEvictionParams {
-            table_id:    TableId::new(
-                NamespaceId::default(),
-                kalamdb_commons::TableName::new("events"),
-            ),
-            table_type:  TableType::Stream,
+            table_id: TableId::new(SchemaId::default(), kalamdb_commons::TableName::new("events")),
+            table_type: TableType::Stream,
             ttl_seconds: 86400,
-            batch_size:  10000,
+            batch_size: 10000,
         };
         assert!(params.validate().is_ok());
     }
@@ -456,13 +453,10 @@ mod tests {
     #[test]
     fn test_params_validation_invalid_table_type() {
         let params = StreamEvictionParams {
-            table_id:    TableId::new(
-                NamespaceId::default(),
-                kalamdb_commons::TableName::new("events"),
-            ),
-            table_type:  TableType::User, // Wrong type
+            table_id: TableId::new(SchemaId::default(), kalamdb_commons::TableName::new("events")),
+            table_type: TableType::User, // Wrong type
             ttl_seconds: 86400,
-            batch_size:  10000,
+            batch_size: 10000,
         };
         assert!(params.validate().is_err());
     }
@@ -470,13 +464,10 @@ mod tests {
     #[test]
     fn test_params_validation_zero_ttl() {
         let params = StreamEvictionParams {
-            table_id:    TableId::new(
-                NamespaceId::default(),
-                kalamdb_commons::TableName::new("events"),
-            ),
-            table_type:  TableType::Stream,
+            table_id: TableId::new(SchemaId::default(), kalamdb_commons::TableName::new("events")),
+            table_type: TableType::Stream,
             ttl_seconds: 0, // Invalid
-            batch_size:  10000,
+            batch_size: 10000,
         };
         assert!(params.validate().is_err());
     }
@@ -528,10 +519,10 @@ mod tests {
         }));
 
         let params = StreamEvictionParams {
-            table_id:    harness.table_id.clone(),
-            table_type:  TableType::Stream,
+            table_id: harness.table_id.clone(),
+            table_type: TableType::Stream,
             ttl_seconds: 1,
-            batch_size:  100,
+            batch_size: 100,
         };
 
         let ctx = JobContext::new(app_ctx.clone(), job.job_id.as_str().to_string(), params);
@@ -586,10 +577,10 @@ mod tests {
         }));
 
         let params = StreamEvictionParams {
-            table_id:    harness.table_id.clone(),
-            table_type:  TableType::Stream,
+            table_id: harness.table_id.clone(),
+            table_type: TableType::Stream,
             ttl_seconds: 60,
-            batch_size:  100,
+            batch_size: 100,
         };
 
         let ctx = JobContext::new(app_ctx.clone(), job.job_id.as_str().to_string(), params);
@@ -634,10 +625,10 @@ mod tests {
             .expect("insert fresh row");
 
         let params = StreamEvictionParams {
-            table_id:    harness.table_id.clone(),
-            table_type:  TableType::Stream,
+            table_id: harness.table_id.clone(),
+            table_type: TableType::Stream,
             ttl_seconds: 60,
-            batch_size:  100,
+            batch_size: 100,
         };
 
         let executor = StreamEvictionExecutor::new();
@@ -667,10 +658,10 @@ mod tests {
         sleep(Duration::from_millis(1200)).await;
 
         let params = StreamEvictionParams {
-            table_id:    harness.table_id.clone(),
-            table_type:  TableType::Stream,
+            table_id: harness.table_id.clone(),
+            table_type: TableType::Stream,
             ttl_seconds: 1,
-            batch_size:  10,
+            batch_size: 10,
         };
 
         let executor = StreamEvictionExecutor::new();

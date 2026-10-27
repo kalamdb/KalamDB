@@ -22,8 +22,8 @@ use crate::{
 };
 
 pub struct DevPrecheckReport {
-    pub environment:         ResolvedEnvironment,
-    pub watch_enabled:       bool,
+    pub environment: ResolvedEnvironment,
+    pub watch_enabled: bool,
     pub local_server_reused: bool,
 }
 

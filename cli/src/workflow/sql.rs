@@ -1,7 +1,7 @@
 //! Shared workflow SQL execution helpers.
 
 use kalam_client::{HttpVersion, KalamLinkClient, QueryResponse, TimestampFormatter};
-use kalamdb_commons::NamespaceId;
+use kalamdb_commons::SchemaId;
 
 use crate::{
     error::{CLIError, Result},
@@ -38,10 +38,10 @@ pub(crate) fn build_workflow_client(
 
 pub(crate) async fn ensure_namespace_exists(
     client: &KalamLinkClient,
-    namespace: &NamespaceId,
+    namespace: &SchemaId,
     output: &WorkflowOutput,
 ) -> Result<()> {
-    let sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace.as_str());
+    let sql = format!("CREATE SCHEMA IF NOT EXISTS {}", namespace.as_str());
     {
         let _spinner = output.status_spinner(format!("ensuring namespace {}", namespace.as_str()));
         execute_single_statement(client, &sql, None, "namespace bootstrap").await?;
@@ -52,9 +52,9 @@ pub(crate) async fn ensure_namespace_exists(
 
 pub(crate) async fn drop_namespace_if_exists(
     client: &KalamLinkClient,
-    namespace: &NamespaceId,
+    namespace: &SchemaId,
 ) -> Result<()> {
-    let sql = format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace.as_str());
+    let sql = format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace.as_str());
     execute_single_statement(client, &sql, None, "namespace reset").await
 }
 
@@ -210,61 +210,61 @@ mod tests {
             .unwrap();
 
         let ctx = WorkflowContext {
-            project_root:       project_root.clone(),
-            config:             KalamProjectConfig {
-                project:    ProjectSection {
-                    name:            "demo".into(),
-                    default_env:     "dev".into(),
+            project_root: project_root.clone(),
+            config: KalamProjectConfig {
+                project: ProjectSection {
+                    name: "demo".into(),
+                    default_env: "dev".into(),
                     package_manager: None,
-                    kalam_dir:       "kalam".into(),
-                    server_version:  None,
+                    kalam_dir: "kalam".into(),
+                    server_version: None,
                 },
                 connection: HashMap::from([(
                     "dev".into(),
                     ConnectionEnv {
-                        url:       "http://localhost:2900".into(),
-                        namespace: kalamdb_commons::NamespaceId::new("demo"),
-                        purpose:   None,
+                        url: "http://localhost:2900".into(),
+                        namespace: kalamdb_commons::SchemaId::new("demo"),
+                        purpose: None,
                     },
                 )]),
-                schema:     SchemaSection {
-                    mode:      SchemaMode::Sql,
-                    path:      Some("schema.sql".into()),
-                    watch:     false,
+                schema: SchemaSection {
+                    mode: SchemaMode::Sql,
+                    path: Some("schema.sql".into()),
+                    watch: false,
                     languages: vec!["typescript".into()],
-                    targets:   HashMap::from([(
+                    targets: HashMap::from([(
                         "typescript".into(),
                         SchemaTarget {
-                            output:            "src/generated/kalam.ts".into(),
+                            output: "src/generated/kalam.ts".into(),
                             unqualified_names: false,
                         },
                     )]),
                 },
                 migrations: MigrationsSection::default(),
-                dev:        DevSection::default(),
-                logging:    LoggingSection::default(),
-                functions:  FunctionsSection::default(),
+                dev: DevSection::default(),
+                logging: LoggingSection::default(),
+                functions: FunctionsSection::default(),
             },
-            cli_config:         CLIConfiguration::default(),
-            use_color:          false,
-            animations:         true,
-            agent:              false,
-            json:               false,
-            project_dir:        None,
-            env_override:       None,
+            cli_config: CLIConfiguration::default(),
+            use_color: false,
+            animations: true,
+            agent: false,
+            json: false,
+            project_dir: None,
+            env_override: None,
             namespace_override: None,
-            url_override:       None,
-            global:             false,
-            host:               None,
-            port:               None,
-            instance:           None,
+            url_override: None,
+            global: false,
+            host: None,
+            port: None,
+            instance: None,
         };
         let environment = ResolvedEnvironment {
-            name:             "dev".into(),
-            url:              "http://localhost:2900".into(),
-            namespace:        kalamdb_commons::NamespaceId::new("demo"),
-            env_source:       crate::workflow::project::resolve::ResolutionSource::ProjectConfig,
-            url_source:       crate::workflow::project::resolve::ResolutionSource::ProjectConfig,
+            name: "dev".into(),
+            url: "http://localhost:2900".into(),
+            namespace: kalamdb_commons::SchemaId::new("demo"),
+            env_source: crate::workflow::project::resolve::ResolutionSource::ProjectConfig,
+            url_source: crate::workflow::project::resolve::ResolutionSource::ProjectConfig,
             namespace_source: crate::workflow::project::resolve::ResolutionSource::ProjectConfig,
         };
 

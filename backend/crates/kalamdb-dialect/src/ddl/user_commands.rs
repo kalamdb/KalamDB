@@ -7,19 +7,18 @@
 //!
 //! Uses sqlparser-rs tokenizer for consistent identifier and string handling.
 
+use kalamdb_commons::models::StorageMode;
 use kalamdb_commons::{AuthType, Role, StorageId};
-use kalamdb_system::providers::storages::models::StorageMode;
 use serde::{Deserialize, Serialize};
-use sqlparser::{
-    dialect::GenericDialect,
-    tokenizer::{Token, Tokenizer},
-};
+use sqlparser::tokenizer::Token;
+
+use crate::parser::KalamParser;
 
 /// Common error type for user command parsing
 #[derive(Debug, Clone, PartialEq)]
 pub struct UserCommandError {
     pub message: String,
-    pub hint:    Option<String>,
+    pub hint: Option<String>,
 }
 
 impl std::fmt::Display for UserCommandError {
@@ -47,7 +46,7 @@ fn parse_role(role_str: &str) -> Result<Role, UserCommandError> {
         "system" => Ok(Role::System),
         _ => Err(UserCommandError {
             message: format!("Invalid role '{}'", role_str),
-            hint:    Some(
+            hint: Some(
                 "Valid roles: dba, admin, developer, analyst, viewer, user, service, system"
                     .to_string(),
             ),
@@ -58,7 +57,7 @@ fn parse_role(role_str: &str) -> Result<Role, UserCommandError> {
 fn parse_storage_mode(storage_mode_str: &str) -> Result<StorageMode, UserCommandError> {
     StorageMode::from_str_opt(storage_mode_str).ok_or_else(|| UserCommandError {
         message: format!("Invalid storage mode '{}'", storage_mode_str),
-        hint:    Some("Valid storage modes: table, region".to_string()),
+        hint: Some("Valid storage modes: table, region".to_string()),
     })
 }
 
@@ -78,12 +77,11 @@ fn is_keyword(token: &Token, keyword: &str) -> bool {
     matches!(token, Token::Word(w) if w.value.to_uppercase() == keyword)
 }
 
-/// Tokenize SQL using sqlparser
+/// Tokenize SQL with the shared Kalam parser.
 fn tokenize(sql: &str) -> Result<Vec<Token>, UserCommandError> {
-    let dialect = GenericDialect {};
-    Tokenizer::new(&dialect, sql).tokenize().map_err(|e| UserCommandError {
-        message: format!("Tokenization error: {}", e),
-        hint:    None,
+    KalamParser::tokenize(sql).map_err(|error| UserCommandError {
+        message: format!("Tokenization error: {}", error),
+        hint: None,
     })
 }
 
@@ -106,15 +104,15 @@ fn filter_tokens(tokens: Vec<Token>) -> Vec<Token> {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CreateUserStatement {
-    pub mode:              CreateUserMode,
-    pub username:          String,
-    pub auth_type:         AuthType,
-    pub role:              Role,
-    pub email:             Option<String>,
-    pub password:          Option<String>,
-    pub storage_mode:      StorageMode,
-    pub storage_id:        Option<StorageId>,
-    pub invite_email:      Option<String>,
+    pub mode: CreateUserMode,
+    pub username: String,
+    pub auth_type: AuthType,
+    pub role: Role,
+    pub email: Option<String>,
+    pub password: Option<String>,
+    pub storage_mode: StorageMode,
+    pub storage_id: Option<StorageId>,
+    pub invite_email: Option<String>,
     pub invite_expires_at: Option<i64>,
 }
 
@@ -138,7 +136,7 @@ impl CreateUserStatement {
         if !is_keyword(iter.next().unwrap_or(&Token::EOF), "CREATE") {
             return Err(UserCommandError {
                 message: "Expected CREATE".to_string(),
-                hint:    Some(
+                hint: Some(
                     "Syntax: CREATE USER username WITH PASSWORD 'pass' ROLE role".to_string(),
                 ),
             });
@@ -146,7 +144,7 @@ impl CreateUserStatement {
         if !is_keyword(iter.next().unwrap_or(&Token::EOF), "USER") {
             return Err(UserCommandError {
                 message: "Expected USER after CREATE".to_string(),
-                hint:    Some(
+                hint: Some(
                     "Syntax: CREATE USER username WITH PASSWORD 'pass' ROLE role".to_string(),
                 ),
             });
@@ -162,14 +160,14 @@ impl CreateUserStatement {
         // Username (identifier or quoted string)
         let username = extract_identifier(first_after_user).ok_or_else(|| UserCommandError {
             message: "Expected username after CREATE USER".to_string(),
-            hint:    Some("Username can be unquoted (alice) or quoted ('alice')".to_string()),
+            hint: Some("Username can be unquoted (alice) or quoted ('alice')".to_string()),
         })?;
 
         // WITH keyword
         if !is_keyword(iter.next().unwrap_or(&Token::EOF), "WITH") {
             return Err(UserCommandError {
                 message: "Expected WITH after username".to_string(),
-                hint:    Some("Syntax: CREATE USER username WITH PASSWORD|OIDC ...".to_string()),
+                hint: Some("Syntax: CREATE USER username WITH PASSWORD|OIDC ...".to_string()),
             });
         }
 
@@ -179,7 +177,7 @@ impl CreateUserStatement {
             let pwd = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
                 UserCommandError {
                     message: "Expected password value after PASSWORD".to_string(),
-                    hint:    Some("Password must be quoted: WITH PASSWORD 'secret'".to_string()),
+                    hint: Some("Password must be quoted: WITH PASSWORD 'secret'".to_string()),
                 }
             })?;
             (AuthType::Password, Some(pwd))
@@ -198,9 +196,7 @@ impl CreateUserStatement {
         } else {
             return Err(UserCommandError {
                 message: "Expected PASSWORD or OIDC after WITH".to_string(),
-                hint:    Some(
-                    "Valid auth types: WITH PASSWORD 'pass', WITH OIDC '{...}'".to_string(),
-                ),
+                hint: Some("Valid auth types: WITH PASSWORD 'pass', WITH OIDC '{...}'".to_string()),
             });
         };
 
@@ -208,15 +204,13 @@ impl CreateUserStatement {
         if !is_keyword(iter.next().unwrap_or(&Token::EOF), "ROLE") {
             return Err(UserCommandError {
                 message: "Expected ROLE keyword".to_string(),
-                hint:    Some("ROLE is required: ... ROLE dba".to_string()),
+                hint: Some("ROLE is required: ... ROLE dba".to_string()),
             });
         }
         let role_str = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
             UserCommandError {
                 message: "Expected role name after ROLE".to_string(),
-                hint:    Some(
-                    "Valid roles: dba, admin, developer, service, user, system".to_string(),
-                ),
+                hint: Some("Valid roles: dba, admin, developer, service, user, system".to_string()),
             }
         })?;
         let role = parse_role(&role_str)?;
@@ -230,14 +224,14 @@ impl CreateUserStatement {
                 if email.is_some() {
                     return Err(UserCommandError {
                         message: "EMAIL specified more than once".to_string(),
-                        hint:    Some("Use a single EMAIL clause".to_string()),
+                        hint: Some("Use a single EMAIL clause".to_string()),
                     });
                 }
                 iter.next();
                 email = Some(extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(
                     || UserCommandError {
                         message: "Expected email address after EMAIL".to_string(),
-                        hint:    Some("Email must be quoted: EMAIL 'user@example.com'".to_string()),
+                        hint: Some("Email must be quoted: EMAIL 'user@example.com'".to_string()),
                     },
                 )?);
                 continue;
@@ -249,7 +243,7 @@ impl CreateUserStatement {
                     extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
                         UserCommandError {
                             message: "Expected storage mode after STORAGE_MODE".to_string(),
-                            hint:    Some("Valid storage modes: table, region".to_string()),
+                            hint: Some("Valid storage modes: table, region".to_string()),
                         }
                     })?;
                 storage_mode = parse_storage_mode(&value)?;
@@ -262,9 +256,7 @@ impl CreateUserStatement {
                     extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
                         UserCommandError {
                             message: "Expected storage ID after STORAGE_ID".to_string(),
-                            hint:    Some(
-                                "Storage ID can be quoted: STORAGE_ID 'local'".to_string(),
-                            ),
+                            hint: Some("Storage ID can be quoted: STORAGE_ID 'local'".to_string()),
                         }
                     })?;
                 storage_id = Some(StorageId::from(value));
@@ -298,7 +290,7 @@ impl CreateUserStatement {
             extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
                 UserCommandError {
                     message: "Expected email address after CREATE USER INVITE".to_string(),
-                    hint:    Some(
+                    hint: Some(
                         "Syntax: CREATE USER INVITE 'user@example.com' ROLE dba".to_string(),
                     ),
                 }
@@ -307,7 +299,7 @@ impl CreateUserStatement {
         if !is_keyword(iter.next().unwrap_or(&Token::EOF), "ROLE") {
             return Err(UserCommandError {
                 message: "Expected ROLE keyword".to_string(),
-                hint:    Some(
+                hint: Some(
                     "ROLE is required: CREATE USER INVITE 'user@example.com' ROLE dba".to_string(),
                 ),
             });
@@ -315,9 +307,7 @@ impl CreateUserStatement {
         let role_str = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
             UserCommandError {
                 message: "Expected role name after ROLE".to_string(),
-                hint:    Some(
-                    "Valid roles: dba, admin, developer, service, user, system".to_string(),
-                ),
+                hint: Some("Valid roles: dba, admin, developer, service, user, system".to_string()),
             }
         })?;
         let role = parse_role(&role_str)?;
@@ -333,14 +323,12 @@ impl CreateUserStatement {
                     extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
                         UserCommandError {
                             message: "Expected millisecond timestamp after EXPIRES_AT".to_string(),
-                            hint:    Some("Use EXPIRES_AT 1770000000000".to_string()),
+                            hint: Some("Use EXPIRES_AT 1770000000000".to_string()),
                         }
                     })?;
                 invite_expires_at = Some(value.parse::<i64>().map_err(|_| UserCommandError {
                     message: format!("Invalid EXPIRES_AT timestamp '{}'", value),
-                    hint:    Some(
-                        "EXPIRES_AT must be a Unix timestamp in milliseconds".to_string(),
-                    ),
+                    hint: Some("EXPIRES_AT must be a Unix timestamp in milliseconds".to_string()),
                 })?);
                 continue;
             }
@@ -351,7 +339,7 @@ impl CreateUserStatement {
                     extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
                         UserCommandError {
                             message: "Expected storage mode after STORAGE_MODE".to_string(),
-                            hint:    Some("Valid storage modes: table, region".to_string()),
+                            hint: Some("Valid storage modes: table, region".to_string()),
                         }
                     })?;
                 storage_mode = parse_storage_mode(&value)?;
@@ -364,9 +352,7 @@ impl CreateUserStatement {
                     extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
                         UserCommandError {
                             message: "Expected storage ID after STORAGE_ID".to_string(),
-                            hint:    Some(
-                                "Storage ID can be quoted: STORAGE_ID 'local'".to_string(),
-                            ),
+                            hint: Some("Storage ID can be quoted: STORAGE_ID 'local'".to_string()),
                         }
                     })?;
                 storage_id = Some(StorageId::from(value));
@@ -408,7 +394,7 @@ impl CreateUserStatement {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AlterUserStatement {
-    pub username:     String,
+    pub username: String,
     pub modification: UserModification,
 }
 
@@ -454,7 +440,7 @@ impl AlterUserStatement {
         if !is_keyword(iter.next().unwrap_or(&Token::EOF), "ALTER") {
             return Err(UserCommandError {
                 message: "Expected ALTER".to_string(),
-                hint:    Some(
+                hint: Some(
                     "Syntax: ALTER USER username SET PASSWORD|ROLE|EMAIL|STORAGE_MODE|STORAGE_ID \
                      ..."
                     .to_string(),
@@ -464,7 +450,7 @@ impl AlterUserStatement {
         if !is_keyword(iter.next().unwrap_or(&Token::EOF), "USER") {
             return Err(UserCommandError {
                 message: "Expected USER after ALTER".to_string(),
-                hint:    Some(
+                hint: Some(
                     "Syntax: ALTER USER username SET PASSWORD|ROLE|EMAIL|STORAGE_MODE|STORAGE_ID \
                      ..."
                     .to_string(),
@@ -476,7 +462,7 @@ impl AlterUserStatement {
         let username = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
             UserCommandError {
                 message: "Expected username after ALTER USER".to_string(),
-                hint:    Some("Username can be unquoted (root) or quoted ('root')".to_string()),
+                hint: Some("Username can be unquoted (root) or quoted ('root')".to_string()),
             }
         })?;
 
@@ -484,7 +470,7 @@ impl AlterUserStatement {
         if !is_keyword(iter.next().unwrap_or(&Token::EOF), "SET") {
             return Err(UserCommandError {
                 message: "Expected SET after username".to_string(),
-                hint:    Some(
+                hint: Some(
                     "Syntax: ALTER USER username SET PASSWORD|ROLE|EMAIL|STORAGE_MODE|STORAGE_ID \
                      ..."
                     .to_string(),
@@ -498,7 +484,7 @@ impl AlterUserStatement {
             let pwd = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
                 UserCommandError {
                     message: "Expected password value after SET PASSWORD".to_string(),
-                    hint:    Some("Password must be quoted: SET PASSWORD 'newsecret'".to_string()),
+                    hint: Some("Password must be quoted: SET PASSWORD 'newsecret'".to_string()),
                 }
             })?;
             UserModification::SetPassword(pwd)
@@ -507,7 +493,7 @@ impl AlterUserStatement {
                 extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
                     UserCommandError {
                         message: "Expected role name after SET ROLE".to_string(),
-                        hint:    Some(
+                        hint: Some(
                             "Valid roles: dba, admin, developer, service, user, system".to_string(),
                         ),
                     }
@@ -519,7 +505,7 @@ impl AlterUserStatement {
                 extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
                     UserCommandError {
                         message: "Expected email address after SET EMAIL".to_string(),
-                        hint:    Some(
+                        hint: Some(
                             "Email must be quoted: SET EMAIL 'user@example.com'".to_string(),
                         ),
                     }
@@ -530,7 +516,7 @@ impl AlterUserStatement {
                 extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
                     UserCommandError {
                         message: "Expected storage mode after SET STORAGE_MODE".to_string(),
-                        hint:    Some("Valid storage modes: table, region".to_string()),
+                        hint: Some("Valid storage modes: table, region".to_string()),
                     }
                 })?;
             UserModification::SetStorageMode(parse_storage_mode(&storage_mode)?)
@@ -541,7 +527,7 @@ impl AlterUserStatement {
             } else {
                 let storage_id = extract_identifier(token).ok_or_else(|| UserCommandError {
                     message: "Expected storage ID or NULL after SET STORAGE_ID".to_string(),
-                    hint:    Some("Use SET STORAGE_ID 'local' or SET STORAGE_ID NULL".to_string()),
+                    hint: Some("Use SET STORAGE_ID 'local' or SET STORAGE_ID NULL".to_string()),
                 })?;
                 UserModification::SetStorageId(Some(StorageId::from(storage_id)))
             }
@@ -549,7 +535,7 @@ impl AlterUserStatement {
             return Err(UserCommandError {
                 message: "Expected PASSWORD, ROLE, EMAIL, STORAGE_MODE, or STORAGE_ID after SET"
                     .to_string(),
-                hint:    Some(
+                hint: Some(
                     "Valid modifications: SET PASSWORD 'pass', SET ROLE admin, SET EMAIL \
                      'x@y.com', SET STORAGE_MODE region, SET STORAGE_ID 'local'"
                         .to_string(),
@@ -577,7 +563,7 @@ impl AlterUserStatement {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DropUserStatement {
-    pub username:  String,
+    pub username: String,
     pub if_exists: bool,
 }
 
@@ -594,13 +580,13 @@ impl DropUserStatement {
         if !is_keyword(iter.next().unwrap_or(&Token::EOF), "DROP") {
             return Err(UserCommandError {
                 message: "Expected DROP".to_string(),
-                hint:    Some("Syntax: DROP USER [IF EXISTS] username".to_string()),
+                hint: Some("Syntax: DROP USER [IF EXISTS] username".to_string()),
             });
         }
         if !is_keyword(iter.next().unwrap_or(&Token::EOF), "USER") {
             return Err(UserCommandError {
                 message: "Expected USER after DROP".to_string(),
-                hint:    Some("Syntax: DROP USER [IF EXISTS] username".to_string()),
+                hint: Some("Syntax: DROP USER [IF EXISTS] username".to_string()),
             });
         }
 
@@ -610,7 +596,7 @@ impl DropUserStatement {
             if !is_keyword(iter.next().unwrap_or(&Token::EOF), "EXISTS") {
                 return Err(UserCommandError {
                     message: "Expected EXISTS after IF".to_string(),
-                    hint:    Some("Syntax: DROP USER IF EXISTS username".to_string()),
+                    hint: Some("Syntax: DROP USER IF EXISTS username".to_string()),
                 });
             }
             true
@@ -622,7 +608,7 @@ impl DropUserStatement {
         let username = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
             UserCommandError {
                 message: "Expected username".to_string(),
-                hint:    Some("Username can be unquoted (alice) or quoted ('alice')".to_string()),
+                hint: Some("Username can be unquoted (alice) or quoted ('alice')".to_string()),
             }
         })?;
 

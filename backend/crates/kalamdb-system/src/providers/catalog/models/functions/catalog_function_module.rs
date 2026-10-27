@@ -18,7 +18,7 @@ pub struct CatalogFunctionModule {
         default = "None",
         comment = "Module identity"
     )]
-    pub module_id:          FunctionModuleId,
+    pub module_id: FunctionModuleId,
     #[column(
         id = 2,
         ordinal = 2,
@@ -28,7 +28,7 @@ pub struct CatalogFunctionModule {
         default = "None",
         comment = "typescript"
     )]
-    pub runtime:            FunctionRuntime,
+    pub runtime: FunctionRuntime,
     #[column(
         id = 3,
         ordinal = 3,
@@ -50,7 +50,7 @@ pub struct CatalogFunctionModule {
         comment = "Contract snapshot hash for the active revision"
     )]
     #[serde(default)]
-    pub contract_hash:      Option<String>,
+    pub contract_hash: Option<String>,
     #[column(
         id = 5,
         ordinal = 5,
@@ -60,7 +60,7 @@ pub struct CatalogFunctionModule {
         default = "None",
         comment = "Host ABI version"
     )]
-    pub abi_version:        i32,
+    pub abi_version: i32,
 }
 
 impl kalamdb_commons::KSerializable for CatalogFunctionModule {}

@@ -103,15 +103,15 @@ async fn drop_table_cleanup_removes_policies_and_reverse_dependencies() {
     let mut policy = row_local_policy(messages.clone(), "member_read", 0);
     policy.using_program =
         Some(PolicyProgram::AuthorizationRelation(kalamdb_commons::AuthorizationRelation {
-            protected_table:   messages.clone(),
-            protected_keys:    vec![2],
-            relation_table:    members.clone(),
-            relation_keys:     vec![2],
-            principal_column:  1,
-            principal:         PrincipalExpr::CurrentUser,
+            protected_table: messages.clone(),
+            protected_keys: vec![2],
+            relation_table: members.clone(),
+            relation_keys: vec![2],
+            principal_column: 1,
+            principal: PrincipalExpr::CurrentUser,
             static_predicates: Vec::new(),
-            dependencies:      vec![members.clone()],
-            invalidation:      kalamdb_commons::InvalidationStrategy::TargetedPrincipal,
+            dependencies: vec![members.clone()],
+            invalidation: kalamdb_commons::InvalidationStrategy::TargetedPrincipal,
         }));
     let policy = provider.create_policy(policy).await.expect("create policy");
 
@@ -179,14 +179,14 @@ async fn ensure_policy_is_idempotent() {
 
 fn membership_program(protected: &TableId, relation: &TableId) -> PolicyProgram {
     PolicyProgram::AuthorizationRelation(kalamdb_commons::AuthorizationRelation {
-        protected_table:   protected.clone(),
-        protected_keys:    vec![2],
-        relation_table:    relation.clone(),
-        relation_keys:     vec![2],
-        principal_column:  1,
-        principal:         PrincipalExpr::CurrentUser,
+        protected_table: protected.clone(),
+        protected_keys: vec![2],
+        relation_table: relation.clone(),
+        relation_keys: vec![2],
+        principal_column: 1,
+        principal: PrincipalExpr::CurrentUser,
         static_predicates: Vec::new(),
-        dependencies:      vec![relation.clone()],
-        invalidation:      kalamdb_commons::InvalidationStrategy::TargetedPrincipal,
+        dependencies: vec![relation.clone()],
+        invalidation: kalamdb_commons::InvalidationStrategy::TargetedPrincipal,
     })
 }

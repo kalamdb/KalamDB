@@ -41,7 +41,7 @@ TypeScript splits consumer into `@kalamdb/consumer`. Rust keeps topic workers in
 
 | Tool | Version |
 |------|---------|
-| Rust | 1.92+ (workspace MSRV) |
+| Rust | 1.99.1 (workspace MSRV) |
 | Tokio | via `native-sdk` feature (default) |
 
 ## Build From Source

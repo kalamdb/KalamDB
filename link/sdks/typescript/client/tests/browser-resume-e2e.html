@@ -187,7 +187,7 @@
         client.setAutoReconnect(false);
         log('Initialized reader and writer clients');
 
-        await client.query(`CREATE NAMESPACE IF NOT EXISTS ${namespace}`);
+        await client.query(`CREATE SCHEMA IF NOT EXISTS ${namespace}`);
         await client.query(`CREATE TABLE IF NOT EXISTS ${table} (id INT PRIMARY KEY, payload TEXT) WITH (TYPE='USER')`);
         log(`Created test table ${table}`);
 

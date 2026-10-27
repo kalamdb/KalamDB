@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Instant};
 
 use actix_web::{HttpRequest, HttpResponse};
 use kalamdb_commons::{
-    models::{NamespaceId, NodeId, UserId},
+    models::{NodeId, SchemaId, UserId},
     schemas::TableType,
 };
 use kalamdb_core::{app_context::AppContext, error::KalamDbError};
@@ -308,7 +308,7 @@ pub async fn forward_sql_if_follower(
     http_req: &HttpRequest,
     sql: &str,
     params_json: &Option<Vec<JsonValue>>,
-    namespace_id: &Option<NamespaceId>,
+    namespace_id: &Option<SchemaId>,
     app_context: &Arc<AppContext>,
     prepared_statements: &[PreparedApiExecutionStatement],
     user_id: &UserId,
@@ -354,8 +354,8 @@ pub async fn forward_sql_if_follower(
         };
 
         let req = QueryRequest {
-            sql:          sql.to_string(),
-            params:       params_json.clone(),
+            sql: sql.to_string(),
+            params: params_json.clone(),
             namespace_id: namespace_id.clone(),
         };
 

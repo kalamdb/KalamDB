@@ -22,10 +22,11 @@ impl TopicPublisherService {
         }
 
         let partition = self.partition_runtime(&topic.topic_id, partition_id);
-        let mut write = partition.lock_write();
-
         let mut stats = TopicRetentionDeletionStats::default();
 
+        // Scans and deletes stay off the publish lock. Publishers take that
+        // lock to assign the next offset, so holding it across a retention
+        // batch stalls every checkout that publishes.
         if let Some(cutoff) = cutoff_timestamp_ms {
             let entries = self
                 .message_store
@@ -38,19 +39,20 @@ impl TopicPublisherService {
                 .map_err(|e| {
                     CommonError::Internal(format!("Failed to scan age retention: {}", e))
                 })?;
-            let deleted = self.message_store.delete_retention_entries(entries).map_err(|e| {
-                CommonError::Internal(format!("Failed to delete expired messages: {}", e))
-            })?;
-            write.subtract_retained_bytes(deleted.bytes_freed);
-            stats.messages_deleted += deleted.messages_deleted;
-            stats.bytes_freed += deleted.bytes_freed;
+            self.delete_retention_batch(&partition, entries, &mut stats)?;
         }
 
         if let Some(max_bytes) = max_bytes {
             let max_bytes = max_bytes.max(0) as u64;
-            let mut retained_bytes =
-                self.load_retained_bytes(&mut write, &topic.topic_id, partition_id)?;
-            while retained_bytes > max_bytes && stats.messages_deleted < batch_size {
+            while stats.messages_deleted < batch_size {
+                let retained_bytes = self.retained_bytes_without_blocking_publish(
+                    &partition,
+                    &topic.topic_id,
+                    partition_id,
+                )?;
+                if retained_bytes <= max_bytes {
+                    break;
+                }
                 let remaining = batch_size - stats.messages_deleted;
                 let entries = self
                     .message_store
@@ -59,7 +61,7 @@ impl TopicPublisherService {
                         CommonError::Internal(format!("Failed to scan byte retention: {}", e))
                     })?;
                 if entries.is_empty() {
-                    write.set_retained_bytes(0);
+                    partition.lock_write().set_retained_bytes(0);
                     break;
                 }
 
@@ -73,18 +75,11 @@ impl TopicPublisherService {
                     }
                 }
 
-                let deleted =
-                    self.message_store.delete_retention_entries(selected_entries).map_err(|e| {
-                        CommonError::Internal(format!("Failed to delete oversized messages: {}", e))
-                    })?;
-                if deleted.messages_deleted == 0 {
+                let before = stats.messages_deleted;
+                self.delete_retention_batch(&partition, selected_entries, &mut stats)?;
+                if stats.messages_deleted == before {
                     break;
                 }
-
-                retained_bytes = retained_bytes.saturating_sub(deleted.bytes_freed);
-                write.subtract_retained_bytes(deleted.bytes_freed);
-                stats.messages_deleted += deleted.messages_deleted;
-                stats.bytes_freed += deleted.bytes_freed;
             }
         }
 
@@ -94,13 +89,69 @@ impl TopicPublisherService {
                     |e| CommonError::Internal(format!("Failed to fetch earliest offset: {}", e)),
                 )? {
                     Some(offset) => offset,
-                    None => write.peek_next().unwrap_or(0),
+                    None => partition.lock_write().peek_next().unwrap_or(0),
                 };
-            write.set_log_start(log_start);
+            partition.lock_write().set_log_start(log_start);
             partition.trim_tail_below(log_start);
         }
 
         Ok(stats)
+    }
+
+    /// Delete expired messages in small RocksDB batches.
+    ///
+    /// The partition write lock is taken only to adjust the retained-byte
+    /// counter, so a publish can allocate its offset between chunks.
+    fn delete_retention_batch(
+        &self,
+        partition: &PartitionRuntime,
+        entries: Vec<(
+            kalamdb_tables::TopicRetentionIndexKey,
+            kalamdb_tables::TopicRetentionIndexEntry,
+        )>,
+        stats: &mut TopicRetentionDeletionStats,
+    ) -> Result<()> {
+        const CHUNK: usize = 512;
+        let mut rest = entries;
+        while !rest.is_empty() {
+            let end = CHUNK.min(rest.len());
+            let chunk = rest.drain(..end).collect();
+            let deleted = self.message_store.delete_retention_entries(chunk).map_err(|e| {
+                CommonError::Internal(format!("Failed to delete expired messages: {}", e))
+            })?;
+            if deleted.messages_deleted == 0 {
+                break;
+            }
+            {
+                let mut write = partition.lock_write();
+                write.subtract_retained_bytes(deleted.bytes_freed);
+            }
+            stats.messages_deleted += deleted.messages_deleted;
+            stats.bytes_freed += deleted.bytes_freed;
+        }
+        Ok(())
+    }
+
+    fn retained_bytes_without_blocking_publish(
+        &self,
+        partition: &PartitionRuntime,
+        topic_id: &TopicId,
+        partition_id: u32,
+    ) -> Result<u64> {
+        if partition.lock_write().retained_bytes().is_some() {
+            let mut write = partition.lock_write();
+            return self.load_retained_bytes(&mut write, topic_id, partition_id);
+        }
+
+        let bytes = self
+            .message_store
+            .retained_bytes_for_partition(topic_id, partition_id)
+            .map_err(|e| CommonError::Internal(format!("Failed to read retained bytes: {}", e)))?;
+        let mut write = partition.lock_write();
+        if write.retained_bytes().is_none() {
+            write.set_retained_bytes(bytes);
+        }
+        Ok(write.retained_bytes().unwrap_or(bytes))
     }
 
     pub fn restore_offset_counters(&self) {

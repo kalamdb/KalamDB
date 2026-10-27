@@ -1,10 +1,10 @@
 //! Prefix-index seek planning for DataFusion filters.
 //!
-//! Index values are still `scalar_value_to_bytes` (decimal strings for numbers)
-//! wrapped in storekey tuples. Leading equalities are encoded as a prefix seek.
-//! The next range is applied either as a UTF-8 byte bound or as a residual
-//! comparison on decoded index-key columns — never as a numeric byte range,
-//! because `"10"` sorts before `"2"`.
+//! Index values are `scalar_value_to_bytes` wrapped in storekey tuples. Integers
+//! use a fixed-width order-preserving encoding, so a range on the leading
+//! indexed column is a byte seek. Strings still use their UTF-8 bytes. A range
+//! whose encoding does not match byte order stays a residual key filter after
+//! any leading equality prefix.
 
 use std::collections::HashMap;
 
@@ -13,7 +13,15 @@ use datafusion::{
     scalar::ScalarValue,
 };
 use kalamdb_commons::{
-    conversions::scalar_value_to_bytes, models::UserId, storage_key::decode_key,
+    conversions::{
+        scalar_bytes::{
+            decode_order_preserving_i128, order_preserving_i128_bytes, scalar_index_integer,
+            ORDER_PRESERVING_INT_LEN,
+        },
+        scalar_value_to_bytes,
+    },
+    models::UserId,
+    storage_key::decode_key,
 };
 
 /// Comparison applied to one decoded index-key column before the row is fetched.
@@ -29,22 +37,22 @@ pub enum IndexCmpOp {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndexKeyPredicate {
     pub column_index: usize,
-    pub op:           IndexCmpOp,
-    pub bound:        ScalarValue,
+    pub op: IndexCmpOp,
+    pub bound: ScalarValue,
 }
 
 /// Store-level scan recipe for one prefix index.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndexScanPlan {
-    pub index_idx:     usize,
-    pub prefix:        Vec<u8>,
-    pub start_key:     Option<Vec<u8>>,
+    pub index_idx: usize,
+    pub prefix: Vec<u8>,
+    pub start_key: Option<Vec<u8>>,
     pub exclusive_end: Option<Vec<u8>>,
-    equality_columns:  u8,
-    has_range:         bool,
-    user_scoped:       bool,
-    column_count:      u8,
-    key_predicates:    Vec<IndexKeyPredicate>,
+    equality_columns: u8,
+    has_range: bool,
+    user_scoped: bool,
+    column_count: u8,
+    key_predicates: Vec<IndexKeyPredicate>,
 }
 
 impl IndexScanPlan {
@@ -69,6 +77,32 @@ impl IndexScanPlan {
 
     pub fn has_range(&self) -> bool {
         self.has_range
+    }
+
+    /// Column whose integer is stored in this plan's equality or range key.
+    ///
+    /// A range sits on the first column after the equality prefix. An equality-only
+    /// plan covers its last equality column.
+    pub fn value_column_index(&self) -> Option<usize> {
+        let index = if self.has_range {
+            usize::from(self.equality_columns)
+        } else if self.equality_columns > 0 {
+            usize::from(self.equality_columns - 1)
+        } else {
+            return None;
+        };
+        if index >= usize::from(self.column_count) {
+            return None;
+        }
+        Some(index)
+    }
+
+    /// Decoded integer for [`Self::value_column_index`] inside one index key.
+    pub fn range_column_integer(&self, index_key: &[u8]) -> Option<i128> {
+        let index = self.value_column_index()?;
+        let columns =
+            decode_prefix_index_columns(index_key, self.user_scoped, self.column_count as usize)?;
+        stored_i128(columns.get(index)?)
     }
 
     pub fn covers_all_equality_columns(&self) -> bool {
@@ -119,9 +153,38 @@ struct ColumnConstraints {
 }
 
 impl ColumnConstraints {
-    fn bounds_are_utf8(&self) -> bool {
-        self.lower.as_ref().map(|(v, _)| is_utf8(v)).unwrap_or(true)
-            && self.upper.as_ref().map(|(v, _)| is_utf8(v)).unwrap_or(true)
+    /// True when every present bound sorts the same way as its index bytes.
+    fn bounds_are_byte_ordered(&self) -> bool {
+        let mut kind = None;
+        for bound in [self.lower.as_ref(), self.upper.as_ref()].into_iter().flatten() {
+            let Some(next) = bound_order_kind(&bound.0) else {
+                return false;
+            };
+            if let Some(previous) = kind {
+                if previous != next {
+                    return false;
+                }
+            } else {
+                kind = Some(next);
+            }
+        }
+        true
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BoundOrderKind {
+    Integer,
+    Utf8,
+}
+
+fn bound_order_kind(value: &ScalarValue) -> Option<BoundOrderKind> {
+    if scalar_index_integer(value).is_some() {
+        Some(BoundOrderKind::Integer)
+    } else if is_utf8(value) {
+        Some(BoundOrderKind::Utf8)
+    } else {
+        None
     }
 }
 
@@ -167,7 +230,7 @@ pub fn plan_prefix_index_scan(
             break;
         }
 
-        let order_preserving = constraint.bounds_are_utf8();
+        let order_preserving = constraint.bounds_are_byte_ordered();
         if column_bytes.is_empty() && !order_preserving {
             return None;
         }
@@ -179,9 +242,9 @@ pub fn plan_prefix_index_scan(
                 start_cols.push(scalar_value_to_bytes(lower));
                 start_key = Some(encode_prefix(user_id, &start_cols));
             }
-            if let Some((upper, false)) = &constraint.upper {
+            if let Some(end_bytes) = exclusive_end_column_bytes(constraint) {
                 let mut end_cols = column_bytes.clone();
-                end_cols.push(scalar_value_to_bytes(upper));
+                end_cols.push(end_bytes);
                 exclusive_end = Some(encode_prefix(user_id, &end_cols));
             }
         }
@@ -400,12 +463,29 @@ fn decode_prefix_index_columns(
     }
 }
 
+/// Bytes that sort immediately after an inclusive integer upper bound.
+///
+/// `b <= 20` stops before the encoding of 21. A non-integer bound has no
+/// successor here and stays a residual predicate.
+fn exclusive_end_column_bytes(constraint: &ColumnConstraints) -> Option<Vec<u8>> {
+    let (upper, inclusive) = constraint.upper.as_ref()?;
+    if let Some(integer) = scalar_index_integer(upper) {
+        let end = if *inclusive {
+            integer.checked_add(1)?
+        } else {
+            integer
+        };
+        return Some(order_preserving_i128_bytes(end).to_vec());
+    }
+    if !inclusive && is_utf8(upper) {
+        return Some(scalar_value_to_bytes(upper));
+    }
+    None
+}
+
 fn compare_index_bytes(stored: &[u8], op: IndexCmpOp, bound: &ScalarValue) -> bool {
     if let Some(bound_int) = bound_i128(bound) {
-        let Ok(text) = std::str::from_utf8(stored) else {
-            return true;
-        };
-        let Ok(stored_int) = text.parse::<i128>() else {
+        let Some(stored_int) = stored_i128(stored) else {
             return true;
         };
         return cmp_ord(stored_int, bound_int, op);
@@ -417,20 +497,19 @@ fn compare_index_bytes(stored: &[u8], op: IndexCmpOp, bound: &ScalarValue) -> bo
 }
 
 fn bound_i128(value: &ScalarValue) -> Option<i128> {
-    match value {
-        ScalarValue::Int8(Some(n)) => Some(i128::from(*n)),
-        ScalarValue::Int16(Some(n)) => Some(i128::from(*n)),
-        ScalarValue::Int32(Some(n)) => Some(i128::from(*n)),
-        ScalarValue::Int64(Some(n)) => Some(i128::from(*n)),
-        ScalarValue::UInt8(Some(n)) => Some(i128::from(*n)),
-        ScalarValue::UInt16(Some(n)) => Some(i128::from(*n)),
-        ScalarValue::UInt32(Some(n)) => Some(i128::from(*n)),
-        ScalarValue::UInt64(Some(n)) => Some(i128::from(*n)),
-        ScalarValue::Utf8(Some(text))
-        | ScalarValue::LargeUtf8(Some(text))
-        | ScalarValue::Utf8View(Some(text)) => text.parse().ok(),
-        _ => None,
+    if let Some(integer) = scalar_index_integer(value) {
+        return Some(integer);
     }
+    bound_utf8(value)?.parse().ok()
+}
+
+/// Order-preserving integer keys are 16 bytes. Shorter keys are the previous
+/// decimal-text encoding and still compare numerically.
+fn stored_i128(stored: &[u8]) -> Option<i128> {
+    if stored.len() == ORDER_PRESERVING_INT_LEN {
+        return decode_order_preserving_i128(stored);
+    }
+    std::str::from_utf8(stored).ok()?.parse().ok()
 }
 
 fn bound_utf8(value: &ScalarValue) -> Option<&str> {
@@ -453,8 +532,11 @@ fn cmp_ord<T: Ord>(left: T, right: T, op: IndexCmpOp) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use datafusion::logical_expr::{col, lit};
-    use kalamdb_commons::{ids::SeqId, KSerializable};
+    use datafusion::{
+        logical_expr::{col, lit},
+        scalar::ScalarValue,
+    };
+    use kalamdb_commons::{conversions::scalar_value_to_bytes, ids::SeqId, KSerializable};
 
     use super::*;
     use crate::{
@@ -504,9 +586,14 @@ mod tests {
         let index = conversation_index();
         let expr = col("conversation_id").eq(lit(1_i64)).and(col("created_at_ms").lt(lit(15_i64)));
         let plan = plan_for(&index, &expr);
-        assert_eq!(plan.prefix, index.encode_column_prefix(None, &[b"1".to_vec()]));
+        let conversation = scalar_value_to_bytes(&ScalarValue::Int64(Some(1)));
+        let created_at = scalar_value_to_bytes(&ScalarValue::Int64(Some(15)));
+        assert_eq!(plan.prefix, index.encode_column_prefix(None, &[conversation.clone()]));
         assert!(plan.start_key.is_none());
-        assert!(plan.exclusive_end.is_none());
+        assert_eq!(
+            plan.exclusive_end.as_deref(),
+            Some(index.encode_column_prefix(None, &[conversation, created_at]).as_slice())
+        );
         assert_eq!(plan.key_predicates().len(), 1);
         assert_eq!(plan.key_predicates()[0].column_index, 1);
         assert_eq!(plan.key_predicates()[0].op, IndexCmpOp::Lt);
@@ -613,11 +700,41 @@ mod tests {
         assert!(!plan.matches_key_predicates(&carol));
     }
 
+    fn integer_column_key(
+        index: &PrefixIndex<SeqId, TestRow>,
+        column: &str,
+        value: i64,
+        seq: i64,
+    ) -> Vec<u8> {
+        let mut fields = std::collections::BTreeMap::new();
+        fields.insert(column.to_string(), scalar_value_to_bytes(&ScalarValue::Int64(Some(value))));
+        index.extract_key(&SeqId::new(seq), &TestRow { fields }).unwrap()
+    }
+
     #[test]
-    fn first_column_numeric_range_is_not_planned() {
-        let index = conversation_index();
-        let expr = col("created_at_ms").lt(lit(15_i64));
-        assert!(index.plan_scan(None, std::slice::from_ref(&expr)).is_none());
+    fn first_column_integer_range_seeks_numeric_order() {
+        let index = PrefixIndex::<SeqId, TestRow>::new(
+            "shared_bench:t2_idx_b",
+            vec!["b".to_string()],
+            false,
+        );
+        let expr = col("b").gt_eq(lit(10_i64)).and(col("b").lt(lit(20_i64)));
+        let plan = index.plan_scan(None, std::slice::from_ref(&expr)).expect("integer range plan");
+        let start = plan.start_key.as_deref().expect("lower bound");
+        let below = integer_column_key(&index, "b", 2, 1);
+        let lower = integer_column_key(&index, "b", 10, 2);
+        let inside = integer_column_key(&index, "b", 19, 3);
+        let upper = integer_column_key(&index, "b", 20, 4);
+
+        assert!(below.as_slice() < start, "2 sorts before the inclusive start");
+        assert!(lower.as_slice() >= start);
+        assert!(inside.as_slice() >= start);
+        assert!(!plan.is_past_end(&lower));
+        assert!(!plan.is_past_end(&inside));
+        assert!(plan.is_past_end(&upper), "exclusive upper bound stops at 20");
+        assert!(plan.matches_key_predicates(&lower));
+        assert!(plan.matches_key_predicates(&inside));
+        assert!(!plan.matches_key_predicates(&upper));
     }
 
     #[test]
@@ -652,5 +769,15 @@ mod tests {
         assert_eq!(plan.equality_columns(), 1);
         assert!(plan.has_range());
         assert!(index.plan_scan(None, std::slice::from_ref(&expr)).is_none());
+    }
+
+    #[test]
+    fn range_on_first_column_is_the_covered_value() {
+        let index = PrefixIndex::<SeqId, TestRow>::new("idx_b", vec!["b".to_string()], false);
+        let expr = col("b").gt_eq(lit(0_i32)).and(col("b").lt(lit(100_i32)));
+        let plan = plan_for(&index, &expr);
+        assert_eq!(plan.value_column_index(), Some(0));
+        assert!(plan.has_range());
+        assert_eq!(plan.equality_columns(), 0);
     }
 }

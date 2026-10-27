@@ -105,10 +105,7 @@ mod tests {
     #[test]
     fn trigger_attempt_id_splits_schema_qualified_trigger() {
         let id = TriggerAttemptId::new(
-            &TriggerId::from_parts(
-                Some(&crate::models::NamespaceId::new("chat")),
-                "process_message",
-            ),
+            &TriggerId::from_parts(Some(&crate::models::SchemaId::new("chat")), "process_message"),
             2,
             41,
             3,

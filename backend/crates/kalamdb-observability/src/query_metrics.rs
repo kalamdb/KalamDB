@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-const RATE_WINDOW_SECS: u64 = 60;
+pub(crate) const RATE_WINDOW_SECS: u64 = 60;
 const RATE_BUCKET_COUNT: usize = RATE_WINDOW_SECS as usize;
 
 static QUERIES_TOTAL: AtomicU64 = AtomicU64::new(0);
@@ -18,13 +18,13 @@ static FAILED_QUERIES_TOTAL: AtomicU64 = AtomicU64::new(0);
 static TOTAL_QUERY_LATENCY_MICROS: AtomicU64 = AtomicU64::new(0);
 static FIRST_QUERY_EPOCH_SECOND: AtomicU64 = AtomicU64::new(0);
 
-struct RateBuckets {
+pub(crate) struct RateBuckets {
     epochs: [AtomicU64; RATE_BUCKET_COUNT],
     counts: [AtomicU64; RATE_BUCKET_COUNT],
 }
 
 impl RateBuckets {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             epochs: std::array::from_fn(|_| AtomicU64::new(0)),
             counts: std::array::from_fn(|_| AtomicU64::new(0)),
@@ -58,14 +58,14 @@ fn delete_rate_buckets() -> &'static RateBuckets {
     DELETE_RATE_BUCKETS.get_or_init(RateBuckets::new)
 }
 
-fn epoch_second() -> u64 {
+pub(crate) fn epoch_second() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
 }
 
-fn observe_rate_event(buckets: &RateBuckets, now_second: u64) {
+pub(crate) fn observe_rate_event(buckets: &RateBuckets, now_second: u64) {
     let index = (now_second % RATE_WINDOW_SECS) as usize;
     let bucket_epoch = &buckets.epochs[index];
     let bucket_count = &buckets.counts[index];
@@ -80,7 +80,7 @@ fn observe_rate_event(buckets: &RateBuckets, now_second: u64) {
     bucket_count.fetch_add(1, Ordering::Relaxed);
 }
 
-fn snapshot_rate(buckets: &RateBuckets, now_second: u64, elapsed_window: u64) -> f64 {
+pub(crate) fn snapshot_rate(buckets: &RateBuckets, now_second: u64, elapsed_window: u64) -> f64 {
     let mut recent_count = 0u64;
     for index in 0..RATE_BUCKET_COUNT {
         let bucket_epoch = buckets.epochs[index].load(Ordering::Acquire);
@@ -107,18 +107,18 @@ pub enum QueryMetricKind {
 /// Point-in-time query counter snapshot for `system.stats`.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct QueryMetricsSnapshot {
-    pub queries_total:             u64,
-    pub queries_per_second:        f64,
-    pub select_queries_total:      u64,
+    pub queries_total: u64,
+    pub queries_per_second: f64,
+    pub select_queries_total: u64,
     pub select_queries_per_second: f64,
-    pub insert_queries_total:      u64,
+    pub insert_queries_total: u64,
     pub insert_queries_per_second: f64,
-    pub update_queries_total:      u64,
+    pub update_queries_total: u64,
     pub update_queries_per_second: f64,
-    pub delete_queries_total:      u64,
+    pub delete_queries_total: u64,
     pub delete_queries_per_second: f64,
-    pub failed_queries_total:      u64,
-    pub avg_query_latency_ms:      f64,
+    pub failed_queries_total: u64,
+    pub avg_query_latency_ms: f64,
 }
 
 impl QueryMetricsSnapshot {
@@ -214,8 +214,7 @@ pub fn query_metrics_snapshot() -> QueryMetricsSnapshot {
         now_second
             .saturating_sub(first_second)
             .saturating_add(1)
-            .min(RATE_WINDOW_SECS)
-            .max(1)
+            .clamp(1, RATE_WINDOW_SECS)
     };
 
     QueryMetricsSnapshot {

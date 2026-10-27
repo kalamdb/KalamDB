@@ -644,7 +644,7 @@ export function StudioResultsGrid({
     const tableName = parsed?.tableName ?? selectedTable?.name;
 
     if (!namespace || !tableName) {
-      alert("Unable to determine target table for commit. Select a table and run a simple SELECT ... FROM namespace.table query.");
+      alert("Unable to determine target table for commit. Select a table and run a simple SELECT ... FROM schema.table query.");
       return;
     }
 

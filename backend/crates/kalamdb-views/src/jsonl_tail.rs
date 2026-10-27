@@ -18,9 +18,9 @@ use crate::error::RegistryError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JsonlTailLimits {
     /// Newest parseable lines to keep from this file.
-    pub max_rows:       usize,
+    pub max_rows: usize,
     /// Reverse-read block size.
-    pub chunk_bytes:    usize,
+    pub chunk_bytes: usize,
     /// Stop reverse scanning after this many bytes even if fewer lines were found.
     pub max_tail_bytes: usize,
     /// Drop a single line larger than this so one giant message cannot fill the tail.
@@ -30,8 +30,8 @@ pub struct JsonlTailLimits {
 impl JsonlTailLimits {
     /// Default caps used by `system.server_logs` and sibling log views.
     pub const DEFAULT: Self = Self {
-        max_rows:       256,
-        chunk_bytes:    8 * 1024,
+        max_rows: 256,
+        chunk_bytes: 8 * 1024,
         max_tail_bytes: 256 * 1024,
         max_line_bytes: 64 * 1024,
     };
@@ -262,8 +262,8 @@ mod tests {
             writeln!(file, "{line}").unwrap();
         }
         let limits = JsonlTailLimits {
-            max_rows:       50,
-            chunk_bytes:    16,
+            max_rows: 50,
+            chunk_bytes: 16,
             max_tail_bytes: 80,
             max_line_bytes: 64,
         };

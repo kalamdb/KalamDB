@@ -46,11 +46,22 @@ impl SystemColumnNames {
     /// Reserved name. Not a stored column.
     pub const COMMIT_SEQ: &'static str = "_commit_seq";
 
+    /// Stable identity for a table created without a primary key.
+    ///
+    /// Stored in the row payload. Hidden from `SELECT *`, implicit `INSERT`
+    /// column lists, and the client catalogs.
+    pub const ROW_ID: &'static str = "_row_id";
+
     /// Check if a column name is a system column
     pub fn is_system_column(column_name: &str) -> bool {
         matches!(
             column_name,
-            Self::DELETED | Self::VERSION | Self::TIMESTAMP | Self::SEQ | Self::COMMIT_SEQ
+            Self::DELETED
+                | Self::VERSION
+                | Self::TIMESTAMP
+                | Self::SEQ
+                | Self::COMMIT_SEQ
+                | Self::ROW_ID
         )
     }
 }
@@ -60,15 +71,32 @@ impl SystemColumnNames {
 // /// Reserved namespace name for system tables.
 pub const SYSTEM_NAMESPACE: &str = "system";
 
+/// PostgreSQL compatibility catalog.
+pub const PG_CATALOG_NAMESPACE: &str = "pg_catalog";
+
+/// SQL standard metadata schema.
+pub const INFORMATION_SCHEMA_NAMESPACE: &str = "information_schema";
+
+/// DataFusion's internal catalog schema.
+pub const DATAFUSION_NAMESPACE: &str = "datafusion";
+
+/// Logical database name shown to PostgreSQL clients.
+///
+/// `current_database()`, `pg_database`, `information_schema`, and the wire
+/// startup database all use this name. KalamDB is one database.
+pub const LOGICAL_DATABASE_NAME: &str = "kalam";
+
 // /// Default namespace name for user tables when not specified.
 // pub const DEFAULT_NAMESPACE: &str = "default";
 
-/// Maximum SQL query length in bytes (1MB)
+/// Maximum SQL query length in bytes (4MB).
 ///
 /// Prevents DoS attacks via extremely long SQL strings that could
 /// cause excessive memory usage or parsing time.
-/// Most legitimate queries are under 10KB.
-pub const MAX_SQL_QUERY_LENGTH: usize = 1024 * 1024; // 1MB
+/// Most legitimate queries are under 10KB. PostgreSQL scripts that
+/// repeat a statement inside one transaction, including the SQLite
+/// speed suite, need more than 1MB for a single request.
+pub const MAX_SQL_QUERY_LENGTH: usize = 4 * 1024 * 1024;
 
 /// Authentication-related constants.
 pub struct AuthConstants;
@@ -110,7 +138,7 @@ pub const AUTH: AuthConstants = AuthConstants;
 pub const BUILTIN_NAMESPACE_ALIASES: &[&str] = &["default", "main"];
 
 pub const RESERVED_NAMESPACE_NAMES: &[&str] = &[
-    "system",
+    SYSTEM_NAMESPACE,
     "sys",
     "root",
     "kalamdb",
@@ -120,9 +148,9 @@ pub const RESERVED_NAMESPACE_NAMES: &[&str] = &[
     "sql",
     "admin",
     "internal",
-    "information_schema",
-    "pg_catalog",
-    "datafusion",
+    INFORMATION_SCHEMA_NAMESPACE,
+    PG_CATALOG_NAMESPACE,
+    DATAFUSION_NAMESPACE,
 ];
 
 /// SQL keywords that must never be used as namespace, table, or column identifiers.

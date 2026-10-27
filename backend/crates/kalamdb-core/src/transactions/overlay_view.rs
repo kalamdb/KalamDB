@@ -14,7 +14,7 @@ use super::{StagedMutation, TransactionCoordinator};
 /// Lightweight query-time overlay handle backed by the live transaction coordinator.
 #[derive(Debug)]
 pub struct CoordinatorOverlayView {
-    coordinator:    Arc<TransactionCoordinator>,
+    coordinator: Arc<TransactionCoordinator>,
     transaction_id: TransactionId,
 }
 
@@ -36,7 +36,7 @@ impl TransactionOverlayView for CoordinatorOverlayView {
     }
 
     fn overlay_for_table(&self, table_id: &TableId) -> Option<TransactionOverlay> {
-        self.overlay().overlay_for_table(table_id)
+        self.coordinator.get_table_overlay(&self.transaction_id, table_id)
     }
 }
 

@@ -1,6 +1,6 @@
 //! CALL procedure parser.
 
-use kalamdb_commons::models::{NamespaceId, RoutineCall, RoutineId};
+use kalamdb_commons::models::{RoutineCall, RoutineId, SchemaId};
 
 use crate::ddl::{
     column_default::parse_call_argument_sql, create_type::split_qualified_ident, DdlResult,
@@ -13,38 +13,124 @@ pub struct CallStatement {
 }
 
 impl CallStatement {
-    pub fn parse(sql: &str, default_namespace: &NamespaceId) -> DdlResult<Self> {
-        let trimmed = sql.trim().trim_end_matches(';');
-        if trimmed.len() < 4 || !trimmed[..4].eq_ignore_ascii_case("CALL") {
+    pub fn parse(sql: &str, default_namespace: &SchemaId) -> DdlResult<Self> {
+        let mut rest = crate::ddl::parsing::trim_sql_comments_and_semicolons(sql)?;
+        if !crate::ddl::parsing::take_keyword_ci(&mut rest, "CALL") {
             return Err("Expected CALL statement".to_string());
         }
-        let rest = trimmed[4..].trim_start();
         let (qual, after) = split_qualified_ident(rest)?;
-        let after = after.trim_start();
+        let after = crate::ddl::parsing::skip_ws_and_comments(after);
         if !after.starts_with('(') {
             return Err("Expected argument list after procedure name".to_string());
         }
         let close = crate::ddl::create_type::matching_paren(after)
             .ok_or_else(|| "Unterminated CALL argument list".to_string())?;
-        let leftover = strip_gui_limit_offset(after[close + 1..].trim())?;
+        let leftover =
+            strip_gui_limit_offset(crate::ddl::parsing::skip_ws_and_comments(&after[close + 1..]))?;
         if !leftover.is_empty() {
             return Err(format!("Unexpected tokens after CALL arguments: '{leftover}'"));
         }
         let args_body = &after[1..close];
         let mut arguments = Vec::new();
-        if !args_body.trim().is_empty() {
+        let mut named_arguments = Vec::new();
+        let mut saw_named = false;
+        let mut seen_names = std::collections::HashSet::new();
+        if !crate::ddl::parsing::skip_ws_and_comments(args_body).is_empty() {
             for part in crate::ddl::create_type::split_top_level(args_body, ',') {
-                arguments.push(parse_call_argument_sql(part.trim())?);
+                let part = crate::ddl::parsing::skip_ws_and_comments(part).trim_end();
+                if let Some((arg_name, arg_expr)) = split_named_call_arg(part)? {
+                    saw_named = true;
+                    if !seen_names.insert(arg_name.clone()) {
+                        return Err(format!("argument name \"{arg_name}\" used more than once"));
+                    }
+                    arguments.push(parse_call_argument_sql(arg_expr.trim())?);
+                    named_arguments.push(Some(arg_name));
+                } else {
+                    if saw_named {
+                        return Err("positional argument cannot follow named argument".to_string());
+                    }
+                    arguments.push(parse_call_argument_sql(part)?);
+                    named_arguments.push(None);
+                }
             }
         }
         let namespace_id = qual.namespace_or(default_namespace);
         Ok(Self {
-            call: RoutineCall::new(
+            call: RoutineCall::with_named_arguments(
                 RoutineId::from_parts(Some(&namespace_id), &qual.name),
                 arguments,
+                named_arguments,
             ),
         })
     }
+}
+
+fn split_named_call_arg(part: &str) -> DdlResult<Option<(String, &str)>> {
+    let bytes = part.as_bytes();
+    let mut i = 0usize;
+    let mut depth = 0i32;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' => {
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == b'\'' {
+                        i += 1;
+                        if i < bytes.len() && bytes[i] == b'\'' {
+                            i += 1;
+                            continue;
+                        }
+                        break;
+                    }
+                    i += 1;
+                }
+            },
+            b'"' => {
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == b'"' {
+                        i += 1;
+                        if i < bytes.len() && bytes[i] == b'"' {
+                            i += 1;
+                            continue;
+                        }
+                        break;
+                    }
+                    i += 1;
+                }
+            },
+            b'(' => {
+                depth += 1;
+                i += 1;
+            },
+            b')' => {
+                depth -= 1;
+                i += 1;
+            },
+            b'=' if depth == 0 && i + 1 < bytes.len() && bytes[i + 1] == b'>' => {
+                let lhs = part[..i].trim();
+                let rhs = &part[i + 2..];
+                let (ident, leftover) = crate::ddl::create_type::take_ident(lhs)?;
+                if !crate::ddl::parsing::skip_ws_and_comments(leftover).is_empty() {
+                    return Err(format!("Invalid named argument target '{lhs}'"));
+                }
+                return Ok(Some((ident, rhs)));
+            },
+            b':' if depth == 0 && i + 1 < bytes.len() && bytes[i + 1] == b'=' => {
+                let lhs = part[..i].trim();
+                let rhs = &part[i + 2..];
+                let (ident, leftover) = crate::ddl::create_type::take_ident(lhs)?;
+                if !crate::ddl::parsing::skip_ws_and_comments(leftover).is_empty() {
+                    return Err(format!("Invalid named argument target '{lhs}'"));
+                }
+                return Ok(Some((ident, rhs)));
+            },
+            _ => {
+                i += 1;
+            },
+        }
+    }
+    Ok(None)
 }
 
 /// GUI clients such as Tabularis wrap every statement with `LIMIT n OFFSET m`.
@@ -84,10 +170,10 @@ mod tests {
 
     #[test]
     fn parse_call_positional_and_placeholder() {
-        let ns = NamespaceId::new("app");
+        let ns = SchemaId::new("app");
         let stmt = CallStatement::parse("CALL api.echo('hi', $1, 7, true, NULL)", &ns).unwrap();
         assert_eq!(stmt.call.routine_id.as_str(), "api.echo");
-        assert_eq!(stmt.call.routine_id.namespace_id(), Some(NamespaceId::new("api")));
+        assert_eq!(stmt.call.routine_id.namespace_id(), Some(SchemaId::new("api")));
         assert_eq!(
             stmt.call.arguments,
             vec![
@@ -102,7 +188,7 @@ mod tests {
 
     #[test]
     fn parse_call_uses_default_namespace() {
-        let ns = NamespaceId::new("chat");
+        let ns = SchemaId::new("chat");
         let stmt = CallStatement::parse("CALL ping()", &ns).unwrap();
         assert_eq!(stmt.call.routine_id.as_str(), "chat.ping");
         assert!(stmt.call.arguments.is_empty());
@@ -110,7 +196,7 @@ mod tests {
 
     #[test]
     fn parse_call_ignores_gui_limit_offset_suffix() {
-        let ns = NamespaceId::new("app");
+        let ns = SchemaId::new("app");
         let stmt = CallStatement::parse(
             r#"CALL "kobj_fnlint_mtyd04d2_22tq_0"."health"() LIMIT 501 OFFSET 0"#,
             &ns,
@@ -125,14 +211,14 @@ mod tests {
 
     #[test]
     fn parse_call_rejects_non_limit_trailing_tokens() {
-        let ns = NamespaceId::new("app");
+        let ns = SchemaId::new("app");
         let err = CallStatement::parse("CALL api.echo('hi') RETURNING x", &ns).unwrap_err();
         assert!(err.contains("Unexpected tokens after CALL arguments"));
     }
 
     #[test]
     fn parse_call_accepts_catalog_typed_arguments() {
-        let ns = NamespaceId::new("app");
+        let ns = SchemaId::new("app");
         let stmt = CallStatement::parse(
             "CALL api.echo(CAST('{\"ok\":true}' AS JSON), UUID \
              '550e8400-e29b-41d4-a716-446655440000', X'ff00')",

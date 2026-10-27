@@ -155,7 +155,7 @@ impl OperationExecutor for MockExecutor {
 
 struct NotLeaderExecutor {
     leader_api_addr: String,
-    code:            Code,
+    code: Code,
 }
 
 impl NotLeaderExecutor {

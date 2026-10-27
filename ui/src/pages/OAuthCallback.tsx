@@ -37,7 +37,7 @@ export default function OAuthCallback() {
     <AuthSplitLayout
       description="Completing external sign in."
       panelTitle="Realtime Data for AI Agents"
-      panelDescription="Store agent memory, chat history, and tool calls. Stream live updates. Isolate per-tenant data with USER tables. Run SQL in SQL Studio and explore per-user namespaces."
+      panelDescription="Store agent memory, chat history, and tool calls. Stream live updates. Isolate per-tenant data with USER tables. Run SQL in SQL Studio and explore per-user schemas."
       panelFootnote="Enterprise Admin UI"
     >
       <div className="space-y-5">

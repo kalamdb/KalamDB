@@ -36,10 +36,10 @@ use registry::{ConnCmd, ResumeCache, SubscriptionReady};
 const DISCONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub(crate) struct SharedConnection {
-    cmd_tx:              mpsc::Sender<ConnCmd>,
-    connected:           Arc<AtomicBool>,
+    cmd_tx: mpsc::Sender<ConnCmd>,
+    connected: Arc<AtomicBool>,
     _reconnect_attempts: Arc<AtomicU32>,
-    _task:               JoinHandle<()>,
+    _task: JoinHandle<()>,
 }
 
 #[derive(Clone)]
@@ -186,7 +186,7 @@ impl SharedConnection {
     pub async fn unsubscribe(&self, id: &str) -> Result<()> {
         self.cmd_tx
             .send(ConnCmd::Unsubscribe {
-                id:         id.to_string(),
+                id: id.to_string(),
                 generation: None,
             })
             .await
@@ -425,7 +425,7 @@ mod tests {
         let domain = kalamdb_commons::ids::VersionDomain::new(
             "hist",
             kalamdb_commons::TableId::new(
-                kalamdb_commons::NamespaceId::new("ns"),
+                kalamdb_commons::SchemaId::new("ns"),
                 kalamdb_commons::models::TableName::new("items"),
             ),
             0,

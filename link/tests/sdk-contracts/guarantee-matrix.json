@@ -1,0 +1,87 @@
+{
+  "revision": "2026-10-24",
+  "decision": "Owner Decision 3",
+  "surfaces": [
+    {
+      "surface": "single_sql_statement",
+      "atomicity": "Autocommit. One row and its indexes persist in one store batch. Multi-row all-or-nothing requires an explicit transaction.",
+      "isolation": "Session committed snapshot plus the statement's own writes.",
+      "durability": "Acknowledged autocommit follows the data-group commit. Later row failures do not roll back earlier autocommit rows.",
+      "table_kinds": ["USER", "SHARED", "STREAM", "SYSTEM"],
+      "data_group": "single statement route; STREAM and SYSTEM stay non-transactional",
+      "retry": "Retry only idempotent statements."
+    },
+    {
+      "surface": "http_sql_batch",
+      "atomicity": "Autocommit per statement unless the batch opens one explicit single-group transaction. An open transaction at the end of the batch is rolled back.",
+      "isolation": "Same session snapshot, with staged reads inside an open transaction.",
+      "durability": "Each autocommit statement and each explicit commit is acknowledged separately.",
+      "table_kinds": ["USER", "SHARED", "STREAM", "SYSTEM"],
+      "data_group": "one group inside an explicit transaction; cross-group writes rejected before commit",
+      "retry": "Do not blindly retry a batch that already committed an autocommit prefix."
+    },
+    {
+      "surface": "explicit_transaction",
+      "atomicity": "Commit or rollback covers staged USER and SHARED mutations in one data group. Cross-group writes and STREAM or SYSTEM mutations are rejected before commit.",
+      "isolation": "Read-your-writes for staged mutations. No cross-group serializable order.",
+      "durability": "Success means the group accepted the commit. An unknown response is committed or not committed, never a partial commit.",
+      "table_kinds": ["USER", "SHARED"],
+      "data_group": "exactly one",
+      "retry": "Open a new transaction after checking the outcome."
+    },
+    {
+      "surface": "native_function_call",
+      "atomicity": "The root routine owns one request transaction for USER and SHARED writes in one data group. Nested calls share it and roll back with it.",
+      "isolation": "Nested SQL sees the root staged writes. Invoker and definer rights stay on the routine.",
+      "durability": "Database effects commit with the root transaction. External HTTP and webhooks are post-commit and at-least-once.",
+      "table_kinds": ["USER", "SHARED"],
+      "data_group": "exactly one",
+      "retry": "Retry volatile calls only with an idempotency key."
+    },
+    {
+      "surface": "pgwire",
+      "atomicity": "Same coordinator as HTTP SQL. Explicit transactions are single-group. Autocommit follows the single-statement promise.",
+      "isolation": "One connection session and one open transaction block.",
+      "durability": "Commit acknowledgement matches explicit transactions. Disconnect rolls back an open transaction.",
+      "table_kinds": ["USER", "SHARED", "STREAM", "SYSTEM"],
+      "data_group": "exactly one for an explicit transaction",
+      "retry": "Check the transaction outcome before retrying."
+    },
+    {
+      "surface": "live_subscription",
+      "atomicity": "Not a commit boundary. Events describe commits that already happened.",
+      "isolation": "Consistent change stream after the snapshot frontier for that subscription scope.",
+      "durability": "Live acknowledgement is not durability of the underlying write. Duplicates and gaps are visible.",
+      "table_kinds": ["USER", "SHARED"],
+      "data_group": "subscription scope, not a cross-group total order",
+      "retry": "Resume from the cursor, or take a new snapshot after a gap."
+    },
+    {
+      "surface": "topic_consumer",
+      "atomicity": "Same-group outbox intent commits with the table write. Delivery is outside that transaction.",
+      "isolation": "Consumers read committed outbox records only.",
+      "durability": "At-least-once delivery after commit.",
+      "table_kinds": ["USER", "SHARED"],
+      "data_group": "same group as the originating write",
+      "retry": "Handlers are idempotent on the outbox identity."
+    },
+    {
+      "surface": "file_attachment",
+      "atomicity": "Object bytes and the referencing row are not one atomic commit.",
+      "isolation": "Later reads authorize both the row and the file reference.",
+      "durability": "A crash can leave an unreferenced object until idempotent cleanup.",
+      "table_kinds": ["USER", "SHARED"],
+      "data_group": "row write follows its table group; object storage is outside the group",
+      "retry": "Retry the upload and the row write with the same file identity."
+    },
+    {
+      "surface": "backup_restore",
+      "atomicity": "One documented frontier for the captured catalogs and data groups. Not PITR and not a cross-group snapshot.",
+      "isolation": "Restore serves the captured frontier in an empty environment.",
+      "durability": "A complete restore serves that committed prefix. A partial or corrupt backup fails closed.",
+      "table_kinds": ["USER", "SHARED", "STREAM", "SYSTEM"],
+      "data_group": "the groups included in the captured frontier",
+      "retry": "Restore again into an empty environment."
+    }
+  ]
+}

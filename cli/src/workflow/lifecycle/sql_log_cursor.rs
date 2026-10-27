@@ -3,7 +3,7 @@ use std::collections::HashMap;
 #[derive(Default, Clone)]
 pub(super) struct SqlLogCursor {
     pub timestamp: String,
-    counts:        HashMap<String, usize>,
+    counts: HashMap<String, usize>,
 }
 
 impl SqlLogCursor {

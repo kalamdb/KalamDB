@@ -11,9 +11,9 @@ mod resolved;
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use kalamdb_commons::models::TypeId;
+use kalamdb_commons::models::{SchemaId, TableName, TypeId};
 use kalamdb_system::CatalogStores;
-pub use resolved::{ResolvedType, ResolvedTypeField};
+pub use resolved::{ResolvedLayout, ResolvedType, ResolvedTypeField};
 
 use crate::error::KalamDbError;
 
@@ -21,16 +21,27 @@ const TYPE_CACHE_MAX_ENTRIES: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct RevisionKey {
-    type_id:  TypeId,
+    type_id: TypeId,
     revision: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TableLayoutKey {
+    namespace_id: SchemaId,
+    table_name: TableName,
+    schema_version: u32,
+}
+
 /// DashMap cache keyed by TypeId+revision. Name lookup is not a cache key.
+/// Table Arrow layouts are cached by schema revision and dropped when a named
+/// type they use is invalidated.
 pub struct TypeRegistry {
-    current:      DashMap<TypeId, Arc<ResolvedType>>,
-    revisions:    DashMap<RevisionKey, Arc<ResolvedType>>,
+    current: DashMap<TypeId, Arc<ResolvedType>>,
+    revisions: DashMap<RevisionKey, Arc<ResolvedType>>,
     reverse_deps: DashMap<TypeId, Vec<TypeId>>,
-    max_entries:  usize,
+    table_layouts: DashMap<TableLayoutKey, Arc<arrow::datatypes::Schema>>,
+    table_deps: DashMap<TypeId, Vec<TableLayoutKey>>,
+    max_entries: usize,
 }
 
 impl std::fmt::Debug for TypeRegistry {
@@ -38,6 +49,7 @@ impl std::fmt::Debug for TypeRegistry {
         f.debug_struct("TypeRegistry")
             .field("current", &self.current.len())
             .field("revisions", &self.revisions.len())
+            .field("table_layouts", &self.table_layouts.len())
             .finish()
     }
 }
@@ -45,15 +57,30 @@ impl std::fmt::Debug for TypeRegistry {
 impl TypeRegistry {
     pub fn new() -> Self {
         Self {
-            current:      DashMap::with_capacity(32),
-            revisions:    DashMap::with_capacity(32),
+            current: DashMap::with_capacity(32),
+            revisions: DashMap::with_capacity(32),
             reverse_deps: DashMap::with_capacity(32),
-            max_entries:  TYPE_CACHE_MAX_ENTRIES,
+            table_layouts: DashMap::with_capacity(32),
+            table_deps: DashMap::with_capacity(32),
+            max_entries: TYPE_CACHE_MAX_ENTRIES,
         }
     }
 
     pub fn current(&self, type_id: &TypeId) -> Option<Arc<ResolvedType>> {
         self.current.get(type_id).map(|entry| Arc::clone(entry.value()))
+    }
+
+    /// Look up a specific pinned revision without mutating the current pointer.
+    pub fn get_revision(
+        &self,
+        type_id: &TypeId,
+        revision: kalamdb_commons::TypeRevision,
+    ) -> Option<Arc<ResolvedType>> {
+        let key = RevisionKey {
+            type_id: type_id.clone(),
+            revision: revision.get(),
+        };
+        self.revisions.get(&key).map(|entry| Arc::clone(entry.value()))
     }
 
     /// Load or intern the current revision. Name lookup happens in the catalog, not here.
@@ -68,25 +95,54 @@ impl TypeRegistry {
         self.load_current(stores, type_id)
     }
 
-    /// Drop current pointer, interned revisions, and reverse dependents.
-    /// In-flight Arcs stay valid.
-    pub fn invalidate(&self, type_id: &TypeId) {
-        let mut drop_ids = vec![type_id.clone()];
-        if let Some((_, dependents)) = self.reverse_deps.remove(type_id) {
-            drop_ids.extend(dependents);
+    /// Drop cached Arrow layouts for one table.
+    ///
+    /// Layouts are keyed only by schema version. Dropping or replacing a table
+    /// reuses those version numbers, so the previous physical schema must not
+    /// survive.
+    pub fn forget_table_layouts(&self, namespace_id: &SchemaId, table_name: &TableName) {
+        self.table_layouts
+            .retain(|key, _| &key.namespace_id != namespace_id || &key.table_name != table_name);
+        for mut entry in self.table_deps.iter_mut() {
+            entry
+                .value_mut()
+                .retain(|key| &key.namespace_id != namespace_id || &key.table_name != table_name);
         }
+    }
+
+    /// Drop current pointer and reverse dependents.
+    /// Historical revisions stay pinned by `(TypeId, revision)` and in-flight Arcs stay valid.
+    pub fn invalidate(&self, type_id: &TypeId) {
+        let mut drop_ids = self.dependent_type_ids(type_id);
+        drop_ids.insert(0, type_id.clone());
         for id in &drop_ids {
             self.current.remove(id);
         }
-        self.revisions.retain(|key, _| drop_ids.iter().all(|id| &key.type_id != id));
+        for id in &drop_ids {
+            let Some((_, keys)) = self.table_deps.remove(id) else {
+                continue;
+            };
+            for key in keys {
+                self.table_layouts.remove(&key);
+            }
+        }
     }
 
-    /// Types that currently store a field of `type_id` (nested composites).
+    /// Types that transitively store a field of `type_id` (nested composites).
     pub fn dependent_type_ids(&self, type_id: &TypeId) -> Vec<TypeId> {
-        self.reverse_deps
-            .get(type_id)
-            .map(|entry| entry.value().clone())
-            .unwrap_or_default()
+        let mut out = Vec::new();
+        let mut queue = vec![type_id.clone()];
+        while let Some(current) = queue.pop() {
+            if let Some(entry) = self.reverse_deps.get(&current) {
+                for dep in entry.value() {
+                    if dep != type_id && !out.contains(dep) {
+                        out.push(dep.clone());
+                        queue.push(dep.clone());
+                    }
+                }
+            }
+        }
+        out
     }
 }
 
@@ -101,7 +157,7 @@ mod tests {
     use std::sync::Arc;
 
     use kalamdb_commons::{
-        models::{CatalogTypeKind, NamespaceId},
+        models::{CatalogTypeKind, SchemaId},
         TypeId,
     };
     use kalamdb_store::test_utils::InMemoryBackend;
@@ -112,7 +168,7 @@ mod tests {
     #[test]
     fn interned_layout_is_shared_across_loads() {
         let stores = CatalogStores::new(Arc::new(InMemoryBackend::new()));
-        let ns = NamespaceId::new("chat");
+        let ns = SchemaId::new("chat");
         let type_id = TypeId::from_parts(Some(&ns), "address");
         stores
             .upsert_type(CatalogType::named(
@@ -154,7 +210,7 @@ mod tests {
         };
 
         let stores = CatalogStores::new(Arc::new(InMemoryBackend::new()));
-        let ns = NamespaceId::new("chat");
+        let ns = SchemaId::new("chat");
         let type_id = TypeId::from_parts(Some(&ns), "status");
         stores
             .upsert_type(CatalogType::named(
@@ -229,5 +285,211 @@ mod tests {
             read_kalam_enum_labels(status).as_deref(),
             Some(["active".to_string(), "blocked".to_string()].as_slice())
         );
+    }
+
+    #[test]
+    fn modifiers_resolve_onto_the_schema_revision_cache() {
+        use kalamdb_commons::{
+            conversions::{read_character_maximum_length, read_logical_type_modifier},
+            schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
+            KalamDataType, LogicalTypeRef, TableName,
+        };
+
+        let stores = CatalogStores::new(Arc::new(InMemoryBackend::new()));
+        let ns = SchemaId::new("chat");
+        let mut payload = ColumnDefinition::new(
+            1,
+            "payload",
+            1,
+            KalamDataType::Json,
+            true,
+            false,
+            false,
+            ColumnDefault::None,
+            None,
+        );
+        payload.logical_type = LogicalTypeRef::jsonb();
+        let mut charged_at = ColumnDefinition::new(
+            2,
+            "charged_at",
+            2,
+            KalamDataType::Timestamp,
+            true,
+            false,
+            false,
+            ColumnDefault::None,
+            None,
+        );
+        charged_at.logical_type = LogicalTypeRef::timestamptz();
+        let mut name = ColumnDefinition::new(
+            3,
+            "name",
+            3,
+            KalamDataType::Text,
+            true,
+            false,
+            false,
+            ColumnDefault::None,
+            None,
+        );
+        name.character_maximum_length = Some(255);
+        let mut table = TableDefinition::new(
+            ns,
+            TableName::new("invoices"),
+            TableType::Shared,
+            vec![payload, charged_at, name],
+            TableOptions::shared(),
+            None,
+        )
+        .unwrap();
+        let registry = TypeRegistry::new();
+        let first = registry.arrow_schema_for_table(&stores, &table).unwrap();
+        let second = registry.arrow_schema_for_table(&stores, &table).unwrap();
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(
+            read_logical_type_modifier(first.field_with_name("payload").unwrap()),
+            Some("jsonb")
+        );
+        assert_eq!(
+            read_logical_type_modifier(first.field_with_name("charged_at").unwrap()),
+            Some("timestamptz")
+        );
+        assert_eq!(
+            read_character_maximum_length(first.field_with_name("name").unwrap()),
+            Some(255)
+        );
+
+        table.schema_version = table.schema_version.saturating_add(1);
+        let revised = registry.arrow_schema_for_table(&stores, &table).unwrap();
+        assert!(!Arc::ptr_eq(&first, &revised));
+    }
+
+    #[test]
+    fn named_type_invalidation_drops_the_table_layout() {
+        use kalamdb_commons::{
+            schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
+            KalamDataType, TableName,
+        };
+
+        let stores = CatalogStores::new(Arc::new(InMemoryBackend::new()));
+        let ns = SchemaId::new("chat");
+        let type_id = TypeId::from_parts(Some(&ns), "status");
+        stores
+            .upsert_type(CatalogType::named(
+                type_id.clone(),
+                ns.clone(),
+                "status",
+                CatalogTypeKind::Enum,
+            ))
+            .unwrap();
+        stores
+            .upsert_type_field(
+                CatalogTypeField::new(
+                    type_id.clone(),
+                    "open",
+                    1,
+                    None,
+                    None,
+                    "open",
+                    false,
+                    true,
+                    false,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let table = TableDefinition::new(
+            ns,
+            TableName::new("invoices"),
+            TableType::Shared,
+            vec![ColumnDefinition::new(
+                1,
+                "status",
+                1,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                None,
+            )
+            .with_named_type(type_id.clone(), false)],
+            TableOptions::shared(),
+            None,
+        )
+        .unwrap();
+        let registry = TypeRegistry::new();
+        let first = registry.arrow_schema_for_table(&stores, &table).unwrap();
+        registry.invalidate(&type_id);
+        let reloaded = registry.arrow_schema_for_table(&stores, &table).unwrap();
+        assert!(!Arc::ptr_eq(&first, &reloaded));
+        assert_eq!(
+            reloaded.field_with_name("status").unwrap().data_type(),
+            &arrow::datatypes::DataType::Utf8
+        );
+    }
+
+    #[test]
+    fn eviction_past_max_entries_does_not_deadlock() {
+        use kalamdb_commons::{
+            schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
+            KalamDataType, TableName,
+        };
+
+        let stores = CatalogStores::new(Arc::new(InMemoryBackend::new()));
+        let ns = SchemaId::new("chat");
+        let registry = TypeRegistry::new();
+
+        for idx in 0..(super::TYPE_CACHE_MAX_ENTRIES + 8) {
+            let type_name = format!("status_{idx}");
+            let type_id = TypeId::from_parts(Some(&ns), &type_name);
+            stores
+                .upsert_type(CatalogType::named(
+                    type_id.clone(),
+                    ns.clone(),
+                    &type_name,
+                    CatalogTypeKind::Enum,
+                ))
+                .unwrap();
+            stores
+                .upsert_type_field(
+                    CatalogTypeField::new(
+                        type_id.clone(),
+                        "open",
+                        1,
+                        None,
+                        None,
+                        "open",
+                        false,
+                        true,
+                        false,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            let table = TableDefinition::new(
+                ns.clone(),
+                TableName::new(format!("tbl_{idx}")),
+                TableType::Shared,
+                vec![ColumnDefinition::new(
+                    1,
+                    "status",
+                    1,
+                    KalamDataType::Text,
+                    false,
+                    false,
+                    false,
+                    ColumnDefault::None,
+                    None,
+                )
+                .with_named_type(type_id, false)],
+                TableOptions::shared(),
+                None,
+            )
+            .unwrap();
+            let _ = registry.arrow_schema_for_table(&stores, &table).unwrap();
+        }
+        assert!(registry.table_layouts.len() <= super::TYPE_CACHE_MAX_ENTRIES);
+        assert!(registry.revisions.len() <= super::TYPE_CACHE_MAX_ENTRIES);
     }
 }

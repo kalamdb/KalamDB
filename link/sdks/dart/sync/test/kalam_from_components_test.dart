@@ -6,9 +6,9 @@ import 'package:kalam_sync/drift.dart' hide isNotNull, isNull;
 import 'package:kalam_sync/kalam_sync.dart';
 
 final class _WrapperTransport implements KalamSyncTransport {
+  bool failOnDispose = false;
   @override
-  Stream<KalamTransportConnection> get connectionStates =>
-      const Stream.empty();
+  Stream<KalamTransportConnection> get connectionStates => const Stream.empty();
 
   @override
   Stream<KalamRemoteBatch> subscribe({
@@ -29,33 +29,53 @@ final class _WrapperTransport implements KalamSyncTransport {
   Future<void> resume() async {}
 
   @override
-  Future<void> dispose() async {}
+  Future<void> dispose() async {
+    if (failOnDispose) throw StateError('transport cleanup failed');
+  }
 }
 
 void main() {
-  test('wrapper transports do not register DML without an explicit client', () async {
-    final database = KalamSyncDatabase(NativeDatabase.memory());
-    addTearDown(database.close);
+  test('owned database closes even when transport disposal fails', () async {
+    final database = _TrackingDatabase();
+    final transport = _WrapperTransport()..failOnDispose = true;
     final kalam = Kalam.fromComponents(
       identity: const KalamAccountIdentity(
-        serverUrl: 'http://localhost:2900',
-        subject: 'admin',
-        namespace: 'app',
+        serverUrl: 'http://db',
+        subject: 'a',
       ),
       database: database,
-      transport: _WrapperTransport(),
+      transport: transport,
     );
-    expect(
-      () => kalam.actions.registry['kalam.dml'],
-      throwsA(
-        isA<StateError>().having(
-          (error) => error.toString(),
-          'message',
-          contains('kalam.dml'),
-        ),
-      ),
-    );
+    await expectLater(kalam.dispose(), throwsStateError);
+    expect(database.closed, isTrue);
   });
+
+  test(
+    'wrapper transports do not register DML without an explicit client',
+    () async {
+      final database = KalamSyncDatabase(NativeDatabase.memory());
+      addTearDown(database.close);
+      final kalam = Kalam.fromComponents(
+        identity: const KalamAccountIdentity(
+          serverUrl: 'http://localhost:2900',
+          subject: 'admin',
+          namespace: 'app',
+        ),
+        database: database,
+        transport: _WrapperTransport(),
+      );
+      expect(
+        () => kalam.actions.registry['kalam.dml'],
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.toString(),
+            'message',
+            contains('kalam.dml'),
+          ),
+        ),
+      );
+    },
+  );
 
   test('table() projects into caller-owned local storage', () async {
     final database = KalamSyncDatabase(NativeDatabase.memory());
@@ -108,4 +128,14 @@ void main() {
     ]);
     expect(await database.select(database.kalamCachedRows).get(), isEmpty);
   });
+}
+
+class _TrackingDatabase extends KalamSyncDatabase {
+  _TrackingDatabase() : super(NativeDatabase.memory());
+  bool closed = false;
+  @override
+  Future<void> close() async {
+    closed = true;
+    await super.close();
+  }
 }

@@ -53,8 +53,8 @@ use tokio::sync::Semaphore;
 use crate::{
     executors::{
         segment_compact::SegmentCompactParams,
-        shared_table_cleanup::cleanup_empty_shared_scope_if_needed,
-        table_partition::hot_table_partition, JobContext, JobDecision, JobExecutor, JobParams,
+        shared_table_cleanup::cleanup_empty_shared_scope_if_needed, JobContext, JobDecision,
+        JobExecutor, JobParams,
     },
     AppContextJobsExt,
 };
@@ -65,9 +65,9 @@ const MAX_POST_FLUSH_TASKS: usize = 2;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlushParams {
     /// Table identifier (required)
-    pub table_id:        TableId,
+    pub table_id: TableId,
     /// Table type (required)
-    pub table_type:      TableType,
+    pub table_type: TableType,
     /// Flush threshold in rows (optional, defaults to config)
     #[serde(default)]
     pub flush_threshold: Option<u64>,
@@ -218,6 +218,19 @@ impl FlushExecutor {
             cached.table.table_options.parquet_compression(),
         );
         let scan_batch_size = app_ctx.config().flush.flush_batch_size;
+        let retain_latest_hot = app_ctx.config().flush.retain_latest_hot;
+        if retain_latest_hot && matches!(&target, FlushTarget::Shared(_)) {
+            kalamdb_flush::FlushManifestHelper::new(manifest_service)
+                .note_retained_hot(table_id.as_ref(), None)
+                .map_err(|error| KalamDbError::Other(error.to_string()))?;
+            return Ok(FlushJobResult {
+                rows_flushed: 0,
+                parquet_files: vec![],
+                scope_hints: vec![],
+                metadata: kalamdb_flush::FlushMetadata::shared_table(),
+            });
+        }
+
         let scope_hook = Arc::new(CoreFlushScopeHook::new(app_ctx));
 
         match target {
@@ -231,7 +244,8 @@ impl FlushExecutor {
                     metadata,
                     scan_batch_size,
                     scope_hook,
-                );
+                )
+                .retain_latest_hot(retain_latest_hot);
 
                 Self::run_blocking_flush(move || flush_job.execute(), "User table flush failed")
                     .await
@@ -246,7 +260,8 @@ impl FlushExecutor {
                     metadata,
                     scan_batch_size,
                     scope_hook,
-                );
+                )
+                .retain_latest_hot(retain_latest_hot);
 
                 Self::run_blocking_flush(move || flush_job.execute(), "Shared table flush failed")
                     .await
@@ -481,8 +496,8 @@ impl FlushExecutor {
             self.try_spawn_post_flush_task("post-flush shared cleanup", &table_id, async move {
                 // Build a minimal JobContext just for the helper
                 let params = FlushParams {
-                    table_id:        cleanup_table_id.clone(),
-                    table_type:      TableType::Shared,
+                    table_id: cleanup_table_id.clone(),
+                    table_type: TableType::Shared,
                     flush_threshold: None,
                 };
                 let ctx =
@@ -494,40 +509,19 @@ impl FlushExecutor {
             });
         }
 
-        // Fire-and-forget: compact RocksDB partition after flush to reclaim
-        // space from tombstones.  Compaction is an optimisation, not a
-        // correctness requirement, so we must not block the job from being
-        // marked "completed".  With max_background_jobs=2, synchronous
-        // compaction under concurrent flush load was the root cause of
-        // 90-120 s stalls observed in smoke tests.
-        if let Some(partition) = hot_table_partition(table_type, &table_id) {
-            let compact_table_id = table_id.clone();
-            let compact_backend = app_ctx.storage_backend();
-            self.try_spawn_post_flush_task("post-flush compaction", &table_id, async move {
-                match tokio::task::spawn_blocking(move || {
-                    compact_backend.compact_partition(&partition)
-                })
-                .await
-                {
-                    Ok(Ok(())) => {
-                        log::trace!("Post-flush compaction completed for {}", compact_table_id);
-                    },
-                    Ok(Err(err)) => {
-                        log::warn!("Post-flush compaction failed (non-critical): {}", err);
-                    },
-                    Err(err) => {
-                        log::warn!("Post-flush compaction task panicked: {}", err);
-                    },
-                }
-            });
-        }
+        // Retain passes delete superseded keys. RocksDB's own background
+        // compaction drops those tombstones. A manual compact_range here
+        // flushes the memtable and rewrites the whole hot file, because every
+        // table shares one SST, and that stall is what sawtoothed the soak.
 
-        self.maybe_spawn_segment_compaction(
-            app_ctx.clone(),
-            &table_id,
-            table_type,
-            &result.scope_hints,
-        );
+        if !result.parquet_files.is_empty() {
+            self.maybe_spawn_segment_compaction(
+                app_ctx.clone(),
+                &table_id,
+                table_type,
+                &result.scope_hints,
+            );
+        }
 
         Ok(JobDecision::Completed {
             message: Some(format!(
@@ -648,7 +642,7 @@ impl Default for FlushExecutor {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::NamespaceId;
+    use kalamdb_commons::SchemaId;
 
     use super::*;
 
@@ -662,11 +656,8 @@ mod tests {
     #[test]
     fn test_flush_params_validate() {
         let params = FlushParams {
-            table_id:        TableId::new(
-                NamespaceId::default(),
-                kalamdb_commons::TableName::new("users"),
-            ),
-            table_type:      TableType::User,
+            table_id: TableId::new(SchemaId::default(), kalamdb_commons::TableName::new("users")),
+            table_type: TableType::User,
             flush_threshold: Some(10000),
         };
 
@@ -676,7 +667,7 @@ mod tests {
     #[test]
     fn segment_compaction_idempotency_keys_are_scope_specific() {
         let table_id =
-            TableId::new(NamespaceId::new("app"), kalamdb_commons::TableName::new("events"));
+            TableId::new(SchemaId::new("app"), kalamdb_commons::TableName::new("events"));
         let user_a = UserId::from("user-a");
         let user_b = UserId::from("user-b");
 

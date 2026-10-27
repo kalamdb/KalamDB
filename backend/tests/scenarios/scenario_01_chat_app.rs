@@ -37,8 +37,8 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
     // =========================================================
     // Step 1: Create namespace
     // =========================================================
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    assert_success(&resp, "CREATE NAMESPACE");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    assert_success(&resp, "CREATE SCHEMA");
 
     // =========================================================
     // Step 2: Create tables
@@ -364,7 +364,7 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
     subscription.close().await?;
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -375,8 +375,8 @@ async fn test_scenario_01_service_writes_as_user() -> anyhow::Result<()> {
     let ns = unique_ns("chat_svc");
 
     // Create namespace and table
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    assert_success(&resp, "CREATE NAMESPACE");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    assert_success(&resp, "CREATE SCHEMA");
 
     let resp = server
         .execute_sql(&format!(
@@ -433,7 +433,7 @@ async fn test_scenario_01_service_writes_as_user() -> anyhow::Result<()> {
     assert_eq!(u1_count, 2, "u1 should see both direct and delegated rows");
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -444,8 +444,8 @@ async fn test_scenario_01_stream_table_ttl() -> anyhow::Result<()> {
     let ns = unique_ns("chat_stream");
 
     // Create namespace
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    assert_success(&resp, "CREATE NAMESPACE");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    assert_success(&resp, "CREATE SCHEMA");
 
     // Create STREAM table with short TTL for testing
     let resp = server
@@ -491,6 +491,6 @@ async fn test_scenario_01_stream_table_ttl() -> anyhow::Result<()> {
     assert!(count_after <= 1, "Event should be evicted after TTL");
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }

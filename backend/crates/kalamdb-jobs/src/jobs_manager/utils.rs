@@ -253,6 +253,10 @@ impl JobsManager {
         status: JobStatus,
         error_message: Option<String>,
     ) -> Result<(), KalamDbError> {
+        let _finished = JobFinishedGuard {
+            manager: self,
+            job_id: job_id.clone(),
+        };
         let job_nodes = self
             .job_nodes_provider
             .list_for_job_id_async(job_id)
@@ -291,6 +295,17 @@ impl JobsManager {
         }
 
         Ok(())
+    }
+}
+
+struct JobFinishedGuard<'a> {
+    manager: &'a JobsManager,
+    job_id: JobId,
+}
+
+impl Drop for JobFinishedGuard<'_> {
+    fn drop(&mut self) {
+        self.manager.notify_job_finished(&self.job_id);
     }
 }
 

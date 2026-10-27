@@ -1,4 +1,4 @@
-mod support;
+use crate::support;
 
 use std::{sync::Arc, time::Duration};
 
@@ -10,7 +10,7 @@ use kalamdb_configs::ServerConfig;
 use kalamdb_core::transactions::ExecutionOwnerKey;
 use kalamdb_pg::OperationExecutor;
 use kalamdb_pg_bridge::OperationService;
-use support::{
+use crate::support::{
     create_cluster_app_context, create_cluster_app_context_with_config, create_executor,
     create_user_table, execute_ok, insert_sql, observer_exec_ctx, request_exec_ctx,
     request_transaction_state, row, select_names, unique_namespace,
@@ -38,11 +38,11 @@ async fn repeated_commit_vs_rollback_clears_coordinator_state() {
 
         service
             .execute_insert(InsertRequest {
-                table_id:   table_id.clone(),
+                table_id: table_id.clone(),
                 table_type: TableType::User,
                 session_id: Some(session_id.to_string()),
-                user_id:    Some(user_id.clone()),
-                rows:       vec![row((iteration + 1) as i64, &row_name)],
+                user_id: Some(user_id.clone()),
+                rows: vec![row((iteration + 1) as i64, &row_name)],
             })
             .await
             .expect("staged write succeeds");
@@ -108,11 +108,11 @@ async fn repeated_timeout_cleanup_drops_staged_state() {
 
         service
             .execute_insert(InsertRequest {
-                table_id:   table_id.clone(),
+                table_id: table_id.clone(),
                 table_type: TableType::User,
                 session_id: Some(session_id.to_string()),
-                user_id:    Some(user_id.clone()),
-                rows:       vec![row((iteration + 1) as i64, &format!("timeout-{iteration}"))],
+                user_id: Some(user_id.clone()),
+                rows: vec![row((iteration + 1) as i64, &format!("timeout-{iteration}"))],
             })
             .await
             .expect("staged write succeeds");
@@ -121,11 +121,11 @@ async fn repeated_timeout_cleanup_drops_staged_state() {
 
         let timeout_error = service
             .execute_insert(InsertRequest {
-                table_id:   table_id.clone(),
+                table_id: table_id.clone(),
                 table_type: TableType::User,
                 session_id: Some(session_id.to_string()),
-                user_id:    Some(user_id.clone()),
-                rows:       vec![row((iteration + 101) as i64, "late")],
+                user_id: Some(user_id.clone()),
+                rows: vec![row((iteration + 101) as i64, "late")],
             })
             .await
             .expect_err("follow-up write should fail after timeout");

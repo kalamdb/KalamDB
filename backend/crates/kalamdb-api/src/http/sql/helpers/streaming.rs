@@ -11,6 +11,7 @@ use kalamdb_commons::{
 use kalamdb_core::providers::arrow_json_conversion::{
     record_batch_to_json_arrays, rows_to_json_arrays,
 };
+use kalamdb_observability::stage_trace::{stage_guard, SqlStage};
 
 use super::{
     converter::{resolve_arrow_schema, success_response_suffix},
@@ -22,12 +23,49 @@ use super::{
 const INLINE_SQL_ROWS_MAX: usize = 32;
 
 struct StreamingRowsState {
-    prefix:               Option<Bytes>,
-    batches:              std::vec::IntoIter<arrow::record_batch::RecordBatch>,
-    suffix:               Option<Bytes>,
-    schema_fields:        std::sync::Arc<Vec<SchemaField>>,
-    user_role:            Option<Role>,
+    prefix: Option<Bytes>,
+    batches: std::vec::IntoIter<arrow::record_batch::RecordBatch>,
+    suffix: Option<Bytes>,
+    schema_fields: std::sync::Arc<Vec<SchemaField>>,
+    user_role: Option<Role>,
     row_separator_needed: bool,
+}
+
+fn schema_needs_cell_mask(schema_fields: &[SchemaField], user_role: Option<Role>) -> bool {
+    let Some(role) = user_role else {
+        return false;
+    };
+    if matches!(role, Role::Dba | Role::System) {
+        return false;
+    }
+    schema_fields.iter().any(|field| {
+        field.name.eq_ignore_ascii_case("credentials")
+            || field.name.eq_ignore_ascii_case("password_hash")
+    })
+}
+
+fn write_batch_json_rows(
+    batch: &arrow::record_batch::RecordBatch,
+    dest: &mut Vec<u8>,
+    schema_fields: &[SchemaField],
+    user_role: Option<Role>,
+    row_separator_needed: &mut bool,
+) -> Result<(), actix_web::Error> {
+    if !schema_needs_cell_mask(schema_fields, user_role)
+        && kalamdb_commons::conversions::try_append_record_batch_json_rows(
+            batch,
+            dest,
+            row_separator_needed,
+        )
+        .map_err(ErrorInternalServerError)?
+    {
+        return Ok(());
+    }
+    let mut rows = record_batch_to_json_arrays(batch).map_err(ErrorInternalServerError)?;
+    if let Some(role) = user_role {
+        mask_sensitive_rows_for_role(&mut rows, schema_fields, role);
+    }
+    write_json_rows(dest, &rows, row_separator_needed).map_err(ErrorInternalServerError)
 }
 
 fn write_json_rows(
@@ -44,36 +82,6 @@ fn write_json_rows(
         serde_json::to_writer(&mut *dest, row)?;
     }
     Ok(())
-}
-
-fn serialize_rows_chunk(
-    rows: &[Vec<KalamCellValue>],
-    row_separator_needed: &mut bool,
-) -> Result<Option<Bytes>, serde_json::Error> {
-    if rows.is_empty() {
-        return Ok(None);
-    }
-
-    let mut chunk = Vec::new();
-    write_json_rows(&mut chunk, rows, row_separator_needed)?;
-    Ok(Some(Bytes::from(chunk)))
-}
-
-fn batches_to_masked_rows(
-    batches: &[arrow::record_batch::RecordBatch],
-    schema_fields: &[SchemaField],
-    user_role: Option<Role>,
-) -> Result<Vec<Vec<KalamCellValue>>, actix_web::Error> {
-    let mut rows = Vec::new();
-    for batch in batches {
-        let mut batch_rows =
-            record_batch_to_json_arrays(batch).map_err(ErrorInternalServerError)?;
-        if let Some(role) = user_role {
-            mask_sensitive_rows_for_role(&mut batch_rows, schema_fields, role);
-        }
-        rows.append(&mut batch_rows);
-    }
-    Ok(rows)
 }
 
 fn inline_json_body(
@@ -97,8 +105,20 @@ fn inline_sql_rows_body(
     user_role: Option<Role>,
     suffix: &str,
 ) -> Result<Bytes, actix_web::Error> {
-    let rows = batches_to_masked_rows(batches, schema_fields, user_role)?;
-    inline_json_body(prefix, &rows, suffix)
+    let mut body = Vec::with_capacity(prefix.len() + suffix.len() + batches.len() * 64);
+    body.extend_from_slice(prefix);
+    let mut row_separator_needed = false;
+    for batch in batches {
+        write_batch_json_rows(
+            batch,
+            &mut body,
+            schema_fields,
+            user_role,
+            &mut row_separator_needed,
+        )?;
+    }
+    body.extend_from_slice(suffix.as_bytes());
+    Ok(Bytes::from(body))
 }
 
 pub fn stream_sql_scalar_rows_response(
@@ -111,9 +131,13 @@ pub fn stream_sql_scalar_rows_response(
 ) -> Result<HttpResponse, actix_web::Error> {
     // Cached PK point gets reach HTTP as Row maps. Building a RecordBatch
     // just to call record_batch_to_json_arrays() is the skip-Arrow regression.
+    let _json = stage_guard(SqlStage::Json);
     let cached = cached_sql_schema(&schema);
     let suffix = success_response_suffix(row_count, &as_user, took);
-    let mut json_rows = rows_to_json_arrays(&schema, rows).map_err(ErrorInternalServerError)?;
+    let mut json_rows = {
+        let _json_rows = stage_guard(SqlStage::JsonRows);
+        rows_to_json_arrays(&schema, rows).map_err(ErrorInternalServerError)?
+    };
     if let Some(role) = user_role {
         mask_sensitive_rows_for_role(&mut json_rows, cached.fields.as_ref(), role);
     }
@@ -160,19 +184,20 @@ pub fn stream_sql_rows_response(
             }
 
             while let Some(batch) = state.batches.next() {
-                let mut rows = match record_batch_to_json_arrays(&batch) {
-                    Ok(rows) => rows,
-                    Err(err) => return Some((Err(ErrorInternalServerError(err)), state)),
-                };
-                if let Some(role) = state.user_role {
-                    mask_sensitive_rows_for_role(&mut rows, &state.schema_fields, role);
+                let mut chunk = Vec::new();
+                if let Err(err) = write_batch_json_rows(
+                    &batch,
+                    &mut chunk,
+                    &state.schema_fields,
+                    state.user_role,
+                    &mut state.row_separator_needed,
+                ) {
+                    return Some((Err(err), state));
                 }
-
-                match serialize_rows_chunk(&rows, &mut state.row_separator_needed) {
-                    Ok(Some(chunk)) => return Some((Ok(chunk), state)),
-                    Ok(None) => continue,
-                    Err(err) => return Some((Err(ErrorInternalServerError(err)), state)),
+                if chunk.is_empty() {
+                    continue;
                 }
+                return Some((Ok(Bytes::from(chunk)), state));
             }
 
             state.suffix.take().map(|suffix| (Ok(suffix), state))

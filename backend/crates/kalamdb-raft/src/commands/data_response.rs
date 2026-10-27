@@ -24,12 +24,12 @@ pub fn assign_entry_versions(
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct TransactionApplyResult {
-    pub rows_affected:      usize,
+    pub rows_affected: usize,
     /// Raft log index of the committed entry (group frontier, not a packed seq).
-    pub log_index:          u64,
+    pub log_index: u64,
     pub notifications_sent: usize,
-    pub manifest_updates:   usize,
-    pub publisher_events:   usize,
+    pub manifest_updates: usize,
+    pub publisher_events: usize,
 }
 
 /// Response for data operations
@@ -120,11 +120,11 @@ mod tests {
         assert!(DataResponse::Ok.is_ok());
         assert!(DataResponse::RowsAffected(5).is_ok());
         assert!(DataResponse::TransactionCommitted(TransactionApplyResult {
-            rows_affected:      2,
-            log_index:          9,
+            rows_affected: 2,
+            log_index: 9,
             notifications_sent: 1,
-            manifest_updates:   1,
-            publisher_events:   1,
+            manifest_updates: 1,
+            publisher_events: 1,
         })
         .is_ok());
         assert!(DataResponse::Subscribed {
@@ -143,11 +143,11 @@ mod tests {
         assert_eq!(DataResponse::RowsAffected(10).rows_affected(), 10);
         assert_eq!(
             DataResponse::TransactionCommitted(TransactionApplyResult {
-                rows_affected:      4,
-                log_index:          11,
+                rows_affected: 4,
+                log_index: 11,
                 notifications_sent: 2,
-                manifest_updates:   2,
-                publisher_events:   2,
+                manifest_updates: 2,
+                publisher_events: 2,
             })
             .rows_affected(),
             4
@@ -165,11 +165,11 @@ mod tests {
     fn test_data_response_committed_log_index() {
         assert_eq!(
             DataResponse::TransactionCommitted(TransactionApplyResult {
-                rows_affected:      3,
-                log_index:          42,
+                rows_affected: 3,
+                log_index: 42,
                 notifications_sent: 1,
-                manifest_updates:   1,
-                publisher_events:   1,
+                manifest_updates: 1,
+                publisher_events: 1,
             })
             .committed_log_index(),
             Some(42)
@@ -181,11 +181,11 @@ mod tests {
     fn test_data_response_committed_side_effect_counts() {
         assert_eq!(
             DataResponse::TransactionCommitted(TransactionApplyResult {
-                rows_affected:      3,
-                log_index:          42,
+                rows_affected: 3,
+                log_index: 42,
                 notifications_sent: 5,
-                manifest_updates:   3,
-                publisher_events:   2,
+                manifest_updates: 3,
+                publisher_events: 2,
             })
             .committed_side_effect_counts(),
             Some((5, 3, 2))

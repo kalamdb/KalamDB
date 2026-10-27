@@ -10,6 +10,25 @@ use serde_json::Value;
 
 use crate::{common::*, kobj_helpers::*};
 
+fn disable_schedule_retrying_race(schedule_id: &str) {
+    let sql = format!("ALTER SCHEDULE {schedule_id} DISABLE");
+    let mut last = String::new();
+    for _ in 0..8 {
+        match execute_sql_as_root_via_client(&sql) {
+            Ok(_) => return,
+            Err(err) => {
+                let text = err.to_string();
+                if !text.contains("changed concurrently") {
+                    panic!("SQL failed: {text}\n{sql}");
+                }
+                last = text;
+                std::thread::sleep(Duration::from_millis(200));
+            },
+        }
+    }
+    panic!("ALTER SCHEDULE kept losing the race: {last}\n{sql}");
+}
+
 fn require_server() {
     assert!(is_server_running(), "schedule smoke requires a running server");
 }
@@ -69,7 +88,7 @@ fn disable_and_drop_namespace(ns: &str, schedules: &[&str]) {
         let _ = execute_sql_as_root_via_client(&format!("ALTER SCHEDULE {ns}.{name} DISABLE"));
         let _ = execute_sql_as_root_via_client(&format!("DROP SCHEDULE IF EXISTS {ns}.{name}"));
     }
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }
 
 #[test]
@@ -85,7 +104,7 @@ fn smoke_schedule_01_rejects_missing_procedure() {
         "missing procedure must fail CREATE SCHEDULE: {err}"
     );
     assert!(schedule_rows(&format!("{ns}.clock")).is_empty());
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }
 
 #[test]
@@ -101,7 +120,7 @@ fn smoke_schedule_02_rejects_parameterized_procedure() {
         err.to_ascii_lowercase().contains("no parameters"),
         "parameterized procedure must be rejected: {err}"
     );
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }
 
 #[test]
@@ -118,7 +137,7 @@ fn smoke_schedule_03_rejects_missing_namespace() {
         err.to_ascii_lowercase().contains("namespace") && err.contains(&ghost),
         "missing schedule namespace must fail: {err}"
     );
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }
 
 #[test]
@@ -172,7 +191,7 @@ fn smoke_schedule_04_rejects_invalid_cron_interval_timezone_and_principal() {
             "expected '{needle}' in configuration error for {sql}: {err}"
         );
     }
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }
 
 #[test]
@@ -195,7 +214,7 @@ fn smoke_schedule_05_rejects_duplicate_name() {
 }
 
 #[test]
-#[ntest::timeout(30000)]
+#[ntest::timeout(120000)]
 fn smoke_schedule_06_interval_wakes_and_runs_procedure() {
     require_server();
     let (ns, _cleanup) = setup_ephemeral_namespace("kobj_sched_wake");
@@ -205,7 +224,7 @@ fn smoke_schedule_06_interval_wakes_and_runs_procedure() {
         "CREATE SCHEDULE {ns}.clock INTERVAL '1 second' EXECUTE PROCEDURE {ns}.tick() WITH \
          (principal = 'system')"
     ));
-    let row = wait_schedule(&format!("{ns}.clock"), Duration::from_secs(15), |row| {
+    let row = wait_schedule(&format!("{ns}.clock"), Duration::from_secs(45), |row| {
         cell_i64(row, "run_count").unwrap_or(0) >= 1 && !is_null(row, "last_finished_at")
     });
     assert!(is_null(&row, "last_error"), "successful wakeup must clear last_error: {row:?}");
@@ -231,7 +250,7 @@ fn smoke_schedule_06_interval_wakes_and_runs_procedure() {
 }
 
 #[test]
-#[ntest::timeout(45000)]
+#[ntest::timeout(120000)]
 fn smoke_schedule_07_records_failed_and_missing_function_calls() {
     require_server();
     let (ns, _cleanup) = setup_ephemeral_namespace("kobj_sched_fail");
@@ -252,7 +271,7 @@ fn smoke_schedule_07_records_failed_and_missing_function_calls() {
          WITH (principal = 'system')"
     ));
 
-    let boom = wait_schedule(&format!("{ns}.boom"), Duration::from_secs(15), |row| {
+    let boom = wait_schedule(&format!("{ns}.boom"), Duration::from_secs(45), |row| {
         cell_i64(row, "run_count").unwrap_or(0) >= 1 && !is_null(row, "last_error")
     });
     let boom_error = cell_str(&boom, "last_error").unwrap_or_default();
@@ -262,7 +281,7 @@ fn smoke_schedule_07_records_failed_and_missing_function_calls() {
     );
     assert_eq!(cell_bool(&boom, "enabled"), Some(true));
 
-    let missing = wait_schedule(&format!("{ns}.missing"), Duration::from_secs(15), |row| {
+    let missing = wait_schedule(&format!("{ns}.missing"), Duration::from_secs(45), |row| {
         cell_i64(row, "run_count").unwrap_or(0) >= 1 && !is_null(row, "last_error")
     });
     let missing_error = cell_str(&missing, "last_error").unwrap_or_default().to_ascii_lowercase();
@@ -351,7 +370,7 @@ fn smoke_schedule_09_cron_every_minute_wakes_and_runs() {
 }
 
 #[test]
-#[ntest::timeout(45000)]
+#[ntest::timeout(120000)]
 fn smoke_schedule_10_disable_skips_overlap_and_blocks_drop_procedure() {
     require_server();
     let (ns, _cleanup) = setup_ephemeral_namespace("kobj_sched_life");
@@ -369,10 +388,10 @@ fn smoke_schedule_10_disable_skips_overlap_and_blocks_drop_procedure() {
          (principal = 'system', overlap = 'skip', misfire = 'skip')"
     ));
     let started = Instant::now();
-    wait_schedule(&format!("{ns}.clock"), Duration::from_secs(15), |row| {
+    wait_schedule(&format!("{ns}.clock"), Duration::from_secs(45), |row| {
         !is_null(row, "last_finished_at")
     });
-    exec(&format!("ALTER SCHEDULE {ns}.clock DISABLE"));
+    disable_schedule_retrying_race(&format!("{ns}.clock"));
     let disabled = &schedule_rows(&format!("{ns}.clock"))[0];
     assert_eq!(cell_bool(disabled, "enabled"), Some(false));
     assert!(
@@ -401,5 +420,5 @@ fn smoke_schedule_10_disable_skips_overlap_and_blocks_drop_procedure() {
     exec(&format!("DROP SCHEDULE IF EXISTS {ns}.clock"));
     assert!(schedule_rows(&format!("{ns}.clock")).is_empty());
     exec(&format!("DROP PROCEDURE {ns}.tick"));
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }

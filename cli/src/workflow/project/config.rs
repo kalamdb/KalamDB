@@ -6,7 +6,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use kalamdb_commons::NamespaceId;
+use kalamdb_commons::SchemaId;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -37,25 +37,25 @@ fn invalid_kalam_toml_message(path: &Path, err: &toml::de::Error) -> String {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct KalamProjectConfig {
-    pub project:    ProjectSection,
+    pub project: ProjectSection,
     #[serde(default)]
     pub connection: HashMap<String, ConnectionEnv>,
-    pub schema:     SchemaSection,
+    pub schema: SchemaSection,
     #[serde(default)]
     pub migrations: MigrationsSection,
     #[serde(default)]
-    pub dev:        DevSection,
+    pub dev: DevSection,
     #[serde(default)]
-    pub logging:    LoggingSection,
+    pub logging: LoggingSection,
     #[serde(default)]
-    pub functions:  FunctionsSection,
+    pub functions: FunctionsSection,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectSection {
-    pub name:            String,
+    pub name: String,
     #[serde(default = "default_env_name")]
-    pub default_env:     String,
+    pub default_env: String,
     /// JavaScript package manager for TypeScript tooling (`npm`, `pnpm`, `yarn`, `bun`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package_manager: Option<String>,
@@ -63,10 +63,10 @@ pub struct ProjectSection {
         default = "default_kalam_dir",
         skip_serializing_if = "is_default_kalam_dir"
     )]
-    pub kalam_dir:       String,
+    pub kalam_dir: String,
     /// Compatible `kalamdb-server` version for this project. Defaults to the CLI version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub server_version:  Option<String>,
+    pub server_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -101,24 +101,24 @@ impl EnvironmentPurpose {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConnectionEnv {
-    pub url:       String,
+    pub url: String,
     #[serde(with = "serde_namespace")]
-    pub namespace: NamespaceId,
+    pub namespace: SchemaId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub purpose:   Option<EnvironmentPurpose>,
+    pub purpose: Option<EnvironmentPurpose>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SchemaSection {
-    pub mode:      SchemaMode,
+    pub mode: SchemaMode,
     #[serde(default)]
-    pub path:      Option<String>,
+    pub path: Option<String>,
     #[serde(default = "default_true")]
-    pub watch:     bool,
+    pub watch: bool,
     #[serde(default = "default_languages")]
     pub languages: Vec<String>,
     #[serde(default)]
-    pub targets:   HashMap<String, SchemaTarget>,
+    pub targets: HashMap<String, SchemaTarget>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -130,7 +130,7 @@ pub enum SchemaMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SchemaTarget {
-    pub output:            String,
+    pub output: String,
     /// Drop schema prefixes from generated type names (`User` instead of `ChatUser`).
     /// Call paths stay nested. Generate fails if short names collide.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -140,7 +140,7 @@ pub struct SchemaTarget {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MigrationsSection {
     #[serde(default = "default_migrations_dir", skip_serializing)]
-    pub dir:         String,
+    pub dir: String,
     #[serde(default = "default_true")]
     pub auto_create: bool,
 }
@@ -148,23 +148,23 @@ pub struct MigrationsSection {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DevSection {
     #[serde(default = "default_true")]
-    pub auto_start_db:  bool,
+    pub auto_start_db: bool,
     #[serde(default = "default_true")]
-    pub apply_schema:   bool,
+    pub apply_schema: bool,
     #[serde(default = "default_true")]
     pub generate_types: bool,
     #[serde(default = "default_true")]
-    pub watch:          bool,
+    pub watch: bool,
     #[serde(default)]
-    pub processes:      HashMap<String, String>,
+    pub processes: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LoggingSection {
     #[serde(default = "default_true")]
-    pub file:                   bool,
+    pub file: bool,
     #[serde(default = "default_log_path", skip_serializing)]
-    pub path:                   String,
+    pub path: String,
     #[serde(default = "default_true")]
     pub capture_process_output: bool,
 }
@@ -172,11 +172,11 @@ pub struct LoggingSection {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FunctionsSection {
     #[serde(default = "default_functions_path")]
-    pub path:    String,
+    pub path: String,
     #[serde(default = "default_functions_runtime")]
     pub runtime: String,
     #[serde(default = "default_functions_module")]
-    pub module:  String,
+    pub module: String,
 }
 
 fn default_env_name() -> String {
@@ -487,7 +487,7 @@ pub use super::identifiers::{
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::NamespaceId;
+    use kalamdb_commons::SchemaId;
     use tempfile::TempDir;
 
     use super::*;
@@ -744,38 +744,38 @@ output = "src/generated/kalam.ts"
         let nested = root.join("src").join("app");
         fs::create_dir_all(&nested).unwrap();
         KalamProjectConfig {
-            project:    ProjectSection {
-                name:            "demo".into(),
-                default_env:     "dev".into(),
+            project: ProjectSection {
+                name: "demo".into(),
+                default_env: "dev".into(),
                 package_manager: None,
-                kalam_dir:       "kalam".into(),
-                server_version:  None,
+                kalam_dir: "kalam".into(),
+                server_version: None,
             },
             connection: HashMap::from([(
                 "dev".into(),
                 ConnectionEnv {
-                    url:       "http://localhost:2900".into(),
-                    namespace: NamespaceId::new("app"),
-                    purpose:   None,
+                    url: "http://localhost:2900".into(),
+                    namespace: SchemaId::new("app"),
+                    purpose: None,
                 },
             )]),
-            schema:     SchemaSection {
-                mode:      SchemaMode::Sql,
-                path:      Some("schema.sql".into()),
-                watch:     true,
+            schema: SchemaSection {
+                mode: SchemaMode::Sql,
+                path: Some("schema.sql".into()),
+                watch: true,
                 languages: vec!["typescript".into()],
-                targets:   HashMap::from([(
+                targets: HashMap::from([(
                     "typescript".into(),
                     SchemaTarget {
-                        output:            "src/generated/kalam.ts".into(),
+                        output: "src/generated/kalam.ts".into(),
                         unqualified_names: false,
                     },
                 )]),
             },
             migrations: MigrationsSection::default(),
-            dev:        DevSection::default(),
-            logging:    LoggingSection::default(),
-            functions:  FunctionsSection::default(),
+            dev: DevSection::default(),
+            logging: LoggingSection::default(),
+            functions: FunctionsSection::default(),
         }
         .save_to_path(&root.join(KALAM_TOML))
         .unwrap();
@@ -789,7 +789,7 @@ output = "src/generated/kalam.ts"
 impl Default for MigrationsSection {
     fn default() -> Self {
         Self {
-            dir:         default_migrations_dir(),
+            dir: default_migrations_dir(),
             auto_create: true,
         }
     }
@@ -798,11 +798,11 @@ impl Default for MigrationsSection {
 impl Default for DevSection {
     fn default() -> Self {
         Self {
-            auto_start_db:  true,
-            apply_schema:   true,
+            auto_start_db: true,
+            apply_schema: true,
             generate_types: true,
-            watch:          true,
-            processes:      HashMap::new(),
+            watch: true,
+            processes: HashMap::new(),
         }
     }
 }
@@ -810,8 +810,8 @@ impl Default for DevSection {
 impl Default for LoggingSection {
     fn default() -> Self {
         Self {
-            file:                   true,
-            path:                   default_log_path(),
+            file: true,
+            path: default_log_path(),
             capture_process_output: true,
         }
     }
@@ -820,9 +820,9 @@ impl Default for LoggingSection {
 impl Default for FunctionsSection {
     fn default() -> Self {
         Self {
-            path:    default_functions_path(),
+            path: default_functions_path(),
             runtime: default_functions_runtime(),
-            module:  default_functions_module(),
+            module: default_functions_module(),
         }
     }
 }

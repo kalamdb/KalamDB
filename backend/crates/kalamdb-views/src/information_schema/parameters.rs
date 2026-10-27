@@ -16,30 +16,29 @@ use datafusion::{
     logical_expr::{Expr, TableProviderFilterPushDown},
     physical_plan::ExecutionPlan,
 };
+use kalamdb_commons::constants::LOGICAL_DATABASE_NAME;
 use kalamdb_datafusion_sources::{
     exec::{finalize_deferred_batch, DeferredBatchExec, DeferredBatchSource},
     provider::combined_filter,
 };
-use kalamdb_system::{CatalogRoutine, CatalogRoutineParameter, SystemTablesRegistry};
+use kalamdb_system::{CatalogRoutine, SystemTablesRegistry};
 
 use crate::{
     information_schema::extend::{
         append_nullable_uint64_column, cast_batch_to_schema, collect_inner_batch, concat_or_either,
         load_inner_table, schema_with_field,
     },
-    pg_catalog::type_mapping::info_schema_data_type,
+    pg_catalog::proc::parameter_sql_type,
 };
-
-const CATALOG_NAME: &str = "kalam";
 const CHARACTER_MAXIMUM_LENGTH: &str = "character_maximum_length";
 
 /// Wraps DataFusion's `information_schema.parameters`, adds `character_maximum_length`,
 /// and appends CALL-able procedure arguments from `system.routine_parameters`.
 #[derive(Debug)]
 pub struct ExtendedInformationSchemaParametersProvider {
-    inner:         Arc<dyn TableProvider>,
-    schema:        SchemaRef,
-    inner_schema:  SchemaRef,
+    inner: Arc<dyn TableProvider>,
+    schema: SchemaRef,
+    inner_schema: SchemaRef,
     system_tables: Arc<SystemTablesRegistry>,
 }
 
@@ -73,12 +72,12 @@ impl ExtendedInformationSchemaParametersProvider {
 }
 
 struct ExtendedParametersScanSource {
-    provider:        Arc<ExtendedInformationSchemaParametersProvider>,
-    session_state:   SessionState,
+    provider: Arc<ExtendedInformationSchemaParametersProvider>,
+    session_state: SessionState,
     physical_filter: Option<Arc<dyn datafusion::physical_expr::PhysicalExpr>>,
-    projection:      Option<Vec<usize>>,
-    limit:           Option<usize>,
-    output_schema:   SchemaRef,
+    projection: Option<Vec<usize>>,
+    limit: Option<usize>,
+    output_schema: SchemaRef,
 }
 
 #[async_trait]
@@ -144,9 +143,9 @@ impl TableProvider for ExtendedInformationSchemaParametersProvider {
 
         Ok(Arc::new(DeferredBatchExec::new(Arc::new(ExtendedParametersScanSource {
             provider: Arc::new(ExtendedInformationSchemaParametersProvider {
-                inner:         Arc::clone(&self.inner),
-                schema:        Arc::clone(&self.schema),
-                inner_schema:  Arc::clone(&self.inner_schema),
+                inner: Arc::clone(&self.inner),
+                schema: Arc::clone(&self.schema),
+                inner_schema: Arc::clone(&self.inner_schema),
                 system_tables: Arc::clone(&self.system_tables),
             }),
             session_state,
@@ -174,6 +173,9 @@ fn kalam_parameter_batch(
     for routine in system_tables.catalog_stores().list_routines().map_err(|error| {
         DataFusionError::Execution(format!("failed to list system.routines: {error}"))
     })? {
+        if routine.language.as_deref() == Some("INTERNAL") {
+            continue;
+        }
         routines.insert(routine.routine_id.as_str().to_string(), routine);
     }
 
@@ -202,15 +204,17 @@ fn kalam_parameter_batch(
         let Some(routine) = routines.get(parameter.routine_id.as_str()) else {
             continue;
         };
-        specific_catalog.append_value(CATALOG_NAME);
+        specific_catalog.append_value(LOGICAL_DATABASE_NAME);
         specific_schema.append_value(routine.namespace_id.as_str());
         specific_name.append_value(routine.routine_id.as_str());
         ordinal_position.append_value((parameter.ordinal.max(0) as u64) + 1);
-        parameter_mode.append_value("IN");
+        parameter_mode.append_value(parameter.mode.as_str());
         parameter_name.append_value(&parameter.name);
-        data_type.append_value(parameter_data_type(&parameter));
-        parameter_default.append_null();
-        is_variadic.append_value(false);
+        data_type.append_value(parameter_sql_type(&parameter));
+        parameter_default.append_option(parameter.default_expr.as_deref());
+        is_variadic.append_value(
+            parameter.mode == kalamdb_commons::models::RoutineParameterMode::Variadic,
+        );
         rid.append_value(0);
     }
 
@@ -249,15 +253,4 @@ fn kalam_parameter_batch(
         return Ok(RecordBatch::new_empty(Arc::clone(output_schema)));
     }
     append_nullable_uint64_column(&inner_typed, output_schema, CHARACTER_MAXIMUM_LENGTH)
-}
-
-fn parameter_data_type(parameter: &CatalogRoutineParameter) -> String {
-    let mut sql_type = parameter
-        .builtin_data_type()
-        .map(|data_type| info_schema_data_type(&data_type).to_string())
-        .unwrap_or_else(|| parameter.type_name.to_ascii_lowercase());
-    if parameter.is_array && !sql_type.ends_with("[]") {
-        sql_type.push_str("[]");
-    }
-    sql_type
 }

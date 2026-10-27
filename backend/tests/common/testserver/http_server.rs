@@ -13,7 +13,7 @@ use kalam_client::{
     query::models::query_param::params_from_json_values,
     AuthProvider, KalamLinkClient, KalamLinkTimeouts,
 };
-use kalamdb_commons::{NamespaceId, Role, UserId};
+use kalamdb_commons::{Role, SchemaId, UserId};
 use kalamdb_core::app_context::AppContext;
 use once_cell::sync::{Lazy, OnceCell as SyncOnceCell};
 use serde_json::Value as JsonValue;
@@ -117,7 +117,7 @@ async fn start_http_test_server_on_global_runtime() -> Result<HttpTestServer> {
 /// async fn test_cluster() {
 ///     let cluster = get_cluster_server().await;
 ///     let node1 = cluster.get_node(0).await;
-///     let response = node1.execute_sql("CREATE NAMESPACE test").await.unwrap();
+///     let response = node1.execute_sql("CREATE SCHEMA test").await.unwrap();
 ///     assert!(response.success());
 /// }
 /// ```
@@ -136,24 +136,24 @@ pub struct HttpTestServer {
     // Cross-process lock to avoid running multiple near-production servers concurrently.
     // Some subsystems (notably Raft/bootstrap) are not safe to initialize concurrently
     // across integration test binaries.
-    _global_lock:           Option<std::fs::File>,
-    pub base_url:           String,
+    _global_lock: Option<std::fs::File>,
+    pub base_url: String,
     #[allow(dead_code)]
-    data_path:              PathBuf,
-    root_auth_header:       String,
-    jwt_secret:             String,
-    link_client_cache:      Mutex<HashMap<String, KalamLinkClient>>,
+    data_path: PathBuf,
+    root_auth_header: String,
+    jwt_secret: String,
+    link_client_cache: Mutex<HashMap<String, KalamLinkClient>>,
     /// Cache of username -> user_id mappings for proper JWT token generation
     /// Uses std::sync::Mutex since it's accessed from sync code (link_client)
-    user_id_cache:          std::sync::Mutex<HashMap<String, String>>,
+    user_id_cache: std::sync::Mutex<HashMap<String, String>>,
     /// Cache of username -> password for basic auth test clients
-    user_password_cache:    std::sync::Mutex<HashMap<String, String>>,
+    user_password_cache: std::sync::Mutex<HashMap<String, String>>,
     /// Cache of username -> bearer token to avoid regenerating per request
-    user_token_cache:       std::sync::Mutex<HashMap<String, String>>,
-    running:                Option<kalamdb_server::lifecycle::RunningTestHttpServer>,
+    user_token_cache: std::sync::Mutex<HashMap<String, String>>,
+    running: Option<kalamdb_server::lifecycle::RunningTestHttpServer>,
     skip_raft_leader_check: bool,
     // Keep temp dir last so it is dropped after server resources.
-    _temp_dir:              Option<tempfile::TempDir>,
+    _temp_dir: Option<tempfile::TempDir>,
 }
 
 fn acquire_global_http_test_server_lock() -> Result<Option<std::fs::File>> {
@@ -623,7 +623,7 @@ impl HttpTestServer {
 
         Ok(resp)
     }
-    fn try_parse_create_table_target(sql: &str) -> Option<(NamespaceId, String)> {
+    fn try_parse_create_table_target(sql: &str) -> Option<(SchemaId, String)> {
         // Best-effort parse for statements like:
         //   CREATE TABLE ns.table ( ... ) WITH (...)
         // We keep this intentionally simple for tests; if parsing fails we just skip the wait.
@@ -644,13 +644,13 @@ impl HttpTestServer {
             return None;
         }
 
-        Some((NamespaceId::new(namespace_id_str), table_name))
+        Some((SchemaId::new(namespace_id_str), table_name))
     }
 
     #[allow(unused_assignments)]
     async fn wait_for_table_queryable(
         &self,
-        namespace_id: &NamespaceId,
+        namespace_id: &SchemaId,
         table_name: &str,
         auth_header: &str,
     ) -> Result<()> {
@@ -1059,9 +1059,9 @@ async fn start_cluster_server() -> Result<ClusterTestServer> {
             .iter()
             .filter(|(peer_node_id, _, _)| *peer_node_id != node_id)
             .map(|(peer_node_id, peer_rpc_port, peer_api_port)| kalamdb_configs::PeerConfig {
-                node_id:         *peer_node_id,
-                rpc_addr:        format!("127.0.0.1:{}", peer_rpc_port),
-                api_addr:        format!("http://127.0.0.1:{}", peer_api_port),
+                node_id: *peer_node_id,
+                rpc_addr: format!("127.0.0.1:{}", peer_rpc_port),
+                api_addr: format!("http://127.0.0.1:{}", peer_api_port),
                 rpc_server_name: None,
             })
             .collect::<Vec<_>>();

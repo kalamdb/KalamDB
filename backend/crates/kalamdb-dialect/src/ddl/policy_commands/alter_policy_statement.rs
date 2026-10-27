@@ -1,4 +1,4 @@
-use kalamdb_commons::{models::NamespaceId, TableId};
+use kalamdb_commons::{models::SchemaId, TableId};
 use sqlparser::ast::{AlterPolicy, AlterPolicyOperation as SqlAlterPolicyOperation, Statement};
 
 use super::{parse_one, parse_targets, resolve_table_id, AlterPolicyOperation};
@@ -8,12 +8,12 @@ use crate::ddl::DdlResult;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlterPolicyStatement {
     pub policy_name: String,
-    pub table_id:    TableId,
-    pub operation:   AlterPolicyOperation,
+    pub table_id: TableId,
+    pub operation: AlterPolicyOperation,
 }
 
 impl AlterPolicyStatement {
-    pub fn parse(sql: &str, default_namespace: &NamespaceId) -> DdlResult<Self> {
+    pub fn parse(sql: &str, default_namespace: &SchemaId) -> DdlResult<Self> {
         let Statement::AlterPolicy(AlterPolicy {
             name,
             table_name,
@@ -32,8 +32,8 @@ impl AlterPolicyStatement {
                 using,
                 with_check,
             } => AlterPolicyOperation::Apply {
-                targets:        to.map(|owners| parse_targets(Some(owners))).transpose()?,
-                using_sql:      using.map(|expr| expr.to_string()),
+                targets: to.map(|owners| parse_targets(Some(owners))).transpose()?,
+                using_sql: using.map(|expr| expr.to_string()),
                 with_check_sql: with_check.map(|expr| expr.to_string()),
             },
         };

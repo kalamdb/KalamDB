@@ -4,7 +4,6 @@
 [target.aarch64-apple-darwin]
 rustflags = [
     "-C", "link-arg=-Wl,-rpath,/Library/Developer/CommandLineTools/usr/lib",
-    "-Z", "threads=8",
     "-A", "linker_messages",
 ]
 
@@ -16,7 +15,6 @@ DYLD_LIBRARY_PATH = "/Library/Developer/CommandLineTools/usr/lib"
 [target.x86_64-apple-darwin]
 rustflags = [
     "-C", "link-arg=-Wl,-rpath,/Library/Developer/CommandLineTools/usr/lib",
-    "-Z", "threads=8",
     "-A", "linker_messages",
 ]
 
@@ -39,7 +37,6 @@ rustflags = []
 rustflags = [
     "-C", "target-feature=+crt-static",
     "-C", "link-args=-static -static-libgcc -static-libstdc++",
-    "-Z", "threads=8",
 ]
 
 # --- Windows (MSVC) ---
@@ -48,7 +45,6 @@ rustflags = [
 # because CARGO_ENCODED_RUSTFLAGS="" overrides these rustflags.
 [target.x86_64-pc-windows-msvc]
 rustflags = [
-    "-Z", "threads=8",
     "-C", "link-arg=/FORCE:MULTIPLE",
 ]
 
@@ -56,7 +52,6 @@ rustflags = [
 # Local rebuilds use incremental artifacts. CI sets CARGO_INCREMENTAL=0 so
 # runners do not keep those caches.
 incremental = true
-rustflags = ["-Z", "threads=8"]
 
 # Cranelift is not the default codegen backend. It drops aws-lc-sys C symbols
 # (`__aws_lc_0_41_0_*`) when linking kalamdb-server on aarch64-apple-darwin.

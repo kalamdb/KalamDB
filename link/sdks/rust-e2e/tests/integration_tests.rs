@@ -69,21 +69,19 @@ async fn setup_namespace(ns: &str) {
     let client = create_client().unwrap();
     // First drop the namespace to ensure clean state
     let _ = client
-        .execute_query(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns), None, None, None)
+        .execute_query(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns), None, None, None)
         .await;
     // Wait for drop to complete (cleanup is async)
     sleep(Duration::from_millis(50)).await;
     // Create the namespace
-    let _ = client
-        .execute_query(&format!("CREATE NAMESPACE {}", ns), None, None, None)
-        .await;
+    let _ = client.execute_query(&format!("CREATE SCHEMA {}", ns), None, None, None).await;
     sleep(Duration::from_millis(20)).await;
 }
 
 async fn cleanup_namespace(ns: &str) {
     let client = create_client().unwrap();
     let _ = client
-        .execute_query(&format!("DROP NAMESPACE {} CASCADE", ns), None, None, None)
+        .execute_query(&format!("DROP SCHEMA {} CASCADE", ns), None, None, None)
         .await;
 }
 
@@ -375,10 +373,10 @@ async fn test_subscription_with_custom_config() {
 fn sample_batch_control() -> BatchControl {
     BatchControl {
         version_domain: None,
-        batch_num:      0,
-        has_more:       false,
-        status:         BatchStatus::Ready,
-        last_seq_id:    None,
+        batch_num: 0,
+        has_more: false,
+        status: BatchStatus::Ready,
+        last_seq_id: None,
     }
 }
 
@@ -386,14 +384,14 @@ fn sample_batch_control() -> BatchControl {
 fn test_change_event_is_error() {
     let error_event = ChangeEvent::Error {
         subscription_id: "sub-1".to_string(),
-        code:            "ERR".to_string(),
-        message:         "test error".to_string(),
+        code: "ERR".to_string(),
+        message: "test error".to_string(),
     };
     assert!(error_event.is_error());
 
     let insert_event = ChangeEvent::Insert {
         subscription_id: "sub-1".to_string(),
-        rows:            vec![],
+        rows: vec![],
     };
     assert!(!insert_event.is_error());
 }
@@ -402,19 +400,19 @@ fn test_change_event_is_error() {
 fn test_change_event_subscription_id() {
     let insert = ChangeEvent::Insert {
         subscription_id: "sub-123".to_string(),
-        rows:            vec![],
+        rows: vec![],
     };
     assert_eq!(insert.subscription_id(), Some("sub-123"));
 
     let ack = ChangeEvent::Ack {
         subscription_id: "sub-ack".to_string(),
-        total_rows:      0,
-        batch_control:   sample_batch_control(),
-        schema:          vec![SchemaField {
-            name:      "id".to_string(),
+        total_rows: 0,
+        batch_control: sample_batch_control(),
+        schema: vec![SchemaField {
+            name: "id".to_string(),
             data_type: KalamDataType::BigInt,
-            index:     0,
-            flags:     None,
+            index: 0,
+            flags: None,
         }],
     };
     assert_eq!(ack.subscription_id(), Some("sub-ack"));
@@ -439,7 +437,7 @@ fn test_error_display() {
 
     let server_err = KalamLinkError::ServerError {
         status_code: 500,
-        message:     "Internal server error".to_string(),
+        message: "Internal server error".to_string(),
     };
     assert!(server_err.to_string().contains("Server error"));
 }
@@ -463,15 +461,13 @@ async fn test_create_namespace() {
 
     // Cleanup first
     let _ = client
-        .execute_query(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns), None, None, None)
+        .execute_query(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns), None, None, None)
         .await;
     sleep(Duration::from_millis(20)).await;
 
     // Create
-    let result = client
-        .execute_query(&format!("CREATE NAMESPACE {}", ns), None, None, None)
-        .await;
-    assert!(result.is_ok(), "CREATE NAMESPACE should succeed");
+    let result = client.execute_query(&format!("CREATE SCHEMA {}", ns), None, None, None).await;
+    assert!(result.is_ok(), "CREATE SCHEMA should succeed");
 
     // Cleanup
     cleanup_namespace(&ns).await;

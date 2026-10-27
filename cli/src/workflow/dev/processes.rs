@@ -19,9 +19,9 @@ use crate::{
 };
 
 pub struct ManagedProcess {
-    pub pid:         u32,
-    pub kill_scope:  SupervisedKillScope,
-    pub child:       Child,
+    pub pid: u32,
+    pub kill_scope: SupervisedKillScope,
+    pub child: Child,
     pub stdout_task: JoinHandle<()>,
     pub stderr_task: JoinHandle<()>,
 }

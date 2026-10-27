@@ -64,9 +64,9 @@ pub const RAFT_PARTITION_NAME: &str = "raft_data";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaftLogEntry {
     /// Log index (1-based, monotonically increasing)
-    pub index:   u64,
+    pub index: u64,
     /// Raft term when this entry was created
-    pub term:    u64,
+    pub term: u64,
     /// Serialized entry payload (command bytes)
     pub payload: Vec<u8>,
 }
@@ -74,17 +74,12 @@ pub struct RaftLogEntry {
 impl KSerializable for RaftLogEntry {}
 
 impl RaftLogEntry {
-    pub const RECORD_VERSION: u8 = 1;
-    pub const RECORD_HEADER_LEN: usize = 1 + 8 + 8;
+    pub const RECORD_VERSION: u8 = kalamdb_serialization::RAFT_LOG_RECORD_VERSION;
+    pub const RECORD_HEADER_LEN: usize = kalamdb_serialization::RAFT_LOG_RECORD_HEADER_LEN;
 
     /// Pack `index`, `term`, and tagged payload without a KOBJ envelope.
     pub fn encode_record_parts(index: u64, term: u64, tagged_payload: &[u8]) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(Self::RECORD_HEADER_LEN + tagged_payload.len());
-        buf.push(Self::RECORD_VERSION);
-        buf.extend_from_slice(&index.to_le_bytes());
-        buf.extend_from_slice(&term.to_le_bytes());
-        buf.extend_from_slice(tagged_payload);
-        buf
+        kalamdb_serialization::encode_raft_log_record_parts(index, term, tagged_payload)
     }
 
     /// Pack `index`, `term`, and payload without a KOBJ/FlexBuffers envelope.
@@ -92,38 +87,21 @@ impl RaftLogEntry {
         Self::encode_record_parts(self.index, self.term, &self.payload)
     }
 
-    /// Tagged `EntryPayload` bytes inside a packed record, or `record` itself if legacy.
+    /// Tagged `EntryPayload` bytes inside a packed record.
     pub fn tagged_payload(record: &[u8]) -> &[u8] {
-        if record.first() == Some(&Self::RECORD_VERSION) && record.len() >= Self::RECORD_HEADER_LEN
-        {
-            &record[Self::RECORD_HEADER_LEN..]
-        } else {
-            record
-        }
+        kalamdb_serialization::raft_log_tagged_payload(record)
     }
 
-    /// Decode a packed log record, or a legacy KOBJ `RaftLogEntry`.
+    /// Decode a packed log record (`version = 1`).
     pub fn decode_record(bytes: &[u8]) -> Result<Self> {
-        if bytes.first() == Some(&Self::RECORD_VERSION) {
-            let index = read_u64_le(bytes, 1).ok_or_else(truncated_log_record)?;
-            let term = read_u64_le(bytes, 9).ok_or_else(truncated_log_record)?;
-            return Ok(Self {
-                index,
-                term,
-                payload: bytes.get(Self::RECORD_HEADER_LEN..).unwrap_or(&[]).to_vec(),
-            });
-        }
-
-        decode_entity(bytes)
+        let (index, term, payload) = kalamdb_serialization::decode_raft_log_record(bytes)
+            .map_err(|err| StorageError::SerializationError(err.to_string()))?;
+        Ok(Self {
+            index,
+            term,
+            payload: payload.to_vec(),
+        })
     }
-}
-
-fn read_u64_le(bytes: &[u8], offset: usize) -> Option<u64> {
-    bytes.get(offset..offset + 8)?.try_into().ok().map(u64::from_le_bytes)
-}
-
-fn truncated_log_record() -> StorageError {
-    StorageError::SerializationError("truncated raft log record".to_string())
 }
 
 fn prefixed_key(prefix: &[u8], suffix: &[u8]) -> Vec<u8> {
@@ -146,7 +124,7 @@ fn append_padded_u64(buf: &mut Vec<u8>, mut value: u64) {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RaftVote {
     /// The term in which the vote was cast
-    pub term:      u64,
+    pub term: u64,
     /// Node ID that received the vote (None if no vote cast)
     pub voted_for: Option<u64>,
     /// Whether this node is the leader for this term
@@ -159,7 +137,7 @@ impl KSerializable for RaftVote {}
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RaftLogId {
     /// Leader term
-    pub term:  u64,
+    pub term: u64,
     /// Log index
     pub index: u64,
 }
@@ -167,30 +145,18 @@ pub struct RaftLogId {
 impl KSerializable for RaftLogId {}
 
 impl RaftLogId {
-    const PACKED_LEN: usize = 16;
+    const PACKED_LEN: usize = kalamdb_serialization::PACKED_LOG_ID_LEN;
 
-    /// Pack term+index as 16 little-endian bytes (no KOBJ envelope).
+    /// Pack `(version = 1, term, index)` as 17 little-endian bytes (no KOBJ envelope).
     pub fn encode_packed(self) -> [u8; Self::PACKED_LEN] {
-        let mut buf = [0u8; Self::PACKED_LEN];
-        buf[..8].copy_from_slice(&self.term.to_le_bytes());
-        buf[8..].copy_from_slice(&self.index.to_le_bytes());
-        buf
+        kalamdb_serialization::encode_packed_log_id(self.term, self.index)
     }
 
-    /// Decode a packed log id, or a legacy KOBJ `RaftLogId`.
+    /// Decode a packed log id (`version = 1`).
     pub fn decode_packed(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() == Self::PACKED_LEN {
-            let mut term = [0u8; 8];
-            let mut index = [0u8; 8];
-            term.copy_from_slice(&bytes[..8]);
-            index.copy_from_slice(&bytes[8..]);
-            return Ok(Self {
-                term:  u64::from_le_bytes(term),
-                index: u64::from_le_bytes(index),
-            });
-        }
-
-        decode_entity(bytes)
+        let (term, index) = kalamdb_serialization::decode_packed_log_id(bytes)
+            .map_err(|err| StorageError::SerializationError(err.to_string()))?;
+        Ok(Self { term, index })
     }
 }
 
@@ -202,7 +168,7 @@ pub struct RaftSnapshotMeta {
     /// Snapshot ID (unique identifier)
     pub snapshot_id: String,
     /// Size of the snapshot data in bytes
-    pub size_bytes:  u64,
+    pub size_bytes: u64,
 }
 
 impl KSerializable for RaftSnapshotMeta {}
@@ -226,11 +192,11 @@ impl KSerializable for RaftSnapshotData {}
 /// Thread-safe via internal `Arc<dyn StorageBackend>`.
 #[derive(Clone)]
 pub struct RaftPartitionStore {
-    backend:          Arc<dyn StorageBackend>,
-    group_id:         GroupId,
-    partition:        Partition,
-    group_prefix:     Vec<u8>,
-    commit_key:       Vec<u8>,
+    backend: Arc<dyn StorageBackend>,
+    group_id: GroupId,
+    partition: Partition,
+    group_prefix: Vec<u8>,
+    commit_key: Vec<u8>,
     last_applied_key: Vec<u8>,
 }
 
@@ -363,8 +329,8 @@ impl RaftPartitionStore {
         if let Some(last_applied) = last_applied {
             ops.push(Operation::Put {
                 partition: self.partition.clone(),
-                key:       self.last_applied_key().to_vec(),
-                value:     last_applied.encode_packed().to_vec(),
+                key: self.last_applied_key().to_vec(),
+                value: last_applied.encode_packed().to_vec(),
             });
         }
 
@@ -636,18 +602,18 @@ mod tests {
 
         let entries = vec![
             RaftLogEntry {
-                index:   1,
-                term:    1,
+                index: 1,
+                term: 1,
                 payload: b"cmd1".to_vec(),
             },
             RaftLogEntry {
-                index:   2,
-                term:    1,
+                index: 2,
+                term: 1,
                 payload: b"cmd2".to_vec(),
             },
             RaftLogEntry {
-                index:   3,
-                term:    2,
+                index: 3,
+                term: 2,
                 payload: b"cmd3".to_vec(),
             },
         ];
@@ -673,8 +639,8 @@ mod tests {
 
         let entries: Vec<RaftLogEntry> = (1..=10)
             .map(|i| RaftLogEntry {
-                index:   i,
-                term:    1,
+                index: i,
+                term: 1,
                 payload: format!("cmd{}", i).into_bytes(),
             })
             .collect();
@@ -702,18 +668,18 @@ mod tests {
         // Add some entries
         let entries = vec![
             RaftLogEntry {
-                index:   5,
-                term:    1,
+                index: 5,
+                term: 1,
                 payload: vec![],
             },
             RaftLogEntry {
-                index:   6,
-                term:    1,
+                index: 6,
+                term: 1,
                 payload: vec![],
             },
             RaftLogEntry {
-                index:   7,
-                term:    1,
+                index: 7,
+                term: 1,
                 payload: vec![],
             },
         ];
@@ -731,8 +697,8 @@ mod tests {
 
         let entries: Vec<RaftLogEntry> = (1..=10)
             .map(|i| RaftLogEntry {
-                index:   i,
-                term:    1,
+                index: i,
+                term: 1,
                 payload: vec![],
             })
             .collect();
@@ -763,8 +729,8 @@ mod tests {
 
         let entries: Vec<RaftLogEntry> = (1..=10)
             .map(|i| RaftLogEntry {
-                index:   i,
-                term:    1,
+                index: i,
+                term: 1,
                 payload: vec![i as u8],
             })
             .collect();
@@ -792,7 +758,7 @@ mod tests {
 
         // Save a vote
         let vote = RaftVote {
-            term:      5,
+            term: 5,
             voted_for: Some(2),
             committed: false,
         };
@@ -805,7 +771,7 @@ mod tests {
 
         // Update vote
         let vote2 = RaftVote {
-            term:      6,
+            term: 6,
             voted_for: Some(3),
             committed: true,
         };
@@ -825,10 +791,7 @@ mod tests {
         assert!(store.read_purge().unwrap().is_none());
 
         // Save commit
-        let commit = RaftLogId {
-            term:  3,
-            index: 42,
-        };
+        let commit = RaftLogId { term: 3, index: 42 };
         store.save_commit(Some(commit)).unwrap();
 
         let read_commit = store.read_commit().unwrap().unwrap();
@@ -836,10 +799,7 @@ mod tests {
         assert_eq!(read_commit.index, 42);
 
         // Save purge
-        let purge = RaftLogId {
-            term:  2,
-            index: 30,
-        };
+        let purge = RaftLogId { term: 2, index: 30 };
         store.save_purge(Some(purge)).unwrap();
 
         let read_purge = store.read_purge().unwrap().unwrap();
@@ -861,11 +821,11 @@ mod tests {
         // Save snapshot meta
         let meta = RaftSnapshotMeta {
             last_log_id: Some(RaftLogId {
-                term:  5,
+                term: 5,
                 index: 100,
             }),
             snapshot_id: "snap-001".to_string(),
-            size_bytes:  1024,
+            size_bytes: 1024,
         };
         store.save_snapshot_meta(&meta).unwrap();
 
@@ -894,8 +854,8 @@ mod tests {
         // Add entries to store1
         store1
             .append_logs(&[RaftLogEntry {
-                index:   1,
-                term:    1,
+                index: 1,
+                term: 1,
                 payload: b"sys".to_vec(),
             }])
             .unwrap();
@@ -903,8 +863,8 @@ mod tests {
         // Add entries to store2 (different group)
         store2
             .append_logs(&[RaftLogEntry {
-                index:   1,
-                term:    2,
+                index: 1,
+                term: 2,
                 payload: b"users".to_vec(),
             }])
             .unwrap();
@@ -928,10 +888,10 @@ mod tests {
     }
 
     #[test]
-    fn packed_log_record_roundtrips_and_reads_legacy_kobj() {
+    fn packed_log_record_roundtrips_and_rejects_legacy_kobj() {
         let entry = RaftLogEntry {
-            index:   7,
-            term:    3,
+            index: 7,
+            term: 3,
             payload: b"cmd".to_vec(),
         };
 
@@ -944,33 +904,29 @@ mod tests {
 
         let legacy = encode_entity(&entry).unwrap();
         assert!(kalamdb_serialization::has_object_magic(&legacy));
-        let decoded_legacy = RaftLogEntry::decode_record(&legacy).unwrap();
-        assert_eq!(decoded_legacy.index, 7);
-        assert_eq!(decoded_legacy.payload, b"cmd");
+        assert!(RaftLogEntry::decode_record(&legacy).is_err());
     }
 
     #[test]
-    fn packed_log_id_roundtrips_and_reads_legacy_kobj() {
-        let id = RaftLogId {
-            term:  4,
-            index: 99,
-        };
+    fn packed_log_id_roundtrips_and_rejects_legacy_kobj() {
+        let id = RaftLogId { term: 4, index: 99 };
         let packed = id.encode_packed();
-        assert_eq!(packed.len(), 16);
+        assert_eq!(packed.len(), kalamdb_serialization::PACKED_LOG_ID_LEN);
+        assert_eq!(packed[0], kalamdb_serialization::RAFT_LOG_ID_VERSION);
         assert!(!kalamdb_serialization::has_object_magic(&packed));
         assert_eq!(RaftLogId::decode_packed(&packed).unwrap(), id);
 
         let legacy = encode_entity(&id).unwrap();
         assert!(kalamdb_serialization::has_object_magic(&legacy));
-        assert_eq!(RaftLogId::decode_packed(&legacy).unwrap(), id);
+        assert!(RaftLogId::decode_packed(&legacy).is_err());
     }
 
     #[test]
     fn append_encoded_with_folds_last_applied() {
         let store = create_test_store(GroupId::Meta);
         let entry = RaftLogEntry {
-            index:   4,
-            term:    2,
+            index: 4,
+            term: 2,
             payload: b"cmd".to_vec(),
         };
         let applied = RaftLogId { term: 2, index: 4 };

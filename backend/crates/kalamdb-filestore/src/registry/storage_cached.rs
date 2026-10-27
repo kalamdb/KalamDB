@@ -24,7 +24,7 @@ use super::operations::{
 use crate::{
     core::runtime::run_blocking,
     error::{FilestoreError, Result},
-    parquet::writer::{serialize_to_parquet_with_compression, ParquetWriteResult},
+    parquet::writer::{serialize_to_temp_parquet, ParquetWriteResult},
     paths::{PathResolver, TemplateResolver},
 };
 
@@ -53,10 +53,10 @@ fn sanitize_storage_relative_path(relative: &str) -> String {
 #[derive(Debug)]
 pub struct StorageCached {
     /// Storage configuration from `system.storages`.
-    pub storage:   Arc<Storage>,
-    timeouts:      kalamdb_configs::config::types::RemoteStorageTimeouts,
+    pub storage: Arc<Storage>,
+    timeouts: kalamdb_configs::config::types::RemoteStorageTimeouts,
     parquet_write: kalamdb_configs::config::types::ParquetWriteSettings,
-    object_store:  Arc<RwLock<Option<Arc<dyn ObjectStore>>>>,
+    object_store: Arc<RwLock<Option<Arc<dyn ObjectStore>>>>,
 }
 
 impl StorageCached {
@@ -505,15 +505,89 @@ impl StorageCached {
         bloom_filter_columns: Option<Vec<String>>,
         compression: TableCompression,
     ) -> Result<ParquetWriteResult> {
-        let parquet_bytes = serialize_to_parquet_with_compression(
-            schema,
-            batches,
-            bloom_filter_columns,
-            self.parquet_writer_options(compression),
-        )?;
-        let size_bytes = parquet_bytes.len() as u64;
-        self.put(table_type, table_id, user_id, filename, parquet_bytes).await?;
+        let options = self.parquet_writer_options(compression);
+        let temp_file = tokio::task::spawn_blocking(move || {
+            serialize_to_temp_parquet(schema, batches, bloom_filter_columns, options)
+        })
+        .await
+        .map_err(|error| FilestoreError::Other(format!("parquet writer task failed: {error}")))??;
+        let size_bytes = temp_file
+            .as_file()
+            .metadata()
+            .map_err(|error| FilestoreError::Other(format!("temp parquet metadata: {error}")))?
+            .len();
+        self.upload_file(table_type, table_id, user_id, filename, temp_file.as_file())
+            .await?;
         Ok(ParquetWriteResult { size_bytes })
+    }
+
+    /// Upload a seekable file in fixed-size parts and abort the multipart upload on failure.
+    ///
+    /// The caller owns cleanup of the local file. Peak memory is one part, not the object.
+    pub async fn upload_file(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        filename: &str,
+        file: &std::fs::File,
+    ) -> Result<PutResult> {
+        use std::io::{Read, Seek, SeekFrom};
+
+        const PART_BYTES: usize = 5 * 1024 * 1024;
+
+        let mut file = file
+            .try_clone()
+            .map_err(|error| FilestoreError::Other(format!("clone parquet file: {error}")))?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(|error| FilestoreError::Other(format!("rewind parquet file: {error}")))?;
+        let size_bytes = file
+            .metadata()
+            .map_err(|error| FilestoreError::Other(format!("parquet file metadata: {error}")))?
+            .len();
+
+        let store = self.object_store_internal()?;
+        let path_result = self.get_file_path(table_type, table_id, user_id, filename);
+        let object_path = self.to_object_path(&path_result.relative_path)?;
+        let mut upload = store
+            .put_multipart(&object_path)
+            .await
+            .map_err(|error| FilestoreError::ObjectStore(error.to_string()))?;
+
+        let mut reader = std::io::BufReader::new(file);
+        let mut buffer = vec![0_u8; PART_BYTES];
+        loop {
+            let mut filled = 0;
+            while filled < PART_BYTES {
+                match reader.read(&mut buffer[filled..]) {
+                    Ok(0) => break,
+                    Ok(read) => filled += read,
+                    Err(error) => {
+                        upload.abort().await.ok();
+                        return Err(FilestoreError::Other(format!(
+                            "read parquet upload part: {error}"
+                        )));
+                    },
+                }
+            }
+            if filled == 0 {
+                break;
+            }
+            let part = Bytes::copy_from_slice(&buffer[..filled]);
+            if let Err(error) = upload.put_part(part.into()).await {
+                upload.abort().await.ok();
+                return Err(FilestoreError::ObjectStore(error.to_string()));
+            }
+            if filled < PART_BYTES {
+                break;
+            }
+        }
+
+        upload
+            .complete()
+            .await
+            .map_err(|error| FilestoreError::ObjectStore(error.to_string()))?;
+        Ok(PutResult::new(path_result.full_path, usize::try_from(size_bytes).unwrap_or(usize::MAX)))
     }
 
     /// List Parquet filenames under a table's storage path (sorted, deduplicated).
@@ -618,6 +692,21 @@ impl StorageCached {
     ) -> Result<DeleteResult> {
         let (tid, uid, f) = (table_id.clone(), user_id.cloned(), filename.to_string());
         run_blocking(|| async { self.delete(table_type, &tid, uid.as_ref(), &f).await })
+    }
+
+    pub fn parquet_footer_stats_sync(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        filename: &str,
+    ) -> Result<crate::parquet::reader::ParquetFooterStats> {
+        let store = self.object_store_internal()?;
+        let path_result = self.get_file_path(table_type, table_id, user_id, filename);
+        let object_path = self.to_object_path(&path_result.relative_path)?;
+        run_blocking(|| async {
+            crate::parquet::reader::read_parquet_footer_stats(store, &object_path).await
+        })
     }
 
     pub fn head_sync(
@@ -734,7 +823,7 @@ fn extract_parquet_filenames(list_result: &ListResult) -> Vec<String> {
 mod tests {
     use std::env;
 
-    use kalamdb_commons::{models::ids::StorageId, NamespaceId, TableName};
+    use kalamdb_commons::{models::ids::StorageId, SchemaId, TableName};
     use kalamdb_system::providers::storages::models::StorageType;
 
     use super::*;
@@ -750,22 +839,22 @@ mod tests {
 
         let now = chrono::Utc::now().timestamp_millis();
         Storage {
-            storage_id:             StorageId::from("test_storage"),
-            storage_name:           "test_storage".to_string(),
-            description:            None,
-            storage_type:           StorageType::Filesystem,
-            base_directory:         temp_dir.to_string_lossy().to_string(),
-            credentials:            None,
-            config_json:            None,
+            storage_id: StorageId::from("test_storage"),
+            storage_name: "test_storage".to_string(),
+            description: None,
+            storage_type: StorageType::Filesystem,
+            base_directory: temp_dir.to_string_lossy().to_string(),
+            credentials: None,
+            config_json: None,
             shared_tables_template: "{namespace}/{tableName}".to_string(),
-            user_tables_template:   "{namespace}/{tableName}/{userId}".to_string(),
-            created_at:             now,
-            updated_at:             now,
+            user_tables_template: "{namespace}/{tableName}/{userId}".to_string(),
+            created_at: now,
+            updated_at: now,
         }
     }
 
     fn make_table_id(ns: &str, tbl: &str) -> TableId {
-        TableId::new(NamespaceId::new(ns), TableName::new(tbl))
+        TableId::new(SchemaId::new(ns), TableName::new(tbl))
     }
 
     #[test]

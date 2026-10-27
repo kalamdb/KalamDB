@@ -45,22 +45,22 @@ pub enum ServerMode {
 
 #[derive(Debug, Clone)]
 pub struct InitOptions {
-    pub name:            Option<String>,
-    pub schema_mode:     Option<SchemaMode>,
-    pub languages:       Option<Vec<String>>,
-    pub template:        Option<String>,
+    pub name: Option<String>,
+    pub schema_mode: Option<SchemaMode>,
+    pub languages: Option<Vec<String>>,
+    pub template: Option<String>,
     pub package_manager: Option<PackageManager>,
-    pub server_mode:     Option<ServerMode>,
-    pub server_url:      Option<String>,
-    pub yes:             bool,
-    pub cwd:             PathBuf,
+    pub server_mode: Option<ServerMode>,
+    pub server_url: Option<String>,
+    pub yes: bool,
+    pub cwd: PathBuf,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct InitTemplateInfo {
-    pub id:          String,
-    pub kind:        String,
-    pub language:    String,
+    pub id: String,
+    pub kind: String,
+    pub language: String,
     pub description: String,
 }
 
@@ -69,18 +69,18 @@ pub fn list_init_templates() -> Vec<InitTemplateInfo> {
     for language in ["typescript", "dart"] {
         for template in templates::templates_for_language(language) {
             templates.push(InitTemplateInfo {
-                id:          template.id.to_string(),
-                kind:        "embedded".to_string(),
-                language:    language.to_string(),
+                id: template.id.to_string(),
+                kind: "embedded".to_string(),
+                language: language.to_string(),
                 description: template.description.to_string(),
             });
         }
     }
     for example in repository_examples::available() {
         templates.push(InitTemplateInfo {
-            id:          example.id.to_string(),
-            kind:        "repository".to_string(),
-            language:    "typescript".to_string(),
+            id: example.id.to_string(),
+            kind: "repository".to_string(),
+            language: "typescript".to_string(),
             description: example.description.to_string(),
         });
     }
@@ -278,29 +278,29 @@ fn build_config(
         targets.insert(
             language.clone(),
             SchemaTarget {
-                output:            output.into(),
+                output: output.into(),
                 unqualified_names: false,
             },
         );
     }
 
     Ok(KalamProjectConfig {
-        project:    ProjectSection {
-            name:            name.to_string(),
-            default_env:     "dev".into(),
+        project: ProjectSection {
+            name: name.to_string(),
+            default_env: "dev".into(),
             package_manager: package_manager.map(PackageManager::as_str).map(str::to_string),
-            kalam_dir:       "kalam".into(),
-            server_version:  Some(crate::CLI_VERSION.to_string()),
+            kalam_dir: "kalam".into(),
+            server_version: Some(crate::CLI_VERSION.to_string()),
         },
         connection: HashMap::from([(
             "dev".into(),
             ConnectionEnv {
-                url:       server_url.to_string(),
+                url: server_url.to_string(),
                 namespace: parse_namespace_id(&normalize_namespace_name(name))?,
-                purpose:   Some(crate::workflow::project::config::EnvironmentPurpose::Development),
+                purpose: Some(crate::workflow::project::config::EnvironmentPurpose::Development),
             },
         )]),
-        schema:     SchemaSection {
+        schema: SchemaSection {
             mode: schema_mode,
             path: Some("schema.sql".into()),
             watch: true,
@@ -308,10 +308,10 @@ fn build_config(
             targets,
         },
         migrations: MigrationsSection {
-            dir:         "kalam/migrations".into(),
+            dir: "kalam/migrations".into(),
             auto_create: true,
         },
-        dev:        DevSection {
+        dev: DevSection {
             auto_start_db: matches!(server_mode, ServerMode::Local),
             processes: if let Some(manager) = package_manager {
                 HashMap::from([("app".into(), manager.dev_run_command().into())])
@@ -322,8 +322,8 @@ fn build_config(
             },
             ..DevSection::default()
         },
-        logging:    LoggingSection::default(),
-        functions:  FunctionsSection::default(),
+        logging: LoggingSection::default(),
+        functions: FunctionsSection::default(),
     })
 }
 
@@ -350,15 +350,15 @@ mod tests {
             let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
             block_on_init(run_init(
                 InitOptions {
-                    name:            Some("demo-app".into()),
-                    schema_mode:     Some(SchemaMode::Sql),
-                    languages:       Some(vec!["typescript".into()]),
-                    template:        Some("simple-live".into()),
+                    name: Some("demo-app".into()),
+                    schema_mode: Some(SchemaMode::Sql),
+                    languages: Some(vec!["typescript".into()]),
+                    template: Some("simple-live".into()),
                     package_manager: None,
-                    server_mode:     Some(ServerMode::Local),
-                    server_url:      None,
-                    yes:             true,
-                    cwd:             temp.path().to_path_buf(),
+                    server_mode: Some(ServerMode::Local),
+                    server_url: None,
+                    yes: true,
+                    cwd: temp.path().to_path_buf(),
                 },
                 &output,
             ))
@@ -401,15 +401,15 @@ mod tests {
             let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
             block_on_init(run_init(
                 InitOptions {
-                    name:            Some("demo-app".into()),
-                    schema_mode:     Some(SchemaMode::Sql),
-                    languages:       Some(vec!["typescript".into()]),
-                    template:        None,
+                    name: Some("demo-app".into()),
+                    schema_mode: Some(SchemaMode::Sql),
+                    languages: Some(vec!["typescript".into()]),
+                    template: None,
                     package_manager: None,
-                    server_mode:     Some(ServerMode::Local),
-                    server_url:      None,
-                    yes:             true,
-                    cwd:             temp.path().to_path_buf(),
+                    server_mode: Some(ServerMode::Local),
+                    server_url: None,
+                    yes: true,
+                    cwd: temp.path().to_path_buf(),
                 },
                 &output,
             ))
@@ -436,15 +436,15 @@ mod tests {
 
             block_on_init(run_init(
                 InitOptions {
-                    name:            Some("demo-dart".into()),
-                    schema_mode:     Some(SchemaMode::Sql),
-                    languages:       Some(vec!["dart".into()]),
-                    template:        None,
+                    name: Some("demo-dart".into()),
+                    schema_mode: Some(SchemaMode::Sql),
+                    languages: Some(vec!["dart".into()]),
+                    template: None,
                     package_manager: None,
-                    server_mode:     Some(ServerMode::Local),
-                    server_url:      None,
-                    yes:             true,
-                    cwd:             temp.path().to_path_buf(),
+                    server_mode: Some(ServerMode::Local),
+                    server_url: None,
+                    yes: true,
+                    cwd: temp.path().to_path_buf(),
                 },
                 &output,
             ))
@@ -481,15 +481,15 @@ mod tests {
 
         block_on_init(run_init_with_installer(
             InitOptions {
-                name:            Some("demo-dart".into()),
-                schema_mode:     Some(SchemaMode::Sql),
-                languages:       Some(vec!["dart".into()]),
-                template:        None,
+                name: Some("demo-dart".into()),
+                schema_mode: Some(SchemaMode::Sql),
+                languages: Some(vec!["dart".into()]),
+                template: None,
                 package_manager: None,
-                server_mode:     Some(ServerMode::Local),
-                server_url:      None,
-                yes:             true,
-                cwd:             temp.path().to_path_buf(),
+                server_mode: Some(ServerMode::Local),
+                server_url: None,
+                yes: true,
+                cwd: temp.path().to_path_buf(),
             },
             &output,
             |_root, _command| {
@@ -509,15 +509,15 @@ mod tests {
             let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
             block_on_init(run_init(
                 InitOptions {
-                    name:            Some("dev-test1".into()),
-                    schema_mode:     Some(SchemaMode::Sql),
-                    languages:       Some(vec!["typescript".into()]),
-                    template:        None,
+                    name: Some("dev-test1".into()),
+                    schema_mode: Some(SchemaMode::Sql),
+                    languages: Some(vec!["typescript".into()]),
+                    template: None,
                     package_manager: None,
-                    server_mode:     Some(ServerMode::Local),
-                    server_url:      None,
-                    yes:             true,
-                    cwd:             temp.path().to_path_buf(),
+                    server_mode: Some(ServerMode::Local),
+                    server_url: None,
+                    yes: true,
+                    cwd: temp.path().to_path_buf(),
                 },
                 &output,
             ))
@@ -527,7 +527,7 @@ mod tests {
             assert_eq!(config.project.name, "dev-test1");
             assert_eq!(
                 config.connection.get("dev").expect("dev env").namespace,
-                kalamdb_commons::NamespaceId::new("dev_test1")
+                kalamdb_commons::SchemaId::new("dev_test1")
             );
 
             let env_contents = fs::read_to_string(temp.path().join(".env")).unwrap();
@@ -542,15 +542,15 @@ mod tests {
             let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
             block_on_init(run_init(
                 InitOptions {
-                    name:            Some("remote-app".into()),
-                    schema_mode:     Some(SchemaMode::Sql),
-                    languages:       Some(vec!["typescript".into()]),
-                    template:        None,
+                    name: Some("remote-app".into()),
+                    schema_mode: Some(SchemaMode::Sql),
+                    languages: Some(vec!["typescript".into()]),
+                    template: None,
                     package_manager: None,
-                    server_mode:     Some(ServerMode::Remote),
-                    server_url:      Some("http://localhost:2900".into()),
-                    yes:             true,
-                    cwd:             temp.path().to_path_buf(),
+                    server_mode: Some(ServerMode::Remote),
+                    server_url: Some("http://localhost:2900".into()),
+                    yes: true,
+                    cwd: temp.path().to_path_buf(),
                 },
                 &output,
             ))

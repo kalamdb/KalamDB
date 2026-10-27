@@ -1,12 +1,12 @@
 //! SET search_path session clause (canonicalizes with USE).
 
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 
 use crate::ddl::DdlResult;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetSearchPathStatement {
-    pub schemas: Vec<NamespaceId>,
+    pub schemas: Vec<SchemaId>,
 }
 
 impl SetSearchPathStatement {
@@ -15,7 +15,7 @@ impl SetSearchPathStatement {
         let upper = trimmed.to_ascii_uppercase();
         if upper == "RESET SEARCH_PATH" {
             return Ok(Self {
-                schemas: vec![NamespaceId::new("default")],
+                schemas: vec![SchemaId::new("default")],
             });
         }
 
@@ -34,7 +34,7 @@ impl SetSearchPathStatement {
         };
         if rest.to_ascii_uppercase() == "DEFAULT" {
             return Ok(Self {
-                schemas: vec![NamespaceId::new("default")],
+                schemas: vec![SchemaId::new("default")],
             });
         }
         let mut schemas = Vec::new();
@@ -44,7 +44,7 @@ impl SetSearchPathStatement {
                 continue;
             }
             let name = parse_search_path_entry(part)?;
-            schemas.push(NamespaceId::new(name));
+            schemas.push(SchemaId::new(name));
         }
         if schemas.is_empty() {
             return Err("SET search_path requires at least one schema".to_string());

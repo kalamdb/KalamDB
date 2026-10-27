@@ -15,8 +15,8 @@ use crate::{
 };
 
 pub struct LinkOptions {
-    pub env:       Option<String>,
-    pub url:       Option<String>,
+    pub env: Option<String>,
+    pub url: Option<String>,
     pub namespace: Option<String>,
 }
 
@@ -99,31 +99,31 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let root = temp.path();
         let config = KalamProjectConfig {
-            project:    ProjectSection {
-                name:            "demo".into(),
-                default_env:     "dev".into(),
+            project: ProjectSection {
+                name: "demo".into(),
+                default_env: "dev".into(),
                 package_manager: None,
-                kalam_dir:       "kalam".into(),
-                server_version:  None,
+                kalam_dir: "kalam".into(),
+                server_version: None,
             },
             connection: HashMap::new(),
-            schema:     SchemaSection {
-                mode:      SchemaMode::Sql,
-                path:      Some("schema.sql".into()),
-                watch:     true,
+            schema: SchemaSection {
+                mode: SchemaMode::Sql,
+                path: Some("schema.sql".into()),
+                watch: true,
                 languages: vec!["typescript".into()],
-                targets:   HashMap::from([(
+                targets: HashMap::from([(
                     "typescript".into(),
                     SchemaTarget {
-                        output:            "src/generated/kalam.ts".into(),
+                        output: "src/generated/kalam.ts".into(),
                         unqualified_names: false,
                     },
                 )]),
             },
             migrations: MigrationsSection::default(),
-            dev:        DevSection::default(),
-            logging:    LoggingSection::default(),
-            functions:  FunctionsSection::default(),
+            dev: DevSection::default(),
+            logging: LoggingSection::default(),
+            functions: FunctionsSection::default(),
         };
         config.save_to_path(&root.join(KALAM_TOML)).unwrap();
 
@@ -149,8 +149,8 @@ mod tests {
         link_environment(
             &ctx,
             &LinkOptions {
-                env:       Some("prod".into()),
-                url:       Some("https://db.example.com".into()),
+                env: Some("prod".into()),
+                url: Some("https://db.example.com".into()),
                 namespace: Some("app".into()),
             },
             &output,
@@ -160,7 +160,7 @@ mod tests {
         let loaded = KalamProjectConfig::load_from_path(&root.join(KALAM_TOML)).unwrap();
         let prod = loaded.connection.get("prod").expect("prod link");
         assert_eq!(prod.url, "https://db.example.com");
-        assert_eq!(prod.namespace, kalamdb_commons::NamespaceId::new("app"));
+        assert_eq!(prod.namespace, kalamdb_commons::SchemaId::new("app"));
         assert_eq!(loaded.project.default_env, "dev");
         assert_eq!(
             prod.purpose,

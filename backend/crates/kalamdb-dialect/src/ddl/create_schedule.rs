@@ -1,28 +1,26 @@
 //! KalamDB schedule extension, tokenized with PostgreSQL quoting and comments.
 use std::collections::HashSet;
 
-use kalamdb_commons::models::{NamespaceId, RoutineId, ScheduleId};
-use sqlparser::{
-    dialect::PostgreSqlDialect,
-    tokenizer::{Token, Tokenizer},
-};
+use kalamdb_commons::helpers::schedule_timing::next_schedule_run;
+use kalamdb_commons::models::{RoutineId, ScheduleId, SchemaId};
+use sqlparser::tokenizer::Token;
 
-use crate::ddl::DdlResult;
+use crate::{ddl::DdlResult, parser::KalamParser};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateScheduleStatement {
-    pub schedule_id:  ScheduleId,
-    pub namespace_id: NamespaceId,
-    pub name:         String,
-    pub routine_id:   RoutineId,
-    pub cron:         Option<String>,
-    pub interval_ms:  Option<i64>,
-    pub timezone:     String,
-    pub principal:    String,
+    pub schedule_id: ScheduleId,
+    pub namespace_id: SchemaId,
+    pub name: String,
+    pub routine_id: RoutineId,
+    pub cron: Option<String>,
+    pub interval_ms: Option<i64>,
+    pub timezone: String,
+    pub principal: String,
 }
 
 impl CreateScheduleStatement {
-    pub fn parse(sql: &str, namespace: &NamespaceId) -> DdlResult<Self> {
+    pub fn parse(sql: &str, namespace: &SchemaId) -> DdlResult<Self> {
         let mut p = ScheduleParser::new(sql)?;
         p.keyword("CREATE")?;
         p.keyword("SCHEDULE")?;
@@ -65,7 +63,7 @@ impl CreateScheduleStatement {
                     "principal" if !value.is_empty() => principal = value,
                     "overlap" | "misfire" if value == "skip" => {},
                     "overlap" | "misfire" => {
-                        return Err(format!("V1 supports only {key} = 'skip'"))
+                        return Err(format!("V1 supports only {key} = 'skip'"));
                     },
                     _ => return Err(format!("Unknown or invalid schedule option '{key}'")),
                 }
@@ -76,12 +74,7 @@ impl CreateScheduleStatement {
             p.expect(Token::RParen)?;
         }
         p.end()?;
-        kalamdb_system::providers::catalog::schedule_timing::next_schedule_run(
-            cron.as_deref(),
-            interval_ms,
-            &timezone,
-            0,
-        )?;
+        next_schedule_run(cron.as_deref(), interval_ms, &timezone, 0)?;
         Ok(Self {
             schedule_id,
             namespace_id,
@@ -100,8 +93,7 @@ pub(super) struct ScheduleParser {
 }
 impl ScheduleParser {
     pub fn new(sql: &str) -> DdlResult<Self> {
-        let tokens = Tokenizer::new(&PostgreSqlDialect {}, sql)
-            .tokenize()
+        let tokens = KalamParser::tokenize(sql)
             .map_err(|e| e.to_string())?
             .into_iter()
             .filter(|t| !matches!(t, Token::Whitespace(_)))
@@ -155,10 +147,10 @@ impl ScheduleParser {
             _ => Err("Expected PostgreSQL identifier".into()),
         }
     }
-    pub fn name(&mut self, namespace: &NamespaceId) -> DdlResult<(NamespaceId, String)> {
+    pub fn name(&mut self, namespace: &SchemaId) -> DdlResult<(SchemaId, String)> {
         let first = self.ident()?;
         if self.take(Token::Period) {
-            Ok((NamespaceId::new(first), self.ident()?))
+            Ok((SchemaId::new(first), self.ident()?))
         } else {
             Ok((namespace.clone(), first))
         }

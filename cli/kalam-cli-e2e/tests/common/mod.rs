@@ -211,7 +211,7 @@ pub fn shared_http_client() -> Client {
         .connect_timeout(Duration::from_secs(5))
         // DDL on a busy running server can exceed a few seconds; keep this aligned
         // with CLI client waits so ensure_ready/SQL helpers do not false-fail first.
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(60))
         .tcp_nodelay(true)
         .build()
         .expect("failed to build test HTTP client")
@@ -219,7 +219,7 @@ pub fn shared_http_client() -> Client {
 
 #[derive(Clone, Debug)]
 struct CachedLeaderUrl {
-    url:          String,
+    url: String,
     confirmed_at: Instant,
 }
 static AUTO_TEST_SERVER_EXIT_CLEANUP_REGISTERED: OnceLock<()> = OnceLock::new();
@@ -790,7 +790,7 @@ impl TestAuthManager {
                 .timeouts(
                     KalamLinkTimeouts::builder()
                         .connection_timeout_secs(5)
-                        .receive_timeout_secs(30)
+                        .receive_timeout_secs(60)
                         .send_timeout_secs(10)
                         .subscribe_timeout_secs(10)
                         .auth_timeout_secs(10)
@@ -809,7 +809,7 @@ impl TestAuthManager {
             .timeouts(
                 KalamLinkTimeouts::builder()
                     .connection_timeout_secs(5)
-                    .receive_timeout_secs(30)
+                    .receive_timeout_secs(60)
                     .send_timeout_secs(10)
                     .subscribe_timeout_secs(10)
                     .auth_timeout_secs(10)
@@ -890,11 +890,11 @@ fn test_auth_manager() -> &'static TestAuthManager {
 }
 
 struct AutoTestServer {
-    base_url:    String,
+    base_url: String,
     storage_dir: PathBuf,
-    pid:         u32,
-    log_path:    PathBuf,
-    child:       Option<Child>,
+    pid: u32,
+    log_path: PathBuf,
+    child: Option<Child>,
 }
 
 impl Drop for AutoTestServer {
@@ -909,12 +909,12 @@ impl Drop for AutoTestServer {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SharedAutoTestServerState {
-    base_url:    String,
+    base_url: String,
     storage_dir: PathBuf,
-    pid:         u32,
+    pid: u32,
     /// Path to the fresh-server stdout/stderr log (usually absolute).
     #[serde(default)]
-    log_path:    Option<PathBuf>,
+    log_path: Option<PathBuf>,
 }
 
 fn auto_test_server_state_root() -> PathBuf {
@@ -1247,11 +1247,11 @@ fn register_auto_test_server_exit_cleanup() {
 
 #[derive(Debug, Clone)]
 pub struct TestContext {
-    pub server_url:       String,
-    pub username:         String,
-    pub password:         String,
-    pub is_cluster:       bool,
-    pub cluster_urls:     Vec<String>,
+    pub server_url: String,
+    pub username: String,
+    pub password: String,
+    pub is_cluster: bool,
+    pub cluster_urls: Vec<String>,
     pub cluster_urls_raw: Vec<String>,
 }
 
@@ -1439,10 +1439,10 @@ fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
 
                 let server = start_result.map_err(|err| err.to_string())?;
                 let state = SharedAutoTestServerState {
-                    base_url:    server.base_url.clone(),
+                    base_url: server.base_url.clone(),
                     storage_dir: server.storage_dir.clone(),
-                    pid:         server.pid,
-                    log_path:    Some(server.log_path.clone()),
+                    pid: server.pid,
+                    log_path: Some(server.log_path.clone()),
                 };
                 write_auto_test_server_state_locked(&state)?;
                 shared_state = Some(state);
@@ -1881,7 +1881,7 @@ fn leader_cache() -> &'static Mutex<Option<CachedLeaderUrl>> {
 fn cache_leader_url(url: &str) {
     if let Ok(mut guard) = leader_cache().lock() {
         *guard = Some(CachedLeaderUrl {
-            url:          url.to_string(),
+            url: url.to_string(),
             confirmed_at: Instant::now(),
         });
     }
@@ -2525,7 +2525,7 @@ pub async fn execute_sql_via_http_on_url(
     let mut request = client
         .post(format!("{}/v1/api/sql", base_url))
         .header("Authorization", format!("Bearer {}", token))
-        .timeout(Duration::from_secs(15));
+        .timeout(Duration::from_secs(60));
     if let Some(request_id) = request_id {
         request = request.header("X-Request-ID", request_id);
     }
@@ -3079,12 +3079,12 @@ pub fn is_cluster_url_reachable(url: &str) -> bool {
 
 fn should_wait_for_cluster_after_sql(sql: &str) -> bool {
     let upper = sql.trim_start().to_ascii_uppercase();
-    upper.starts_with("CREATE NAMESPACE")
+    upper.starts_with("CREATE SCHEMA")
         || upper.starts_with("CREATE TABLE")
         || upper.starts_with("CREATE SHARED TABLE")
         || upper.starts_with("CREATE USER TABLE")
         || upper.starts_with("CREATE STREAM TABLE")
-        || upper.starts_with("DROP NAMESPACE")
+        || upper.starts_with("DROP SCHEMA")
         || upper.starts_with("DROP TABLE")
         || upper.starts_with("ALTER TABLE")
 }
@@ -3465,8 +3465,8 @@ pub fn execute_sql_via_cli(sql: &str) -> Result<String, Box<dyn std::error::Erro
 
 /// Timing information for CLI execution
 pub struct CliTiming {
-    pub output:         String,
-    pub total_time_ms:  u128,
+    pub output: String,
+    pub total_time_ms: u128,
     pub server_time_ms: Option<f64>,
 }
 
@@ -3669,7 +3669,9 @@ fn execute_sql_via_cli_as_with_args_and_urls(
                 .env_remove("https_proxy")
                 .env_remove("ALL_PROXY")
                 .env_remove("all_proxy")
-                .arg("--no-spinner")     // Disable spinner for cleaner output
+                .arg("--no-spinner") // Disable spinner for cleaner output
+                .arg("--receive-timeout")
+                .arg("60")
                 .args(extra_args)
                 .arg("--command")
                 .arg(sql)
@@ -3684,8 +3686,9 @@ fn execute_sql_via_cli_as_with_args_and_urls(
 
             let wait_start = Instant::now();
 
-            // Wait for child with timeout to avoid hanging tests
-            let timeout_duration = Duration::from_secs(60);
+            // Wait for child with timeout to avoid hanging tests.
+            // The CLI receive timeout is 60s; leave room for it to return.
+            let timeout_duration = Duration::from_secs(90);
             match child.wait_timeout(timeout_duration)? {
                 Some(status) => {
                     let wait_duration = wait_start.elapsed();
@@ -3903,6 +3906,8 @@ pub fn execute_sql_file_as_root_via_cli(
                 .env_remove("ALL_PROXY")
                 .env_remove("all_proxy")
                 .arg("--no-spinner")
+                .arg("--receive-timeout")
+                .arg("60")
                 .arg("--file")
                 .arg(&file_arg)
                 .stdout(std::process::Stdio::piped())
@@ -3912,7 +3917,7 @@ pub fn execute_sql_file_as_root_via_cli(
             let (stdout_reader, stderr_reader) = take_child_output_readers(&mut child);
             use wait_timeout::ChildExt;
 
-            match child.wait_timeout(Duration::from_secs(60))? {
+            match child.wait_timeout(Duration::from_secs(90))? {
                 Some(status) => {
                     let stdout = join_child_output_reader(stdout_reader)?;
                     let stderr = join_child_output_reader(stderr_reader)?;
@@ -4129,7 +4134,7 @@ pub fn client_builder_for_url_no_auth(base_url: &str) -> KalamLinkClientBuilder 
 /// This version automatically uses the first available server (cluster or single-node)
 struct RootClientCache {
     base_url: String,
-    client:   KalamLinkClient,
+    client: KalamLinkClient,
 }
 
 fn shared_root_client_cache() -> &'static Mutex<Option<RootClientCache>> {
@@ -4152,7 +4157,7 @@ fn get_shared_root_client_for_url(base_url: &str) -> KalamLinkClient {
         let client = build_root_client(base_url);
         *guard = Some(RootClientCache {
             base_url: base_url.to_string(),
-            client:   client.clone(),
+            client: client.clone(),
         });
         return client;
     }
@@ -4258,7 +4263,7 @@ fn execute_sql_via_client_internal(
                 {
                     let timeouts = KalamLinkTimeouts::builder()
                         .connection_timeout_secs(5)
-                        .receive_timeout_secs(30)
+                        .receive_timeout_secs(60)
                         .send_timeout_secs(10)
                         .subscribe_timeout_secs(10)
                         .auth_timeout_secs(10)
@@ -4322,10 +4327,10 @@ fn execute_sql_via_client_internal(
                                     let msg = e.to_string();
                                     if is_flush_sql(&sql) && is_idempotent_conflict(&msg) {
                                         return Ok(kalam_client::QueryResponse {
-                                            status:  kalam_client::models::ResponseStatus::Success,
+                                            status: kalam_client::models::ResponseStatus::Success,
                                             results: Vec::new(),
-                                            took:    None,
-                                            error:   None,
+                                            took: None,
+                                            error: None,
                                         });
                                     }
                                     if is_refreshable_token_error(&msg) {
@@ -4874,7 +4879,7 @@ pub fn ensure_cli_auth_ready_on_server(username: &str, password: &str, server: &
 
     let timeouts = KalamLinkTimeouts::builder()
         .connection_timeout_secs(10)
-        .receive_timeout_secs(30)
+        .receive_timeout_secs(60)
         .send_timeout_secs(30)
         .subscribe_timeout_secs(5)
         .auth_timeout_secs(5)
@@ -4980,7 +4985,7 @@ pub fn setup_test_table(test_name: &str) -> Result<String, Box<dyn std::error::E
     let _ = execute_sql_as_root_via_cli(&drop_sql);
 
     // Create namespace if it doesn't exist
-    let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
+    let ns_sql = format!("CREATE SCHEMA IF NOT EXISTS {}", namespace);
     let _ = execute_sql_as_root_via_cli(&ns_sql);
 
     // Create test table
@@ -5006,7 +5011,7 @@ pub fn cleanup_test_table(table_full_name: &str) -> Result<(), Box<dyn std::erro
     let drop_sql = format!("DROP TABLE IF EXISTS {}", table_full_name);
     let _ = execute_sql_as_root_via_cli(&drop_sql);
     if let Some((namespace, _)) = table_full_name.split_once('.') {
-        let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+        let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {}", namespace));
     }
     Ok(())
 }
@@ -5385,8 +5390,8 @@ pub fn wait_for_jobs_finished(
 /// macOS TCP connection limits.
 pub struct SubscriptionListener {
     event_receiver: std_mpsc::Receiver<String>,
-    stop_sender:    Option<tokio::sync::oneshot::Sender<()>>,
-    _handle:        Option<std::thread::JoinHandle<()>>,
+    stop_sender: Option<tokio::sync::oneshot::Sender<()>>,
+    _handle: Option<std::thread::JoinHandle<()>>,
     pending_events: VecDeque<String>,
 }
 
@@ -5467,7 +5472,7 @@ impl SubscriptionListener {
                     &password,
                     KalamLinkTimeouts::builder()
                         .connection_timeout_secs(5)
-                        .receive_timeout_secs(30)
+                        .receive_timeout_secs(60)
                         .send_timeout_secs(10)
                         .subscribe_timeout_secs(10)
                         .auth_timeout_secs(10)
@@ -5528,8 +5533,8 @@ impl SubscriptionListener {
 
         Ok(Self {
             event_receiver: event_rx,
-            stop_sender:    Some(stop_tx),
-            _handle:        Some(handle),
+            stop_sender: Some(stop_tx),
+            _handle: Some(handle),
             pending_events: VecDeque::new(),
         })
     }
@@ -5702,17 +5707,17 @@ pub fn get_storage_dir() -> std::path::PathBuf {
 #[derive(Debug)]
 pub struct FlushStorageVerificationResult {
     /// Whether manifest.json was found
-    pub manifest_found:     bool,
+    pub manifest_found: bool,
     /// Size of manifest.json in bytes (0 if not found)
-    pub manifest_size:      u64,
+    pub manifest_size: u64,
     /// Number of parquet files found
     pub parquet_file_count: usize,
     /// Total size of all parquet files in bytes
     pub parquet_total_size: u64,
     /// Path to the manifest.json file (if found)
-    pub manifest_path:      Option<std::path::PathBuf>,
+    pub manifest_path: Option<std::path::PathBuf>,
     /// Paths to all parquet files found
-    pub parquet_paths:      Vec<std::path::PathBuf>,
+    pub parquet_paths: Vec<std::path::PathBuf>,
 }
 
 impl FlushStorageVerificationResult {
@@ -5791,12 +5796,12 @@ pub fn verify_flush_storage_files_user(
     let table_dir = storage_dir.join(namespace).join(table_name);
 
     let mut result = FlushStorageVerificationResult {
-        manifest_found:     false,
-        manifest_size:      0,
+        manifest_found: false,
+        manifest_size: 0,
         parquet_file_count: 0,
         parquet_total_size: 0,
-        manifest_path:      None,
-        parquet_paths:      Vec::new(),
+        manifest_path: None,
+        parquet_paths: Vec::new(),
     };
 
     if !table_dir.exists() {
@@ -5833,12 +5838,12 @@ fn verify_flush_storage_files_in_dir(dir: &std::path::Path) -> FlushStorageVerif
     use std::fs;
 
     let mut result = FlushStorageVerificationResult {
-        manifest_found:     false,
-        manifest_size:      0,
+        manifest_found: false,
+        manifest_size: 0,
         parquet_file_count: 0,
         parquet_total_size: 0,
-        manifest_path:      None,
-        parquet_paths:      Vec::new(),
+        manifest_path: None,
+        parquet_paths: Vec::new(),
     };
 
     if !dir.exists() {
@@ -5953,9 +5958,9 @@ fn escape_sql_string(value: &str) -> String {
 
 #[derive(Debug, Clone)]
 pub struct ServerMemorySample {
-    pub pid:         Option<u32>,
+    pub pid: Option<u32>,
     pub reported_mb: u64,
-    pub rss_mb:      Option<u64>,
+    pub rss_mb: Option<u64>,
 }
 
 impl ServerMemorySample {

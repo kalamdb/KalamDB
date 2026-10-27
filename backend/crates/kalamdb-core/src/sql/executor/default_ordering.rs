@@ -17,7 +17,7 @@
 use std::sync::Arc;
 
 use datafusion::logical_expr::{LogicalPlan, Sort, SortExpr};
-use kalamdb_commons::{constants::SystemColumnNames, models::TableId, NamespaceId};
+use kalamdb_commons::{constants::SystemColumnNames, models::TableId, SchemaId};
 
 use crate::{app_context::AppContext, error::KalamDbError};
 
@@ -37,7 +37,7 @@ pub fn has_order_by(plan: &LogicalPlan) -> bool {
 
 fn wrap_with_sort(plan: LogicalPlan, sort_exprs: Vec<SortExpr>) -> LogicalPlan {
     LogicalPlan::Sort(Sort {
-        expr:  sort_exprs,
+        expr: sort_exprs,
         input: Arc::new(plan),
         fetch: None,
     })
@@ -83,8 +83,8 @@ fn inject_default_sort(
 ///
 /// Returns the first TableScan found in the plan tree.
 /// For simple SELECT queries, this is typically the main table.
-/// Bare table names resolve against `default_namespace` (session `USE NAMESPACE`).
-fn extract_table_reference(plan: &LogicalPlan, default_namespace: &NamespaceId) -> Option<TableId> {
+/// Bare table names resolve against `default_namespace` (session `SET SCHEMA`).
+fn extract_table_reference(plan: &LogicalPlan, default_namespace: &SchemaId) -> Option<TableId> {
     match plan {
         LogicalPlan::TableScan(scan) => {
             let table_id = match &scan.table_name {
@@ -114,7 +114,7 @@ fn extract_table_reference(plan: &LogicalPlan, default_namespace: &NamespaceId) 
 fn table_id_from_qualified_scan(
     schema: &str,
     table: &str,
-    default_namespace: &NamespaceId,
+    default_namespace: &SchemaId,
 ) -> TableId {
     if schema.eq_ignore_ascii_case(default_namespace.as_str()) {
         TableId::from_namespace(default_namespace.clone(), table)
@@ -211,7 +211,7 @@ fn sort_columns_in_schema(sort_exprs: &[SortExpr], plan: &LogicalPlan) -> bool {
 pub async fn apply_default_order_by(
     plan: LogicalPlan,
     app_context: &Arc<AppContext>,
-    default_namespace: &NamespaceId,
+    default_namespace: &SchemaId,
 ) -> Result<LogicalPlan, KalamDbError> {
     // Skip if already has ORDER BY
     if has_order_by(&plan) {
@@ -294,21 +294,21 @@ mod tests {
     fn empty_plan() -> LogicalPlan {
         LogicalPlan::EmptyRelation(EmptyRelation {
             produce_one_row: false,
-            schema:          Arc::new(DFSchema::empty()),
+            schema: Arc::new(DFSchema::empty()),
         })
     }
 
     #[test]
     fn has_order_by_detects_sort_under_limit() {
         let unordered = LogicalPlan::Limit(Limit {
-            skip:  None,
+            skip: None,
             fetch: Some(Box::new(lit(10_i64))),
             input: Arc::new(empty_plan()),
         });
         assert!(!has_order_by(&unordered));
 
         let ordered = LogicalPlan::Limit(Limit {
-            skip:  None,
+            skip: None,
             fetch: Some(Box::new(lit(10_i64))),
             input: Arc::new(wrap_with_sort(
                 empty_plan(),

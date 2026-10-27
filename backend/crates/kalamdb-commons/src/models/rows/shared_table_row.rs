@@ -13,7 +13,7 @@ pub struct SharedTableRow {
     /// Soft delete tombstone marker. Maps to SQL column `_deleted`.
     pub _deleted: bool,
     /// All user-defined columns including PK.
-    pub fields:   Row,
+    pub fields: Row,
 }
 
 #[cfg(feature = "serialization")]

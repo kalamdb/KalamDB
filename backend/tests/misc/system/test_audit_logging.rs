@@ -16,24 +16,24 @@ async fn create_system_user(server: &TestServer, username: &str) -> UserId {
     let now = chrono::Utc::now().timestamp_millis();
 
     let user = kalamdb_system::User {
-        user_id:               user_id.clone(),
-        password_hash:         "hashed".to_string(),
-        role:                  Role::System,
-        name:                  None,
-        email:                 Some(format!("{}@kalamdb.local", username)),
-        auth_type:             AuthType::Password,
-        auth_data:             None,
-        storage_mode:          StorageMode::Table,
-        storage_id:            None,
+        user_id: user_id.clone(),
+        password_hash: "hashed".to_string(),
+        role: Role::System,
+        name: None,
+        email: Some(format!("{}@kalamdb.local", username)),
+        auth_type: AuthType::Password,
+        auth_data: None,
+        storage_mode: StorageMode::Table,
+        storage_id: None,
         failed_login_attempts: 0,
-        locked_until:          None,
-        last_login_at:         None,
-        created_at:            now,
-        updated_at:            now,
-        last_seen:             None,
-        deleted_at:            None,
-        invite_expires_at:     None,
-        invited_by:            None,
+        locked_until: None,
+        last_login_at: None,
+        created_at: now,
+        updated_at: now,
+        last_seen: None,
+        deleted_at: None,
+        invite_expires_at: None,
+        invited_by: None,
     };
 
     // Ignore error if user already exists (shared DB in tests)
@@ -152,14 +152,12 @@ async fn test_audit_log_for_table_access_change() {
     let server = TestServer::new_shared().await;
     let admin_id = create_system_user(&server, "audit_admin_2").await;
 
-    let resp = server
-        .execute_sql_as_user("CREATE NAMESPACE analytics", admin_id.as_str())
-        .await;
+    let resp = server.execute_sql_as_user("CREATE SCHEMA analytics", admin_id.as_str()).await;
     // Ignore if namespace already exists
     if resp.status != ResponseStatus::Success
         && !resp.error.as_ref().unwrap().message.contains("already exists")
     {
-        panic!("CREATE NAMESPACE failed: {:?}", resp.error);
+        panic!("CREATE SCHEMA failed: {:?}", resp.error);
     }
 
     // Shared tables are FORCE RLS; grant visibility with CREATE POLICY.

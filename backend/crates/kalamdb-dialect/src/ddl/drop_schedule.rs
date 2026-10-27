@@ -1,13 +1,13 @@
-use kalamdb_commons::models::{NamespaceId, ScheduleId};
+use kalamdb_commons::models::{ScheduleId, SchemaId};
 
 use crate::ddl::{create_schedule::ScheduleParser, DdlResult};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropScheduleStatement {
     pub schedule_id: ScheduleId,
-    pub if_exists:   bool,
+    pub if_exists: bool,
 }
 impl DropScheduleStatement {
-    pub fn parse(sql: &str, namespace: &NamespaceId) -> DdlResult<Self> {
+    pub fn parse(sql: &str, namespace: &SchemaId) -> DdlResult<Self> {
         let mut p = ScheduleParser::new(sql)?;
         p.keyword("DROP")?;
         p.keyword("SCHEDULE")?;

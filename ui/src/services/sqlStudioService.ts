@@ -433,9 +433,16 @@ function normalizeSchemaColumns(
         return null;
       }
 
+      const logicalType =
+        record.logical_type && typeof record.logical_type === "object"
+          ? (record.logical_type as Record<string, unknown>).Builtin ??
+            record.logical_type
+          : record.logical_type;
+
       return {
         name,
-        dataType: normalizeTextValue(record.data_type) ?? "unknown",
+        dataType:
+          normalizeTextValue(record.data_type ?? logicalType) ?? "unknown",
         isNullable: normalizeNullable(record.is_nullable ?? record.nullable),
         isPrimaryKey: Boolean(record.is_primary_key ?? record.primary_key),
         ordinal:

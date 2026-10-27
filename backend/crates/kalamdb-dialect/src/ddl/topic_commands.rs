@@ -29,11 +29,11 @@ use crate::{
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateTopicStatement {
-    pub topic_name:          String,
-    pub if_not_exists:       bool,
-    pub partitions:          Option<u32>,
+    pub topic_name: String,
+    pub if_not_exists: bool,
+    pub partitions: Option<u32>,
     /// Outer `None` means omitted; inner `None` means explicit SQL NULL.
-    pub retention_seconds:   Option<Option<i64>>,
+    pub retention_seconds: Option<Option<i64>>,
     /// Outer `None` means omitted; inner `None` means explicit SQL NULL.
     pub retention_max_bytes: Option<Option<i64>>,
 }
@@ -47,7 +47,7 @@ pub struct CreateTopicStatement {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DropTopicStatement {
     pub topic_name: String,
-    pub if_exists:  bool,
+    pub if_exists: bool,
 }
 
 /// CLEAR TOPIC statement
@@ -73,12 +73,12 @@ pub struct ClearTopicStatement {
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct AddTopicSourceStatement {
-    pub topic_name:           String,
-    pub table_id:             TableId,
+    pub topic_name: String,
+    pub table_id: TableId,
     pub table_name_qualified: bool,
-    pub operation:            TopicOp,
-    pub filter_expr:          Option<String>,
-    pub payload_mode:         PayloadMode,
+    pub operation: TopicOp,
+    pub filter_expr: Option<String>,
+    pub payload_mode: PayloadMode,
 }
 
 /// ALTER TOPIC SET RETENTION statement
@@ -90,9 +90,9 @@ pub struct AddTopicSourceStatement {
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct AlterTopicRetentionStatement {
-    pub topic_name:          String,
+    pub topic_name: String,
     /// Outer `None` means omitted; inner `None` means explicit SQL NULL.
-    pub retention_seconds:   Option<Option<i64>>,
+    pub retention_seconds: Option<Option<i64>>,
     /// Outer `None` means omitted; inner `None` means explicit SQL NULL.
     pub retention_max_bytes: Option<Option<i64>>,
 }
@@ -120,9 +120,9 @@ pub struct ClearTopicRetentionStatement {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConsumeStatement {
     pub topic_name: String,
-    pub group_id:   Option<String>,
-    pub position:   ConsumePosition,
-    pub limit:      Option<u64>,
+    pub group_id: Option<String>,
+    pub position: ConsumePosition,
+    pub limit: Option<u64>,
 }
 
 /// Position to start consuming from
@@ -147,10 +147,10 @@ pub enum ConsumePosition {
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct AckStatement {
-    pub topic_name:   String,
-    pub group_id:     String,
+    pub topic_name: String,
+    pub group_id: String,
     pub partition_id: u32,
-    pub upto_offset:  u64,
+    pub upto_offset: u64,
 }
 
 /// RESET CONSUMER GROUP statement for moving a group cursor.
@@ -164,10 +164,10 @@ pub struct AckStatement {
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResetConsumerGroupStatement {
-    pub topic_name:   String,
-    pub group_id:     String,
+    pub topic_name: String,
+    pub group_id: String,
     pub partition_id: u32,
-    pub next_offset:  u64,
+    pub next_offset: u64,
 }
 
 // Implement DdlAst trait for all topic statement types
@@ -529,10 +529,8 @@ fn parse_table_id(table_str: &str) -> Result<(TableId, bool), String> {
         Some(namespace) => {
             TableId::try_from_strings(&namespace, &table_name).map(|table_id| (table_id, true))
         },
-        None => {
-            TableId::try_from_namespace(kalamdb_commons::NamespaceId::default_ns(), &table_name)
-                .map(|table_id| (table_id, false))
-        },
+        None => TableId::try_from_namespace(kalamdb_commons::SchemaId::default_ns(), &table_name)
+            .map(|table_id| (table_id, false)),
     }
 }
 

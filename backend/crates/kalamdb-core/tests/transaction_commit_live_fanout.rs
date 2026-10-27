@@ -1,5 +1,3 @@
-mod support;
-
 use std::{sync::Arc, time::Duration};
 
 use kalamdb_commons::{
@@ -12,7 +10,7 @@ use kalamdb_live::models::{
     LiveRoute, NotificationSender, SubscriptionFlowControl, SubscriptionHandle,
     SubscriptionRuntimeMetadata,
 };
-use support::{create_cluster_app_context, create_shared_table, row, unique_namespace};
+use crate::support::{create_cluster_app_context, create_shared_table, row, unique_namespace};
 use tokio::sync::mpsc;
 
 fn make_shared_handle(
@@ -21,13 +19,13 @@ fn make_shared_handle(
     flow_control: Arc<SubscriptionFlowControl>,
 ) -> SubscriptionHandle {
     SubscriptionHandle {
-        subscription_id:  Arc::from(subscription_id),
-        filter_expr:      None,
-        authorization:    None,
-        projections:      None,
-        notification_tx:  tx,
-        event_tx:         mpsc::channel(1).0,
-        flow_control:     Some(flow_control),
+        subscription_id: Arc::from(subscription_id),
+        filter_expr: None,
+        authorization: None,
+        projections: None,
+        notification_tx: tx,
+        event_tx: mpsc::channel(1).0,
+        flow_control: Some(flow_control),
         runtime_metadata: Arc::new(SubscriptionRuntimeMetadata::new(
             "SELECT * FROM shared.items",
             None,

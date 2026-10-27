@@ -126,6 +126,9 @@ impl VirtualView for ProceduresView {
         let mut sources = StringBuilder::new();
 
         for routine in routines {
+            if routine.language.as_deref() == Some("INTERNAL") {
+                continue;
+            }
             let procedure_id = routine.routine_id.as_str();
             let module_ref = current_modules.lookup(procedure_id);
             let implementation = if module_ref.is_some() {

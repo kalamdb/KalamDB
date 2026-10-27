@@ -19,7 +19,7 @@ use crate::common::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RecordedSqlRequest {
-    pub(crate) sql:          String,
+    pub(crate) sql: String,
     pub(crate) namespace_id: Option<String>,
 }
 
@@ -189,7 +189,7 @@ pub(crate) fn start_recording_sql_server(
                 let payload: serde_json::Value =
                     serde_json::from_slice(body).expect("parse sql request body");
                 requests_handle.lock().expect("lock requests").push(RecordedSqlRequest {
-                    sql:          payload
+                    sql: payload
                         .get("sql")
                         .and_then(|value| value.as_str())
                         .unwrap_or_default()
@@ -225,12 +225,12 @@ pub(crate) fn start_migration_tracking_server(
     #[derive(Clone, Default)]
     struct FakeMig {
         migration_key: String,
-        migration_id:  String,
-        namespace:     String,
-        name:          String,
-        checksum:      String,
-        status:        String,
-        source:        String,
+        migration_id: String,
+        namespace: String,
+        name: String,
+        checksum: String,
+        status: String,
+        source: String,
     }
 
     // Extract the nth single-quoted SQL string value.  Handles '' escapes.
@@ -363,7 +363,7 @@ pub(crate) fn start_migration_tracking_server(
                 let ns =
                     payload.get("namespace_id").and_then(|v| v.as_str()).map(ToString::to_string);
                 requests_clone.lock().expect("lock requests").push(RecordedSqlRequest {
-                    sql:          sql.clone(),
+                    sql: sql.clone(),
                     namespace_id: ns,
                 });
                 let sql_up = sql.to_uppercase();
@@ -373,7 +373,7 @@ pub(crate) fn start_migration_tracking_server(
                     let records: Vec<FakeMig> = migs.values().cloned().collect();
                     let body = build_migrations_response(&records);
                     make_response(&body)
-                } else if sql_up.starts_with("DROP NAMESPACE") {
+                } else if sql_up.starts_with("DROP SCHEMA") {
                     migrations.lock().expect("lock migs").clear();
                     make_response(r#"{"status":"success","results":[]}"#)
                 } else if sql_up.starts_with("DELETE FROM SYSTEM.MIGRATIONS") {
@@ -1863,7 +1863,7 @@ fn test_project_workflow_dev_prompt_reset_restarts_schema_from_clean_namespace()
         );
 
         assert!(
-            wait_for_recorded_sql_contains(&requests, "DROP NAMESPACE", Duration::from_secs(8)),
+            wait_for_recorded_sql_contains(&requests, "DROP SCHEMA", Duration::from_secs(8)),
             "reset should drop the namespace before rebuilding\nrequests: {:?}",
             requests.lock().expect("lock requests").clone()
         );

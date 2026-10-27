@@ -130,8 +130,8 @@ fn aggregate_manifest_statistics(
 
 fn empty_statistics(schema: &SchemaRef) -> Statistics {
     Statistics {
-        num_rows:          Precision::Exact(0),
-        total_byte_size:   Precision::Exact(0),
+        num_rows: Precision::Exact(0),
+        total_byte_size: Precision::Exact(0),
         column_statistics: Statistics::unknown_column(schema),
     }
 }
@@ -157,8 +157,8 @@ fn column_id_index_map(table_def: &TableDefinition, schema: &SchemaRef) -> HashM
 
 #[derive(Default)]
 struct MergedColumnStats {
-    min_value:  Option<StoredScalarValue>,
-    max_value:  Option<StoredScalarValue>,
+    min_value: Option<StoredScalarValue>,
+    max_value: Option<StoredScalarValue>,
     null_count: u64,
 }
 
@@ -175,16 +175,16 @@ impl MergedColumnStats {
 
     fn to_column_statistics(&self) -> ColumnStatistics {
         ColumnStatistics {
-            null_count:     if self.null_count > 0 {
+            null_count: if self.null_count > 0 {
                 Precision::Inexact(self.null_count as usize)
             } else {
                 Precision::Exact(0)
             },
-            min_value:      stored_scalar_precision(self.min_value.clone()),
-            max_value:      stored_scalar_precision(self.max_value.clone()),
-            sum_value:      Precision::Absent,
+            min_value: stored_scalar_precision(self.min_value.clone()),
+            max_value: stored_scalar_precision(self.max_value.clone()),
+            sum_value: Precision::Absent,
             distinct_count: Precision::Absent,
-            byte_size:      Precision::Absent,
+            byte_size: Precision::Absent,
         }
     }
 }
@@ -201,14 +201,14 @@ mod tests {
     use kalamdb_commons::{
         datatypes::KalamDataType,
         models::schemas::{ColumnDefinition, TableDefinition, TableOptions},
-        NamespaceId, TableName,
+        SchemaId, TableName,
     };
 
     use super::*;
 
     fn test_table_def() -> TableDefinition {
         TableDefinition::new(
-            NamespaceId::new("app"),
+            SchemaId::new("app"),
             TableName::new("items"),
             TableType::Shared,
             vec![

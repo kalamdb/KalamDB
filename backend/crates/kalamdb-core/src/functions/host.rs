@@ -6,7 +6,7 @@ use std::{
 };
 
 use datafusion::scalar::ScalarValue;
-use kalamdb_commons::{models::RoutineId, NamespaceId, Role, RoutineSecurityMode, UserId};
+use kalamdb_commons::{models::RoutineId, Role, RoutineSecurityMode, SchemaId, UserId};
 use kalamdb_functions::{
     emit_function_log, format_host_log_message, FunctionCallOrigin, FunctionExecutionRoot,
     FunctionHost, FunctionsError, HostFuture, HostLogRecord, InvocationMetadata, InvocationScope,
@@ -56,19 +56,19 @@ pub(super) type PrincipalContextCache = SmallVec<[(PrincipalKey, ExecutionContex
 
 #[derive(Clone)]
 pub(super) struct CoreFunctionHost {
-    pub app:      Arc<AppContext>,
-    pub handle:   Handle,
-    pub session:  Arc<HostSession>,
-    pub origin:   FunctionCallOrigin,
-    pub scope:    InvocationScope,
+    pub app: Arc<AppContext>,
+    pub handle: Handle,
+    pub session: Arc<HostSession>,
+    pub origin: FunctionCallOrigin,
+    pub scope: InvocationScope,
     pub sql_gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 #[derive(Clone)]
 pub(super) struct HostSession {
-    pub exec_ctx:      ExecutionContext,
-    pub stack:         ProcedureFrameStack,
-    pub root:          FunctionExecutionRoot,
+    pub exec_ctx: ExecutionContext,
+    pub stack: ProcedureFrameStack,
+    pub root: FunctionExecutionRoot,
     pub principal_ctx: Arc<Mutex<PrincipalContextCache>>,
 }
 
@@ -79,8 +79,8 @@ impl CoreFunctionHost {
             return session.exec_ctx.clone();
         };
         let key = PrincipalKey {
-            user:      frame.principal_user.clone(),
-            role:      frame.principal_role,
+            user: frame.principal_user.clone(),
+            role: frame.principal_role,
             namespace: if frame.security == RoutineSecurityMode::Definer {
                 frame.namespace_id.clone()
             } else {
@@ -191,9 +191,12 @@ impl CoreFunctionHost {
             ctx
         };
         let executor = self.app.sql_executor();
-        let metadata = executor
-            .prepare_statement_metadata(&sql, &ctx)
-            .map_err(|error| FunctionsError::Invalid(error.user_message().to_string()))?;
+        let metadata = {
+            let _span = kalamdb_observability::kdb_info_span_entered!("func.host.prepare_meta");
+            executor
+                .prepare_statement_metadata(&sql, &ctx)
+                .map_err(|error| FunctionsError::Invalid(error.user_message().to_string()))?
+        };
         // Procedure transactions are owned by their root invocation.
         if metadata.classified_statement.as_ref().is_some_and(|statement| {
             matches!(
@@ -207,22 +210,60 @@ impl CoreFunctionHost {
                 "transaction control is not allowed inside a procedure".into(),
             ));
         }
+        if let Some(frame) = self.session.stack.last() {
+            if matches!(
+                frame.volatility,
+                kalamdb_commons::models::RoutineVolatility::Immutable
+                    | kalamdb_commons::models::RoutineVolatility::Stable
+            ) && metadata.classified_statement.as_ref().is_some_and(|statement| {
+                !matches!(
+                    statement.kind(),
+                    kalamdb_sql::SqlStatementKind::Select
+                        | kalamdb_sql::SqlStatementKind::DataFusionMetaCommand
+                        | kalamdb_sql::SqlStatementKind::SetSearchPath(_)
+                )
+            }) {
+                return Err(FunctionsError::Invalid(format!(
+                    "{} routine {} cannot execute read-write or DDL statements",
+                    frame.volatility.as_str(),
+                    frame.routine_id
+                )));
+            }
+        }
         let result = executor.execute_with_metadata(
             &metadata,
             &ctx,
             params.into_iter().map(|v| v.value).collect(),
         );
-        let result = tokio::select! {
-            biased;
-            _ = self.scope.cancel.cancelled() => return Err(FunctionsError::Cancelled),
-            _ = tokio::time::sleep_until(self.scope.deadline.into()) => return Err(FunctionsError::Timeout),
-            result = result => result.map_err(map_core)?,
-        };
+        let result = kalamdb_observability::kdb_await_in_info_span!(
+            async {
+                tokio::select! {
+                    biased;
+                    _ = self.scope.cancel.cancelled() => Err(FunctionsError::Cancelled),
+                    _ = tokio::time::sleep_until(self.scope.deadline.into()) => Err(FunctionsError::Timeout),
+                    result = result => result.map_err(map_core),
+                }
+            },
+            "func.host.execute_sql"
+        )?;
+        let _span = kalamdb_observability::kdb_info_span_entered!("func.host.convert_result");
         if rows {
             super::convert::execution_result_to_rows(result).map_err(map_core)
         } else {
             super::convert::execution_result_to_routine(result).map_err(map_core)
         }
+    }
+
+    async fn run_sql_view(
+        &self,
+        sql: String,
+        params: Vec<RoutineValue>,
+    ) -> kalamdb_functions::Result<RoutineValue> {
+        let mut res = self.run_sql(sql, params, true).await?;
+        if let Some(batches) = res.row_batches.take() {
+            res.read_view_batches = Some(batches);
+        }
+        Ok(res)
     }
 }
 
@@ -236,24 +277,47 @@ impl FunctionHost for CoreFunctionHost {
     fn query(&self, sql: String, params: Vec<RoutineValue>) -> HostFuture<'_, RoutineValue> {
         let host = self.clone();
         let handle = host.handle.clone();
+        #[cfg(feature = "traceability")]
+        let span = tracing::Span::current();
         Box::pin(async move {
-            AbortOnDropHandle::new(
-                handle.spawn(async move { host.run_sql(sql, params, true).await }),
-            )
-            .await
-            .map_err(map_join)?
+            let fut = async move { host.run_sql(sql, params, true).await };
+            #[cfg(feature = "traceability")]
+            let fut = tracing::Instrument::instrument(fut, span);
+            AbortOnDropHandle::new(handle.spawn(fut)).await.map_err(map_join)?
         })
+    }
+
+    fn query_view(&self, sql: String, params: Vec<RoutineValue>) -> HostFuture<'_, RoutineValue> {
+        let host = self.clone();
+        let handle = host.handle.clone();
+        #[cfg(feature = "traceability")]
+        let span = tracing::Span::current();
+        Box::pin(async move {
+            let fut = async move { host.run_sql_view(sql, params).await };
+            #[cfg(feature = "traceability")]
+            let fut = tracing::Instrument::instrument(fut, span);
+            AbortOnDropHandle::new(handle.spawn(fut)).await.map_err(map_join)?
+        })
+    }
+
+    fn query_batches(
+        &self,
+        sql: String,
+        params: Vec<RoutineValue>,
+    ) -> HostFuture<'_, RoutineValue> {
+        self.query_view(sql, params)
     }
 
     fn execute(&self, sql: String, params: Vec<RoutineValue>) -> HostFuture<'_, RoutineValue> {
         let host = self.clone();
         let handle = host.handle.clone();
+        #[cfg(feature = "traceability")]
+        let span = tracing::Span::current();
         Box::pin(async move {
-            AbortOnDropHandle::new(
-                handle.spawn(async move { host.run_sql(sql, params, false).await }),
-            )
-            .await
-            .map_err(map_join)?
+            let fut = async move { host.run_sql(sql, params, false).await };
+            #[cfg(feature = "traceability")]
+            let fut = tracing::Instrument::instrument(fut, span);
+            AbortOnDropHandle::new(handle.spawn(fut)).await.map_err(map_join)?
         })
     }
 
@@ -264,15 +328,18 @@ impl FunctionHost for CoreFunctionHost {
     ) -> HostFuture<'_, RoutineValue> {
         let host = self.clone();
         let handle = host.handle.clone();
+        #[cfg(feature = "traceability")]
+        let span = tracing::Span::current();
         Box::pin(async move {
             // Dropping a bare `JoinHandle` detaches the task; the root rolls back its
             // transaction as soon as `drive` drops pending host work, so the task must abort.
-            AbortOnDropHandle::new(handle.spawn(async move {
+            let fut = async move {
                 let id = resolve_routine_id(&procedure, &host.session.exec_ctx.default_namespace());
                 executor::invoke_nested(&host, id, &args).await.map_err(map_core)
-            }))
-            .await
-            .map_err(map_join)?
+            };
+            #[cfg(feature = "traceability")]
+            let fut = tracing::Instrument::instrument(fut, span);
+            AbortOnDropHandle::new(handle.spawn(fut)).await.map_err(map_join)?
         })
     }
 
@@ -294,7 +361,11 @@ impl FunctionHost for CoreFunctionHost {
         let mut child = self.clone();
         child.scope = self.scope.child(max_depth)?;
         let id = resolve_routine_id(&procedure, &child.session.exec_ctx.default_namespace());
-        let (invocation, host) = executor::prepare_call(&child, id, &args).map_err(map_core)?;
+        let Some((invocation, host)) =
+            executor::prepare_nested_v8_call(&child, id, &args).map_err(map_core)?
+        else {
+            return Ok(None);
+        };
         if invocation.revision.revision_id != caller.revision_id {
             return Ok(None);
         }
@@ -304,15 +375,15 @@ impl FunctionHost for CoreFunctionHost {
     fn metadata(&self) -> Option<InvocationMetadata> {
         let ctx = self.current_exec_ctx();
         Some(InvocationMetadata {
-            actor:      kalamdb_functions::ActorMeta {
-                id:   self.session.exec_ctx.user_id().clone(),
+            actor: kalamdb_functions::ActorMeta {
+                id: self.session.exec_ctx.user_id().clone(),
                 role: self.session.exec_ctx.user_role(),
             },
-            principal:  kalamdb_functions::ActorMeta {
-                id:   ctx.user_id().clone(),
+            principal: kalamdb_functions::ActorMeta {
+                id: ctx.user_id().clone(),
                 role: ctx.user_role(),
             },
-            namespace:  ctx.default_namespace(),
+            namespace: ctx.default_namespace(),
             request_id: ctx.request_id().unwrap_or_default().to_string(),
         })
     }
@@ -471,8 +542,8 @@ impl FunctionHost for CoreFunctionHost {
                 run_id,
                 scheduled_at,
             } => kalamdb_functions::InvocationSource::Schedule {
-                schedule_id:  schedule_id.clone(),
-                run_id:       run_id.clone(),
+                schedule_id: schedule_id.clone(),
+                run_id: run_id.clone(),
                 scheduled_at: *scheduled_at,
             },
             FunctionCallOrigin::Topic {
@@ -483,10 +554,10 @@ impl FunctionHost for CoreFunctionHost {
                 attempt,
             } => kalamdb_functions::InvocationSource::Topic {
                 topic_name: topic_name.clone(),
-                event_id:   event_id.clone(),
-                partition:  *partition,
-                offset:     *offset,
-                attempt:    *attempt,
+                event_id: event_id.clone(),
+                partition: *partition,
+                offset: *offset,
+                attempt: *attempt,
             },
             FunctionCallOrigin::Sql | FunctionCallOrigin::Http { .. } => {
                 kalamdb_functions::InvocationSource::Call
@@ -566,10 +637,10 @@ mod tests {
     }
 }
 
-pub(super) fn resolve_routine_id(name: &str, default_ns: &NamespaceId) -> RoutineId {
+pub(super) fn resolve_routine_id(name: &str, default_ns: &SchemaId) -> RoutineId {
     let trimmed = name.trim();
     if let Some((schema, rest)) = trimmed.split_once('.') {
-        RoutineId::from_parts(Some(&NamespaceId::new(schema)), rest)
+        RoutineId::from_parts(Some(&SchemaId::new(schema)), rest)
     } else {
         RoutineId::from_parts(Some(default_ns), trimmed)
     }

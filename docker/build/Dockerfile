@@ -12,7 +12,7 @@
 # ============================================================================
 # Stage 1: Base builder with dependencies
 # ============================================================================
-FROM rust:1.92-bookworm AS base
+FROM rust:1.99.1-bookworm AS base
 
 # Install build dependencies including Node.js for UI build
 RUN apt-get update && \
@@ -41,7 +41,7 @@ RUN set -eux; \
         wasm-pack --version
 
 ENV PATH=/usr/local/cargo/bin:$PATH
-ENV RUSTUP_TOOLCHAIN=1.92.0
+ENV RUSTUP_TOOLCHAIN=1.99.1
 ENV CARGO_ENCODED_RUSTFLAGS=
 
 # Install wasm32 target for Rust

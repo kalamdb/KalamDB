@@ -38,16 +38,16 @@ use crate::{
 
 #[derive(Clone)]
 pub(crate) struct SharedTableAuthorization {
-    cache:            Arc<AuthorizationCache>,
-    data_generation:  Arc<AtomicU64>,
+    cache: Arc<AuthorizationCache>,
+    data_generation: Arc<AtomicU64>,
     active_mutations: Arc<AtomicU64>,
 }
 
 impl SharedTableAuthorization {
     pub fn new() -> Self {
         Self {
-            cache:            Arc::new(AuthorizationCache::default()),
-            data_generation:  Arc::new(AtomicU64::new(0)),
+            cache: Arc::new(AuthorizationCache::default()),
+            data_generation: Arc::new(AtomicU64::new(0)),
             active_mutations: Arc::new(AtomicU64::new(0)),
         }
     }

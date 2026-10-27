@@ -119,28 +119,28 @@ impl IndexDefinition<SharedVectorHotOpId, VectorHotOp> for SharedVectorPkIndex {
 mod tests {
     use kalamdb_commons::{
         ids::SeqId,
-        models::{NamespaceId, TableName},
+        models::{SchemaId, TableName},
     };
 
     use super::*;
 
     #[test]
     fn test_user_vector_pk_index_partition_name() {
-        let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("tbl1"));
+        let table_id = TableId::new(SchemaId::new("ns1"), TableName::new("tbl1"));
         let idx = UserVectorPkIndex::new(&table_id, "embedding");
         assert_eq!(idx.partition().name(), "vix_ns1:tbl1_embedding_user_pk_idx");
     }
 
     #[test]
     fn test_shared_vector_pk_index_partition_name() {
-        let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("tbl1"));
+        let table_id = TableId::new(SchemaId::new("ns1"), TableName::new("tbl1"));
         let idx = SharedVectorPkIndex::new(&table_id, "embedding");
         assert_eq!(idx.partition().name(), "vix_ns1:tbl1_embedding_shared_pk_idx");
     }
 
     #[test]
     fn test_user_index_key_prefix() {
-        let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("tbl1"));
+        let table_id = TableId::new(SchemaId::new("ns1"), TableName::new("tbl1"));
         let idx = UserVectorPkIndex::new(&table_id, "embedding");
         let key = UserVectorHotOpId::new(UserId::new("u1"), SeqId::new(10), "pk-1");
         let encoded = idx

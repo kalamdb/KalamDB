@@ -18,7 +18,7 @@ const PG_PORT: u16 = 28816;
 const TEST_DB: &str = "kalamdb_test";
 
 struct OwnedPgClient {
-    client:          tokio_postgres::Client,
+    client: tokio_postgres::Client,
     connection_task: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -75,7 +75,7 @@ enum TerminalAction {
 }
 
 struct ProvisionedProxy {
-    proxy:           TcpDisconnectProxy,
+    proxy: TcpDisconnectProxy,
     leader_base_url: String,
 }
 

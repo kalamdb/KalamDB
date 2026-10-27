@@ -32,6 +32,10 @@ impl DeferredMvccScanProvider<UserTableRowId, UserTableRow> for UserTableProvide
         !scan_context.allow_all_users && scan_context.snapshot_commit_seq.is_none()
     }
 
+    fn can_try_pk_fast_path(&self, scan_context: &Self::ScanContext) -> bool {
+        !scan_context.allow_all_users
+    }
+
     fn allow_count_only_fast_path(&self, scan_context: &Self::ScanContext) -> bool {
         !scan_context.allow_all_users
     }
@@ -64,6 +68,86 @@ impl DeferredMvccScanProvider<UserTableRowId, UserTableRow> for UserTableProvide
     ) -> Result<usize, KalamDbError> {
         self.count_resolved_rows_async(&scan_context.user_id, scan_context.snapshot_commit_seq)
             .await
+    }
+
+    fn requires_row_authorization(&self, _scan_context: &Self::ScanContext) -> bool {
+        false
+    }
+
+    async fn scan_kvs_with_context_projected(
+        &self,
+        scan_context: &Self::ScanContext,
+        filter: Option<&Expr>,
+        since_seq: Option<VersionId>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+        cold_columns: Option<&[String]>,
+        storage_ordinals: Option<&[usize]>,
+    ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
+        let user_id = &scan_context.user_id;
+        if scan_context.allow_all_users {
+            self.scan_all_users_with_version_resolution_async(
+                filter,
+                limit,
+                keep_deleted,
+                scan_context.snapshot_commit_seq,
+                Some(user_id),
+                false,
+            )
+            .await
+            .map(|result| result.rows)
+        } else {
+            self.scan_with_version_resolution_to_kvs_result_async(
+                user_id,
+                filter,
+                since_seq,
+                limit,
+                keep_deleted,
+                cold_columns,
+                scan_context.snapshot_commit_seq,
+                false,
+                storage_ordinals.map(|ordinals| ordinals.to_vec()),
+            )
+            .await
+            .map(|result| result.rows)
+        }
+    }
+
+    async fn scan_kvs_with_diagnostics_projected(
+        &self,
+        scan_context: &Self::ScanContext,
+        filter: Option<&Expr>,
+        since_seq: Option<VersionId>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+        cold_columns: Option<&[String]>,
+        storage_ordinals: Option<&[usize]>,
+    ) -> Result<base::MvccScanResult<UserTableRowId, UserTableRow>, KalamDbError> {
+        let user_id = &scan_context.user_id;
+        if scan_context.allow_all_users {
+            self.scan_all_users_with_version_resolution_async(
+                filter,
+                limit,
+                keep_deleted,
+                scan_context.snapshot_commit_seq,
+                Some(user_id),
+                true,
+            )
+            .await
+        } else {
+            self.scan_with_version_resolution_to_kvs_result_async(
+                user_id,
+                filter,
+                since_seq,
+                limit,
+                keep_deleted,
+                cold_columns,
+                scan_context.snapshot_commit_seq,
+                true,
+                storage_ordinals.map(|ordinals| ordinals.to_vec()),
+            )
+            .await
+        }
     }
 
     async fn scan_kvs_with_context(
@@ -253,8 +337,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 std::slice::from_ref(&row_data),
             )?;
 
-            // Validate PRIMARY KEY uniqueness if user provided PK value
-            base::ensure_unique_pk_value(self, Some(user_id), &row_data).await?;
+            let predecessor = self.insert_predecessor(user_id, &row_data).await?;
 
             // Generate new SeqId via SystemColumnsService
             let seq_id = version;
@@ -275,8 +358,13 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
             // Use the same preencoded append path as batch inserts so single-row
             // MVCC writes and batch writes stay consistent.
-            self.append_hot_row(&row_key, &entity, "Failed to insert user table row")
-                .await?;
+            self.write_replaced_row(
+                predecessor,
+                row_key.clone(),
+                entity.clone(),
+                "Failed to insert user table row",
+            )
+            .await?;
 
             if log::log_enabled!(log::Level::Debug) {
                 log::debug!(
@@ -496,6 +584,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             cold_columns,
             snapshot_commit_seq,
             false,
+            None,
         )
         .await
         .map(|result| result.rows)

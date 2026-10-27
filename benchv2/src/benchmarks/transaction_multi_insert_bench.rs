@@ -1,9 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 /// Benchmark: explicit transaction containing 50 single-row INSERT statements.
 pub struct TransactionMultiInsertBench;
@@ -38,7 +35,8 @@ impl Benchmark for TransactionMultiInsertBench {
                 .await;
             client
                 .sql_ok(&format!(
-                    "CREATE TABLE {}.transaction_multi_insert_bench (id INT PRIMARY KEY, name TEXT, value DOUBLE)",
+                    "CREATE TABLE {}.transaction_multi_insert_bench (id INT PRIMARY KEY, name \
+                     TEXT, value DOUBLE)",
                     config.namespace
                 ))
                 .await?;
@@ -58,7 +56,8 @@ impl Benchmark for TransactionMultiInsertBench {
                 .map(|offset| {
                     let id = base + offset;
                     format!(
-                        "INSERT INTO {}.transaction_multi_insert_bench (id, name, value) VALUES ({}, 'tx_user_{}', {:.2});",
+                        "INSERT INTO {}.transaction_multi_insert_bench (id, name, value) VALUES \
+                         ({}, 'tx_user_{}', {:.2});",
                         config.namespace,
                         id,
                         id,
@@ -67,9 +66,7 @@ impl Benchmark for TransactionMultiInsertBench {
                 })
                 .collect();
 
-            client
-                .sql_ok(&format!("BEGIN; {} COMMIT;", statements.join(" ")))
-                .await?;
+            client.sql_ok(&format!("BEGIN; {} COMMIT;", statements.join(" "))).await?;
             Ok(())
         })
     }

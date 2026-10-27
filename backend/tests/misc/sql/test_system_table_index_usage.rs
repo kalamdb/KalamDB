@@ -50,24 +50,24 @@ async fn test_system_users_user_id_index() {
     for i in 1..=50 {
         let now = chrono::Utc::now().timestamp_millis();
         let user = User {
-            user_id:               UserId::new(&format!("{}_{}", id_prefix, i)),
-            password_hash:         password_hash.clone(),
-            role:                  Role::User,
-            name:                  None,
-            email:                 Some(format!("{}_{}@example.com", id_prefix, i)),
-            auth_type:             AuthType::Password,
-            auth_data:             None,
-            storage_mode:          StorageMode::Table,
-            storage_id:            Some(StorageId::local()),
+            user_id: UserId::new(&format!("{}_{}", id_prefix, i)),
+            password_hash: password_hash.clone(),
+            role: Role::User,
+            name: None,
+            email: Some(format!("{}_{}@example.com", id_prefix, i)),
+            auth_type: AuthType::Password,
+            auth_data: None,
+            storage_mode: StorageMode::Table,
+            storage_id: Some(StorageId::local()),
             failed_login_attempts: 0,
-            locked_until:          None,
-            last_login_at:         None,
-            created_at:            now,
-            updated_at:            now,
-            last_seen:             None,
-            deleted_at:            None,
-            invite_expires_at:     None,
-            invited_by:            None,
+            locked_until: None,
+            last_login_at: None,
+            created_at: now,
+            updated_at: now,
+            last_seen: None,
+            deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         };
 
         server
@@ -313,7 +313,7 @@ async fn test_system_live_basic() {
     let connection_state = registration.state;
     connection_state.mark_authenticated(user_id.clone(), Role::User);
 
-    let create_ns = format!("CREATE NAMESPACE IF NOT EXISTS {}", ns);
+    let create_ns = format!("CREATE SCHEMA IF NOT EXISTS {}", ns);
     let ns_resp = server.execute_sql_as_user(&create_ns, "root").await;
     assert_eq!(
         ns_resp.status,
@@ -338,8 +338,8 @@ async fn test_system_live_basic() {
 
     for i in 1..=10 {
         let subscription = SubscriptionRequest {
-            id:      format!("sub{}", i),
-            sql:     format!("SELECT * FROM {}.table{}", ns, i % 3),
+            id: format!("sub{}", i),
+            sql: format!("SELECT * FROM {}.table{}", ns, i % 3),
             options: Some(SubscriptionOptions::default()),
         };
 
@@ -404,24 +404,24 @@ async fn test_index_performance_scaling() {
     for i in 1..=50 {
         let now = chrono::Utc::now().timestamp_millis();
         let user = User {
-            user_id:               UserId::new(&format!("{}_{}", user_prefix, i)),
-            password_hash:         password_hash.clone(),
-            role:                  Role::User,
-            name:                  None,
-            email:                 Some(format!("perf{}@example.com", i)),
-            auth_type:             AuthType::Password,
-            auth_data:             None,
-            storage_mode:          StorageMode::Table,
-            storage_id:            Some(StorageId::local()),
+            user_id: UserId::new(&format!("{}_{}", user_prefix, i)),
+            password_hash: password_hash.clone(),
+            role: Role::User,
+            name: None,
+            email: Some(format!("perf{}@example.com", i)),
+            auth_type: AuthType::Password,
+            auth_data: None,
+            storage_mode: StorageMode::Table,
+            storage_id: Some(StorageId::local()),
             failed_login_attempts: 0,
-            locked_until:          None,
-            last_login_at:         None,
-            created_at:            now,
-            updated_at:            now,
-            last_seen:             None,
-            deleted_at:            None,
-            invite_expires_at:     None,
-            invited_by:            None,
+            locked_until: None,
+            last_login_at: None,
+            created_at: now,
+            updated_at: now,
+            last_seen: None,
+            deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         };
 
         server
@@ -462,24 +462,24 @@ async fn test_index_performance_scaling() {
     for i in 51..=250 {
         let now = chrono::Utc::now().timestamp_millis();
         let user = User {
-            user_id:               UserId::new(&format!("{}_{}", user_prefix, i)),
-            password_hash:         password_hash.clone(),
-            role:                  Role::User,
-            name:                  None,
-            email:                 Some(format!("perf{}@example.com", i)),
-            auth_type:             AuthType::Password,
-            auth_data:             None,
-            storage_mode:          StorageMode::Table,
-            storage_id:            Some(StorageId::local()),
+            user_id: UserId::new(&format!("{}_{}", user_prefix, i)),
+            password_hash: password_hash.clone(),
+            role: Role::User,
+            name: None,
+            email: Some(format!("perf{}@example.com", i)),
+            auth_type: AuthType::Password,
+            auth_data: None,
+            storage_mode: StorageMode::Table,
+            storage_id: Some(StorageId::local()),
             failed_login_attempts: 0,
-            locked_until:          None,
-            last_login_at:         None,
-            created_at:            now,
-            updated_at:            now,
-            last_seen:             None,
-            deleted_at:            None,
-            invite_expires_at:     None,
-            invited_by:            None,
+            locked_until: None,
+            last_login_at: None,
+            created_at: now,
+            updated_at: now,
+            last_seen: None,
+            deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         };
 
         server

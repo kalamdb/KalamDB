@@ -27,7 +27,7 @@ fn registry_json_error(error: serde_json::Error) -> CLIError {
 fn register(registry: &Path, layout: &ManagedLayout) -> Result<()> {
     let entry = TrackedServer {
         instance_path: fs::canonicalize(&layout.instance_path)?,
-        folder:        fs::canonicalize(&layout.working_dir)?,
+        folder: fs::canonicalize(&layout.working_dir)?,
     };
     let payload = serde_json::to_vec(&entry).map_err(registry_json_error)?;
     let key = crate::release_download::sha256_bytes(

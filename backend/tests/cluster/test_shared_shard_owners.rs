@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use kalam_client::models::ResponseStatus;
-use kalamdb_commons::{NamespaceId, TableId};
+use kalamdb_commons::{SchemaId, TableId};
 use kalamdb_raft::{GroupId, RaftExecutor};
 use tokio::time::sleep;
 
@@ -35,13 +35,12 @@ async fn shared_owners_agree_across_replicas() -> Result<()> {
     let mut owners = Vec::new();
     for index in 0..8 {
         let namespace = format!("shared_owners_{}_{index}", std::process::id());
-        let create_ns =
-            cluster.nodes[0].execute_sql(&format!("CREATE NAMESPACE {namespace}")).await?;
+        let create_ns = cluster.nodes[0].execute_sql(&format!("CREATE SCHEMA {namespace}")).await?;
         assert_eq!(create_ns.status, ResponseStatus::Success, "{create_ns:?}");
         let sql = format!("CREATE SHARED TABLE {namespace}.t (id BIGINT PRIMARY KEY, name TEXT)");
         let created = cluster.nodes[0].execute_sql(&sql).await?;
         assert_eq!(created.status, ResponseStatus::Success, "{created:?}");
-        let table = TableId::new(NamespaceId::new(&namespace), "t".into());
+        let table = TableId::new(SchemaId::new(&namespace), "t".into());
         let mut agreed = None;
         for _ in 0..50 {
             let resolved: Vec<_> = cluster

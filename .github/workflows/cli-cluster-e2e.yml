@@ -5,6 +5,12 @@ on:
     branches: [ main ]
     paths:
       - 'cli/**'
+      - 'backend/crates/kalamdb-commons/**'
+      - 'backend/crates/kalamdb-dialect/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.cargo/config.toml'
+      - 'scripts/check-cli-dependency-boundary.py'
       - 'scripts/cluster.sh'
       - 'scripts/download-release-server.sh'
       - 'scripts/resolve-latest-release-asset.py'
@@ -18,8 +24,14 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: "1.94.0"
+  RUST_VERSION: "1.99.1"
   CARGO_ENCODED_RUSTFLAGS: ""
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  CARGO_PROFILE_DEV_SPLIT_DEBUGINFO: "off"
+  CARGO_PROFILE_TEST_SPLIT_DEBUGINFO: "off"
+  NEXTEST_PROFILE: ci
   RUSTC_WRAPPER: ""
   CARGO_BUILD_RUSTC_WRAPPER: ""
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -109,6 +121,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # /tmp is an ~8G tmpfs on GitHub-hosted runners. Test databases belong
+      # on the root volume.
+      - name: Keep temporary files on the root disk
+        run: |
+          set -euo pipefail
+          mkdir -p "${GITHUB_WORKSPACE}/.ci-tmp"
+          echo "TMPDIR=${GITHUB_WORKSPACE}/.ci-tmp" >> "$GITHUB_ENV"
+
       - name: Download released server binary
         uses: actions/download-artifact@v6
         with:
@@ -151,6 +171,12 @@ jobs:
           ./target/release/kalamdb-server --version
           echo "Cluster e2e server source: latest-release"
 
+      - name: Check CLI dependency boundary
+        run: python3 scripts/check-cli-dependency-boundary.py
+
+      - name: Build CLI and e2e artifacts together
+        run: cargo build --locked --profile test --bins --tests --timings -p kalam-cli -p kalam-cli-e2e
+
       - name: Run cluster workspace-e2e workflow
         shell: bash
         env:
@@ -170,6 +196,14 @@ jobs:
             cat ".cluster-local/node${node}/logs/stdout.log" || true
             echo
           done
+
+      - name: Upload compilation timings
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: cluster-cargo-timings
+          path: target/cargo-timings/
+          if-no-files-found: ignore
 
       - name: Upload cluster logs
         if: always()

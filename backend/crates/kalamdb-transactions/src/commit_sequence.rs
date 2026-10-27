@@ -29,8 +29,8 @@ pub trait CommitSequenceSource: std::fmt::Debug + Send + Sync {
 /// `MAX` across groups — otherwise group A's high index incorrectly includes
 /// later writes from group B.
 pub struct CommitSequenceTracker {
-    frontiers:              RwLock<HashMap<GroupId, u64>>,
-    local_alloc:            AtomicU64,
+    frontiers: RwLock<HashMap<GroupId, u64>>,
+    local_alloc: AtomicU64,
     durable_high_watermark: u64,
 }
 

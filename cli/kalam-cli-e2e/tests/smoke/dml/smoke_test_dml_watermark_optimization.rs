@@ -29,8 +29,8 @@ fn smoke_test_watermark_dml_insert_performance() {
     let full_table_name = format!("{}.{}", namespace, table);
 
     // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE should succeed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA should succeed");
 
     let create_table_sql = format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, name TEXT NOT NULL, value INT)",
@@ -77,8 +77,7 @@ fn smoke_test_watermark_dml_insert_performance() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // The key assertion: INSERTs should work and not hang
     assert!(
@@ -107,8 +106,8 @@ fn smoke_test_watermark_dml_update() {
     let full_table_name = format!("{}.{}", namespace, table);
 
     // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE should succeed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA should succeed");
 
     let create_table_sql = format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, status TEXT, counter INT) WITH (TYPE = 'USER', \
@@ -159,8 +158,7 @@ fn smoke_test_watermark_dml_update() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     assert!(elapsed.as_secs() < 30, "Total UPDATE time exceeded 30 second limit");
 }
@@ -184,8 +182,8 @@ fn smoke_test_watermark_dml_delete() {
     let full_table_name = format!("{}.{}", namespace, table);
 
     // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE should succeed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA should succeed");
 
     let create_table_sql =
         format!("CREATE TABLE {} (id BIGINT PRIMARY KEY, data TEXT)", full_table_name);
@@ -226,8 +224,7 @@ fn smoke_test_watermark_dml_delete() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     assert!(elapsed.as_secs() < 90, "Total DELETE time exceeded 90 second limit");
 }
@@ -249,8 +246,8 @@ fn smoke_test_watermark_ddl_then_dml() {
     let namespace = generate_unique_namespace("watermark_ddl");
 
     // Setup namespace
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE should succeed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA should succeed");
 
     // Rapid DDL + DML cycles to verify ordering works
     const CYCLES: usize = 3;
@@ -284,8 +281,7 @@ fn smoke_test_watermark_ddl_then_dml() {
     println!("  ✅ PASS: DDL→DML ordering works correctly (Raft guarantees)");
 
     // Cleanup namespace
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     assert!(
         elapsed.as_secs() < 120,

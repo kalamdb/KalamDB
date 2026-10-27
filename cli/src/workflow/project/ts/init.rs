@@ -255,15 +255,15 @@ mod tests {
             let mut observed: Option<(PathBuf, PackageManager)> = None;
             block_on_init(run_init_with_installer(
                 InitOptions {
-                    name:            Some("demo-ts".into()),
-                    schema_mode:     Some(SchemaMode::Sql),
-                    languages:       Some(vec!["typescript".into()]),
-                    template:        Some("simple-live".into()),
+                    name: Some("demo-ts".into()),
+                    schema_mode: Some(SchemaMode::Sql),
+                    languages: Some(vec!["typescript".into()]),
+                    template: Some("simple-live".into()),
                     package_manager: Some(manager),
-                    server_mode:     Some(ServerMode::Local),
-                    server_url:      None,
-                    yes:             true,
-                    cwd:             temp.path().to_path_buf(),
+                    server_mode: Some(ServerMode::Local),
+                    server_url: None,
+                    yes: true,
+                    cwd: temp.path().to_path_buf(),
                 },
                 &output,
                 |root, selected| {
@@ -297,15 +297,15 @@ mod tests {
             let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
             block_on_init(run_init_with_installer(
                 InitOptions {
-                    name:            Some("demo-ts".into()),
-                    schema_mode:     Some(SchemaMode::Sql),
-                    languages:       Some(vec!["typescript".into()]),
-                    template:        Some("simple-live".into()),
+                    name: Some("demo-ts".into()),
+                    schema_mode: Some(SchemaMode::Sql),
+                    languages: Some(vec!["typescript".into()]),
+                    template: Some("simple-live".into()),
                     package_manager: Some(manager),
-                    server_mode:     Some(ServerMode::Local),
-                    server_url:      None,
-                    yes:             true,
-                    cwd:             temp.path().to_path_buf(),
+                    server_mode: Some(ServerMode::Local),
+                    server_url: None,
+                    yes: true,
+                    cwd: temp.path().to_path_buf(),
                 },
                 &output,
                 |_, _| Ok(()),
@@ -345,15 +345,15 @@ mod tests {
             let mut called = false;
             block_on_init(run_init_with_installer(
                 InitOptions {
-                    name:            Some("demo-ts".into()),
-                    schema_mode:     Some(SchemaMode::Sql),
-                    languages:       Some(vec!["typescript".into()]),
-                    template:        Some("simple-live".into()),
+                    name: Some("demo-ts".into()),
+                    schema_mode: Some(SchemaMode::Sql),
+                    languages: Some(vec!["typescript".into()]),
+                    template: Some("simple-live".into()),
                     package_manager: Some(manager),
-                    server_mode:     Some(ServerMode::Local),
-                    server_url:      None,
-                    yes:             true,
-                    cwd:             temp.path().to_path_buf(),
+                    server_mode: Some(ServerMode::Local),
+                    server_url: None,
+                    yes: true,
+                    cwd: temp.path().to_path_buf(),
                 },
                 &output,
                 |_, _| {

@@ -106,7 +106,7 @@ export class KalamClient {
      */
     getAuthType(): string;
     /**
-     * Get the last received seq_id for a subscription
+     * Get the last received version for a subscription
      *
      * Useful for debugging or manual resumption tracking
      */
@@ -603,7 +603,7 @@ export interface InitOutput {
     readonly kalamclient_delete: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly kalamclient_disconnect: (a: number) => number;
     readonly kalamclient_getAuthType: (a: number, b: number) => void;
-    readonly kalamclient_getLastSeqId: (a: number, b: number, c: number, d: number) => void;
+    readonly kalamclient_getLastVersionId: (a: number, b: number, c: number, d: number) => void;
     readonly kalamclient_getReconnectAttempts: (a: number) => number;
     readonly kalamclient_getSubscriptions: (a: number) => number;
     readonly kalamclient_insert: (a: number, b: number, c: number, d: number, e: number) => number;
@@ -641,12 +641,12 @@ export interface InitOutput {
     readonly wasmtimestampformatter_formatRelative: (a: number, b: number, c: number) => void;
     readonly wasmtimestampformatter_new: () => number;
     readonly wasmtimestampformatter_withFormat: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_2433: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_2435: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_787: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_787_51: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_787_52: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_786: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_2543: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2545: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_863: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_863_51: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_863_52: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_862: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

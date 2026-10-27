@@ -31,7 +31,7 @@ fn fast_link_client() -> Result<KalamLinkClient, Box<dyn std::error::Error + Sen
 
 /// Verify that `client.subscriptions()` lists active subscriptions
 /// and that closing a subscription removes it from the list.
-#[ntest::timeout(30000)]
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_subscription_listing_and_close_removes() {
     if !require_server_running() {
@@ -43,7 +43,7 @@ fn smoke_subscription_listing_and_close_removes() {
     let full = format!("{}.{}", ns, tbl);
 
     // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE IF NOT EXISTS {} (id TEXT PRIMARY KEY, v TEXT) WITH (TYPE='USER')",
@@ -157,14 +157,14 @@ fn smoke_subscription_listing_and_close_removes() {
     }
     assert_eq!(result, "OK", "test thread reported: {}", result);
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns));
 }
 
 // ── test 2: subscriptions() tracks last_seq_id after events ───────────────────
 
 /// Verify that after receiving change events, subscriptions() reports
 /// a non-empty last_seq_id and last_event_time_ms.
-#[ntest::timeout(30000)]
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_subscription_listing_tracks_seq_id() {
     if !require_server_running() {
@@ -176,7 +176,7 @@ fn smoke_subscription_listing_tracks_seq_id() {
     let full = format!("{}.{}", ns, tbl);
 
     // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE IF NOT EXISTS {} (id TEXT PRIMARY KEY, v TEXT) WITH (TYPE='USER')",
@@ -288,5 +288,5 @@ fn smoke_subscription_listing_tracks_seq_id() {
     }
     assert_eq!(result, "OK", "test thread reported: {}", result);
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns));
 }

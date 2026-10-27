@@ -1,37 +1,40 @@
 //! Privilege and comment stubs for PostgreSQL wire clients.
 
-use std::sync::Arc;
-
 use datafusion::{
-    arrow::array::{ArrayRef, BooleanBuilder, StringBuilder},
     error::{DataFusionError, Result as DataFusionResult},
-    logical_expr::{
-        ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature, Volatility,
-    },
+    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature},
 };
-use kalamdb_commons::arrow_utils::{arrow_utf8, ArrowDataType};
+use kalamdb_commons::arrow_utils::ArrowDataType;
+
+use super::scalar::{
+    arity, bool_rows, cached_signature, scalar_udf, stable_exact, utf8_nulls, variadic_any_stable,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AlwaysTruePrivilegeFunction {
     name: &'static str,
+    aliases: Vec<String>,
 }
 
 impl AlwaysTruePrivilegeFunction {
     pub fn has_function_privilege() -> Self {
         Self {
             name: "has_function_privilege",
+            aliases: vec!["pg_catalog.has_function_privilege".to_string()],
         }
     }
 
     pub fn has_table_privilege() -> Self {
         Self {
             name: "has_table_privilege",
+            aliases: vec!["pg_catalog.has_table_privilege".to_string()],
         }
     }
 
     pub fn has_schema_privilege() -> Self {
         Self {
             name: "has_schema_privilege",
+            aliases: vec!["pg_catalog.has_schema_privilege".to_string()],
         }
     }
 }
@@ -41,9 +44,12 @@ impl ScalarUDFImpl for AlwaysTruePrivilegeFunction {
         self.name
     }
 
+    fn aliases(&self) -> &[String] {
+        &self.aliases
+    }
+
     fn signature(&self) -> &Signature {
-        static SIGNATURE: std::sync::OnceLock<Signature> = std::sync::OnceLock::new();
-        SIGNATURE.get_or_init(|| Signature::new(TypeSignature::VariadicAny, Volatility::Stable))
+        cached_signature!(variadic_any_stable())
     }
 
     fn return_type(&self, _args: &[ArrowDataType]) -> DataFusionResult<ArrowDataType> {
@@ -57,62 +63,30 @@ impl ScalarUDFImpl for AlwaysTruePrivilegeFunction {
                 self.name
             )));
         }
-
-        let mut builder = BooleanBuilder::with_capacity(args.number_rows);
-        for _ in 0..args.number_rows {
-            builder.append_value(true);
-        }
-        Ok(ColumnarValue::Array(Arc::new(builder.finish()) as ArrayRef))
+        Ok(bool_rows(true, args.number_rows))
     }
 }
 
-/// `obj_description(oid [, catalog])` returns NULL until comments are stored.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
-pub struct ObjDescriptionFunction;
-
-impl ObjDescriptionFunction {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl ScalarUDFImpl for ObjDescriptionFunction {
-    fn name(&self) -> &str {
-        "obj_description"
-    }
-
-    fn signature(&self) -> &Signature {
-        static SIGNATURE: std::sync::OnceLock<Signature> = std::sync::OnceLock::new();
-        SIGNATURE.get_or_init(|| {
-            Signature::one_of(
-                vec![
-                    TypeSignature::Exact(vec![ArrowDataType::Int64]),
-                    TypeSignature::Exact(vec![ArrowDataType::Int32]),
-                    TypeSignature::Exact(vec![ArrowDataType::Int64, ArrowDataType::Utf8]),
-                    TypeSignature::Exact(vec![ArrowDataType::Int32, ArrowDataType::Utf8]),
-                    TypeSignature::Exact(vec![ArrowDataType::Int64, ArrowDataType::Utf8View]),
-                    TypeSignature::Exact(vec![ArrowDataType::Int32, ArrowDataType::Utf8View]),
-                ],
-                Volatility::Stable,
-            )
-        })
-    }
-
-    fn return_type(&self, _args: &[ArrowDataType]) -> DataFusionResult<ArrowDataType> {
-        Ok(arrow_utf8())
-    }
-
-    fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
-        if args.args.is_empty() || args.args.len() > 2 {
-            return Err(DataFusionError::Plan(
-                "obj_description requires one or two arguments".to_string(),
-            ));
-        }
-
-        let mut builder = StringBuilder::new();
-        for _ in 0..args.number_rows {
-            builder.append_null();
-        }
-        Ok(ColumnarValue::Array(Arc::new(builder.finish()) as ArrayRef))
+scalar_udf! {
+    /// `obj_description(oid [, catalog])` returns NULL until comments are stored.
+    pub struct ObjDescriptionFunction;
+    name = "obj_description";
+    aliases = ["pg_catalog.obj_description"];
+    signature = stable_exact(&[
+        &[ArrowDataType::Int64],
+        &[ArrowDataType::Int32],
+        &[ArrowDataType::Int64, ArrowDataType::Utf8],
+        &[ArrowDataType::Int32, ArrowDataType::Utf8],
+        &[ArrowDataType::Int64, ArrowDataType::Utf8View],
+        &[ArrowDataType::Int32, ArrowDataType::Utf8View],
+    ]);
+    returns utf8;
+    invoke(args) {
+        arity(
+            &args,
+            |len| (1..=2).contains(&len),
+            "obj_description requires one or two arguments",
+        )?;
+        Ok(utf8_nulls(args.number_rows))
     }
 }

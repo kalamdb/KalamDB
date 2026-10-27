@@ -1,10 +1,6 @@
 //! Minimal pg_catalog compatibility views for PostgreSQL wire clients.
 
-use std::{
-    collections::BTreeMap,
-    hash::{Hash, Hasher},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
 use datafusion::{
@@ -17,39 +13,52 @@ use datafusion::{
     physical_expr::PhysicalExpr,
     physical_plan::ExecutionPlan,
 };
-use kalamdb_commons::{
-    schemas::{TableDefinition, TableType as KalamTableType},
-    Role, SystemTable,
-};
+use kalamdb_commons::{constants::LOGICAL_DATABASE_NAME, Role, SystemTable};
 use kalamdb_datafusion_sources::{
     exec::{finalize_deferred_batch, DeferredBatchExec, DeferredBatchSource},
     provider::{combined_filter, pushdown_results_for_filters, FilterCapability},
 };
-use kalamdb_session::{can_access_system_table, can_access_user_table, is_admin_role};
-use kalamdb_session_datafusion::{extract_user_role, PermissionChecker};
+use kalamdb_session_datafusion::{extract_user_role, PermissionChecker, SessionConfigValues};
 use kalamdb_system::SystemTablesRegistry;
 
-use crate::{
-    error::RegistryError,
-    system::{sessions::SessionsSnapshotCallback, system_view_table_definition},
-};
+use crate::{error::RegistryError, system::sessions::SessionsSnapshotCallback};
 
+pub mod attrdef;
 pub mod attribute;
 pub mod class;
 pub mod constraint;
 pub mod database;
+pub mod description;
 pub mod empty;
+pub mod empty_tables;
+pub mod enum_view;
 pub mod get_keywords;
 pub mod index;
+pub mod language;
 pub mod namespace;
 pub mod proc;
 pub use proc::{function_definition, function_result, identity_arguments};
+pub mod roles;
 pub mod settings;
 pub mod stat_activity;
 pub mod tables;
 pub mod r#type;
 pub mod type_mapping;
 pub mod views;
+
+mod oid;
+mod relations;
+
+pub use oid::proc_oid;
+pub(crate) use oid::{
+    catalog_type_oid, class_oid, named_column_attnums, namespace_oid, oid_for_qualified_type_id,
+    primary_constraint_oid, primary_index_oid, primary_index_relname, primary_key_attnums,
+    scalar_index_attnums, scalar_index_oid, stable_oid,
+};
+pub(crate) use relations::{
+    include_explicit_namespaces, pg_relkind, relation_is_view, supplemental_catalog_definitions,
+    visible_table_definitions,
+};
 
 pub trait PgCatalogView: Send + Sync + std::fmt::Debug {
     fn name(&self) -> &'static str;
@@ -58,6 +67,13 @@ pub trait PgCatalogView: Send + Sync + std::fmt::Debug {
         None
     }
     fn compute_batch(&self, role: Role) -> Result<RecordBatch, RegistryError>;
+    fn compute_session_batch(
+        &self,
+        role: Role,
+        _settings: Option<&SessionConfigValues>,
+    ) -> Result<RecordBatch, RegistryError> {
+        self.compute_batch(role)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -72,12 +88,13 @@ impl<V: PgCatalogView> PgCatalogViewTableProvider<V> {
 }
 
 struct PgCatalogScanSource<V: PgCatalogView> {
-    view:            Arc<V>,
+    view: Arc<V>,
     physical_filter: Option<Arc<dyn PhysicalExpr>>,
-    projection:      Option<Vec<usize>>,
-    limit:           Option<usize>,
-    output_schema:   SchemaRef,
-    role:            Role,
+    projection: Option<Vec<usize>>,
+    limit: Option<usize>,
+    output_schema: SchemaRef,
+    role: Role,
+    settings: Option<SessionConfigValues>,
 }
 
 impl<V: PgCatalogView> std::fmt::Debug for PgCatalogScanSource<V> {
@@ -101,13 +118,15 @@ impl<V: PgCatalogView + 'static> DeferredBatchSource for PgCatalogScanSource<V> 
     }
 
     async fn produce_batch(&self) -> DataFusionResult<RecordBatch> {
-        let batch = self.view.compute_batch(self.role).map_err(|error| {
-            DataFusionError::Execution(format!(
-                "failed to compute pg_catalog.{}: {}",
-                self.view.name(),
-                error
-            ))
-        })?;
+        let batch = self.view.compute_session_batch(self.role, self.settings.as_ref()).map_err(
+            |error| {
+                DataFusionError::Execution(format!(
+                    "failed to compute pg_catalog.{}: {}",
+                    self.view.name(),
+                    error
+                ))
+            },
+        )?;
 
         finalize_deferred_batch(
             batch,
@@ -163,6 +182,7 @@ impl<V: PgCatalogView + 'static> TableProvider for PgCatalogViewTableProvider<V>
             limit,
             output_schema,
             role,
+            settings: state.config_options().extensions.get::<SessionConfigValues>().cloned(),
         }))))
     }
 
@@ -212,7 +232,7 @@ impl PgCatalogSchemaProvider {
         providers.insert(
             "pg_database".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(database::PgDatabaseView::new(
-                "kalam",
+                LOGICAL_DATABASE_NAME,
             )))),
         );
         providers.insert(
@@ -259,6 +279,40 @@ impl PgCatalogSchemaProvider {
             "pg_settings".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(settings::PgSettingsView))),
         );
+        providers.insert(
+            "pg_enum".to_string(),
+            Arc::new(PgCatalogViewTableProvider::new(Arc::new(enum_view::PgEnumView::new(
+                Arc::clone(&system_registry),
+            )))),
+        );
+        providers.insert(
+            "pg_language".to_string(),
+            Arc::new(PgCatalogViewTableProvider::new(Arc::new(language::PgLanguageView))),
+        );
+        providers.insert(
+            "pg_attrdef".to_string(),
+            Arc::new(PgCatalogViewTableProvider::new(Arc::new(attrdef::PgAttrdefView::new(
+                Arc::clone(&system_registry),
+            )))),
+        );
+        providers.insert(
+            "pg_description".to_string(),
+            Arc::new(PgCatalogViewTableProvider::new(Arc::new(
+                description::PgDescriptionView::new(Arc::clone(&system_registry)),
+            ))),
+        );
+        providers.insert(
+            "pg_roles".to_string(),
+            Arc::new(PgCatalogViewTableProvider::new(Arc::new(roles::PgRolesView::roles(
+                Arc::clone(&system_registry),
+            )))),
+        );
+        providers.insert(
+            "pg_authid".to_string(),
+            Arc::new(PgCatalogViewTableProvider::new(Arc::new(roles::PgRolesView::authid(
+                Arc::clone(&system_registry),
+            )))),
+        );
         register_empty_pg_catalog_views(&mut providers);
 
         Self { providers }
@@ -266,13 +320,8 @@ impl PgCatalogSchemaProvider {
 }
 
 fn register_empty_pg_catalog_views(providers: &mut BTreeMap<String, Arc<dyn TableProvider>>) {
-    // Single source of truth: kalamdb-postgres-wire client_catalog (compiled in-place via path).
-    #[allow(dead_code)]
-    #[path = "../../../kalamdb-postgres-wire/src/client_catalog/empty_tables.rs"]
-    mod wire_empty_tables;
-
-    for (name, fields) in wire_empty_tables::empty_pg_catalog_table_defs() {
-        if name == "pg_settings" {
+    for (name, fields) in empty_tables::empty_pg_catalog_table_defs() {
+        if providers.contains_key(name) {
             continue;
         }
         providers.insert(
@@ -300,123 +349,5 @@ impl SchemaProvider for PgCatalogSchemaProvider {
 
     async fn table_type(&self, name: &str) -> DataFusionResult<Option<TableType>> {
         Ok(self.providers.get(name).map(|provider| provider.table_type()))
-    }
-}
-
-pub(crate) fn stable_oid(parts: &[&str]) -> i64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for part in parts {
-        part.hash(&mut hasher);
-    }
-    (hasher.finish() & 0x7fff_ffff) as i64
-}
-
-pub(crate) fn class_oid(namespace: &str, table: &str) -> i64 {
-    stable_oid(&["class", namespace, table])
-}
-
-pub(crate) fn namespace_oid(namespace: &str) -> i64 {
-    stable_oid(&["namespace", namespace])
-}
-
-pub fn proc_oid(namespace: &str, name: &str) -> i64 {
-    stable_oid(&["proc", namespace, name])
-}
-
-pub(crate) fn primary_index_oid(namespace: &str, table: &str) -> i64 {
-    stable_oid(&["class", namespace, table, "pkey"])
-}
-
-pub(crate) fn primary_constraint_oid(namespace: &str, table: &str) -> i64 {
-    stable_oid(&["constraint", namespace, table, "pkey"])
-}
-
-pub(crate) fn primary_index_relname(table: &str) -> String {
-    format!("{table}_pkey")
-}
-
-pub(crate) fn primary_key_attnums(table: &TableDefinition) -> Vec<i64> {
-    let mut columns: Vec<_> = table.columns.iter().filter(|column| column.is_primary_key).collect();
-    columns.sort_by_key(|column| column.ordinal_position);
-    columns.into_iter().map(|column| column.ordinal_position as i64).collect()
-}
-
-pub(crate) fn visible_table_definitions(
-    system_registry: &SystemTablesRegistry,
-    role: Role,
-) -> Result<Vec<TableDefinition>, RegistryError> {
-    let mut definitions = BTreeMap::<(String, String), TableDefinition>::new();
-
-    let tables = system_registry
-        .tables()
-        .list_tables()
-        .map_err(|error| RegistryError::Other(format!("failed to list tables: {error}")))?;
-    for table in tables {
-        insert_catalog_definition(&mut definitions, table);
-    }
-
-    for table in supplemental_catalog_definitions(system_registry) {
-        insert_catalog_definition(&mut definitions, table);
-    }
-
-    Ok(definitions
-        .into_values()
-        .filter(|table| table_visible_to_role(table, role))
-        .collect())
-}
-
-fn insert_catalog_definition(
-    definitions: &mut BTreeMap<(String, String), TableDefinition>,
-    table: TableDefinition,
-) {
-    let key = (table.namespace_id.as_str().to_string(), table.table_name.as_str().to_string());
-    definitions.entry(key).or_insert(table);
-}
-
-fn supplemental_catalog_definitions(
-    system_registry: &SystemTablesRegistry,
-) -> Vec<TableDefinition> {
-    let mut definitions = system_registry
-        .expected_system_table_definitions()
-        .into_iter()
-        .map(|definition| definition.as_ref().clone())
-        .collect::<Vec<_>>();
-
-    for system_table in SystemTable::all_views() {
-        definitions.push(system_view_table_definition(*system_table));
-    }
-
-    definitions
-}
-
-pub(crate) fn include_explicit_namespaces(role: Role) -> bool {
-    is_admin_role(role)
-}
-
-fn table_visible_to_role(table: &TableDefinition, role: Role) -> bool {
-    match table.table_type {
-        KalamTableType::System => can_access_system_table(role),
-        KalamTableType::Shared => !matches!(role, Role::Anonymous),
-        KalamTableType::User | KalamTableType::Stream => can_access_user_table(role),
-    }
-}
-
-/// Whether a visible relation should be classified as a PostgreSQL view.
-pub(crate) fn relation_is_view(table: &TableDefinition) -> bool {
-    if table.namespace_id.as_str() != "system" {
-        return false;
-    }
-
-    SystemTable::from_name(table.table_name.as_str())
-        .map(|system_table| system_table.is_view())
-        .unwrap_or(false)
-}
-
-/// PostgreSQL `pg_class.relkind` for a visible relation.
-pub(crate) fn pg_relkind(table: &TableDefinition) -> &'static str {
-    if relation_is_view(table) {
-        "v"
-    } else {
-        "r"
     }
 }

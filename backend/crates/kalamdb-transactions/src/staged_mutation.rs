@@ -71,13 +71,13 @@ fn approximate_scalar_value_size_bytes(value: &ScalarValue) -> usize {
 pub struct StagedMutation {
     pub transaction_id: TransactionId,
     pub mutation_order: u64,
-    pub table_id:       TableId,
-    pub table_type:     TableType,
-    pub user_id:        Option<UserId>,
+    pub table_id: TableId,
+    pub table_type: TableType,
+    pub user_id: Option<UserId>,
     pub operation_kind: OperationKind,
-    pub primary_key:    String,
-    pub payload:        Row,
-    pub tombstone:      bool,
+    pub primary_key: String,
+    pub payload: Row,
+    pub tombstone: bool,
 }
 
 impl StagedMutation {
@@ -118,13 +118,13 @@ impl StagedMutation {
         TransactionOverlayEntry {
             transaction_id: self.transaction_id.clone(),
             mutation_order: self.mutation_order,
-            table_id:       self.table_id.clone(),
-            table_type:     self.table_type,
-            user_id:        self.user_id.clone(),
+            table_id: self.table_id.clone(),
+            table_type: self.table_type,
+            user_id: self.user_id.clone(),
             operation_kind: self.operation_kind,
-            primary_key:    self.primary_key.clone(),
-            payload:        self.payload.clone(),
-            tombstone:      self.tombstone,
+            primary_key: self.primary_key.clone(),
+            payload: self.payload.clone(),
+            tombstone: self.tombstone,
         }
     }
 }
@@ -168,13 +168,13 @@ mod tests {
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
         models::{rows::Row, TableName, TransactionId, UserId},
-        NamespaceId, TableId, TableType,
+        SchemaId, TableId, TableType,
     };
 
     use super::{build_insert_staged_mutations, StagedInsertBuildError};
 
     fn test_table_id() -> TableId {
-        TableId::new(NamespaceId::new("app"), TableName::new("items"))
+        TableId::new(SchemaId::new("app"), TableName::new("items"))
     }
 
     fn test_transaction_id() -> TransactionId {

@@ -1,4 +1,7 @@
-//! Type-safe wrapper for namespace identifiers.
+//! Type-safe wrapper for schema identifiers.
+//!
+//! Stored keys stay the folded name. Stable schema identity and quoted names live in
+//! [`super::schema_identity`] and are not written through this type.
 
 use std::{
     fmt,
@@ -11,7 +14,10 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "storage")]
 use crate::StorageKey;
 use crate::{
-    constants::{RESERVED_NAMESPACE_NAMES, SYSTEM_NAMESPACE},
+    constants::{
+        DATAFUSION_NAMESPACE, INFORMATION_SCHEMA_NAMESPACE, PG_CATALOG_NAMESPACE,
+        RESERVED_NAMESPACE_NAMES, SYSTEM_NAMESPACE,
+    },
     helpers::naming::{
         validate_namespace_reference, validate_user_namespace_name, SqlIdentifierError,
     },
@@ -20,7 +26,7 @@ use crate::{
 /// Error returned when a namespace ID fails validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamespaceIdValidationError {
-    pub name:   String,
+    pub name: String,
     pub reason: String,
 }
 
@@ -35,7 +41,7 @@ impl std::error::Error for NamespaceIdValidationError {}
 impl From<SqlIdentifierError> for NamespaceIdValidationError {
     fn from(error: SqlIdentifierError) -> Self {
         Self {
-            name:   String::new(),
+            name: String::new(),
             reason: error.to_string(),
         }
     }
@@ -57,6 +63,9 @@ impl From<SqlIdentifierError> for NamespaceIdValidationError {
 /// Statics for cheap singleton construction.
 static SYSTEM_NS: OnceLock<Arc<str>> = OnceLock::new();
 static DEFAULT_NS: OnceLock<Arc<str>> = OnceLock::new();
+static PG_CATALOG_NS: OnceLock<Arc<str>> = OnceLock::new();
+static INFORMATION_SCHEMA_NS: OnceLock<Arc<str>> = OnceLock::new();
+static DATAFUSION_NS: OnceLock<Arc<str>> = OnceLock::new();
 
 /// Type-safe wrapper for namespace identifiers.
 ///
@@ -64,9 +73,9 @@ static DEFAULT_NS: OnceLock<Arc<str>> = OnceLock::new();
 /// rather than a heap allocation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct NamespaceId(Arc<str>);
+pub struct SchemaId(Arc<str>);
 
-impl NamespaceId {
+impl SchemaId {
     /// Validates a namespace ID for security issues.
     ///
     /// Returns an error if the ID:
@@ -77,28 +86,28 @@ impl NamespaceId {
     fn validate(name: &str) -> Result<(), NamespaceIdValidationError> {
         if name.is_empty() {
             return Err(NamespaceIdValidationError {
-                name:   name.to_string(),
+                name: name.to_string(),
                 reason: "Namespace ID cannot be empty".to_string(),
             });
         }
 
         if name.contains("..") {
             return Err(NamespaceIdValidationError {
-                name:   name.to_string(),
+                name: name.to_string(),
                 reason: "Namespace ID cannot contain '..' (path traversal)".to_string(),
             });
         }
 
         if name.contains('/') || name.contains('\\') {
             return Err(NamespaceIdValidationError {
-                name:   name.to_string(),
+                name: name.to_string(),
                 reason: "Namespace ID cannot contain path separators".to_string(),
             });
         }
 
         if name.contains('\0') {
             return Err(NamespaceIdValidationError {
-                name:   name.to_string(),
+                name: name.to_string(),
                 reason: "Namespace ID cannot contain null bytes".to_string(),
             });
         }
@@ -106,7 +115,7 @@ impl NamespaceId {
         Ok(())
     }
 
-    /// Creates a new NamespaceId from a string, with validation.
+    /// Creates a new SchemaId from a string, with validation.
     ///
     /// Returns an error if the ID fails security, SQL identifier, or reserved-name validation.
     ///
@@ -115,7 +124,7 @@ impl NamespaceId {
         let id = id.into();
         Self::validate(&id)?;
         validate_user_namespace_name(&id).map_err(|error| NamespaceIdValidationError {
-            name:   id.clone(),
+            name: id.clone(),
             reason: error.to_string(),
         })?;
         Ok(Self(Arc::<str>::from(id.to_lowercase())))
@@ -129,16 +138,16 @@ impl NamespaceId {
         let id = id.into();
         Self::validate(&id)?;
         validate_namespace_reference(&id).map_err(|error| NamespaceIdValidationError {
-            name:   id.clone(),
+            name: id.clone(),
             reason: error.to_string(),
         })?;
         Ok(Self(Arc::<str>::from(id.to_lowercase())))
     }
 
-    /// Creates a new NamespaceId from a string.
+    /// Creates a new SchemaId from a string.
     ///
     /// Namespace IDs are case-insensitive - they are normalized to lowercase internally.
-    /// For example, `NamespaceId::new("MyApp")` and `NamespaceId::new("myapp")` are equal.
+    /// For example, `SchemaId::new("MyApp")` and `SchemaId::new("myapp")` are equal.
     ///
     /// # Panics
     ///
@@ -174,6 +183,76 @@ impl NamespaceId {
         Self(DEFAULT_NS.get_or_init(|| Arc::from("default")).clone())
     }
 
+    /// PostgreSQL catalog schema. Cached singleton.
+    #[inline]
+    pub fn pg_catalog() -> Self {
+        Self(PG_CATALOG_NS.get_or_init(|| Arc::from(PG_CATALOG_NAMESPACE)).clone())
+    }
+
+    /// SQL `information_schema`. Cached singleton.
+    #[inline]
+    pub fn information_schema() -> Self {
+        Self(
+            INFORMATION_SCHEMA_NS
+                .get_or_init(|| Arc::from(INFORMATION_SCHEMA_NAMESPACE))
+                .clone(),
+        )
+    }
+
+    /// DataFusion internal schema. Cached singleton.
+    #[inline]
+    pub fn datafusion() -> Self {
+        Self(DATAFUSION_NS.get_or_init(|| Arc::from(DATAFUSION_NAMESPACE)).clone())
+    }
+
+    /// KalamDB `system` schema. Stored names are already lowercase.
+    #[inline]
+    pub fn is_system_schema(&self) -> bool {
+        self.as_str() == SYSTEM_NAMESPACE
+    }
+
+    /// PostgreSQL `pg_catalog` schema.
+    #[inline]
+    pub fn is_pg_catalog(&self) -> bool {
+        self.as_str() == PG_CATALOG_NAMESPACE
+    }
+
+    /// SQL `information_schema`.
+    #[inline]
+    pub fn is_information_schema(&self) -> bool {
+        self.as_str() == INFORMATION_SCHEMA_NAMESPACE
+    }
+
+    /// DataFusion internal schema.
+    #[inline]
+    pub fn is_datafusion_schema(&self) -> bool {
+        self.as_str() == DATAFUSION_NAMESPACE
+    }
+
+    /// Case-insensitive `pg_catalog` check for a name that is not yet a [`SchemaId`].
+    #[inline]
+    pub fn is_pg_catalog_name(name: &str) -> bool {
+        name.eq_ignore_ascii_case(PG_CATALOG_NAMESPACE)
+    }
+
+    /// Case-insensitive `information_schema` check for an unparsed schema name.
+    #[inline]
+    pub fn is_information_schema_name(name: &str) -> bool {
+        name.eq_ignore_ascii_case(INFORMATION_SCHEMA_NAMESPACE)
+    }
+
+    /// Case-insensitive `system` check for an unparsed schema name.
+    #[inline]
+    pub fn is_system_schema_name(name: &str) -> bool {
+        name.eq_ignore_ascii_case(SYSTEM_NAMESPACE)
+    }
+
+    /// `pg_catalog` or `information_schema`. PostgreSQL clients read both.
+    #[inline]
+    pub fn is_client_catalog_name(name: &str) -> bool {
+        Self::is_pg_catalog_name(name) || Self::is_information_schema_name(name)
+    }
+
     /// Reuse a typed namespace when it already matches a session schema string.
     ///
     /// Avoids re-validation and a new `Arc<str>` on the common path where
@@ -189,8 +268,17 @@ impl NamespaceId {
         if schema.eq_ignore_ascii_case("default") {
             return Self::default_ns();
         }
-        if schema.eq_ignore_ascii_case(SYSTEM_NAMESPACE) {
+        if Self::is_system_schema_name(schema) {
             return Self::system();
+        }
+        if Self::is_pg_catalog_name(schema) {
+            return Self::pg_catalog();
+        }
+        if Self::is_information_schema_name(schema) {
+            return Self::information_schema();
+        }
+        if schema.eq_ignore_ascii_case(DATAFUSION_NAMESPACE) {
+            return Self::datafusion();
         }
         Self::new(schema)
     }
@@ -204,10 +292,10 @@ impl NamespaceId {
     /// - `datafusion`: DataFusion internal catalog
     #[inline]
     pub fn is_system_namespace(&self) -> bool {
-        matches!(
-            self.as_str(),
-            SYSTEM_NAMESPACE | "information_schema" | "pg_catalog" | "datafusion"
-        )
+        self.is_system_schema()
+            || self.is_information_schema()
+            || self.is_pg_catalog()
+            || self.is_datafusion_schema()
     }
 
     /// If default namespace
@@ -223,12 +311,11 @@ impl NamespaceId {
     ///
     /// # Example
     /// ```
-    /// use kalamdb_commons::NamespaceId;
+    /// use kalamdb_commons::SchemaId;
     ///
-    /// assert!(NamespaceId::system().is_reserved());
-    /// assert!(NamespaceId::system().is_reserved());
-    /// assert!(NamespaceId::new("kalamdb").is_reserved());
-    /// assert!(!NamespaceId::new("my_app").is_reserved());
+    /// assert!(SchemaId::system().is_reserved());
+    /// assert!(SchemaId::new("kalamdb").is_reserved());
+    /// assert!(!SchemaId::new("my_app").is_reserved());
     /// ```
     /// Values are already stored lowercase, so no allocation needed.
     #[inline]
@@ -237,53 +324,53 @@ impl NamespaceId {
     }
 }
 
-impl fmt::Display for NamespaceId {
+impl fmt::Display for SchemaId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl Default for NamespaceId {
+impl Default for SchemaId {
     fn default() -> Self {
         Self::default_ns()
     }
 }
 
-impl From<String> for NamespaceId {
+impl From<String> for SchemaId {
     fn from(s: String) -> Self {
         Self::validate(&s).expect("Invalid namespace ID");
         Self(Arc::<str>::from(s.to_lowercase()))
     }
 }
 
-impl From<&str> for NamespaceId {
+impl From<&str> for SchemaId {
     fn from(s: &str) -> Self {
         Self::validate(s).expect("Invalid namespace ID");
         Self(Arc::<str>::from(s.to_lowercase()))
     }
 }
 
-impl AsRef<str> for NamespaceId {
+impl AsRef<str> for SchemaId {
     fn as_ref(&self) -> &str {
         &self.0
     }
 }
 
-impl AsRef<[u8]> for NamespaceId {
+impl AsRef<[u8]> for SchemaId {
     fn as_ref(&self) -> &[u8] {
         self.0.as_bytes()
     }
 }
 
 #[cfg(feature = "storage")]
-impl StorageKey for NamespaceId {
+impl StorageKey for SchemaId {
     fn storage_key(&self) -> Vec<u8> {
         self.0.as_bytes().to_vec()
     }
 
     fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
         String::from_utf8(bytes.to_vec())
-            .map(|s| NamespaceId(Arc::<str>::from(s)))
+            .map(|s| SchemaId(Arc::<str>::from(s)))
             .map_err(|e| e.to_string())
     }
 }
@@ -294,81 +381,87 @@ mod tests {
 
     #[test]
     fn test_is_reserved_lowercase() {
-        assert!(NamespaceId::system().is_reserved());
-        assert!(NamespaceId::new("sys").is_reserved());
-        assert!(NamespaceId::new("root").is_reserved());
-        assert!(NamespaceId::new("kalamdb").is_reserved());
-        assert!(NamespaceId::new("kalam").is_reserved());
-        assert!(NamespaceId::new("main").is_reserved());
-        assert!(NamespaceId::default().is_reserved());
-        assert!(NamespaceId::new("sql").is_reserved());
-        assert!(NamespaceId::new("admin").is_reserved());
-        assert!(NamespaceId::new("internal").is_reserved());
-        assert!(NamespaceId::new("information_schema").is_reserved());
-        assert!(NamespaceId::new("pg_catalog").is_reserved());
-        assert!(NamespaceId::new("datafusion").is_reserved());
+        assert!(SchemaId::system().is_reserved());
+        assert!(SchemaId::new("sys").is_reserved());
+        assert!(SchemaId::new("root").is_reserved());
+        assert!(SchemaId::new("kalamdb").is_reserved());
+        assert!(SchemaId::new("kalam").is_reserved());
+        assert!(SchemaId::new("main").is_reserved());
+        assert!(SchemaId::default().is_reserved());
+        assert!(SchemaId::new("sql").is_reserved());
+        assert!(SchemaId::new("admin").is_reserved());
+        assert!(SchemaId::new("internal").is_reserved());
+        assert!(SchemaId::new("information_schema").is_reserved());
+        assert!(SchemaId::new("pg_catalog").is_reserved());
+        assert!(SchemaId::new("datafusion").is_reserved());
     }
 
     #[test]
     fn test_is_reserved_case_insensitive() {
-        assert!(NamespaceId::system().is_reserved());
-        assert!(NamespaceId::system().is_reserved());
-        assert!(NamespaceId::new("KalamDB").is_reserved());
-        assert!(NamespaceId::new("INFORMATION_SCHEMA").is_reserved());
+        assert!(SchemaId::system().is_reserved());
+        assert!(SchemaId::system().is_reserved());
+        assert!(SchemaId::new("KalamDB").is_reserved());
+        assert!(SchemaId::new("INFORMATION_SCHEMA").is_reserved());
     }
 
     #[test]
     fn test_is_not_reserved() {
-        assert!(!NamespaceId::new("my_app").is_reserved());
-        assert!(!NamespaceId::new("production").is_reserved());
-        assert!(!NamespaceId::new("user_data").is_reserved());
-        assert!(!NamespaceId::new("analytics").is_reserved());
+        assert!(!SchemaId::new("my_app").is_reserved());
+        assert!(!SchemaId::new("production").is_reserved());
+        assert!(!SchemaId::new("user_data").is_reserved());
+        assert!(!SchemaId::new("analytics").is_reserved());
     }
 
     #[test]
     fn test_is_system_namespace() {
-        assert!(NamespaceId::system().is_system_namespace());
-        assert!(NamespaceId::new("information_schema").is_system_namespace());
-        assert!(NamespaceId::new("pg_catalog").is_system_namespace());
-        assert!(NamespaceId::new("datafusion").is_system_namespace());
+        assert!(SchemaId::system().is_system_namespace());
+        assert!(SchemaId::new("information_schema").is_system_namespace());
+        assert!(SchemaId::new("pg_catalog").is_system_namespace());
+        assert!(SchemaId::new("datafusion").is_system_namespace());
 
         // These are reserved but not system namespaces
-        assert!(!NamespaceId::new("kalamdb").is_system_namespace());
-        assert!(!NamespaceId::default().is_system_namespace());
+        assert!(!SchemaId::new("kalamdb").is_system_namespace());
+        assert!(!SchemaId::default().is_system_namespace());
     }
 
     #[test]
     fn test_system_constructor() {
-        let ns = NamespaceId::system();
+        let ns = SchemaId::system();
         assert_eq!(ns.as_str(), "system");
+        assert!(ns.is_system_schema());
         assert!(ns.is_system_namespace());
         assert!(ns.is_reserved());
     }
 
     #[test]
+    fn builtin_catalog_schemas_are_identified_on_the_id() {
+        assert!(SchemaId::pg_catalog().is_pg_catalog());
+        assert!(SchemaId::information_schema().is_information_schema());
+        assert!(SchemaId::datafusion().is_datafusion_schema());
+        assert!(SchemaId::is_pg_catalog_name("PG_CATALOG"));
+        assert!(SchemaId::is_client_catalog_name("Information_Schema"));
+        assert!(!SchemaId::pg_catalog().is_system_schema());
+        assert!(!SchemaId::default_ns().is_pg_catalog());
+    }
+
+    #[test]
     fn test_from_session_schema_reuses_cached_and_singletons() {
-        let chat = NamespaceId::new("chat");
-        assert_eq!(NamespaceId::from_session_schema("chat", Some(&chat)), chat);
-        assert_eq!(NamespaceId::from_session_schema("CHAT", Some(&chat)), chat);
-        assert_eq!(
-            NamespaceId::from_session_schema("default", Some(&chat)),
-            NamespaceId::default_ns()
-        );
-        assert_eq!(NamespaceId::from_session_schema("system", None), NamespaceId::system());
-        assert_eq!(
-            NamespaceId::from_session_schema("other", Some(&chat)),
-            NamespaceId::new("other")
-        );
+        let chat = SchemaId::new("chat");
+        assert_eq!(SchemaId::from_session_schema("chat", Some(&chat)), chat);
+        assert_eq!(SchemaId::from_session_schema("CHAT", Some(&chat)), chat);
+        assert_eq!(SchemaId::from_session_schema("default", Some(&chat)), SchemaId::default_ns());
+        assert_eq!(SchemaId::from_session_schema("system", None), SchemaId::system());
+        assert_eq!(SchemaId::from_session_schema("other", Some(&chat)), SchemaId::new("other"));
     }
 
     #[test]
     fn test_namespace_id_case_insensitive() {
         // All these should be equal because names are normalized to lowercase
-        let ns1 = NamespaceId::new("MyApp");
-        let ns2 = NamespaceId::new("myapp");
-        let ns3 = NamespaceId::new("MYAPP");
-        let ns4 = NamespaceId::from("MyApP".to_string());
-        let ns5: NamespaceId = "mYaPp".into();
+        let ns1 = SchemaId::new("MyApp");
+        let ns2 = SchemaId::new("myapp");
+        let ns3 = SchemaId::new("MYAPP");
+        let ns4 = SchemaId::from("MyApP".to_string());
+        let ns5: SchemaId = "mYaPp".into();
 
         assert_eq!(ns1, ns2);
         assert_eq!(ns2, ns3);
@@ -383,76 +476,76 @@ mod tests {
     // Security tests for path traversal prevention
     #[test]
     fn test_try_new_valid_names() {
-        assert!(NamespaceId::try_new("myapp").is_ok());
-        assert!(NamespaceId::try_new("my_namespace").is_ok());
-        assert!(NamespaceId::try_new("namespace123").is_ok());
-        assert!(NamespaceId::try_new("a").is_ok());
+        assert!(SchemaId::try_new("myapp").is_ok());
+        assert!(SchemaId::try_new("my_namespace").is_ok());
+        assert!(SchemaId::try_new("namespace123").is_ok());
+        assert!(SchemaId::try_new("a").is_ok());
     }
 
     #[test]
     fn test_try_new_rejects_hyphenated_names() {
-        let result = NamespaceId::try_new("dev-test1");
+        let result = SchemaId::try_new("dev-test1");
         assert!(result.is_err());
         assert!(result.unwrap_err().reason.contains("invalid characters"));
     }
 
     #[test]
     fn test_try_new_rejects_reserved_namespace_names() {
-        let result = NamespaceId::try_new("kalamdb");
+        let result = SchemaId::try_new("kalamdb");
         assert!(result.is_err());
         assert!(result.unwrap_err().reason.contains("reserved"));
     }
 
     #[test]
     fn test_try_parse_reference_allows_default_namespace() {
-        let ns = NamespaceId::try_parse_reference("default").expect("default should parse");
+        let ns = SchemaId::try_parse_reference("default").expect("default should parse");
         assert_eq!(ns.as_str(), "default");
     }
 
     #[test]
     fn test_try_parse_reference_rejects_system_namespace() {
-        let result = NamespaceId::try_parse_reference("system");
+        let result = SchemaId::try_parse_reference("system");
         assert!(result.is_err());
         assert!(result.unwrap_err().reason.contains("reserved"));
     }
 
     #[test]
     fn test_try_new_rejects_empty() {
-        let result = NamespaceId::try_new("");
+        let result = SchemaId::try_new("");
         assert!(result.is_err());
         assert!(result.unwrap_err().reason.contains("empty"));
     }
 
     #[test]
     fn test_try_new_rejects_path_traversal() {
-        let result = NamespaceId::try_new("../myapp");
+        let result = SchemaId::try_new("../myapp");
         assert!(result.is_err());
         assert!(result.unwrap_err().reason.contains("path traversal"));
 
-        let result = NamespaceId::try_new("myapp/../admin");
+        let result = SchemaId::try_new("myapp/../admin");
         assert!(result.is_err());
 
-        let result = NamespaceId::try_new("..%2fmyapp");
+        let result = SchemaId::try_new("..%2fmyapp");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_try_new_rejects_forward_slash() {
-        let result = NamespaceId::try_new("path/to/namespace");
+        let result = SchemaId::try_new("path/to/namespace");
         assert!(result.is_err());
         assert!(result.unwrap_err().reason.contains("path separators"));
     }
 
     #[test]
     fn test_try_new_rejects_backslash() {
-        let result = NamespaceId::try_new("path\\to\\namespace");
+        let result = SchemaId::try_new("path\\to\\namespace");
         assert!(result.is_err());
         assert!(result.unwrap_err().reason.contains("path separators"));
     }
 
     #[test]
     fn test_try_new_rejects_null_byte() {
-        let result = NamespaceId::try_new("namespace\0name");
+        let result = SchemaId::try_new("namespace\0name");
         assert!(result.is_err());
         assert!(result.unwrap_err().reason.contains("null bytes"));
     }
@@ -460,12 +553,31 @@ mod tests {
     #[test]
     #[should_panic(expected = "Invalid namespace ID")]
     fn test_new_panics_on_path_traversal() {
-        let _ = NamespaceId::new("../etc/passwd");
+        let _ = SchemaId::new("../etc/passwd");
     }
 
     #[test]
     #[should_panic(expected = "Invalid namespace ID")]
     fn test_from_panics_on_path_traversal() {
-        let _: NamespaceId = "../etc/passwd".into();
+        let _: SchemaId = "../etc/passwd".into();
+    }
+
+    #[test]
+    fn legacy_default_key_stays_default_and_does_not_merge_with_public() {
+        use crate::models::ids::schema_identity::{IdentitySource, SchemaRecord, SqlIdent};
+
+        assert_eq!(SchemaId::new("Default").as_str(), "default");
+        let legacy = SchemaRecord::legacy_default();
+        assert_eq!(legacy.stored_key(), Some("default"));
+        assert_eq!(legacy.name().as_str(), "public");
+        let mut source = IdentitySource::new();
+        let created = SchemaRecord::create(&mut source, SqlIdent::unquoted("public").unwrap());
+        assert_ne!(legacy.identity(), created.identity());
+        let encoded = legacy.encoded_identity();
+        let mut renamed = legacy;
+        renamed.rename(SqlIdent::quoted("Application").unwrap());
+        assert_eq!(renamed.stored_key(), Some("default"));
+        assert_eq!(renamed.encoded_identity(), encoded);
+        assert_ne!(renamed.name().as_str(), "public");
     }
 }

@@ -96,7 +96,7 @@ impl KalamLinkClient {
         log::debug!("[LOGIN] Authenticating user '{}' at url={}", user, url);
 
         let login_request = crate::models::LoginRequest {
-            user:     kalamdb_commons::UserId::from(user),
+            user: kalamdb_commons::UserId::from(user),
             password: password.to_string(),
         };
 
@@ -220,7 +220,7 @@ impl KalamLinkClient {
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
             return Err(KalamLinkError::ServerError {
                 status_code: status.as_u16(),
-                message:     error_text,
+                message: error_text,
             });
         }
 
@@ -260,7 +260,7 @@ impl KalamLinkClient {
 
             return Err(KalamLinkError::ServerError {
                 status_code: status.as_u16(),
-                message:     error_text,
+                message: error_text,
             });
         }
 

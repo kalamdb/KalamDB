@@ -15,7 +15,7 @@ use kalamdb_auth::CachedUsersRepo;
 use kalamdb_backend::manager::BackendSessionManager;
 use kalamdb_commons::{
     constants::{ColumnFamilyNames, SYSTEM_NAMESPACE},
-    models::{NamespaceId, TransactionOrigin, UserId},
+    models::{SchemaId, TransactionOrigin, UserId},
     NodeId, TableId,
 };
 use kalamdb_configs::ServerConfig;
@@ -106,7 +106,7 @@ pub struct AppContext {
     schema_registry: Arc<SchemaRegistry>,
 
     // ===== Stores =====
-    user_table_store:   Arc<UserTableStore>,
+    user_table_store: Arc<UserTableStore>,
     shared_table_store: Arc<SharedTableStore>,
 
     // ===== Core Infrastructure =====
@@ -115,9 +115,9 @@ pub struct AppContext {
     // ===== Managers =====
     /// Type-erased job manager (concrete type is `kalamdb_jobs::JobsManager`).
     /// Consumers downcast via the `kalamdb_jobs::AppContextJobsExt` trait.
-    job_manager:        OnceCell<Arc<dyn std::any::Any + Send + Sync>>,
+    job_manager: OnceCell<Arc<dyn std::any::Any + Send + Sync>>,
     /// Lightweight waker so the Raft applier can notify the job loop.
-    job_waker:          OnceCell<Arc<dyn JobWaker>>,
+    job_waker: OnceCell<Arc<dyn JobWaker>>,
     live_query_manager: OnceCell<Arc<LiveQueryManager>>,
 
     // ===== Notification Service =====
@@ -130,7 +130,7 @@ pub struct AppContext {
     storage_registry: Arc<StorageRegistry>,
 
     // ===== DataFusion Session Management =====
-    session_factory:      Arc<DataFusionSessionFactory>,
+    session_factory: Arc<DataFusionSessionFactory>,
     base_session_context: Arc<SessionContext>,
 
     // ===== System Tables Registry =====
@@ -309,6 +309,10 @@ impl AppContext {
             // Create system table providers registry FIRST (needed by StorageRegistry and
             // information_schema)
             let system_tables = Arc::new(SystemTablesRegistry::new(storage_backend.clone()));
+            system_tables
+                .catalog_stores()
+                .ensure_builtin_extension_catalog()
+                .expect("Failed to initialize built-in extension catalog");
 
             // Create storage registry (uses StoragesTableProvider from system_tables)
             let storage_registry = Arc::new(StorageRegistry::new(
@@ -369,7 +373,7 @@ impl AppContext {
             // This ensures all namespaces persisted in RocksDB are available for SQL queries
             let namespaces_provider = system_tables.namespaces();
 
-            let default_namespace_id = NamespaceId::default();
+            let default_namespace_id = SchemaId::default();
             if namespaces_provider
                 .get_namespace(&default_namespace_id)
                 .expect("Failed to read namespaces")
@@ -575,6 +579,10 @@ impl AppContext {
                 &app_ctx.base_session_context,
                 app_ctx.system_tables(),
             );
+            DataFusionSessionFactory::register_file_storage_functions(
+                &app_ctx.base_session_context,
+                app_ctx.file_storage_service(),
+            );
 
             // Set AppContext in SchemaRegistry to break circular dependency
             schema_registry.set_app_context(app_ctx.clone());
@@ -731,17 +739,17 @@ impl AppContext {
                         .active_metrics()
                         .into_iter()
                         .map(|metric| TransactionSnapshot {
-                            transaction_id:       metric.transaction_id.to_string(),
-                            owner_id:             metric.owner_id.to_string(),
-                            origin:               metric.origin.as_str().to_string(),
-                            state:                metric.state.lifecycle_str().to_string(),
-                            age_ms:               metric.age_ms.min(i64::MAX as u64) as i64,
-                            idle_ms:              metric.idle_ms.min(i64::MAX as u64) as i64,
-                            write_count:          metric.write_count.min(i64::MAX as usize) as i64,
-                            write_bytes:          metric.write_bytes.min(i64::MAX as usize) as i64,
+                            transaction_id: metric.transaction_id.to_string(),
+                            owner_id: metric.owner_id.to_string(),
+                            origin: metric.origin.as_str().to_string(),
+                            state: metric.state.lifecycle_str().to_string(),
+                            age_ms: metric.age_ms.min(i64::MAX as u64) as i64,
+                            idle_ms: metric.idle_ms.min(i64::MAX as u64) as i64,
+                            write_count: metric.write_count.min(i64::MAX as usize) as i64,
+                            write_bytes: metric.write_bytes.min(i64::MAX as usize) as i64,
                             touched_tables_count: metric.touched_tables_count.min(i64::MAX as usize)
                                 as i64,
-                            snapshot_commit_seq:  metric.snapshot_commit_seq.min(i64::MAX as u64)
+                            snapshot_commit_seq: metric.snapshot_commit_seq.min(i64::MAX as u64)
                                 as i64,
                         })
                         .collect()
@@ -844,6 +852,10 @@ impl AppContext {
         if let Err(e) = manager.restore_state_machines_from_snapshots().await {
             log::error!("Failed to restore state machines from snapshots: {:?}", e);
         } else {
+            let tracker = self.commit_sequence_tracker();
+            for (group_id, applied_index) in manager.applied_log_frontiers() {
+                tracker.observe_committed(group_id, applied_index);
+            }
             log::debug!("✓ Raft state machines restored successfully");
         }
     }
@@ -1088,6 +1100,33 @@ impl AppContext {
 
     pub fn schema_registry(&self) -> Arc<SchemaRegistry> {
         self.schema_registry.clone()
+    }
+
+    /// Whether SELECT RLS on this shared table exposes a current row whose FILE
+    /// column stores `subfolder`/`stored_name`.
+    ///
+    /// DBA and System bypass. Missing policies, missing FILE columns, and rows
+    /// the caller cannot see all return `false`.
+    pub async fn shared_select_authorizes_file(
+        &self,
+        table_id: &TableId,
+        user_id: &UserId,
+        role: kalamdb_commons::Role,
+        subfolder: &str,
+        stored_name: &str,
+    ) -> Result<bool, KalamDbError> {
+        let Some(provider) = self.schema_registry().get_provider(table_id) else {
+            return Ok(false);
+        };
+        let Some(shared) = (provider.as_ref() as &dyn std::any::Any)
+            .downcast_ref::<kalamdb_tables::SharedTableProvider>()
+        else {
+            return Ok(false);
+        };
+        shared
+            .select_authorizes_file_path(user_id, role, subfolder, stored_name)
+            .await
+            .map_err(KalamDbError::from)
     }
 
     pub fn user_table_store(&self) -> Arc<UserTableStore> {
@@ -1454,7 +1493,7 @@ impl AppContext {
         let state = Arc::clone(self.function_runtime.get().expect("function runtime initialized"));
         state.ensure_lifecycle_observer(|| {
             Arc::new(crate::functions::lifecycle::FunctionRuntimeLogObserver {
-                logger:  self.procedure_log_logger(),
+                logger: self.procedure_log_logger(),
                 node_id: Arc::from(self.node_id().as_ref().to_string()),
             })
         });

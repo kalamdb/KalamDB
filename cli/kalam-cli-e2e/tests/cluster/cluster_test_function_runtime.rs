@@ -38,8 +38,8 @@ fn nodes_from(leader: &str, followers: &[String]) -> Vec<String> {
 
 fn setup_namespace(leader: &str, label: &str) -> String {
     let namespace = generate_unique_namespace(label);
-    let _ = execute_on_node(leader, &format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
-    execute_on_node(leader, &format!("CREATE NAMESPACE {namespace}"))
+    let _ = execute_on_node(leader, &format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
+    execute_on_node(leader, &format!("CREATE SCHEMA {namespace}"))
         .unwrap_or_else(|err| panic!("create namespace {namespace}: {err}"));
     namespace
 }
@@ -141,9 +141,9 @@ fn open_sql_call(base_url: &str, token: &str, sql: &str) -> TcpStream {
 }
 
 struct CallOutcome {
-    id:      i64,
+    id: i64,
     elapsed: Duration,
-    result:  Result<i64, String>,
+    result: Result<i64, String>,
 }
 
 fn burst_calls(nodes: &[String], namespace: &str, procedure: &str, count: i64) -> Vec<CallOutcome> {

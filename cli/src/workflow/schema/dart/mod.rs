@@ -17,6 +17,7 @@ use crate::{
 
 mod functions;
 mod rows;
+mod table_column_context;
 mod tables;
 
 use functions::{functions_context, procedure_types, ResultAlias};
@@ -28,33 +29,33 @@ const DART_TEMPLATE: &str = "lib/generated/kalam.dart";
 #[derive(Serialize)]
 struct DartContext {
     contract_hash_line: String,
-    enums:              Vec<EnumContext>,
-    classes:            Vec<RowClassContext>,
-    aliases:            Vec<AliasContext>,
-    result_aliases:     Vec<ResultAlias>,
-    tables:             Vec<TableSpecContext>,
-    has_functions:      bool,
-    namespaces:         Vec<functions::NamespaceContext>,
-    needs_helpers:      bool,
+    enums: Vec<EnumContext>,
+    classes: Vec<RowClassContext>,
+    aliases: Vec<AliasContext>,
+    result_aliases: Vec<ResultAlias>,
+    tables: Vec<TableSpecContext>,
+    has_functions: bool,
+    namespaces: Vec<functions::NamespaceContext>,
+    needs_helpers: bool,
 }
 
 #[derive(Serialize)]
 struct EnumContext {
-    doc:    String,
-    ident:  String,
+    doc: String,
+    ident: String,
     labels: Vec<EnumLabel>,
 }
 
 #[derive(Serialize)]
 struct EnumLabel {
-    ident:      String,
-    label:      String,
+    ident: String,
+    label: String,
     terminator: &'static str,
 }
 
 #[derive(Serialize)]
 struct AliasContext {
-    ident:    String,
+    ident: String,
     alias_of: String,
 }
 
@@ -93,25 +94,30 @@ fn dart_context(
     let (mut classes, result_aliases) = procedure_types(snapshot, names, procedures);
     let mut named_classes = Vec::new();
     let mut enums = Vec::new();
+    let mut aliases = Vec::new();
     for (id, ty) in &snapshot.types {
         match &ty.kind {
             ContractTypeKind::Enum { labels } => {
                 let last = labels.len().saturating_sub(1);
                 enums.push(EnumContext {
-                    doc:    line_docs(ty.comment.as_deref(), "/// "),
-                    ident:  names.type_ident(id).to_string(),
+                    doc: line_docs(ty.comment.as_deref(), "/// "),
+                    ident: names.type_ident(id).to_string(),
                     labels: labels
                         .iter()
                         .enumerate()
                         .map(|(index, label)| EnumLabel {
-                            ident:      camel_case(label),
-                            label:      escape_js_single_quoted_string(label),
+                            ident: camel_case(label),
+                            label: escape_js_single_quoted_string(label),
                             terminator: if index == last { ";" } else { "," },
                         })
                         .collect(),
                 });
             },
             ContractTypeKind::Composite { fields } => {
+                // FILE columns use KalamFileRef from kalam_link. Do not emit a JSON class.
+                if id == "pg_catalog.file" {
+                    continue;
+                }
                 named_classes.push(row_class_context(
                     names.type_ident(id),
                     fields,
@@ -121,13 +127,22 @@ fn dart_context(
                     true,
                 ));
             },
+            ContractTypeKind::Domain { base_type, .. } => {
+                aliases.push(AliasContext {
+                    ident: names.type_ident(id).to_string(),
+                    alias_of: crate::workflow::schema::types::render_field_type(
+                        base_type,
+                        names,
+                        crate::workflow::schema::types::TargetLang::Dart,
+                    ),
+                });
+            },
             ContractTypeKind::ImplicitTableRow { .. }
             | ContractTypeKind::RowAlias { .. }
             | ContractTypeKind::TopicPayload { .. } => {},
         }
     }
 
-    let mut aliases = Vec::new();
     for table in snapshot.tables.values() {
         let canonical_id = canonical_row_type_id(table).to_string();
         named_classes.push(row_class_context(
@@ -144,7 +159,7 @@ fn dart_context(
             let row_ident = names.type_ident(table.row_type_id.as_str());
             if alias_ident != row_ident {
                 aliases.push(AliasContext {
-                    ident:    row_ident.to_string(),
+                    ident: row_ident.to_string(),
                     alias_of: alias_ident.to_string(),
                 });
             }
@@ -216,12 +231,47 @@ CREATE TABLE users (
         assert!(source.contains("this.createdAt"));
         assert!(source.contains("factory Users.fromJson"));
         assert!(source.contains("static final users = KalamTableSpec<Users>("));
-        assert!(source.contains("tableId: 'users'"));
+        assert!(source.contains("tableId: 'public.users'"));
         assert!(source.contains("keyColumn: 'id'"));
         assert!(source.contains("mode: KalamSyncMode.bidirectional"));
         assert!(source.contains("keyOf: (row) => row.kalamRowKey"));
         assert!(source.contains("encode: (row) => row.toJson()"));
         assert!(source.contains("decode: Users.fromJson"));
+    }
+
+    #[test]
+    fn file_columns_use_kalam_file_ref() {
+        let mut snapshot = compile_contract_sql(
+            r#"
+CREATE TABLE messages (
+  id TEXT PRIMARY KEY,
+  attachment FILE
+);
+"#,
+            "public",
+        )
+        .unwrap();
+        crate::workflow::schema::load::merge_builtin_file_extension(&mut snapshot);
+        let hash = kalamdb_sql::canonical_contract_hash(&snapshot);
+        let names = assign_names(
+            &snapshot,
+            NamingOptions {
+                unqualified_names: false,
+            },
+        )
+        .unwrap();
+        let source = generate_dart_source(&snapshot, &hash, &names).unwrap();
+        assert!(source.contains("final KalamFileRef? attachment;"), "{source}");
+        assert!(source.contains("'attachment': attachment?.toMap(),"), "{source}");
+        assert!(
+            source.contains("attachment: KalamFileRef.tryParse(json['attachment']),"),
+            "{source}"
+        );
+        assert!(source.contains("typedef FilePutResult = KalamFileRef;"), "{source}");
+        assert!(source.contains("final KalamFileRef file;"), "{source}");
+        assert!(source.contains("'file': file.toMap()"), "{source}");
+        assert!(!source.contains("final class File {"), "{source}");
+        assert!(!source.contains("File.fromJson"), "{source}");
     }
 
     #[test]
@@ -325,11 +375,11 @@ CREATE TABLE chat.users (
         let procedures = ProcedureCatalog::from_snapshot(&snapshot, &names);
         write_dart_schema(&SchemaEmitInput {
             project_root: temp.path(),
-            output_path:  &output,
-            snapshot:     &snapshot,
-            hash:         &hash,
-            names:        &names,
-            procedures:   &procedures,
+            output_path: &output,
+            snapshot: &snapshot,
+            hash: &hash,
+            names: &names,
+            procedures: &procedures,
         })
         .unwrap();
         let source = std::fs::read_to_string(&output).unwrap();
@@ -341,7 +391,8 @@ CREATE TABLE chat.users (
     fn comments_emit_dart_docs() {
         let snapshot = compile_contract_sql(
             "CREATE SCHEMA chat;
-             CREATE TYPE chat.address AS (city TEXT NOT NULL) COMMENT 'Postal address';",
+             CREATE TYPE chat.address AS (city TEXT);
+             COMMENT ON TYPE chat.address IS 'Postal address';",
             "public",
         )
         .unwrap();
@@ -367,10 +418,10 @@ CREATE TABLE chat.users (
   id BIGINT PRIMARY KEY,
   email TEXT NOT NULL
 ) ROW TYPE chat.user;
-CREATE PROCEDURE chat.create_message(user_id TEXT NOT NULL, body TEXT NOT NULL)
+CREATE FUNCTION chat.create_message(user_id TEXT NOT NULL, body TEXT NOT NULL)
 RETURNS chat.user;
 CREATE PROCEDURE chat.ping();
-CREATE PROCEDURE app.send_message(body JSON NOT NULL) RETURNS JSON;
+CREATE FUNCTION app.send_message(body JSON NOT NULL) RETURNS JSON;
 "#,
             "public",
         )
@@ -408,16 +459,18 @@ CREATE PROCEDURE app.send_message(body JSON NOT NULL) RETURNS JSON;
             ),
             "{source}"
         );
-        assert!(source.contains("CALL chat.create_message($1, $2)"), "{source}");
-        assert!(source.contains("input.userId, input.body"), "{source}");
-        assert!(source.contains("final result = _kalamCallResult(response);"), "{source}");
+        assert!(source.contains("invokeRoutine("), "{source}");
+        assert!(source.contains("schema: 'chat'"), "{source}");
+        assert!(source.contains("name: 'create_message'"), "{source}");
+        assert!(source.contains("arguments: input.toJson()"), "{source}");
         assert!(source.contains("ChatUser.fromJson(_asJsonMap(result))"), "{source}");
         assert!(source.contains("Future<ChatPingResult> ping() async"), "{source}");
-        assert!(source.contains("CALL chat.ping()"), "{source}");
+        assert!(source.contains("name: 'ping'"), "{source}");
+        assert!(!source.contains("CALL chat."), "{source}");
+        assert!(!source.contains("SELECT chat.create_message"), "{source}");
         assert!(source.contains("Future<AppSendMessageResult> sendMessage"), "{source}");
         assert!(source.contains("return _asJsonMapOrNull(result);"), "{source}");
-        assert!(source.contains("Object? _kalamCallResult(QueryResponse response)"), "{source}");
+        assert!(!source.contains("_kalamCallResult"), "{source}");
         assert!(!source.contains("KalamClient.call"), "{source}");
-        assert!(!source.contains("/v1/functions"), "{source}");
     }
 }

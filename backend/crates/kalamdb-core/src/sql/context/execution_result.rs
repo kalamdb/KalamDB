@@ -10,11 +10,11 @@ pub enum ExecutionResult {
     Success { message: String },
     /// Query results (SELECT, SHOW, DESCRIBE)
     Rows {
-        batches:   Vec<RecordBatch>,
+        batches: Vec<RecordBatch>,
         row_count: usize,
         /// Optional schema for when batches is empty (0 rows returned)
         /// This preserves column information for the UI even when no data
-        schema:    Option<SchemaRef>,
+        schema: Option<SchemaRef>,
     },
     /// Cached PK point-get rows that skip Arrow on the HTTP JSON path.
     ///
@@ -25,9 +25,9 @@ pub enum ExecutionResult {
     /// pgwire, live queries, and cluster forwarding still call
     /// [`Self::into_arrow_rows`].
     ScalarRows {
-        rows:      Vec<Row>,
+        rows: Vec<Row>,
         row_count: usize,
-        schema:    SchemaRef,
+        schema: SchemaRef,
     },
     /// INSERT result
     Inserted { rows_affected: usize },
@@ -37,14 +37,14 @@ pub enum ExecutionResult {
     Deleted { rows_affected: usize },
     /// FLUSH result
     Flushed {
-        tables:        Vec<String>,
+        tables: Vec<String>,
         bytes_written: u64,
     },
     /// Subscription metadata (for SUBSCRIBE/LIVE SELECT commands)
     Subscription {
         subscription_id: String,
-        channel:         String,
-        select_query:    String,
+        channel: String,
+        select_query: String,
     },
     /// Job killed result
     JobKilled { job_id: String, status: String },

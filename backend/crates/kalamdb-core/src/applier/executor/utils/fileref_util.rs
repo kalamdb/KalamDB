@@ -28,7 +28,7 @@ pub fn collect_file_refs_from_row(
     };
 
     let mut refs = Vec::new();
-    for column in table_def.columns.iter().filter(|c| c.data_type == KalamDataType::File) {
+    for column in table_def.columns.iter().filter(|c| c.data_type() == KalamDataType::File) {
         if let Some(value) = row.values.get(&column.column_name) {
             let json_opt = match value {
                 ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => Some(s),
@@ -73,7 +73,7 @@ pub fn collect_replaced_file_refs_for_update(
     };
 
     let mut refs = Vec::new();
-    for column in table_def.columns.iter().filter(|c| c.data_type == KalamDataType::File) {
+    for column in table_def.columns.iter().filter(|c| c.data_type() == KalamDataType::File) {
         let update_value = match updates.values.get(&column.column_name) {
             Some(value) => value,
             None => continue,

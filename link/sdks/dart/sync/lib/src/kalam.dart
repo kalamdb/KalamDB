@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:drift/drift.dart';
 import 'package:kalam_link/kalam_link.dart';
 
 import 'actions/kalam_action_definition.dart';
@@ -24,6 +25,10 @@ import 'transport/kalam_remote_batch.dart';
 import 'transport/kalam_sync_transport.dart';
 
 typedef KalamTransportFactory = Future<KalamSyncTransport> Function();
+typedef KalamDatabaseConstructor =
+    GeneratedDatabase Function(QueryExecutor executor);
+typedef KalamExecutorOpener =
+    Future<QueryExecutor> Function(KalamAccountIdentity identity);
 
 /// One account-scoped local-first KalamDB session.
 final class Kalam {
@@ -34,14 +39,16 @@ final class Kalam {
     required this.store,
     required this.actions,
     required this.sync,
-  });
+    required bool ownsDatabase,
+  }) : _ownsDatabase = ownsDatabase;
 
   final KalamAccountIdentity identity;
-  final KalamSyncDatabase database;
+  final GeneratedDatabase database;
   final KalamSyncTransport transport;
   final KalamSyncStore store;
   final KalamActionRunner actions;
   final KalamSyncCoordinator sync;
+  final bool _ownsDatabase;
   bool _disposed = false;
 
   KalamSyncState get syncState => sync.state;
@@ -60,6 +67,9 @@ final class Kalam {
     KalamDatabaseFactory databaseFactory = const KalamFlutterDatabaseFactory(),
     KalamTransportFactory? transportFactory,
     Duration? keepaliveInterval,
+    GeneratedDatabase? database,
+    KalamDatabaseConstructor? databaseConstructor,
+    KalamExecutorOpener? openExecutor,
   }) async {
     await ensureInitialized();
     final identity = KalamAccountIdentity(
@@ -67,7 +77,13 @@ final class Kalam {
       subject: subject,
       namespace: namespace,
     );
-    final database = await databaseFactory.open(identity);
+    final opened = await resolveKalamDatabase(
+      identity: identity,
+      database: database,
+      databaseConstructor: databaseConstructor,
+      databaseFactory: databaseFactory,
+      openExecutor: openExecutor,
+    );
     try {
       final transport = transportFactory != null
           ? await transportFactory()
@@ -78,12 +94,13 @@ final class Kalam {
             );
       return Kalam.fromComponents(
         identity: identity,
-        database: database,
+        database: opened.database,
         transport: transport,
         actionDefinitions: actionDefinitions,
+        ownsDatabase: opened.owned,
       );
     } catch (_) {
-      await database.close();
+      if (opened.owned) await opened.database.close();
       rethrow;
     }
   }
@@ -104,7 +121,7 @@ final class Kalam {
     Duration? keepaliveInterval,
     KalamSyncTransport? transport,
     KalamTransportFactory? transportFactory,
-    KalamSyncDatabase? database,
+    GeneratedDatabase? database,
   }) async {
     await ensureInitialized();
     final identity = KalamAccountIdentity(
@@ -185,10 +202,11 @@ final class Kalam {
   /// transport that still talks through `kalam_link`.
   factory Kalam.fromComponents({
     required KalamAccountIdentity identity,
-    required KalamSyncDatabase database,
+    required GeneratedDatabase database,
     required KalamSyncTransport transport,
     Iterable<KalamActionDefinition<dynamic>> actionDefinitions = const [],
     KalamClient? dmlClient,
+    bool ownsDatabase = true,
   }) {
     Future<KalamClient> Function()? resolveClient;
     if (dmlClient != null) {
@@ -220,6 +238,7 @@ final class Kalam {
       store: store,
       actions: actions,
       sync: sync,
+      ownsDatabase: ownsDatabase,
     );
   }
 
@@ -250,9 +269,15 @@ final class Kalam {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
-    await sync.dispose();
-    await transport.dispose();
-    await database.close();
+    try {
+      await sync.dispose();
+    } finally {
+      try {
+        await transport.dispose();
+      } finally {
+        if (_ownsDatabase) await database.close();
+      }
+    }
   }
 
   /// Generates a cryptographically random RFC 4122 version 4 identifier.
@@ -271,6 +296,52 @@ final class Kalam {
 }
 
 Future<Auth> _anonymousAuth() async => const Auth.none();
+
+final class ResolvedKalamDatabase {
+  const ResolvedKalamDatabase({required this.database, required this.owned});
+
+  final GeneratedDatabase database;
+  final bool owned;
+}
+
+/// Opens the one session database, or adopts one the application already opened.
+Future<ResolvedKalamDatabase> resolveKalamDatabase({
+  required KalamAccountIdentity identity,
+  GeneratedDatabase? database,
+  KalamDatabaseConstructor? databaseConstructor,
+  KalamDatabaseFactory databaseFactory = const KalamFlutterDatabaseFactory(),
+  KalamExecutorOpener? openExecutor,
+}) async {
+  if (database != null && databaseConstructor != null) {
+    throw ArgumentError(
+      'Pass either an opened database or a database constructor.',
+    );
+  }
+  if (database != null) {
+    return ResolvedKalamDatabase(database: database, owned: false);
+  }
+  if (databaseConstructor != null) {
+    final opener = openExecutor ?? _executorOpener(databaseFactory);
+    final executor = await opener(identity);
+    return ResolvedKalamDatabase(
+      database: databaseConstructor(executor),
+      owned: true,
+    );
+  }
+  return ResolvedKalamDatabase(
+    database: await databaseFactory.open(identity),
+    owned: true,
+  );
+}
+
+KalamExecutorOpener _executorOpener(KalamDatabaseFactory factory) {
+  if (factory is KalamFlutterDatabaseFactory) {
+    return factory.openExecutor;
+  }
+  throw ArgumentError(
+    'databaseConstructor needs openExecutor or KalamFlutterDatabaseFactory.',
+  );
+}
 
 final class _CatchUpConsumerResult {
   const _CatchUpConsumerResult({

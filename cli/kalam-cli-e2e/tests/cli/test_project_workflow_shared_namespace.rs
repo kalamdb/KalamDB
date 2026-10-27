@@ -1,7 +1,7 @@
 use std::{fs, process::Stdio, time::Duration};
 
 use kalam_cli::workflow::project::config::{KalamProjectConfig, KALAM_TOML};
-use kalamdb_commons::NamespaceId;
+use kalamdb_commons::SchemaId;
 use tempfile::TempDir;
 
 use crate::{
@@ -91,7 +91,7 @@ fn configure_shared_namespace(project_dir: &std::path::Path, generate_types: boo
     let config_path = project_dir.join(KALAM_TOML);
     let mut config = KalamProjectConfig::load_from_path(&config_path).expect("load kalam.toml");
     let connection = config.connection.get_mut("dev").expect("dev connection");
-    connection.namespace = NamespaceId::new(SHARED_NAMESPACE);
+    connection.namespace = SchemaId::new(SHARED_NAMESPACE);
     config.dev.processes.clear();
     config.dev.apply_schema = true;
     config.dev.generate_types = generate_types;
@@ -270,7 +270,7 @@ fn test_second_project_reuses_shared_namespace_history_without_recreating_tables
         "second project must not re-apply CREATE TABLE users\nrequests: {recorded:?}"
     );
     assert!(
-        recorded.iter().all(|request| !sql_matches(request, "DROP NAMESPACE")),
+        recorded.iter().all(|request| !sql_matches(request, "DROP SCHEMA")),
         "second project must not drop the shared namespace\nrequests: {recorded:?}"
     );
     assert!(
@@ -329,7 +329,7 @@ fn test_fresh_init_on_same_namespace_does_not_drop_existing_schema() {
 
     let recorded = requests.lock().expect("lock requests").clone();
     assert!(
-        recorded.iter().all(|request| !sql_matches(request, "DROP NAMESPACE")),
+        recorded.iter().all(|request| !sql_matches(request, "DROP SCHEMA")),
         "a fresh init on the same namespace must not drop existing schema\nrequests: {recorded:?}"
     );
     assert!(

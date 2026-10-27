@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use kalamdb_commons::{
-    models::{NamespaceId, TableId, TableName},
+    models::{SchemaId, TableId, TableName},
     schemas::TableDefinition,
     PolicyCommand, PolicyId, PolicyTarget, TablePolicy,
 };
@@ -30,7 +30,7 @@ pub fn initialize_dba_namespace(app_context: Arc<AppContext>) -> Result<()> {
 }
 
 fn remove_retired_stats_table(app_context: &AppContext) -> Result<()> {
-    let table_id = TableId::new(NamespaceId::new(DBA_NAMESPACE), TableName::new("stats"));
+    let table_id = TableId::new(SchemaId::new(DBA_NAMESPACE), TableName::new("stats"));
     if app_context.system_tables().tables().get_table_by_id(&table_id)?.is_some() {
         app_context.system_tables().tables().delete_table(&table_id)?;
         app_context.schema_registry().invalidate_all_versions(&table_id);
@@ -41,7 +41,7 @@ fn remove_retired_stats_table(app_context: &AppContext) -> Result<()> {
 }
 
 fn ensure_namespace_exists(app_context: &AppContext) -> Result<()> {
-    let namespace_id = NamespaceId::new(DBA_NAMESPACE);
+    let namespace_id = SchemaId::new(DBA_NAMESPACE);
     if app_context.system_tables().namespaces().get_namespace(&namespace_id)?.is_none() {
         app_context
             .system_tables()
@@ -76,7 +76,7 @@ fn ensure_table_exists(app_context: &AppContext, table_def: TableDefinition) -> 
 }
 
 pub async fn ensure_dba_notification_policies(app_context: Arc<AppContext>) -> Result<()> {
-    let table_id = TableId::new(NamespaceId::new(DBA_NAMESPACE), TableName::new("notifications"));
+    let table_id = TableId::new(SchemaId::new(DBA_NAMESPACE), TableName::new("notifications"));
     let policy_id = PolicyId::new(table_id.clone(), "dba_notifications_select")
         .map_err(KalamDbError::InvalidOperation)?;
     if app_context

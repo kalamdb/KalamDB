@@ -47,7 +47,16 @@ use uuid::Uuid;
 // Chrono no longer needed - DataFusion handles timestamp serialization natively
 use crate::models::rows::Row;
 use crate::{
-    conversions::schema_metadata::validate_enum_label, errors::CommonError, models::KalamCellValue,
+    conversions::{
+        scalar::json::{format_decimal_value, parse_decimal_value_bounded},
+        schema_metadata::{
+            read_character_maximum_length, read_kalam_data_type_metadata,
+            read_kalam_domain_constraints, read_logical_type_modifier, validate_enum_label,
+            DomainConstraintSpec,
+        },
+    },
+    errors::CommonError,
+    models::{datatypes::KalamDataType, FileRef, KalamCellValue},
 };
 
 /// Type alias for Arc<dyn Array> to improve readability
@@ -68,12 +77,17 @@ pub fn coerce_rows(rows: Vec<Row>, schema: &SchemaRef) -> Result<Vec<Row>, Strin
 
     rows.into_iter()
         .map(|mut row| {
-            // 1. Materialize missing schema columns as typed NULLs so constraint checks can
-            //    distinguish omitted required fields from explicit defaults applied earlier.
+            // 1. Materialize missing schema columns as domain defaults (when present) or typed
+            //    NULLs so constraint checks can distinguish omitted required fields from explicit
+            //    defaults applied earlier.
             for (i, field) in schema.fields().iter().enumerate() {
                 let field_name = field.name().as_str();
                 if !row.values.contains_key(field_name) {
-                    row.values.insert(field_name.to_string(), typed_nulls[i].clone());
+                    let initial = match materialize_domain_default_for_field(field.as_ref())? {
+                        Some(default_val) => default_val,
+                        None => typed_nulls[i].clone(),
+                    };
+                    row.values.insert(field_name.to_string(), initial);
                 }
             }
 
@@ -130,20 +144,27 @@ pub fn json_rows_to_arrow_batch(schema: &SchemaRef, rows: Vec<Row>) -> Result<Re
                 .unwrap_or_else(|| typed_nulls[i].clone());
 
             // We still need to coerce, but now we own the value
-            let coerced = coerce_scalar_to_field(raw_value, field)
+            let coerced = coerce_scalar_to_field_inner(raw_value, field, false)
                 .map_err(|e| format!("Failed to coerce column '{}': {}", field.name(), e))?;
 
             columns[i].push(coerced);
         }
     }
 
-    // Build arrays from columns
+    scalar_columns_to_record_batch(schema, columns)
+}
+
+/// Build a record batch from column-major scalars already coerced to `schema`.
+pub fn scalar_columns_to_record_batch(
+    schema: &SchemaRef,
+    columns: Vec<Vec<ScalarValue>>,
+) -> Result<RecordBatch, String> {
     let mut arrays: Vec<ArrayRef> = Vec::with_capacity(schema.fields().len());
     for (i, col_values) in columns.into_iter().enumerate() {
         let field = schema.field(i);
-        let array = build_array_from_scalars(field.as_ref(), col_values)
+        let array = build_array_from_scalars(field, col_values)
             .map_err(|e| format!("Failed to build column '{}': {}", field.name(), e))?;
-        let array = super::project::align_array_to_field(array, field.as_ref())
+        let array = super::project::align_array_to_field(array, field)
             .map_err(|e| format!("Failed to align column '{}': {}", field.name(), e))?;
         arrays.push(array);
     }
@@ -152,11 +173,36 @@ pub fn json_rows_to_arrow_batch(schema: &SchemaRef, rows: Vec<Row>) -> Result<Re
         .map_err(|e| format!("Failed to build record batch: {}", e))
 }
 
+pub fn coerce_scalar_for_arrow_field(
+    value: ScalarValue,
+    field: &arrow::datatypes::Field,
+) -> Result<ScalarValue, String> {
+    coerce_scalar_to_field_inner(value, field, false).map_err(|error| error.to_string())
+}
+
 fn get_column_defaults(schema: &SchemaRef) -> Vec<Option<ScalarValue>> {
     schema
         .fields()
         .iter()
         .map(|field| {
+            if let Some(default_json) =
+                crate::conversions::schema_metadata::read_kalam_missing_default(field.as_ref())
+            {
+                let scalar = json_value_to_scalar(&default_json);
+                if let Ok(coerced) = coerce_scalar_to_field_inner(scalar, field.as_ref(), false) {
+                    return Some(coerced);
+                }
+            }
+            if let Ok(Some(domain_default)) = materialize_domain_default_for_field(field.as_ref()) {
+                return Some(domain_default);
+            }
+            if let Some(labels) =
+                crate::conversions::schema_metadata::read_kalam_enum_labels(field.as_ref())
+            {
+                if let Some(first) = labels.first() {
+                    return Some(ScalarValue::Utf8(Some(first.clone())));
+                }
+            }
             if field.is_nullable() {
                 return None;
             }
@@ -210,11 +256,27 @@ fn create_empty_array(data_type: &DataType) -> ArrayRef {
 }
 
 fn build_array_from_scalars(field: &Field, values: Vec<ScalarValue>) -> Result<ArrayRef, String> {
+    if values.is_empty() {
+        return Ok(create_empty_array(field.data_type()));
+    }
     match field.data_type() {
         DataType::FixedSizeList(child, len) if matches!(child.data_type(), DataType::Float32) => {
             build_embedding_array(child.clone(), *len, values)
         },
-        _ => ScalarValue::iter_to_array(values.into_iter()).map_err(|e| format!("{}", e)),
+        DataType::Struct(fields) if fields.is_empty() => {
+            let len = values.len();
+            let validity: Vec<bool> = values.iter().map(|v| !v.is_null()).collect();
+            let nulls = if validity.iter().all(|valid| *valid) {
+                None
+            } else {
+                Some(arrow::buffer::NullBuffer::from(validity))
+            };
+            let struct_arr =
+                StructArray::try_new_with_length(fields.clone(), Vec::new(), nulls, len)
+                    .map_err(|e| e.to_string())?;
+            Ok(Arc::new(struct_arr) as ArrayRef)
+        },
+        _ => ScalarValue::iter_to_array(values).map_err(|e| format!("{}", e)),
     }
 }
 
@@ -304,40 +366,286 @@ fn numeric_array_to_vec(array: &dyn Array, dimensions: usize) -> Option<Vec<f32>
 }
 
 pub fn coerce_scalar_to_field(value: ScalarValue, field: &Field) -> Result<ScalarValue, String> {
+    coerce_scalar_to_field_inner(value, field, true)
+}
+
+fn coerce_scalar_to_field_inner(
+    value: ScalarValue,
+    field: &Field,
+    enforce_domain_constraints: bool,
+) -> Result<ScalarValue, String> {
     if value.is_null() {
-        return Ok(typed_null_for_field(field));
+        let typed_null = typed_null_for_field(field);
+        if enforce_domain_constraints {
+            validate_domain_constraints_for_field(field, &typed_null)?;
+        }
+        return Ok(typed_null);
     }
 
-    validate_enum_scalar(field, &value)?;
+    reject_character_maximum_length(&value, field)?;
 
-    if &value.data_type() == field.data_type() {
+    if enforce_domain_constraints {
+        validate_enum_scalar(field, &value)?;
+    } else if &value.data_type() == field.data_type() {
         return Ok(value);
     }
 
-    if matches!(field.data_type(), DataType::FixedSizeBinary(16)) {
+    let coerced = if let Some(file_scalar) = if enforce_domain_constraints {
+        coerce_file_column_scalar(&value, field)?
+    } else {
+        None
+    } {
+        file_scalar
+    } else if let Some(json_scalar) = if enforce_domain_constraints {
+        coerce_json_column_scalar(&value, field)?
+    } else {
+        None
+    } {
+        json_scalar
+    } else if let Some(decimal_scalar) = coerce_decimal_scalar(&value, field)? {
+        decimal_scalar
+    } else if let Some(nested) =
+        coerce_nested_json_scalar(value.clone(), field, enforce_domain_constraints)?
+    {
+        nested
+    } else if &value.data_type() == field.data_type() {
+        value
+    } else if matches!(field.data_type(), DataType::FixedSizeBinary(16)) {
         let value_type = value.data_type();
-        return coerce_uuid_scalar(value, field)?.ok_or_else(|| {
+        coerce_uuid_scalar(value, field)?.ok_or_else(|| {
             format!("Unable to coerce value {value_type:?} to UUID for column '{}'", field.name())
-        });
-    }
-
-    if let Some(embedding) = coerce_embedding_scalar(value.clone(), field)? {
-        return Ok(embedding);
-    }
-
-    if let Some(nested) = coerce_nested_json_scalar(value.clone(), field)? {
-        return Ok(nested);
-    }
-
-    value.cast_to(field.data_type()).map_err(|e| {
-        format!(
-            "Unable to cast value {:?} to {:?} for column '{}': {}",
-            value.data_type(),
-            field.data_type(),
-            field.name(),
-            e
+        })?
+    } else if let Some(embedding) = coerce_embedding_scalar(value.clone(), field)? {
+        embedding
+    } else if matches!(field.data_type(), DataType::Int16 | DataType::Int32 | DataType::Int64)
+        && matches!(
+            &value,
+            ScalarValue::Utf8(Some(_))
+                | ScalarValue::LargeUtf8(Some(_))
+                | ScalarValue::Utf8View(Some(_))
         )
-    })
+    {
+        let raw = scalar_as_str(&value).unwrap_or_default().trim();
+        let parsed = raw.parse::<i64>().map_err(|_| {
+            format!(
+                "invalid input syntax for type {:?}: \"{raw}\" in column '{}'",
+                field.data_type(),
+                field.name()
+            )
+        })?;
+        match field.data_type() {
+            DataType::Int16 => {
+                let v = i16::try_from(parsed).map_err(|_| {
+                    format!(
+                        "value \"{raw}\" is out of range for type smallint in column '{}'",
+                        field.name()
+                    )
+                })?;
+                ScalarValue::Int16(Some(v))
+            },
+            DataType::Int32 => {
+                let v = i32::try_from(parsed).map_err(|_| {
+                    format!(
+                        "value \"{raw}\" is out of range for type integer in column '{}'",
+                        field.name()
+                    )
+                })?;
+                ScalarValue::Int32(Some(v))
+            },
+            DataType::Int64 => ScalarValue::Int64(Some(parsed)),
+            _ => unreachable!(),
+        }
+    } else if matches!(field.data_type(), DataType::Float32 | DataType::Float64)
+        && matches!(
+            &value,
+            ScalarValue::Utf8(Some(_))
+                | ScalarValue::LargeUtf8(Some(_))
+                | ScalarValue::Utf8View(Some(_))
+        )
+    {
+        let raw = scalar_as_str(&value).unwrap_or_default().trim();
+        let parsed = raw.parse::<f64>().map_err(|_| {
+            format!(
+                "invalid input syntax for type {:?}: \"{raw}\" in column '{}'",
+                field.data_type(),
+                field.name()
+            )
+        })?;
+        match field.data_type() {
+            DataType::Float32 => ScalarValue::Float32(Some(parsed as f32)),
+            DataType::Float64 => ScalarValue::Float64(Some(parsed)),
+            _ => unreachable!(),
+        }
+    } else if matches!(field.data_type(), DataType::Boolean)
+        && matches!(
+            &value,
+            ScalarValue::Utf8(Some(_))
+                | ScalarValue::LargeUtf8(Some(_))
+                | ScalarValue::Utf8View(Some(_))
+        )
+    {
+        let raw = scalar_as_str(&value).unwrap_or_default().trim();
+        let b = match raw.to_ascii_lowercase().as_str() {
+            "true" | "t" | "1" | "yes" | "on" => true,
+            "false" | "f" | "0" | "no" | "off" => false,
+            _ => {
+                return Err(format!(
+                    "invalid input syntax for type boolean: \"{raw}\" in column '{}'",
+                    field.name()
+                ))
+            },
+        };
+        ScalarValue::Boolean(Some(b))
+    } else {
+        let casted = value.cast_to(field.data_type()).map_err(|e| {
+            format!(
+                "Unable to cast value {:?} to {:?} for column '{}': {}",
+                value.data_type(),
+                field.data_type(),
+                field.name(),
+                e
+            )
+        })?;
+        if casted.is_null() && !value.is_null() {
+            return Err(format!(
+                "invalid input syntax or out of range when casting {:?} to {:?} for column '{}'",
+                value.data_type(),
+                field.data_type(),
+                field.name()
+            ));
+        }
+        casted
+    };
+
+    if enforce_domain_constraints {
+        validate_domain_constraints_for_field(field, &coerced)?;
+    }
+
+    reject_character_maximum_length(&coerced, field)?;
+    Ok(coerced)
+}
+
+fn coerce_file_column_scalar(
+    value: &ScalarValue,
+    field: &Field,
+) -> Result<Option<ScalarValue>, String> {
+    if !matches!(field.data_type(), DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View)
+        || read_kalam_data_type_metadata(field) != Some(KalamDataType::File)
+    {
+        return Ok(None);
+    }
+    let raw_text = match value {
+        ScalarValue::Utf8(Some(text))
+        | ScalarValue::LargeUtf8(Some(text))
+        | ScalarValue::Utf8View(Some(text)) => text.as_str(),
+        other => {
+            return Err(format!(
+                "column '{}' is of type pg_catalog.file and cannot be constructed from {:?}; use \
+                 file_put()",
+                field.name(),
+                other.data_type()
+            ));
+        },
+    };
+    let parsed = FileRef::try_from_json(raw_text).map_err(|error| {
+        format!(
+            "invalid or forged pg_catalog.file reference in column '{}': {error}",
+            field.name()
+        )
+    })?;
+    if !parsed.is_well_formed() {
+        return Err(format!(
+            "invalid or forged pg_catalog.file reference in column '{}': required metadata fields \
+             are missing",
+            field.name()
+        ));
+    }
+    Ok(Some(ScalarValue::Utf8(Some(raw_text.to_string()))))
+}
+
+fn coerce_json_column_scalar(
+    value: &ScalarValue,
+    field: &Field,
+) -> Result<Option<ScalarValue>, String> {
+    if !matches!(field.data_type(), DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View)
+        || read_kalam_data_type_metadata(field) != Some(KalamDataType::Json)
+    {
+        return Ok(None);
+    }
+    let raw_text = match value {
+        ScalarValue::Utf8(Some(text))
+        | ScalarValue::LargeUtf8(Some(text))
+        | ScalarValue::Utf8View(Some(text)) => text.as_str(),
+        other => {
+            return Err(format!(
+                "column '{}' is of type json but expression is of type {:?}",
+                field.name(),
+                other.data_type()
+            ));
+        },
+    };
+    let type_label = read_logical_type_modifier(field).unwrap_or("json");
+    let parsed: JsonValue = serde_json::from_str(raw_text).map_err(|error| {
+        format!(
+            "invalid input syntax for type {type_label} in column '{}': {error}",
+            field.name()
+        )
+    })?;
+    if type_label == "jsonb" {
+        let normalized = serde_json::to_string(&parsed).map_err(|error| error.to_string())?;
+        Ok(Some(ScalarValue::Utf8(Some(normalized))))
+    } else {
+        Ok(Some(ScalarValue::Utf8(Some(raw_text.to_string()))))
+    }
+}
+
+fn coerce_decimal_scalar(
+    value: &ScalarValue,
+    field: &Field,
+) -> Result<Option<ScalarValue>, String> {
+    let DataType::Decimal128(precision, scale) = field.data_type() else {
+        return Ok(None);
+    };
+    let text = match value {
+        ScalarValue::Decimal128(Some(v), _src_p, src_s) => {
+            format_decimal_value(*v, (*src_s).max(0) as u8)
+        },
+        ScalarValue::Utf8(Some(s))
+        | ScalarValue::LargeUtf8(Some(s))
+        | ScalarValue::Utf8View(Some(s)) => s.clone(),
+        ScalarValue::Int8(Some(n)) => n.to_string(),
+        ScalarValue::Int16(Some(n)) => n.to_string(),
+        ScalarValue::Int32(Some(n)) => n.to_string(),
+        ScalarValue::Int64(Some(n)) => n.to_string(),
+        ScalarValue::UInt8(Some(n)) => n.to_string(),
+        ScalarValue::UInt16(Some(n)) => n.to_string(),
+        ScalarValue::UInt32(Some(n)) => n.to_string(),
+        ScalarValue::UInt64(Some(n)) => n.to_string(),
+        ScalarValue::Float32(Some(f)) => {
+            if !f.is_finite() {
+                return Err(format!(
+                    "numeric value '{f}' is not supported by bounded NUMERIC({precision}, \
+                     {scale}) in column '{}'",
+                    field.name()
+                ));
+            }
+            f.to_string()
+        },
+        ScalarValue::Float64(Some(f)) => {
+            if !f.is_finite() {
+                return Err(format!(
+                    "numeric value '{f}' is not supported by bounded NUMERIC({precision}, \
+                     {scale}) in column '{}'",
+                    field.name()
+                ));
+            }
+            f.to_string()
+        },
+        _ => return Ok(None),
+    };
+    let parsed = parse_decimal_value_bounded(&text, *precision, *scale)
+        .map_err(|error| format!("column '{}': {error}", field.name()))?;
+    Ok(Some(ScalarValue::Decimal128(Some(parsed), *precision, *scale)))
 }
 
 fn coerce_embedding_scalar(
@@ -388,6 +696,7 @@ fn coerce_embedding_scalar(
 fn coerce_nested_json_scalar(
     value: ScalarValue,
     field: &Field,
+    enforce_domain_constraints: bool,
 ) -> Result<Option<ScalarValue>, String> {
     match field.data_type() {
         DataType::Struct(_) | DataType::List(_) | DataType::LargeList(_) => {},
@@ -399,7 +708,90 @@ fn coerce_nested_json_scalar(
                 format!("invalid nested JSON for column '{}': {error}", field.name())
             })?
         },
-        ScalarValue::Struct(_) | ScalarValue::List(_) | ScalarValue::LargeList(_) => {
+        ScalarValue::List(list_arr) => {
+            if !enforce_domain_constraints {
+                let aligned = super::project::align_array_to_field(list_arr as ArrayRef, field)?;
+                let rebuilt = aligned
+                    .as_any()
+                    .downcast_ref::<ListArray>()
+                    .ok_or_else(|| "expected ListArray after alignment".to_string())?
+                    .clone();
+                return Ok(Some(ScalarValue::List(Arc::new(rebuilt))));
+            }
+            let DataType::List(item_field) = field.data_type() else {
+                return Ok(Some(ScalarValue::List(list_arr)));
+            };
+            let values_arr = list_arr.value(0);
+            let mut coerced_items = Vec::with_capacity(values_arr.len());
+            for idx in 0..values_arr.len() {
+                let elem_scalar =
+                    arrow_value_to_scalar(&values_arr, idx).map_err(|e| e.to_string())?;
+                if elem_scalar.is_null() && !item_field.is_nullable() {
+                    return Err(format!(
+                        "array element in column '{}' cannot be null",
+                        field.name()
+                    ));
+                }
+                coerced_items.push(coerce_scalar_to_field(elem_scalar, item_field)?);
+            }
+            let child_array = if coerced_items.is_empty() {
+                new_empty_array(item_field.data_type())
+            } else {
+                build_array_from_scalars(item_field.as_ref(), coerced_items)?
+            };
+            let offsets = OffsetBuffer::from_lengths([child_array.len()]);
+            return Ok(Some(ScalarValue::List(Arc::new(ListArray::new(
+                item_field.clone(),
+                offsets,
+                child_array,
+                None,
+            )))));
+        },
+        ScalarValue::Struct(struct_arr) => {
+            if !enforce_domain_constraints {
+                let aligned = super::project::align_array_to_field(struct_arr as ArrayRef, field)?;
+                let rebuilt = aligned
+                    .as_any()
+                    .downcast_ref::<StructArray>()
+                    .ok_or_else(|| "expected StructArray after alignment".to_string())?
+                    .clone();
+                return Ok(Some(ScalarValue::Struct(Arc::new(rebuilt))));
+            }
+            let DataType::Struct(fields) = field.data_type() else {
+                return Ok(Some(ScalarValue::Struct(struct_arr)));
+            };
+            if struct_arr.num_columns() != fields.len() {
+                return Err(format!(
+                    "composite value for column '{}' has {} fields, expected {}",
+                    field.name(),
+                    struct_arr.num_columns(),
+                    fields.len()
+                ));
+            }
+            let mut child_arrays = Vec::with_capacity(fields.len());
+            for (idx, child_field) in fields.iter().enumerate() {
+                let col = struct_arr.column(idx);
+                let child_scalar = arrow_value_to_scalar(col, 0).map_err(|e| e.to_string())?;
+                if child_scalar.is_null() && !child_field.is_nullable() {
+                    return Err(format!(
+                        "field '{}' of composite column '{}' cannot be null",
+                        child_field.name(),
+                        field.name()
+                    ));
+                }
+                let coerced = coerce_scalar_to_field(child_scalar, child_field)?;
+                child_arrays.push(coerced.to_array().map_err(|e| e.to_string())?);
+            }
+            let rebuilt = StructArray::try_new_with_length(
+                fields.clone(),
+                child_arrays,
+                struct_arr.nulls().cloned(),
+                1,
+            )
+            .map_err(|e| e.to_string())?;
+            return Ok(Some(ScalarValue::Struct(Arc::new(rebuilt))));
+        },
+        ScalarValue::LargeList(_) => {
             return Ok(Some(value));
         },
         _ => return Ok(None),
@@ -412,9 +804,20 @@ pub fn json_value_to_scalar_for_field(
     value: &JsonValue,
     field: &Field,
 ) -> Result<ScalarValue, String> {
+    if value.is_null() {
+        return Ok(typed_null_for_field(field));
+    }
+    if matches!(field.data_type(), DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View)
+        && read_kalam_data_type_metadata(field) == Some(KalamDataType::Json)
+    {
+        let raw = match value {
+            JsonValue::String(s) => s.clone(),
+            other => serde_json::to_string(other).map_err(|e| e.to_string())?,
+        };
+        return coerce_scalar_to_field(ScalarValue::Utf8(Some(raw)), field);
+    }
     let scalar = json_value_to_scalar_for_data_type(value, field.data_type(), field.is_nullable())?;
-    validate_enum_scalar(field, &scalar)?;
-    Ok(scalar)
+    coerce_scalar_to_field(scalar, field)
 }
 
 fn json_value_to_scalar_for_data_type(
@@ -433,10 +836,18 @@ fn json_value_to_scalar_for_data_type(
             let mut arrays = Vec::with_capacity(fields.len());
             for child in fields {
                 let child_json = object.get(child.name()).unwrap_or(&JsonValue::Null);
+                if child_json.is_null() && !child.is_nullable() {
+                    return Err(format!(
+                        "field '{}' of composite value cannot be null",
+                        child.name()
+                    ));
+                }
                 let scalar = json_value_to_scalar_for_field(child_json, child)?;
                 arrays.push(scalar.to_array().map_err(|error| error.to_string())?);
             }
-            Ok(ScalarValue::Struct(Arc::new(StructArray::new(fields.clone(), arrays, None))))
+            let struct_array = StructArray::try_new_with_length(fields.clone(), arrays, None, 1)
+                .map_err(|error| error.to_string())?;
+            Ok(ScalarValue::Struct(Arc::new(struct_array)))
         },
         DataType::List(item) | DataType::LargeList(item) => {
             let array = value
@@ -447,12 +858,15 @@ fn json_value_to_scalar_for_data_type(
             }
             let mut values = Vec::with_capacity(array.len());
             for element in array {
+                if element.is_null() && !item.is_nullable() {
+                    return Err("array element cannot be null".to_string());
+                }
                 values.push(json_value_to_scalar_for_field(element, item)?);
             }
             let child_array = if values.is_empty() {
                 new_empty_array(item.data_type())
             } else {
-                ScalarValue::iter_to_array(values).map_err(|error| error.to_string())?
+                build_array_from_scalars(item.as_ref(), values)?
             };
             let offsets = OffsetBuffer::from_lengths([child_array.len()]);
             Ok(ScalarValue::List(Arc::new(ListArray::new(
@@ -474,6 +888,914 @@ fn validate_enum_scalar(field: &Field, value: &ScalarValue) -> Result<(), String
         _ => return Ok(()),
     };
     validate_enum_label(field, label)
+}
+
+/// Validate all domain `NOT NULL` and `CHECK` constraints attached to `field`.
+pub fn validate_domain_constraints_for_field(
+    field: &Field,
+    value: &ScalarValue,
+) -> Result<(), String> {
+    let Some(specs) = read_kalam_domain_constraints(field) else {
+        return Ok(());
+    };
+    validate_domain_specs(&specs, value)
+}
+
+/// Validate an explicit slice of [`DomainConstraintSpec`] against `value`.
+pub fn validate_domain_specs(
+    specs: &[DomainConstraintSpec],
+    value: &ScalarValue,
+) -> Result<(), String> {
+    for spec in specs {
+        if spec.not_null && value.is_null() {
+            return Err(format!("domain {} does not allow null values", spec.domain_name));
+        }
+        for check in &spec.checks {
+            if evaluate_domain_check_predicate(&check.expr, value)? == Some(false) {
+                return Err(format!(
+                    "value for domain {} violates check constraint \"{}\"",
+                    spec.domain_name, check.name
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Materialize the outermost domain default attached to `field`, if any.
+pub fn materialize_domain_default_for_field(field: &Field) -> Result<Option<ScalarValue>, String> {
+    let Some(specs) = read_kalam_domain_constraints(field) else {
+        return Ok(None);
+    };
+    let Some(default_expr) = specs.iter().rev().find_map(|spec| spec.default_expr.as_deref())
+    else {
+        return Ok(None);
+    };
+    let scalar = eval_domain_default_expr(default_expr, field)?;
+    coerce_scalar_to_field(scalar, field).map(Some)
+}
+
+fn eval_domain_default_expr(raw: &str, field: &Field) -> Result<ScalarValue, String> {
+    let trimmed = strip_trailing_type_cast(raw.trim());
+    let trimmed = strip_balanced_parens(trimmed);
+    if trimmed.eq_ignore_ascii_case("NULL") {
+        return Ok(ScalarValue::Null);
+    }
+    if let DataType::Struct(children) = field.data_type() {
+        let tuple_inner = if let Some(rest) = strip_keyword_prefix(trimmed, "ROW") {
+            let rest = rest.trim();
+            if rest.starts_with('(') && rest.ends_with(')') {
+                Some(&rest[1..rest.len() - 1])
+            } else {
+                None
+            }
+        } else if raw.trim().starts_with('(') && raw.trim().ends_with(')') {
+            let r = strip_trailing_type_cast(raw.trim());
+            Some(&r[1..r.len() - 1])
+        } else {
+            None
+        };
+        if let Some(inner) = tuple_inner {
+            let parts = split_top_level_commas(inner);
+            if parts.len() != children.len() {
+                return Err(format!(
+                    "domain default composite value has {} fields, expected {}",
+                    parts.len(),
+                    children.len()
+                ));
+            }
+            let mut child_arrays = Vec::with_capacity(children.len());
+            for (part, child_field) in parts.iter().zip(children.iter()) {
+                let child_scalar = eval_domain_default_expr(part, child_field.as_ref())?;
+                let coerced = coerce_scalar_to_field(child_scalar, child_field.as_ref())?;
+                child_arrays.push(coerced.to_array().map_err(|e| e.to_string())?);
+            }
+            let sa = StructArray::try_new_with_length(children.clone(), child_arrays, None, 1)
+                .map_err(|e| e.to_string())?;
+            return Ok(ScalarValue::Struct(Arc::new(sa)));
+        }
+    }
+    if let DataType::List(item_field) = field.data_type() {
+        if let Some(rest) = strip_keyword_prefix(trimmed, "ARRAY") {
+            let rest = rest.trim();
+            if rest.starts_with('[') && rest.ends_with(']') {
+                let inner = &rest[1..rest.len() - 1];
+                let parts = split_top_level_commas(inner);
+                let mut items = Vec::with_capacity(parts.len());
+                for part in parts {
+                    let elem = eval_domain_default_expr(part, item_field.as_ref())?;
+                    items.push(coerce_scalar_to_field(elem, item_field.as_ref())?);
+                }
+                let child_array = if items.is_empty() {
+                    new_empty_array(item_field.data_type())
+                } else {
+                    build_array_from_scalars(item_field.as_ref(), items)?
+                };
+                let offsets = OffsetBuffer::from_lengths([child_array.len()]);
+                return Ok(ScalarValue::List(Arc::new(ListArray::new(
+                    item_field.clone(),
+                    offsets,
+                    child_array,
+                    None,
+                ))));
+            }
+        }
+    }
+    eval_domain_operand(trimmed, &ScalarValue::Null)
+}
+
+/// Evaluate a PostgreSQL domain `CHECK (expr)` predicate with three-valued SQL logic:
+/// `Some(true)` = TRUE, `Some(false)` = FALSE (violates constraint), `None` = UNKNOWN (passes).
+pub fn evaluate_domain_check_predicate(
+    expr: &str,
+    value: &ScalarValue,
+) -> Result<Option<bool>, String> {
+    let trimmed = strip_balanced_parens(expr.trim());
+    if trimmed.is_empty() {
+        return Ok(Some(true));
+    }
+
+    let or_parts = split_top_level_keyword(trimmed, "OR");
+    if or_parts.len() > 1 {
+        let mut saw_unknown = false;
+        for part in or_parts {
+            match evaluate_domain_check_predicate(part, value)? {
+                Some(true) => return Ok(Some(true)),
+                Some(false) => {},
+                None => saw_unknown = true,
+            }
+        }
+        return Ok(if saw_unknown { None } else { Some(false) });
+    }
+
+    let and_parts = split_top_level_keyword(trimmed, "AND");
+    if and_parts.len() > 1 {
+        let mut saw_unknown = false;
+        for part in and_parts {
+            match evaluate_domain_check_predicate(part, value)? {
+                Some(false) => return Ok(Some(false)),
+                Some(true) => {},
+                None => saw_unknown = true,
+            }
+        }
+        return Ok(if saw_unknown { None } else { Some(true) });
+    }
+
+    if let Some(rest) = strip_keyword_prefix(trimmed, "NOT") {
+        return Ok(evaluate_domain_check_predicate(rest, value)?.map(|b| !b));
+    }
+
+    if let Some(lhs_str) = strip_keyword_suffix(trimmed, "IS NOT NULL") {
+        let lhs = eval_domain_operand(lhs_str, value)?;
+        return Ok(Some(!lhs.is_null()));
+    }
+    if let Some(lhs_str) = strip_keyword_suffix(trimmed, "IS NULL") {
+        let lhs = eval_domain_operand(lhs_str, value)?;
+        return Ok(Some(lhs.is_null()));
+    }
+    if let Some(lhs_str) = strip_keyword_suffix(trimmed, "IS TRUE") {
+        let lhs = eval_domain_operand(lhs_str, value)?;
+        return Ok(Some(matches!(lhs, ScalarValue::Boolean(Some(true)))));
+    }
+    if let Some(lhs_str) = strip_keyword_suffix(trimmed, "IS FALSE") {
+        let lhs = eval_domain_operand(lhs_str, value)?;
+        return Ok(Some(matches!(lhs, ScalarValue::Boolean(Some(false)))));
+    }
+
+    if let Some((lhs_str, list_str, negated)) = split_in_list(trimmed) {
+        let lhs = eval_domain_operand(lhs_str, value)?;
+        if lhs.is_null() {
+            return Ok(None);
+        }
+        let items = split_top_level_commas(list_str);
+        let mut saw_null = false;
+        let mut matched = false;
+        for item_str in items {
+            let item = eval_domain_operand(item_str, value)?;
+            if item.is_null() {
+                saw_null = true;
+            } else if compare_domain_scalars(&lhs, &item)? == Some(std::cmp::Ordering::Equal) {
+                matched = true;
+                break;
+            }
+        }
+        return Ok(if matched {
+            Some(!negated)
+        } else if saw_null {
+            None
+        } else {
+            Some(negated)
+        });
+    }
+
+    if let Some((lhs_str, rhs_str, case_insensitive, negated)) = split_like_op(trimmed) {
+        let lhs = eval_domain_operand(lhs_str, value)?;
+        let rhs = eval_domain_operand(rhs_str, value)?;
+        if lhs.is_null() || rhs.is_null() {
+            return Ok(None);
+        }
+        let Some(text) = scalar_as_str(&lhs) else {
+            return Err("LIKE operand must be text".to_string());
+        };
+        let Some(pattern) = scalar_as_str(&rhs) else {
+            return Err("LIKE pattern must be text".to_string());
+        };
+        let is_match = sql_like_match(text, pattern, case_insensitive);
+        return Ok(Some(if negated { !is_match } else { is_match }));
+    }
+
+    if let Some((lhs_str, op, rhs_str)) = split_top_level_comparison(trimmed) {
+        let lhs = eval_domain_operand(lhs_str, value)?;
+        let rhs = eval_domain_operand(rhs_str, value)?;
+        if lhs.is_null() || rhs.is_null() {
+            return Ok(None);
+        }
+        let Some(ord) = compare_domain_scalars(&lhs, &rhs)? else {
+            return Ok(None);
+        };
+        let result = match op {
+            "=" => ord == std::cmp::Ordering::Equal,
+            "<>" | "!=" => ord != std::cmp::Ordering::Equal,
+            "<" => ord == std::cmp::Ordering::Less,
+            "<=" => ord != std::cmp::Ordering::Greater,
+            ">" => ord == std::cmp::Ordering::Greater,
+            ">=" => ord != std::cmp::Ordering::Less,
+            _ => return Err(format!("unsupported domain check operator '{op}'")),
+        };
+        return Ok(Some(result));
+    }
+
+    let val = eval_domain_operand(trimmed, value)?;
+    match val {
+        ScalarValue::Boolean(Some(b)) => Ok(Some(b)),
+        v if v.is_null() => Ok(None),
+        other => Err(format!(
+            "domain CHECK expression '{trimmed}' did not evaluate to boolean (got {:?})",
+            other.data_type()
+        )),
+    }
+}
+
+fn eval_domain_operand(raw: &str, value: &ScalarValue) -> Result<ScalarValue, String> {
+    let without_cast = strip_trailing_type_cast(raw.trim());
+    let trimmed = strip_balanced_parens(without_cast);
+
+    if let Some((lhs_str, op, rhs_str)) = split_top_level_arith(trimmed) {
+        let lhs = eval_domain_operand(lhs_str, value)?;
+        let rhs = eval_domain_operand(rhs_str, value)?;
+        return eval_domain_arith(&lhs, op, &rhs);
+    }
+
+    if trimmed.eq_ignore_ascii_case("VALUE") {
+        return Ok(value.clone());
+    }
+    if trimmed.eq_ignore_ascii_case("NULL") {
+        return Ok(ScalarValue::Null);
+    }
+    if trimmed.eq_ignore_ascii_case("TRUE") {
+        return Ok(ScalarValue::Boolean(Some(true)));
+    }
+    if trimmed.eq_ignore_ascii_case("FALSE") {
+        return Ok(ScalarValue::Boolean(Some(false)));
+    }
+
+    if let Some(field_path) = parse_value_field_access(trimmed) {
+        let mut current = value.clone();
+        for segment in field_path {
+            if current.is_null() {
+                return Ok(ScalarValue::Null);
+            }
+            let ScalarValue::Struct(sa) = &current else {
+                return Err(format!(
+                    "cannot access field '{segment}' on non-composite domain value"
+                ));
+            };
+            let Some((idx, _)) = sa
+                .fields()
+                .iter()
+                .enumerate()
+                .find(|(_, f)| f.name().eq_ignore_ascii_case(segment))
+            else {
+                return Err(format!("composite domain value has no field '{segment}'"));
+            };
+            current = arrow_value_to_scalar(sa.column(idx), 0).map_err(|e| e.to_string())?;
+        }
+        return Ok(current);
+    }
+
+    if trimmed.starts_with('\'') && trimmed.ends_with('\'') && trimmed.len() >= 2 {
+        let inner = &trimmed[1..trimmed.len() - 1];
+        return Ok(ScalarValue::Utf8(Some(inner.replace("''", "'"))));
+    }
+
+    if let Some((fn_name, args_str)) = split_function_call(trimmed) {
+        let args = split_top_level_commas(args_str);
+        let lower_fn = fn_name.to_ascii_lowercase();
+        match lower_fn.as_str() {
+            "length" | "char_length" | "character_length" => {
+                if args.len() != 1 {
+                    return Err(format!("{fn_name}() requires 1 argument"));
+                }
+                let arg = eval_domain_operand(args[0], value)?;
+                if arg.is_null() {
+                    return Ok(ScalarValue::Null);
+                }
+                let Some(s) = scalar_as_str(&arg) else {
+                    return Err(format!("{fn_name}() requires text argument"));
+                };
+                return Ok(ScalarValue::Int64(Some(s.chars().count() as i64)));
+            },
+            "octet_length" => {
+                if args.len() != 1 {
+                    return Err("octet_length() requires 1 argument".to_string());
+                }
+                let arg = eval_domain_operand(args[0], value)?;
+                if arg.is_null() {
+                    return Ok(ScalarValue::Null);
+                }
+                let Some(s) = scalar_as_str(&arg) else {
+                    return Err("octet_length() requires text argument".to_string());
+                };
+                return Ok(ScalarValue::Int64(Some(s.len() as i64)));
+            },
+            "lower" => {
+                if args.len() != 1 {
+                    return Err("lower() requires 1 argument".to_string());
+                }
+                let arg = eval_domain_operand(args[0], value)?;
+                if arg.is_null() {
+                    return Ok(ScalarValue::Null);
+                }
+                let Some(s) = scalar_as_str(&arg) else {
+                    return Err("lower() requires text argument".to_string());
+                };
+                return Ok(ScalarValue::Utf8(Some(s.to_lowercase())));
+            },
+            "upper" => {
+                if args.len() != 1 {
+                    return Err("upper() requires 1 argument".to_string());
+                }
+                let arg = eval_domain_operand(args[0], value)?;
+                if arg.is_null() {
+                    return Ok(ScalarValue::Null);
+                }
+                let Some(s) = scalar_as_str(&arg) else {
+                    return Err("upper() requires text argument".to_string());
+                };
+                return Ok(ScalarValue::Utf8(Some(s.to_uppercase())));
+            },
+            "trim" | "btrim" => {
+                if args.len() != 1 {
+                    return Err(format!("{fn_name}() requires 1 argument"));
+                }
+                let arg = eval_domain_operand(args[0], value)?;
+                if arg.is_null() {
+                    return Ok(ScalarValue::Null);
+                }
+                let Some(s) = scalar_as_str(&arg) else {
+                    return Err(format!("{fn_name}() requires text argument"));
+                };
+                return Ok(ScalarValue::Utf8(Some(s.trim().to_string())));
+            },
+            "abs" => {
+                if args.len() != 1 {
+                    return Err("abs() requires 1 argument".to_string());
+                }
+                let arg = eval_domain_operand(args[0], value)?;
+                if arg.is_null() {
+                    return Ok(ScalarValue::Null);
+                }
+                if let Some(n) = scalar_as_f64(&arg) {
+                    return Ok(ScalarValue::Float64(Some(n.abs())));
+                }
+                return Err("abs() requires numeric argument".to_string());
+            },
+            "cardinality" | "array_length" => {
+                if args.is_empty() {
+                    return Err(format!("{fn_name}() requires at least 1 argument"));
+                }
+                let arg = eval_domain_operand(args[0], value)?;
+                if arg.is_null() {
+                    return Ok(ScalarValue::Null);
+                }
+                if let ScalarValue::List(list) = &arg {
+                    return Ok(ScalarValue::Int64(Some(list.value(0).len() as i64)));
+                }
+                return Err(format!("{fn_name}() requires array argument"));
+            },
+            "coalesce" => {
+                for arg_expr in args {
+                    let arg = eval_domain_operand(arg_expr, value)?;
+                    if !arg.is_null() {
+                        return Ok(arg);
+                    }
+                }
+                return Ok(ScalarValue::Null);
+            },
+            _ => {},
+        }
+    }
+
+    if let Ok(int_val) = trimmed.parse::<i64>() {
+        return Ok(ScalarValue::Int64(Some(int_val)));
+    }
+    if let Ok(float_val) = trimmed.parse::<f64>() {
+        return Ok(ScalarValue::Float64(Some(float_val)));
+    }
+
+    Err(format!("unsupported operand '{trimmed}' in domain expression"))
+}
+
+fn reject_character_maximum_length(value: &ScalarValue, field: &Field) -> Result<(), String> {
+    let Some(max_chars) = read_character_maximum_length(field) else {
+        return Ok(());
+    };
+    let Some(text) = scalar_as_str(value) else {
+        return Ok(());
+    };
+    if text.chars().count() > usize::try_from(max_chars).unwrap_or(usize::MAX) {
+        return Err(format!("value too long for type character varying({max_chars})"));
+    }
+    Ok(())
+}
+
+fn scalar_as_str(val: &ScalarValue) -> Option<&str> {
+    match val {
+        ScalarValue::Utf8(Some(s))
+        | ScalarValue::LargeUtf8(Some(s))
+        | ScalarValue::Utf8View(Some(s)) => Some(s.as_str()),
+        _ => None,
+    }
+}
+
+fn scalar_as_f64(val: &ScalarValue) -> Option<f64> {
+    match val {
+        ScalarValue::Int8(Some(v)) => Some(*v as f64),
+        ScalarValue::Int16(Some(v)) => Some(*v as f64),
+        ScalarValue::Int32(Some(v)) => Some(*v as f64),
+        ScalarValue::Int64(Some(v)) => Some(*v as f64),
+        ScalarValue::UInt8(Some(v)) => Some(*v as f64),
+        ScalarValue::UInt16(Some(v)) => Some(*v as f64),
+        ScalarValue::UInt32(Some(v)) => Some(*v as f64),
+        ScalarValue::UInt64(Some(v)) => Some(*v as f64),
+        ScalarValue::Float32(Some(v)) => Some(*v as f64),
+        ScalarValue::Float64(Some(v)) => Some(*v),
+        ScalarValue::Decimal128(Some(v), _, s) => {
+            let scale = (*s).max(0) as u32;
+            Some((*v as f64) / 10_f64.powi(scale as i32))
+        },
+        _ => None,
+    }
+}
+
+fn compare_domain_scalars(
+    lhs: &ScalarValue,
+    rhs: &ScalarValue,
+) -> Result<Option<std::cmp::Ordering>, String> {
+    if let (Some(l), Some(r)) = (scalar_as_f64(lhs), scalar_as_f64(rhs)) {
+        return Ok(l.partial_cmp(&r));
+    }
+    if let (Some(l), Some(r)) = (scalar_as_str(lhs), scalar_as_str(rhs)) {
+        return Ok(Some(l.cmp(r)));
+    }
+    if let (ScalarValue::Boolean(Some(l)), ScalarValue::Boolean(Some(r))) = (lhs, rhs) {
+        return Ok(Some(l.cmp(r)));
+    }
+    Err(format!(
+        "cannot compare domain values of types {:?} and {:?}",
+        lhs.data_type(),
+        rhs.data_type()
+    ))
+}
+
+fn eval_domain_arith(
+    lhs: &ScalarValue,
+    op: &str,
+    rhs: &ScalarValue,
+) -> Result<ScalarValue, String> {
+    if lhs.is_null() || rhs.is_null() {
+        return Ok(ScalarValue::Null);
+    }
+    if let (ScalarValue::Int64(Some(l)), ScalarValue::Int64(Some(r))) = (lhs, rhs) {
+        return match op {
+            "+" => Ok(ScalarValue::Int64(Some(l.saturating_add(*r)))),
+            "-" => Ok(ScalarValue::Int64(Some(l.saturating_sub(*r)))),
+            "*" => Ok(ScalarValue::Int64(Some(l.saturating_mul(*r)))),
+            "/" => {
+                if *r == 0 {
+                    Err("division by zero in domain constraint".to_string())
+                } else {
+                    Ok(ScalarValue::Int64(Some(l / r)))
+                }
+            },
+            "%" => {
+                if *r == 0 {
+                    Err("division by zero in domain constraint".to_string())
+                } else {
+                    Ok(ScalarValue::Int64(Some(l % r)))
+                }
+            },
+            _ => Err(format!("unsupported arithmetic operator '{op}'")),
+        };
+    }
+    if let (Some(l), Some(r)) = (scalar_as_f64(lhs), scalar_as_f64(rhs)) {
+        return match op {
+            "+" => Ok(ScalarValue::Float64(Some(l + r))),
+            "-" => Ok(ScalarValue::Float64(Some(l - r))),
+            "*" => Ok(ScalarValue::Float64(Some(l * r))),
+            "/" => {
+                if r == 0.0 {
+                    Err("division by zero in domain constraint".to_string())
+                } else {
+                    Ok(ScalarValue::Float64(Some(l / r)))
+                }
+            },
+            "%" => {
+                if r == 0.0 {
+                    Err("division by zero in domain constraint".to_string())
+                } else {
+                    Ok(ScalarValue::Float64(Some(l % r)))
+                }
+            },
+            _ => Err(format!("unsupported arithmetic operator '{op}'")),
+        };
+    }
+    Err("arithmetic in domain constraint requires numeric operands".to_string())
+}
+
+fn strip_balanced_parens(mut s: &str) -> &str {
+    loop {
+        let trimmed = s.trim();
+        if !trimmed.starts_with('(') || !trimmed.ends_with(')') {
+            return trimmed;
+        }
+        let mut depth = 0i32;
+        let mut in_single = false;
+        let mut in_double = false;
+        let bytes = trimmed.as_bytes();
+        let mut closes_at_end = true;
+        for (i, &b) in bytes.iter().enumerate() {
+            match b {
+                b'\'' if !in_double => in_single = !in_single,
+                b'"' if !in_single => in_double = !in_double,
+                b'(' if !in_single && !in_double => depth += 1,
+                b')' if !in_single && !in_double => {
+                    depth -= 1;
+                    if depth == 0 && i + 1 < bytes.len() {
+                        closes_at_end = false;
+                        break;
+                    }
+                },
+                _ => {},
+            }
+        }
+        if closes_at_end && depth == 0 {
+            s = &trimmed[1..trimmed.len() - 1];
+        } else {
+            return trimmed;
+        }
+    }
+}
+
+fn strip_trailing_type_cast(s: &str) -> &str {
+    let mut depth = 0i32;
+    let mut in_single = false;
+    let mut in_double = false;
+    let bytes = s.as_bytes();
+    let mut i = 0usize;
+    let mut last_cast = None;
+    while i + 1 < bytes.len() {
+        match bytes[i] {
+            b'\'' if !in_double => in_single = !in_single,
+            b'"' if !in_single => in_double = !in_double,
+            b'(' | b'[' if !in_single && !in_double => depth += 1,
+            b')' | b']' if !in_single && !in_double => depth -= 1,
+            b':' if !in_single && !in_double && depth == 0 && bytes[i + 1] == b':' => {
+                last_cast = Some(i);
+                i += 2;
+                continue;
+            },
+            _ => {},
+        }
+        i += 1;
+    }
+    if let Some(pos) = last_cast {
+        let suffix = s[pos + 2..].trim();
+        if !suffix.is_empty()
+            && suffix.chars().all(|c| {
+                c.is_ascii_alphanumeric()
+                    || matches!(c, '_' | '.' | '[' | ']' | ' ' | '(' | ')' | ',')
+            })
+        {
+            return s[..pos].trim();
+        }
+    }
+    s
+}
+
+fn split_top_level_keyword<'a>(s: &'a str, keyword: &str) -> Vec<&'a str> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut in_single = false;
+    let mut in_double = false;
+    let bytes = s.as_bytes();
+    let kw_len = keyword.len();
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' if !in_double => in_single = !in_single,
+            b'"' if !in_single => in_double = !in_double,
+            b'(' | b'[' if !in_single && !in_double => depth += 1,
+            b')' | b']' if !in_single && !in_double => depth -= 1,
+            _ if !in_single && !in_double && depth == 0 && i + kw_len <= bytes.len() => {
+                let prev_ok = i == 0 || bytes[i - 1].is_ascii_whitespace() || bytes[i - 1] == b')';
+                let next_ok = i + kw_len == bytes.len()
+                    || bytes[i + kw_len].is_ascii_whitespace()
+                    || bytes[i + kw_len] == b'(';
+                if prev_ok && next_ok && s[i..i + kw_len].eq_ignore_ascii_case(keyword) {
+                    parts.push(s[start..i].trim());
+                    i += kw_len;
+                    start = i;
+                    continue;
+                }
+            },
+            _ => {},
+        }
+        i += 1;
+    }
+    if parts.is_empty() {
+        vec![s]
+    } else {
+        parts.push(s[start..].trim());
+        parts
+    }
+}
+
+fn strip_keyword_prefix<'a>(s: &'a str, keyword: &str) -> Option<&'a str> {
+    let trimmed = s.trim();
+    if trimmed.len() <= keyword.len() {
+        return None;
+    }
+    if !trimmed[..keyword.len()].eq_ignore_ascii_case(keyword) {
+        return None;
+    }
+    let next = trimmed.as_bytes()[keyword.len()];
+    if next.is_ascii_whitespace() || next == b'(' || next == b'[' {
+        Some(trimmed[keyword.len()..].trim())
+    } else {
+        None
+    }
+}
+
+fn strip_keyword_suffix<'a>(s: &'a str, suffix_kw: &str) -> Option<&'a str> {
+    let trimmed = s.trim();
+    let parts: Vec<&str> = suffix_kw.split_whitespace().collect();
+    let mut rem = trimmed;
+    for kw in parts.iter().rev() {
+        rem = rem.trim_end();
+        if rem.len() <= kw.len() {
+            return None;
+        }
+        let split_at = rem.len() - kw.len();
+        if !rem.is_char_boundary(split_at) || !rem[split_at..].eq_ignore_ascii_case(kw) {
+            return None;
+        }
+        let prev = rem.as_bytes()[split_at - 1];
+        if !prev.is_ascii_whitespace() && prev != b')' {
+            return None;
+        }
+        rem = &rem[..split_at];
+    }
+    Some(rem.trim())
+}
+
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut start = 0usize;
+    for (i, b) in trimmed.bytes().enumerate() {
+        match b {
+            b'\'' if !in_double => in_single = !in_single,
+            b'"' if !in_single => in_double = !in_double,
+            b'(' | b'[' if !in_single && !in_double => depth += 1,
+            b')' | b']' if !in_single && !in_double => depth -= 1,
+            b',' if !in_single && !in_double && depth == 0 => {
+                out.push(trimmed[start..i].trim());
+                start = i + 1;
+            },
+            _ => {},
+        }
+    }
+    out.push(trimmed[start..].trim());
+    out
+}
+
+fn split_in_list(s: &str) -> Option<(&str, &str, bool)> {
+    let trimmed = s.trim();
+    if !trimmed.ends_with(')') {
+        return None;
+    }
+    let mut depth = 0i32;
+    let mut in_single = false;
+    let mut in_double = false;
+    let bytes = trimmed.as_bytes();
+    let mut open_paren = None;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'\'' if !in_double => in_single = !in_single,
+            b'"' if !in_single => in_double = !in_double,
+            b'(' if !in_single && !in_double => {
+                if depth == 0 {
+                    open_paren = Some(i);
+                }
+                depth += 1;
+            },
+            b')' if !in_single && !in_double => {
+                depth -= 1;
+                if depth == 0 && i + 1 < bytes.len() {
+                    open_paren = None;
+                }
+            },
+            _ => {},
+        }
+    }
+    let open = open_paren?;
+    let before_paren = trimmed[..open].trim();
+    let list_inner = &trimmed[open + 1..trimmed.len() - 1];
+    if let Some(lhs) = strip_keyword_suffix(before_paren, "NOT IN") {
+        return Some((lhs, list_inner, true));
+    }
+    if let Some(lhs) = strip_keyword_suffix(before_paren, "IN") {
+        return Some((lhs, list_inner, false));
+    }
+    None
+}
+
+fn split_like_op(s: &str) -> Option<(&str, &str, bool, bool)> {
+    for (kw, ci, neg) in [
+        ("NOT ILIKE", true, true),
+        ("NOT LIKE", false, true),
+        ("ILIKE", true, false),
+        ("LIKE", false, false),
+    ] {
+        let parts = split_top_level_keyword(s, kw);
+        if parts.len() == 2 {
+            return Some((parts[0], parts[1], ci, neg));
+        }
+    }
+    None
+}
+
+fn sql_like_match(text: &str, pattern: &str, case_insensitive: bool) -> bool {
+    let t: Vec<char> = if case_insensitive {
+        text.to_lowercase().chars().collect()
+    } else {
+        text.chars().collect()
+    };
+    let p: Vec<char> = if case_insensitive {
+        pattern.to_lowercase().chars().collect()
+    } else {
+        pattern.chars().collect()
+    };
+    let mut dp = vec![vec![false; p.len() + 1]; t.len() + 1];
+    dp[0][0] = true;
+    for j in 1..=p.len() {
+        if p[j - 1] == '%' {
+            dp[0][j] = dp[0][j - 1];
+        }
+    }
+    for i in 1..=t.len() {
+        for j in 1..=p.len() {
+            if p[j - 1] == '%' {
+                dp[i][j] = dp[i][j - 1] || dp[i - 1][j];
+            } else if p[j - 1] == '_' || p[j - 1] == t[i - 1] {
+                dp[i][j] = dp[i - 1][j - 1];
+            }
+        }
+    }
+    dp[t.len()][p.len()]
+}
+
+fn split_top_level_comparison(s: &str) -> Option<(&str, &str, &str)> {
+    let mut depth = 0i32;
+    let mut in_single = false;
+    let mut in_double = false;
+    let bytes = s.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' if !in_double => in_single = !in_single,
+            b'"' if !in_single => in_double = !in_double,
+            b'(' | b'[' if !in_single && !in_double => depth += 1,
+            b')' | b']' if !in_single && !in_double => depth -= 1,
+            _ if !in_single && !in_double && depth == 0 => {
+                if i + 1 < bytes.len() {
+                    let two = &s[i..i + 2];
+                    if matches!(two, "<>" | "!=" | "<=" | ">=") {
+                        return Some((s[..i].trim(), two, s[i + 2..].trim()));
+                    }
+                }
+                let one = &s[i..i + 1];
+                if matches!(one, "=" | "<" | ">") {
+                    return Some((s[..i].trim(), one, s[i + 1..].trim()));
+                }
+            },
+            _ => {},
+        }
+        i += 1;
+    }
+    None
+}
+
+fn split_top_level_arith(s: &str) -> Option<(&str, &str, &str)> {
+    let mut depth = 0i32;
+    let mut in_single = false;
+    let mut in_double = false;
+    let bytes = s.as_bytes();
+    let mut add_sub_pos = None;
+    let mut mul_div_pos = None;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'\'' if !in_double => in_single = !in_single,
+            b'"' if !in_single => in_double = !in_double,
+            b'(' | b'[' if !in_single && !in_double => depth += 1,
+            b')' | b']' if !in_single && !in_double => depth -= 1,
+            b'+' | b'-' if !in_single && !in_double && depth == 0 && i > 0 => {
+                let prev = s[..i].trim_end();
+                if !prev.is_empty() {
+                    add_sub_pos = Some(i);
+                }
+            },
+            b'*' | b'/' | b'%' if !in_single && !in_double && depth == 0 && i > 0 => {
+                mul_div_pos = Some(i);
+            },
+            _ => {},
+        }
+    }
+    let pos = add_sub_pos.or(mul_div_pos)?;
+    Some((s[..pos].trim(), &s[pos..pos + 1], s[pos + 1..].trim()))
+}
+
+fn parse_value_field_access(s: &str) -> Option<Vec<&str>> {
+    let trimmed = s.trim();
+    let rest = if let Some(after) = trimmed.strip_prefix('(') {
+        let close = after.find(')')?;
+        let inner = after[..close].trim();
+        if !inner.eq_ignore_ascii_case("VALUE") {
+            return None;
+        }
+        after[close + 1..].trim()
+    } else if trimmed.len() > 6 && trimmed[..5].eq_ignore_ascii_case("VALUE") {
+        trimmed[5..].trim()
+    } else {
+        return None;
+    };
+    let rest = rest.strip_prefix('.')?;
+    let segments: Vec<&str> = rest
+        .split('.')
+        .map(|seg| seg.trim().trim_matches('"'))
+        .filter(|seg| !seg.is_empty())
+        .collect();
+    if segments.is_empty() {
+        None
+    } else {
+        Some(segments)
+    }
+}
+
+fn split_function_call(s: &str) -> Option<(&str, &str)> {
+    let trimmed = s.trim();
+    if !trimmed.ends_with(')') {
+        return None;
+    }
+    let open = trimmed.find('(')?;
+    let fn_name = trimmed[..open].trim();
+    if fn_name.is_empty() || !fn_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    let mut depth = 0i32;
+    let mut in_single = false;
+    for (i, b) in trimmed[open..].bytes().enumerate() {
+        match b {
+            b'\'' => in_single = !in_single,
+            b'(' if !in_single => depth += 1,
+            b')' if !in_single => {
+                depth -= 1;
+                if depth == 0 && open + i + 1 < trimmed.len() {
+                    return None;
+                }
+            },
+            _ => {},
+        }
+    }
+    Some((fn_name, &trimmed[open + 1..trimmed.len() - 1]))
 }
 
 fn parse_debug_embedding_repr(raw: &str) -> Option<Vec<f32>> {
@@ -552,6 +1874,31 @@ mod tests {
             values.insert(key.to_string(), value);
         }
         Row::new(values)
+    }
+
+    #[test]
+    fn varchar_limit_rejects_one_extra_character() {
+        use crate::conversions::with_character_maximum_length;
+
+        let field = with_character_maximum_length(Field::new("string", DataType::Utf8, true), 255);
+        let accepted = coerce_scalar_to_field(ScalarValue::Utf8(Some("0".repeat(255))), &field)
+            .expect("255 characters fit varchar(255)");
+        match accepted {
+            ScalarValue::Utf8(Some(text)) => assert_eq!(text.chars().count(), 255),
+            other => panic!("unexpected value {other:?}"),
+        }
+
+        let rejected = coerce_scalar_to_field(ScalarValue::Utf8(Some("0".repeat(256))), &field)
+            .expect_err("256 characters overflow varchar(255)");
+        assert!(rejected.contains("value too long for type character varying(255)"));
+
+        let missing = coerce_scalar_to_field(ScalarValue::Utf8(None), &field).unwrap();
+        assert!(missing.is_null());
+
+        let unlimited = Field::new("string", DataType::Utf8, true);
+        assert!(
+            coerce_scalar_to_field(ScalarValue::Utf8(Some("0".repeat(256))), &unlimited).is_ok()
+        );
     }
 
     #[test]
@@ -634,6 +1981,11 @@ mod tests {
         let batch = json_rows_to_arrow_batch(&schema, vec![]).unwrap();
         assert_eq!(batch.num_rows(), 0);
         assert_eq!(batch.num_columns(), 2);
+
+        let empty_columns = vec![Vec::new(), Vec::new()];
+        let direct = scalar_columns_to_record_batch(&schema, empty_columns).unwrap();
+        assert_eq!(direct.num_rows(), 0);
+        assert_eq!(direct.num_columns(), 2);
     }
 
     #[test]
@@ -1235,21 +2587,7 @@ pub fn scalar_value_to_json(value: &ScalarValue) -> Result<KalamCellValue, Commo
         ScalarValue::TimestampNanosecond(Some(ts), _) => JsonValue::Number((ts / 1_000).into()),
         ScalarValue::TimestampNanosecond(None, _) => JsonValue::Null,
         ScalarValue::Decimal128(Some(v), _precision, scale) => {
-            // Format decimal with proper scale
-            // e.g., 20075 with scale=2 -> "200.75"
-            let divisor = 10i128.pow(*scale as u32);
-            let integer_part = v / divisor;
-            let fractional_part = (v % divisor).abs();
-            if *scale == 0 {
-                JsonValue::String(integer_part.to_string())
-            } else {
-                JsonValue::String(format!(
-                    "{}.{:0>width$}",
-                    integer_part,
-                    fractional_part,
-                    width = *scale as usize
-                ))
-            }
+            JsonValue::String(format_decimal_value(*v, (*scale).max(0) as u8))
         },
         ScalarValue::Decimal128(None, _, _) => JsonValue::Null,
         ScalarValue::FixedSizeBinary(_, Some(bytes)) => {
@@ -1468,6 +2806,218 @@ pub fn record_batch_to_json_rows(
 ///
 /// # Architecture Note
 /// ✅ NO direct conversions - all cells go through scalar_value_to_json()
+/// Write one JSON array per row directly from Arrow columns.
+///
+/// Returns false when a column type has no direct writer. Callers then use
+/// [`record_batch_to_json_arrays`] so masking and uncommon types stay unchanged.
+pub fn try_append_record_batch_json_rows(
+    batch: &RecordBatch,
+    out: &mut Vec<u8>,
+    row_separator_needed: &mut bool,
+) -> Result<bool, CommonError> {
+    if !batch.columns().iter().all(|column| arrow_column_has_direct_json(column.as_ref())) {
+        return Ok(false);
+    }
+    for row_idx in 0..batch.num_rows() {
+        if *row_separator_needed {
+            out.push(b',');
+        } else {
+            *row_separator_needed = true;
+        }
+        out.push(b'[');
+        for (col_idx, column) in batch.columns().iter().enumerate() {
+            if col_idx > 0 {
+                out.push(b',');
+            }
+            append_arrow_cell_json(column.as_ref(), row_idx, out)?;
+        }
+        out.push(b']');
+    }
+    Ok(true)
+}
+
+fn arrow_column_has_direct_json(column: &dyn arrow::array::Array) -> bool {
+    matches!(
+        column.data_type(),
+        arrow::datatypes::DataType::Boolean
+            | arrow::datatypes::DataType::Int8
+            | arrow::datatypes::DataType::Int16
+            | arrow::datatypes::DataType::Int32
+            | arrow::datatypes::DataType::Int64
+            | arrow::datatypes::DataType::UInt8
+            | arrow::datatypes::DataType::UInt16
+            | arrow::datatypes::DataType::UInt32
+            | arrow::datatypes::DataType::UInt64
+            | arrow::datatypes::DataType::Float32
+            | arrow::datatypes::DataType::Float64
+            | arrow::datatypes::DataType::Utf8
+            | arrow::datatypes::DataType::LargeUtf8
+            | arrow::datatypes::DataType::Null
+    )
+}
+
+fn append_arrow_cell_json(
+    column: &dyn arrow::array::Array,
+    row_idx: usize,
+    out: &mut Vec<u8>,
+) -> Result<(), CommonError> {
+    use arrow::array::{
+        BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
+        LargeStringArray, StringArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+    };
+
+    if column.is_null(row_idx) {
+        out.extend_from_slice(b"null");
+        return Ok(());
+    }
+    match column.data_type() {
+        arrow::datatypes::DataType::Boolean => {
+            let value = column.as_any().downcast_ref::<BooleanArray>().unwrap().value(row_idx);
+            out.extend_from_slice(if value { b"true" } else { b"false" });
+        },
+        arrow::datatypes::DataType::Int8 => {
+            let value = column.as_any().downcast_ref::<Int8Array>().unwrap().value(row_idx);
+            append_i64(out, i64::from(value));
+        },
+        arrow::datatypes::DataType::Int16 => {
+            let value = column.as_any().downcast_ref::<Int16Array>().unwrap().value(row_idx);
+            append_i64(out, i64::from(value));
+        },
+        arrow::datatypes::DataType::Int32 => {
+            let value = column.as_any().downcast_ref::<Int32Array>().unwrap().value(row_idx);
+            append_i64(out, i64::from(value));
+        },
+        arrow::datatypes::DataType::Int64 => {
+            let value = column.as_any().downcast_ref::<Int64Array>().unwrap().value(row_idx);
+            out.push(b'"');
+            append_i64(out, value);
+            out.push(b'"');
+        },
+        arrow::datatypes::DataType::UInt8 => {
+            let value = column.as_any().downcast_ref::<UInt8Array>().unwrap().value(row_idx);
+            append_i64(out, i64::from(value));
+        },
+        arrow::datatypes::DataType::UInt16 => {
+            let value = column.as_any().downcast_ref::<UInt16Array>().unwrap().value(row_idx);
+            append_i64(out, i64::from(value));
+        },
+        arrow::datatypes::DataType::UInt32 => {
+            let value = column.as_any().downcast_ref::<UInt32Array>().unwrap().value(row_idx);
+            append_i64(out, i64::from(value));
+        },
+        arrow::datatypes::DataType::UInt64 => {
+            let value = column.as_any().downcast_ref::<UInt64Array>().unwrap().value(row_idx);
+            out.push(b'"');
+            append_u64(out, value);
+            out.push(b'"');
+        },
+        arrow::datatypes::DataType::Float32 => {
+            let value = column.as_any().downcast_ref::<Float32Array>().unwrap().value(row_idx);
+            append_json_f64(out, f64::from(value));
+        },
+        arrow::datatypes::DataType::Float64 => {
+            let value = column.as_any().downcast_ref::<Float64Array>().unwrap().value(row_idx);
+            append_json_f64(out, value);
+        },
+        arrow::datatypes::DataType::Utf8 => {
+            let value = column.as_any().downcast_ref::<StringArray>().unwrap().value(row_idx);
+            append_json_string(out, value);
+        },
+        arrow::datatypes::DataType::LargeUtf8 => {
+            let value = column.as_any().downcast_ref::<LargeStringArray>().unwrap().value(row_idx);
+            append_json_string(out, value);
+        },
+        arrow::datatypes::DataType::Null => out.extend_from_slice(b"null"),
+        _ => {
+            return Err(CommonError::invalid_input(
+                "column type has no direct JSON writer",
+            ));
+        },
+    }
+    Ok(())
+}
+
+fn append_json_f64(out: &mut Vec<u8>, value: f64) {
+    if value.is_finite() {
+        out.extend_from_slice(format!("{value}").as_bytes());
+    } else {
+        out.extend_from_slice(b"null");
+    }
+}
+
+fn append_u64(out: &mut Vec<u8>, mut remaining: u64) {
+    if remaining == 0 {
+        out.push(b'0');
+        return;
+    }
+    let mut buf = [0u8; 20];
+    let mut cursor = buf.len();
+    while remaining > 0 {
+        cursor -= 1;
+        buf[cursor] = b'0' + (remaining % 10) as u8;
+        remaining /= 10;
+    }
+    out.extend_from_slice(&buf[cursor..]);
+}
+
+fn append_i64(out: &mut Vec<u8>, value: i64) {
+    if value == i64::MIN {
+        out.extend_from_slice(b"-9223372036854775808");
+        return;
+    }
+    let mut buf = [0u8; 20];
+    let mut cursor = buf.len();
+    let negative = value < 0;
+    let mut remaining = if negative { -value } else { value } as u64;
+    if remaining == 0 {
+        out.push(b'0');
+        return;
+    }
+    while remaining > 0 {
+        cursor -= 1;
+        buf[cursor] = b'0' + (remaining % 10) as u8;
+        remaining /= 10;
+    }
+    if negative {
+        cursor -= 1;
+        buf[cursor] = b'-';
+    }
+    out.extend_from_slice(&buf[cursor..]);
+}
+
+fn append_json_string(out: &mut Vec<u8>, value: &str) {
+    out.push(b'"');
+    for ch in value.chars() {
+        match ch {
+            '"' => out.extend_from_slice(b"\\\""),
+            '\\' => out.extend_from_slice(b"\\\\"),
+            '\n' => out.extend_from_slice(b"\\n"),
+            '\r' => out.extend_from_slice(b"\\r"),
+            '\t' => out.extend_from_slice(b"\\t"),
+            ch if (ch as u32) < 0x20 => {
+                let mut hex = [0u8; 6];
+                hex[0] = b'\\';
+                hex[1] = b'u';
+                hex[2] = b'0';
+                hex[3] = b'0';
+                let byte = ch as u8;
+                hex[4] = hex_digit(byte >> 4);
+                hex[5] = hex_digit(byte & 0x0f);
+                out.extend_from_slice(&hex);
+            },
+            ch => {
+                let mut buf = [0u8; 4];
+                out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+            },
+        }
+    }
+    out.push(b'"');
+}
+
+fn hex_digit(value: u8) -> u8 {
+    b"0123456789abcdef"[usize::from(value)]
+}
+
 pub fn record_batch_to_json_arrays(
     batch: &RecordBatch,
 ) -> Result<Vec<Vec<KalamCellValue>>, CommonError> {
@@ -1513,8 +3063,8 @@ pub fn rows_to_json_arrays(
             // keys. Missing keys become JSON null — that is how
             // `SELECT name AS title` regressed on skip-Arrow.
             let scalar = row.values.remove(field.name()).unwrap_or(ScalarValue::Null);
-            let coerced =
-                coerce_scalar_to_field(scalar, field).map_err(CommonError::invalid_input)?;
+            let coerced = coerce_scalar_to_field_inner(scalar, field, false)
+                .map_err(CommonError::invalid_input)?;
             json_row.push(scalar_value_to_json(&coerced)?);
         }
         json_rows.push(json_row);

@@ -356,14 +356,14 @@ packages:
       path: "../link"
       relative: true
     source: path
-    version: "0.6.0-rc.0"
+    version: "0.8.0"
   kalam_sync:
     dependency: "direct main"
     description:
       path: "../sync"
       relative: true
     source: path
-    version: "0.6.0-rc.0"
+    version: "0.8.0"
   kalam_sync_generator_example:
     dependency: "direct dev"
     description:

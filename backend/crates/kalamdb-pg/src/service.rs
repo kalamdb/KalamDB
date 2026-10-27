@@ -53,7 +53,7 @@ pub struct PingResponse {
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct OpenSessionRequest {
     #[prost(string, tag = "1")]
-    pub session_id:     String,
+    pub session_id: String,
     #[prost(string, optional, tag = "2")]
     pub current_schema: Option<String>,
 }
@@ -61,16 +61,16 @@ pub struct OpenSessionRequest {
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct OpenSessionResponse {
     #[prost(string, tag = "1")]
-    pub session_id:          String,
+    pub session_id: String,
     #[prost(string, optional, tag = "2")]
-    pub current_schema:      Option<String>,
+    pub current_schema: Option<String>,
     /// Lease expiry (epoch ms). Client should re-authenticate before this time.
     #[prost(int64, tag = "3")]
     pub lease_expires_at_ms: i64,
     /// Per-session capability returned only to the authenticated opener.
     /// Later RPCs must present it when bridge authentication is configured.
     #[prost(string, tag = "4")]
-    pub session_token:       String,
+    pub session_token: String,
 }
 
 #[derive(Clone, PartialEq, prost::Message)]
@@ -93,15 +93,15 @@ pub struct ScanFilterExpression {
     pub column: String,
     /// Operator: "eq" for equality.
     #[prost(string, tag = "2")]
-    pub op:     String,
+    pub op: String,
     #[prost(string, tag = "3")]
-    pub value:  String,
+    pub value: String,
 }
 
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct ScanRpcRequest {
     #[prost(string, tag = "1")]
-    pub namespace:  String,
+    pub namespace: String,
     #[prost(string, tag = "2")]
     pub table_name: String,
     #[prost(string, tag = "3")]
@@ -109,15 +109,15 @@ pub struct ScanRpcRequest {
     #[prost(string, tag = "4")]
     pub session_id: String,
     #[prost(string, optional, tag = "5")]
-    pub user_id:    Option<String>,
+    pub user_id: Option<String>,
     /// Projected column names (empty = all columns).
     #[prost(string, repeated, tag = "6")]
-    pub columns:    Vec<String>,
+    pub columns: Vec<String>,
     #[prost(uint64, optional, tag = "7")]
-    pub limit:      Option<u64>,
+    pub limit: Option<u64>,
     /// Equality filters pushed down from PostgreSQL WHERE clauses.
     #[prost(message, repeated, tag = "8")]
-    pub filters:    Vec<ScanFilterExpression>,
+    pub filters: Vec<ScanFilterExpression>,
 }
 
 #[derive(Clone, PartialEq, prost::Message)]
@@ -127,13 +127,13 @@ pub struct ScanRpcResponse {
     pub ipc_batches: Vec<bytes::Bytes>,
     /// Arrow IPC-encoded schema (for empty result sets).
     #[prost(bytes = "bytes", optional, tag = "2")]
-    pub schema_ipc:  Option<bytes::Bytes>,
+    pub schema_ipc: Option<bytes::Bytes>,
 }
 
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct InsertRpcRequest {
     #[prost(string, tag = "1")]
-    pub namespace:  String,
+    pub namespace: String,
     #[prost(string, tag = "2")]
     pub table_name: String,
     #[prost(string, tag = "3")]
@@ -141,10 +141,10 @@ pub struct InsertRpcRequest {
     #[prost(string, tag = "4")]
     pub session_id: String,
     #[prost(string, optional, tag = "5")]
-    pub user_id:    Option<String>,
+    pub user_id: Option<String>,
     /// Each entry is a JSON-encoded row (`{"col": value, ...}`).
     #[prost(string, repeated, tag = "6")]
-    pub rows_json:  Vec<String>,
+    pub rows_json: Vec<String>,
 }
 
 #[derive(Clone, PartialEq, prost::Message)]
@@ -156,17 +156,17 @@ pub struct InsertRpcResponse {
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct UpdateRpcRequest {
     #[prost(string, tag = "1")]
-    pub namespace:    String,
+    pub namespace: String,
     #[prost(string, tag = "2")]
-    pub table_name:   String,
+    pub table_name: String,
     #[prost(string, tag = "3")]
-    pub table_type:   String,
+    pub table_type: String,
     #[prost(string, tag = "4")]
-    pub session_id:   String,
+    pub session_id: String,
     #[prost(string, optional, tag = "5")]
-    pub user_id:      Option<String>,
+    pub user_id: Option<String>,
     #[prost(string, tag = "6")]
-    pub pk_value:     String,
+    pub pk_value: String,
     /// JSON-encoded column updates (`{"col": value, ...}`).
     #[prost(string, tag = "7")]
     pub updates_json: String,
@@ -181,7 +181,7 @@ pub struct UpdateRpcResponse {
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct DeleteRpcRequest {
     #[prost(string, tag = "1")]
-    pub namespace:  String,
+    pub namespace: String,
     #[prost(string, tag = "2")]
     pub table_name: String,
     #[prost(string, tag = "3")]
@@ -189,9 +189,9 @@ pub struct DeleteRpcRequest {
     #[prost(string, tag = "4")]
     pub session_id: String,
     #[prost(string, optional, tag = "5")]
-    pub user_id:    Option<String>,
+    pub user_id: Option<String>,
     #[prost(string, tag = "6")]
-    pub pk_value:   String,
+    pub pk_value: String,
 }
 
 #[derive(Clone, PartialEq, prost::Message)]
@@ -207,7 +207,7 @@ pub struct DeleteRpcResponse {
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct ExecuteSqlRpcRequest {
     #[prost(string, tag = "1")]
-    pub sql:        String,
+    pub sql: String,
     #[prost(string, tag = "2")]
     pub session_id: String,
 }
@@ -228,7 +228,7 @@ pub struct ExecuteSqlRpcResponse {
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct ExecuteQueryRpcRequest {
     #[prost(string, tag = "1")]
-    pub sql:        String,
+    pub sql: String,
     #[prost(string, tag = "2")]
     pub session_id: String,
 }
@@ -239,9 +239,9 @@ pub struct ExecuteQueryRpcRequest {
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct ExecuteQueryRpcResponse {
     #[prost(bool, tag = "1")]
-    pub success:     bool,
+    pub success: bool,
     #[prost(string, tag = "2")]
-    pub message:     String,
+    pub message: String,
     #[prost(bytes = "bytes", repeated, tag = "3")]
     pub ipc_batches: Vec<bytes::Bytes>,
 }
@@ -265,7 +265,7 @@ pub struct BeginTransactionResponse {
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct CommitTransactionRequest {
     #[prost(string, tag = "1")]
-    pub session_id:     String,
+    pub session_id: String,
     #[prost(string, tag = "2")]
     pub transaction_id: String,
 }
@@ -279,7 +279,7 @@ pub struct CommitTransactionResponse {
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct RollbackTransactionRequest {
     #[prost(string, tag = "1")]
-    pub session_id:     String,
+    pub session_id: String,
     #[prost(string, tag = "2")]
     pub transaction_id: String,
 }
@@ -889,19 +889,19 @@ pub use pg_service_server::{PgService, PgServiceServer};
 #[derive(Clone)]
 pub struct KalamPgService {
     /// When true, authorize via client certificate CN (mTLS) using kalamdb-server-auth.
-    mtls_enabled:                   bool,
+    mtls_enabled: bool,
     /// Pre-shared token for non-mTLS authentication (e.g. `Bearer <token>`).
     /// When set, the `authorization` gRPC metadata must match this value.
-    expected_auth_header:           Option<String>,
+    expected_auth_header: Option<String>,
     /// Optional bearer-token validation path for DBA/system PG bridge accounts.
-    bearer_user_repo:               Option<Arc<dyn UserRepository>>,
+    bearer_user_repo: Option<Arc<dyn UserRepository>>,
     /// Test-only escape hatch. Production leaves this false so an unconfigured
     /// bridge rejects RPCs instead of becoming a system principal.
     allow_insecure_unauthenticated: bool,
-    session_registry:               Arc<SessionRegistry>,
-    operation_executor:             Option<Arc<dyn OperationExecutor>>,
+    session_registry: Arc<SessionRegistry>,
+    operation_executor: Option<Arc<dyn OperationExecutor>>,
     /// Capability secrets for authenticated sessions. Not written to system.sessions.
-    session_tokens:                 Arc<StdMutex<HashMap<String, String>>>,
+    session_tokens: Arc<StdMutex<HashMap<String, String>>>,
 }
 
 #[cfg(feature = "server")]
@@ -918,13 +918,13 @@ impl std::fmt::Debug for KalamPgService {
 impl Default for KalamPgService {
     fn default() -> Self {
         Self {
-            mtls_enabled:                   false,
-            expected_auth_header:           None,
-            bearer_user_repo:               None,
+            mtls_enabled: false,
+            expected_auth_header: None,
+            bearer_user_repo: None,
             allow_insecure_unauthenticated: false,
-            session_registry:               Arc::new(SessionRegistry::default()),
-            operation_executor:             None,
-            session_tokens:                 Arc::new(StdMutex::new(HashMap::new())),
+            session_registry: Arc::new(SessionRegistry::default()),
+            operation_executor: None,
+            session_tokens: Arc::new(StdMutex::new(HashMap::new())),
         }
     }
 }
@@ -1090,9 +1090,9 @@ impl KalamPgService {
         if self.mtls_enabled {
             kalamdb_server_auth::RpcCaller::require_pg_extension(request)?;
             return Ok(BridgeAuth {
-                user_id:             UserId::new("mtls-pg-bridge"),
-                role:                Role::System,
-                auth_mode:           "mtls".to_string(),
+                user_id: UserId::new("mtls-pg-bridge"),
+                role: Role::System,
+                auth_mode: "mtls".to_string(),
                 lease_expires_at_ms: now_ms + lease_ms,
             });
         }
@@ -1109,9 +1109,9 @@ impl KalamPgService {
         if let Some(expected) = &self.expected_auth_header {
             if constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
                 return Ok(BridgeAuth {
-                    user_id:             UserId::new("static-pg-bridge"),
-                    role:                Role::System,
-                    auth_mode:           "static_header".to_string(),
+                    user_id: UserId::new("static-pg-bridge"),
+                    role: Role::System,
+                    auth_mode: "static_header".to_string(),
                     lease_expires_at_ms: now_ms + lease_ms,
                 });
             }
@@ -1126,9 +1126,9 @@ impl KalamPgService {
             .await?
         {
             return Ok(BridgeAuth {
-                user_id:             auth_result.user.user_id,
-                role:                auth_result.user.role,
-                auth_mode:           format!("{:?}", auth_result.method).to_lowercase(),
+                user_id: auth_result.user.user_id,
+                role: auth_result.user.role,
+                auth_mode: format!("{:?}", auth_result.method).to_lowercase(),
                 lease_expires_at_ms: now_ms + lease_ms,
             });
         }
@@ -1143,9 +1143,9 @@ impl KalamPgService {
         }
 
         Ok(BridgeAuth {
-            user_id:             UserId::anonymous(),
-            role:                Role::System,
-            auth_mode:           "none".to_string(),
+            user_id: UserId::anonymous(),
+            role: Role::System,
+            auth_mode: "none".to_string(),
             lease_expires_at_ms: now_ms + lease_ms,
         })
     }

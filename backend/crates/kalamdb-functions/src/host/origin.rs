@@ -3,7 +3,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use kalamdb_commons::{
-    models::{FunctionRevisionId, NamespaceId, RoutineId, UserId},
+    models::{FunctionRevisionId, RoutineId, SchemaId, UserId},
     Role, RoutineSecurityMode,
 };
 use parking_lot::Mutex;
@@ -13,14 +13,14 @@ use crate::RoutineValue;
 
 #[derive(Debug, Clone)]
 pub struct HttpResponseOverrides {
-    pub status:  Option<u16>,
+    pub status: Option<u16>,
     pub headers: HashMap<String, String>,
 }
 
 impl Default for HttpResponseOverrides {
     fn default() -> Self {
         Self {
-            status:  None,
+            status: None,
             headers: HashMap::new(),
         }
     }
@@ -30,23 +30,23 @@ impl Default for HttpResponseOverrides {
 pub enum FunctionCallOrigin {
     Sql,
     Http {
-        method:   String,
-        path:     String,
-        headers:  Arc<Vec<(String, String)>>,
-        query:    Arc<Vec<(String, String)>>,
+        method: String,
+        path: String,
+        headers: Arc<Vec<(String, String)>>,
+        query: Arc<Vec<(String, String)>>,
         response: Arc<Mutex<HttpResponseOverrides>>,
     },
     Schedule {
-        schedule_id:  kalamdb_commons::ScheduleId,
-        run_id:       String,
+        schedule_id: kalamdb_commons::ScheduleId,
+        run_id: String,
         scheduled_at: i64,
     },
     Topic {
         topic_name: String,
-        event_id:   String,
-        partition:  u32,
-        offset:     u64,
-        attempt:    u32,
+        event_id: String,
+        partition: u32,
+        offset: u64,
+        attempt: u32,
     },
 }
 
@@ -71,20 +71,22 @@ impl FunctionCallOrigin {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrincipalKey {
-    pub user:      UserId,
-    pub role:      Role,
-    pub namespace: NamespaceId,
+    pub user: UserId,
+    pub role: Role,
+    pub namespace: SchemaId,
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // revision_id/security are kept on the frame for nested INVOKER/DEFINER
+#[allow(dead_code)] // revision_id/security/volatility are kept on the frame for nested INVOKER/DEFINER & volatility
+                    // enforcement
 pub struct ProcedureFrame {
-    pub routine_id:     RoutineId,
-    pub revision_id:    FunctionRevisionId,
-    pub namespace_id:   NamespaceId,
+    pub routine_id: RoutineId,
+    pub revision_id: FunctionRevisionId,
+    pub namespace_id: SchemaId,
     pub principal_user: UserId,
     pub principal_role: Role,
-    pub security:       RoutineSecurityMode,
+    pub security: RoutineSecurityMode,
+    pub volatility: kalamdb_commons::models::RoutineVolatility,
 }
 
 impl ProcedureFrame {
@@ -97,8 +99,8 @@ pub type ProcedureFrameStack = SmallVec<[ProcedureFrame; 4]>;
 
 #[derive(Debug, Clone)]
 pub struct FunctionCallResult {
-    pub value:        RoutineValue,
-    pub http_status:  Option<u16>,
+    pub value: RoutineValue,
+    pub http_status: Option<u16>,
     pub http_headers: HashMap<String, String>,
 }
 
@@ -111,12 +113,13 @@ mod tests {
     #[test]
     fn nested_invoker_keeps_caller_principal() {
         let frame = ProcedureFrame {
-            routine_id:     RoutineId::new("api.child"),
-            revision_id:    FunctionRevisionId::new("backend:rev"),
-            namespace_id:   NamespaceId::new("api"),
+            routine_id: RoutineId::new("api.child"),
+            revision_id: FunctionRevisionId::new("backend:rev"),
+            namespace_id: SchemaId::new("api"),
             principal_user: UserId::new("alice"),
             principal_role: Role::User,
-            security:       RoutineSecurityMode::Invoker,
+            security: RoutineSecurityMode::Invoker,
+            volatility: kalamdb_commons::models::RoutineVolatility::default(),
         };
         assert_eq!(frame.principal_user.as_str(), "alice");
         assert_eq!(frame.principal_role, Role::User);
@@ -125,12 +128,13 @@ mod tests {
     #[test]
     fn nested_definer_uses_owner_principal() {
         let frame = ProcedureFrame {
-            routine_id:     RoutineId::new("api.child"),
-            revision_id:    FunctionRevisionId::new("backend:rev"),
-            namespace_id:   NamespaceId::new("api"),
+            routine_id: RoutineId::new("api.child"),
+            revision_id: FunctionRevisionId::new("backend:rev"),
+            namespace_id: SchemaId::new("api"),
             principal_user: UserId::new("owner"),
             principal_role: Role::Service,
-            security:       RoutineSecurityMode::Definer,
+            security: RoutineSecurityMode::Definer,
+            volatility: kalamdb_commons::models::RoutineVolatility::default(),
         };
         assert_eq!(frame.principal_user.as_str(), "owner");
         assert_eq!(frame.security, RoutineSecurityMode::Definer);
@@ -166,8 +170,8 @@ mod tests {
     #[test]
     fn schedule_origin_exposes_kind_and_id() {
         let origin = FunctionCallOrigin::Schedule {
-            schedule_id:  kalamdb_commons::ScheduleId::new("reports.daily"),
-            run_id:       "run-1".into(),
+            schedule_id: kalamdb_commons::ScheduleId::new("reports.daily"),
+            run_id: "run-1".into(),
             scheduled_at: 1,
         };
         assert_eq!(origin.kind(), "schedule");

@@ -125,7 +125,7 @@ fn smoke_subscription_reconnect_basic_resume() {
     let tbl = generate_unique_table("resume");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE IF NOT EXISTS {} (id INT PRIMARY KEY, payload TEXT) WITH (TYPE='USER')",
@@ -236,7 +236,7 @@ fn smoke_subscription_reconnect_basic_resume() {
         client.disconnect().await;
     });
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", ns));
 }
 
 // ── TEST 2: from_seq_id server-side resume ────────────────────────────────────
@@ -260,7 +260,7 @@ fn smoke_subscription_resume_from_seq_id() {
     let tbl = generate_unique_table("seqresume");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE IF NOT EXISTS {} (id INT PRIMARY KEY, payload TEXT) WITH (TYPE='USER')",
@@ -418,5 +418,5 @@ fn smoke_subscription_resume_from_seq_id() {
         client.disconnect().await;
     });
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", ns));
 }

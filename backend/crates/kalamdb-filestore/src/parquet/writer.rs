@@ -24,8 +24,11 @@ const PARQUET_INITIAL_BUFFER_BYTES: usize = 1024 * 1024;
 /// Parquet writer tuning for a single write.
 #[derive(Debug, Clone, Copy)]
 pub struct ParquetWriterOptions {
-    pub compression:              TableCompression,
+    pub compression: TableCompression,
     pub content_defined_chunking: bool,
+    /// The producer already verified each batch is ordered by `_version`.
+    /// Unordered input is still sorted when this is false.
+    pub version_order_verified: bool,
 }
 
 impl ParquetWriterOptions {
@@ -33,11 +36,17 @@ impl ParquetWriterOptions {
         Self {
             compression,
             content_defined_chunking: false,
+            version_order_verified: false,
         }
     }
 
     pub fn with_content_defined_chunking(mut self, enabled: bool) -> Self {
         self.content_defined_chunking = enabled;
+        self
+    }
+
+    pub fn with_verified_version_order(mut self, verified: bool) -> Self {
+        self.version_order_verified = verified;
         self
     }
 }
@@ -62,7 +71,7 @@ pub(crate) fn serialize_to_parquet_with_compression(
         content_defined_chunking = options.content_defined_chunking
     );
 
-    let batches = sort_batches_by_version(batches)?;
+    let batches = prepare_version_order(batches, options)?;
     let total_rows: u64 = batches.iter().map(|b| b.num_rows() as u64).sum();
     let props = writer_properties(total_rows, bloom_filter_columns, options);
 
@@ -151,6 +160,116 @@ pub fn serialize_record_batch_receiver_to_parquet_with_options(
     Ok(Bytes::from(buffer))
 }
 
+fn prepare_version_order(
+    batches: Vec<RecordBatch>,
+    options: ParquetWriterOptions,
+) -> Result<Vec<RecordBatch>> {
+    if options.version_order_verified {
+        Ok(batches)
+    } else {
+        sort_batches_by_version(batches)
+    }
+}
+
+/// Local Parquet file removed when dropped.
+pub struct TempParquetFile {
+    file: std::fs::File,
+    path: std::path::PathBuf,
+}
+
+impl TempParquetFile {
+    fn create() -> Result<Self> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "kalam-parquet-{}-{id}.parquet",
+            std::process::id()
+        ));
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|error| FilestoreError::Other(format!("temp parquet file: {error}")))?;
+        Ok(Self { file, path })
+    }
+
+    pub fn as_file(&self) -> &std::fs::File {
+        &self.file
+    }
+
+    pub fn as_file_mut(&mut self) -> &mut std::fs::File {
+        &mut self.file
+    }
+}
+
+impl Drop for TempParquetFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+pub(crate) fn serialize_to_temp_parquet(
+    schema: SchemaRef,
+    batches: Vec<RecordBatch>,
+    bloom_filter_columns: Option<Vec<String>>,
+    options: ParquetWriterOptions,
+) -> Result<TempParquetFile> {
+    let batches = prepare_version_order(batches, options)?;
+    let total_rows: u64 = batches.iter().map(|batch| batch.num_rows() as u64).sum();
+    let props = writer_properties(total_rows, bloom_filter_columns, options);
+    let mut file = TempParquetFile::create()?;
+    write_record_batches(file.as_file_mut(), schema, &batches, props)?;
+    Ok(file)
+}
+
+pub fn serialize_record_batch_receiver_to_temp_parquet(
+    schema: SchemaRef,
+    mut receiver: tokio::sync::mpsc::Receiver<Result<RecordBatch>>,
+    bloom_filter_columns: Option<Vec<String>>,
+    estimated_rows: u64,
+    options: ParquetWriterOptions,
+) -> Result<TempParquetFile> {
+    let props = writer_properties(estimated_rows, bloom_filter_columns, options);
+    let mut file = TempParquetFile::create()?;
+    {
+        let mut writer = ArrowWriter::try_new(file.as_file_mut(), schema, Some(props))
+            .map_err(|error| FilestoreError::Parquet(error.to_string()))?;
+        while let Some(batch_result) = receiver.blocking_recv() {
+            let batch = batch_result?;
+            let batch = if options.version_order_verified {
+                batch
+            } else {
+                sort_record_batch_by_version(batch)?
+            };
+            writer
+                .write(&batch)
+                .map_err(|error| FilestoreError::Parquet(error.to_string()))?;
+        }
+        writer.close().map_err(|error| FilestoreError::Parquet(error.to_string()))?;
+    }
+    Ok(file)
+}
+
+fn write_record_batches<W>(
+    sink: W,
+    schema: SchemaRef,
+    batches: &[RecordBatch],
+    props: WriterProperties,
+) -> Result<()>
+where
+    W: std::io::Write + std::io::Seek + Send,
+{
+    let mut writer = ArrowWriter::try_new(sink, schema, Some(props))
+        .map_err(|error| FilestoreError::Parquet(error.to_string()))?;
+    for batch in batches {
+        writer.write(batch).map_err(|error| FilestoreError::Parquet(error.to_string()))?;
+    }
+    writer.close().map_err(|error| FilestoreError::Parquet(error.to_string()))?;
+    Ok(())
+}
+
 fn writer_properties(
     row_count: u64,
     bloom_filter_columns: Option<Vec<String>>,
@@ -203,8 +322,11 @@ fn sort_batches_by_version(batches: Vec<RecordBatch>) -> Result<Vec<RecordBatch>
 }
 
 fn sort_record_batch_by_version(batch: RecordBatch) -> Result<RecordBatch> {
-    let Some(seq_idx) =
-        batch.schema().fields().iter().position(|f| f.name() == SystemColumnNames::VERSION)
+    let Some(seq_idx) = batch
+        .schema()
+        .fields()
+        .iter()
+        .position(|f| f.name() == SystemColumnNames::VERSION)
     else {
         return Ok(batch);
     };
@@ -217,7 +339,7 @@ fn sort_record_batch_by_version(batch: RecordBatch) -> Result<RecordBatch> {
     let indices = compute::sort_to_indices(
         seq_col.as_ref(),
         Some(SortOptions {
-            descending:  false,
+            descending: false,
             nulls_first: false,
         }),
         None,
@@ -343,5 +465,54 @@ mod tests {
         let read_batches: Vec<RecordBatch> = reader.map(|batch| batch.unwrap()).collect();
         assert_eq!(read_batches.len(), 1);
         assert_eq!(read_batches[0].num_rows(), 3);
+    }
+
+    #[test]
+    fn verified_version_order_skips_the_writer_sort() {
+        use arrow::array::Int64Array;
+        use kalamdb_commons::arrow_utils::field_int64;
+
+        let schema = schema(vec![field_int64(SystemColumnNames::VERSION, false)]);
+        let descending = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::new(Int64Array::from(vec![30_i64, 10, 20]))],
+        )
+        .unwrap();
+        let bytes = serialize_to_parquet_with_compression(
+            Arc::clone(&schema),
+            vec![descending],
+            None,
+            ParquetWriterOptions::new(TableCompression::None).with_verified_version_order(true),
+        )
+        .unwrap();
+        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes).unwrap().build().unwrap();
+        let batch = reader.map(|batch| batch.unwrap()).next().unwrap();
+        let versions = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        assert_eq!(versions.value(0), 30);
+
+        let unsorted = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::new(Int64Array::from(vec![30_i64, 10, 20]))],
+        )
+        .unwrap();
+        let bytes = serialize_to_parquet_with_compression(
+            schema,
+            vec![unsorted],
+            None,
+            ParquetWriterOptions::new(TableCompression::None),
+        )
+        .unwrap();
+        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes).unwrap().build().unwrap();
+        let batch = reader.map(|batch| batch.unwrap()).next().unwrap();
+        let versions = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        assert_eq!(versions.values(), &[10, 20, 30]);
     }
 }

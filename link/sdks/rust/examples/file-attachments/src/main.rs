@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let table_id = TableId::from_strings(&ns, table);
 
     client
-        .execute_query(&format!("CREATE NAMESPACE {ns}"), None, None, None)
+        .execute_query(&format!("CREATE SCHEMA {ns}"), None, None, None)
         .await?;
 
     client
@@ -96,7 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let _ = client
-        .execute_query(&format!("DROP NAMESPACE {ns} CASCADE"), None, None, None)
+        .execute_query(&format!("DROP SCHEMA {ns} CASCADE"), None, None, None)
         .await;
 
     client.disconnect().await;

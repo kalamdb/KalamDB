@@ -24,52 +24,53 @@ const SCHEMA_TEMPLATE: &str = "src/generated/schema.ts";
 #[derive(Serialize)]
 struct SchemaContext {
     #[serde(flatten)]
-    file:            GeneratedHeader,
-    needs_orm:       bool,
-    needs_file:      bool,
-    needs_sql:       bool,
+    file: GeneratedHeader,
+    needs_orm: bool,
+    needs_file: bool,
+    needs_file_type: bool,
+    needs_sql: bool,
     drizzle_imports: String,
-    decls:           Vec<SchemaDecl>,
-    tables:          Vec<TableDecl>,
+    decls: Vec<SchemaDecl>,
+    tables: Vec<TableDecl>,
 }
 
 #[derive(Serialize, Default)]
 struct SchemaDecl {
-    jsdoc:            String,
-    ident:            String,
-    is_enum:          bool,
-    union:            String,
-    is_object:        bool,
-    fields:           Vec<FieldDecl>,
-    is_alias:         bool,
-    alias_of:         String,
-    is_topic:         bool,
-    is_topic_empty:   bool,
-    variants:         Vec<TopicVariant>,
+    jsdoc: String,
+    ident: String,
+    is_enum: bool,
+    union: String,
+    is_object: bool,
+    fields: Vec<FieldDecl>,
+    is_alias: bool,
+    alias_of: String,
+    is_topic: bool,
+    is_topic_empty: bool,
+    variants: Vec<TopicVariant>,
     is_request_empty: bool,
-    is_result:        bool,
-    ty:               String,
+    is_result: bool,
+    ty: String,
 }
 
 #[derive(Serialize)]
 struct FieldDecl {
     name: String,
-    ty:   String,
+    ty: String,
 }
 
 #[derive(Serialize)]
 struct TopicVariant {
-    tag:        String,
-    row_ident:  String,
+    tag: String,
+    row_ident: String,
     terminator: String,
 }
 
 #[derive(Serialize)]
 struct TableDecl {
-    var_name:   String,
-    factory:    &'static str,
+    var_name: String,
+    factory: &'static str,
     table_name: String,
-    columns:    Vec<ColumnDecl>,
+    columns: Vec<ColumnDecl>,
 }
 
 #[derive(Serialize)]
@@ -97,13 +98,14 @@ pub(super) fn render_schema_source(
         "typescript",
         SCHEMA_TEMPLATE,
         &SchemaContext {
-            file:            GeneratedHeader::from_hash(hash),
-            needs_orm:       !snapshot.tables.is_empty(),
-            needs_file:      snapshot_has_file_column(snapshot),
-            needs_sql:       snapshot_has_default_column(snapshot),
+            file: GeneratedHeader::from_hash(hash),
+            needs_orm: !snapshot.tables.is_empty(),
+            needs_file: snapshot_has_file_column(snapshot),
+            needs_file_type: snapshot.types.contains_key("pg_catalog.file"),
+            needs_sql: snapshot_has_default_column(snapshot),
             drizzle_imports: drizzle_imports(snapshot),
-            decls:           schema_decls(snapshot, names, procedures),
-            tables:          table_decls(snapshot, names),
+            decls: schema_decls(snapshot, names, procedures),
+            tables: table_decls(snapshot, names),
         },
     )
 }
@@ -115,6 +117,15 @@ fn schema_decls(
 ) -> Vec<SchemaDecl> {
     let mut decls = Vec::new();
     for (id, ty) in &snapshot.types {
+        if id == "pg_catalog.file" {
+            decls.push(SchemaDecl {
+                ident: names.type_ident(id).to_string(),
+                is_alias: true,
+                alias_of: "PgCatalogFile".to_string(),
+                ..SchemaDecl::default()
+            });
+            continue;
+        }
         match &ty.kind {
             ContractTypeKind::Enum { labels } => {
                 decls.push(SchemaDecl {
@@ -131,6 +142,15 @@ fn schema_decls(
             },
             ContractTypeKind::Composite { fields } => {
                 decls.push(object_decl(names.type_ident(id), fields, names, ty.comment.as_deref()));
+            },
+            ContractTypeKind::Domain { base_type, .. } => {
+                decls.push(SchemaDecl {
+                    jsdoc: jsdoc(ty.comment.as_deref(), ""),
+                    ident: names.type_ident(id).to_string(),
+                    is_alias: true,
+                    alias_of: render_field_type(base_type, names, TargetLang::TypeScript),
+                    ..SchemaDecl::default()
+                });
             },
             ContractTypeKind::TopicPayload { .. }
             | ContractTypeKind::ImplicitTableRow { .. }
@@ -214,8 +234,8 @@ fn topic_decl(
             .iter()
             .enumerate()
             .map(|(index, table_id)| TopicVariant {
-                tag:        escape_double_quoted_string(&table_payload_tag(table_id)),
-                row_ident:  row_type_ident(snapshot, names, table_id).to_string(),
+                tag: escape_double_quoted_string(&table_payload_tag(table_id)),
+                row_ident: row_type_ident(snapshot, names, table_id).to_string(),
                 terminator: if index == last {
                     ";".to_string()
                 } else {
@@ -258,7 +278,7 @@ fn field_decls(fields: &[ContractField], names: &AssignedNames) -> Vec<FieldDecl
         .iter()
         .map(|field| FieldDecl {
             name: field.name.clone(),
-            ty:   render_field_type(field, names, TargetLang::TypeScript),
+            ty: render_field_type(field, names, TargetLang::TypeScript),
         })
         .collect()
 }
@@ -268,19 +288,15 @@ fn table_decls(snapshot: &ContractSnapshot, names: &AssignedNames) -> Vec<TableD
         .tables
         .values()
         .map(|table| TableDecl {
-            var_name:   value_ident(
-                &table.schema,
-                &table.name,
-                names.uses_local_name(&table.schema),
-            ),
-            factory:    match table.kind {
+            var_name: value_ident(&table.schema, &table.name, names.uses_local_name(&table.schema)),
+            factory: match table.kind {
                 ContractTableKind::User => "kTable.user",
                 ContractTableKind::Shared => "kTable.shared",
                 ContractTableKind::Stream => "kTable.stream",
                 ContractTableKind::Unspecified => "kTable",
             },
             table_name: escape_double_quoted_string(&table.table_id),
-            columns:    table
+            columns: table
                 .fields
                 .iter()
                 .map(|field| ColumnDecl {
@@ -314,7 +330,12 @@ fn snapshot_has_default_column(snapshot: &ContractSnapshot) -> bool {
 }
 
 fn is_file_column(field: &ContractField) -> bool {
-    field.type_id.is_none() && field.type_name.eq_ignore_ascii_case("FILE")
+    field.type_name.eq_ignore_ascii_case("FILE")
+        || field.type_name.eq_ignore_ascii_case("pg_catalog.file")
+        || field
+            .type_id
+            .as_ref()
+            .is_some_and(|id| id.as_str().eq_ignore_ascii_case("pg_catalog.file"))
 }
 
 fn drizzle_imports(snapshot: &ContractSnapshot) -> String {
@@ -356,7 +377,7 @@ fn drizzle_column(field: &ContractField, names: &AssignedNames) -> String {
     let name = escape_double_quoted_string(&field.name);
     let helper = drizzle_column_helper(field);
     let mut expr = match helper {
-        "file" => format!("file(\"{name}\")"),
+        "file" => format!("file(\"{name}\").$type<File>()"),
         "bigint" => format!("bigint(\"{name}\", {{ mode: \"bigint\" }})"),
         "timestamp" => format!("timestamp(\"{name}\", {{ mode: \"date\" }})"),
         "customType" => {
@@ -369,12 +390,15 @@ fn drizzle_column(field: &ContractField, names: &AssignedNames) -> String {
         },
         _ => format!("{helper}(\"{name}\")"),
     };
+    if field.is_array {
+        expr.push_str(".array()");
+    }
     if field.has_default {
         expr.push_str(".default(sql``)");
     }
-    if field.primary_key || field.name == "id" {
+    if field.primary_key {
         expr.push_str(".primaryKey()");
-    } else if field.not_null {
+    } else if field.not_null || field.primary_key {
         expr.push_str(".notNull()");
     }
     expr

@@ -33,7 +33,7 @@ pub type LiveSnapshotCallback = Arc<dyn Fn() -> Vec<LiveQuery> + Send + Sync>;
 
 /// Virtual view that snapshots active subscriptions from memory.
 pub struct LiveView {
-    system_table:      SystemTable,
+    system_table: SystemTable,
     snapshot_callback: Arc<RwLock<Option<LiveSnapshotCallback>>>,
 }
 
@@ -157,7 +157,7 @@ pub type LiveTableProvider = SystemViewProvider<LiveView>;
 #[cfg(test)]
 mod tests {
     use kalamdb_commons::{
-        models::{ConnectionId, LiveQueryId, NamespaceId, UserId},
+        models::{ConnectionId, LiveQueryId, SchemaId, UserId},
         NodeId, TableName,
     };
     use kalamdb_system::LiveQueryStatus;
@@ -171,7 +171,7 @@ mod tests {
             live_id: LiveQueryId::new(user_id.clone(), connection_id.clone(), "sub_live"),
             connection_id: connection_id.as_str().to_string(),
             subscription_id: "sub_live".to_string(),
-            namespace_id: NamespaceId::from("default"),
+            namespace_id: SchemaId::from("default"),
             table_name: TableName::from("events"),
             user_id,
             query: "SELECT * FROM default.events".to_string(),

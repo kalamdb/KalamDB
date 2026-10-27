@@ -16,20 +16,20 @@ use crate::{FunctionsError, Result};
 struct State {
     next_id: u64,
     entries: HashMap<u64, Entry>,
-    heap:    BinaryHeap<HeapItem>,
+    heap: BinaryHeap<HeapItem>,
 }
 
 struct Entry {
-    handle:     v8::IsolateHandle,
-    deadline:   Instant,
-    cancel:     CancellationToken,
+    handle: v8::IsolateHandle,
+    deadline: Instant,
+    cancel: CancellationToken,
     terminated: bool,
 }
 
 #[derive(Eq, PartialEq)]
 struct HeapItem {
     deadline: Instant,
-    id:       u64,
+    id: u64,
 }
 
 impl Ord for HeapItem {
@@ -45,7 +45,7 @@ impl PartialOrd for HeapItem {
 }
 
 struct Supervisor {
-    state:   Mutex<State>,
+    state: Mutex<State>,
     changed: Condvar,
 }
 
@@ -53,7 +53,7 @@ fn supervisor() -> &'static Arc<Supervisor> {
     static SUPERVISOR: OnceLock<Arc<Supervisor>> = OnceLock::new();
     SUPERVISOR.get_or_init(|| {
         let supervisor = Arc::new(Supervisor {
-            state:   Mutex::new(State::default()),
+            state: Mutex::new(State::default()),
             changed: Condvar::new(),
         });
         let worker = Arc::clone(&supervisor);
@@ -110,9 +110,9 @@ fn supervisor() -> &'static Arc<Supervisor> {
 }
 
 pub(crate) struct DeadlineGuard {
-    id:       u64,
+    id: u64,
     deadline: Instant,
-    cancel:   CancellationToken,
+    cancel: CancellationToken,
 }
 
 impl DeadlineGuard {
@@ -175,14 +175,14 @@ mod tests {
         let cancel = CancellationToken::new();
         let root = crate::InvocationScope {
             deadline: Instant::now() + Duration::from_millis(1),
-            cancel:   cancel.clone(),
-            depth:    0,
+            cancel: cancel.clone(),
+            depth: 0,
         };
         std::thread::sleep(Duration::from_millis(3));
         let child = crate::InvocationScope {
             deadline: root.deadline,
-            cancel:   root.cancel.clone(),
-            depth:    1,
+            cancel: root.cancel.clone(),
+            depth: 1,
         };
         assert!(matches!(child.check(), Err(FunctionsError::Timeout)));
         cancel.cancel();

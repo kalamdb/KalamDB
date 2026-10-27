@@ -68,13 +68,19 @@ on:
         required: false
         default: false
 
+      build_pg_extension:
+        description: "Build, test, and publish the PostgreSQL extension"
+        type: boolean
+        required: false
+        default: false
+
 permissions:
   contents: write
   packages: write
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: "1.94.0"
+  RUST_VERSION: "1.99.1"
   CARGO_ENCODED_RUSTFLAGS: ""
   WASM_PACK_VERSION: "0.15.0"
   PG_EXTENSION_MAJOR: "16"
@@ -1216,6 +1222,7 @@ jobs:
     name: Build PG Extension Linux x86_64
     runs-on: ubuntu-latest
     needs: read_version
+    if: ${{ github.event.inputs.build_pg_extension == 'true' }}
 
     steps:
       - name: Checkout
@@ -1501,7 +1508,7 @@ jobs:
           exit 1
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # PG EXTENSION TESTS - Native e2e suite against live KalamDB + pgrx PostgreSQL
+  # PG EXTENSION TESTS - e2e suite against the packaged extension and live KalamDB
   # ═══════════════════════════════════════════════════════════════════════════
   pg_extension_tests_native:
     name: PG Extension Tests (native)
@@ -1509,7 +1516,9 @@ jobs:
     continue-on-error: true
     needs:
       - build_linux_x86_64
+      - build_pg_extension_x86_64
       - read_version
+    if: ${{ github.event.inputs.build_pg_extension == 'true' }}
 
     steps:
       - name: Checkout
@@ -1532,7 +1541,10 @@ jobs:
             llvm-dev \
             pkg-config \
             libssl-dev \
-            libreadline-dev
+            libreadline-dev \
+            postgresql-server-dev-16
+          install -d "${HOME}/.pgrx"
+          printf '[configs]\npg16 = "/usr/lib/postgresql/16/bin/pg_config"\n' > "${HOME}/.pgrx/config.toml"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@master
@@ -1550,32 +1562,71 @@ jobs:
         shell: bash
         run: bash scripts/repair-rusty-v8-cache.sh
 
-      - name: Cache pgrx PostgreSQL install
-        id: cache-pgrx-install
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.pgrx/${{ env.PG_EXTENSION_MAJOR }}.*
-            ~/.pgrx/config.toml
-          key: ${{ runner.os }}-pgrx-install-${{ env.PGRX_VERSION }}-pg${{ env.PG_EXTENSION_MAJOR }}
-
-      - name: Install cargo-nextest and cargo-pgrx
+      - name: Install cargo-nextest
         shell: bash
         run: |
           set -euo pipefail
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
-          if ! command -v cargo-pgrx >/dev/null 2>&1 || ! cargo pgrx --version | grep -q "cargo-pgrx ${PGRX_VERSION}$"; then
-            cargo install cargo-pgrx --version "${PGRX_VERSION}" --locked
-          fi
           cargo nextest --version
-          cargo pgrx --version
 
-      - name: Initialize pgrx PostgreSQL
-        if: steps.cache-pgrx-install.outputs.cache-hit != 'true'
+      - name: Download prebuilt PG extension
+        uses: actions/download-artifact@v6
+        with:
+          name: dist-pg-extension-linux-x86_64
+          path: pg-artifacts/
+
+      - name: Start PostgreSQL with the prebuilt extension
         shell: bash
         run: |
           set -euo pipefail
-          cargo pgrx init "--pg${PG_EXTENSION_MAJOR}" download
+          VERSION="${{ needs.read_version.outputs.version }}"
+          ARCHIVE="pg-artifacts/pg_kalam-${VERSION}-${PG_EXTENSION_FLAVOR}-linux-x86_64.tar.gz"
+          if [[ ! -f "$ARCHIVE" ]]; then
+            echo "Prebuilt extension archive not found: $ARCHIVE" >&2
+            find pg-artifacts -maxdepth 3 -type f -print >&2
+            exit 1
+          fi
+
+          rm -rf pg-ext-install
+          mkdir -p pg-ext-install
+          tar -xzf "$ARCHIVE" -C pg-ext-install --strip-components=1
+          test -f pg-ext-install/pg_kalam.so
+          test -f pg-ext-install/pg_kalam.control
+          compgen -G "pg-ext-install/pg_kalam--*.sql" >/dev/null
+
+          # Same Bookworm PostgreSQL major the artifact was linked against.
+          # The runner user is the trust-auth superuser the e2e tests connect as.
+          docker build \
+            --build-arg "POSTGRES_BASE_IMAGE=postgres:${PG_EXTENSION_MAJOR}-bookworm" \
+            --build-arg "PG_MAJOR=${PG_EXTENSION_MAJOR}" \
+            -f pg/docker/Dockerfile.release-pg \
+            -t pg-kalam-prebuilt-test \
+            pg-ext-install
+
+          docker rm -f pg-kalam-prebuilt-test >/dev/null 2>&1 || true
+          docker run -d --name pg-kalam-prebuilt-test \
+            -p 127.0.0.1:28816:5432 \
+            -e POSTGRES_HOST_AUTH_METHOD=trust \
+            -e POSTGRES_USER="$USER" \
+            -e POSTGRES_DB=kalamdb_test \
+            pg-kalam-prebuilt-test \
+            postgres -c shared_preload_libraries=pg_kalam
+
+          for i in $(seq 1 60); do
+            if docker exec pg-kalam-prebuilt-test pg_isready -U "$USER" -d kalamdb_test >/dev/null 2>&1; then
+              echo "PostgreSQL is ready with the prebuilt extension (${i}s)"
+              exit 0
+            fi
+            if [[ "$(docker inspect --format '{{.State.Status}}' pg-kalam-prebuilt-test)" != "running" ]]; then
+              echo "PostgreSQL container exited" >&2
+              docker logs pg-kalam-prebuilt-test || true
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "PostgreSQL did not become ready" >&2
+          docker logs pg-kalam-prebuilt-test || true
+          exit 1
 
       - name: Prepare server binary
         shell: bash
@@ -1632,21 +1683,13 @@ jobs:
           cat pg-server.log || true
           exit 1
 
-      - name: Setup pgrx PostgreSQL and install extension
-        shell: bash
-        env:
-          PG_MAJOR: ${{ env.PG_EXTENSION_MAJOR }}
-          PG_EXTENSION_FLAVOR: ${{ env.PG_EXTENSION_FLAVOR }}
-        run: |
-          set -euo pipefail
-          ./pg/scripts/pgrx-test-setup.sh 2>&1 | tee pg-pgrx-setup-output.txt
-
       - name: Run native PG extension perf tests (informational)
         continue-on-error: true
         shell: bash
         env:
           KALAMDB_SERVER_URL: "http://127.0.0.1:2900"
           KALAMDB_ROOT_PASSWORD: "kalamdb123"
+          PGRX_PG_CONFIG_PATH: /usr/lib/postgresql/16/bin/pg_config
         run: |
           set -euo pipefail
           : > pg-native-test-output.txt
@@ -1665,6 +1708,7 @@ jobs:
         env:
           KALAMDB_SERVER_URL: "http://127.0.0.1:2900"
           KALAMDB_ROOT_PASSWORD: "kalamdb123"
+          PGRX_PG_CONFIG_PATH: /usr/lib/postgresql/16/bin/pg_config
         run: |
           set -euo pipefail
           cargo nextest run \
@@ -1678,14 +1722,12 @@ jobs:
             --test-threads 1 \
             2>&1 | tee -a pg-native-test-output.txt
 
-      - name: Stop pgrx PostgreSQL
+      - name: Stop prebuilt PostgreSQL
         if: always()
         shell: bash
-        env:
-          PG_MAJOR: ${{ env.PG_EXTENSION_MAJOR }}
-          PG_EXTENSION_FLAVOR: ${{ env.PG_EXTENSION_FLAVOR }}
         run: |
-          ./pg/scripts/pgrx-test-setup.sh --stop || true
+          docker logs pg-kalam-prebuilt-test > pg-postgres.log 2>&1 || true
+          docker rm -f pg-kalam-prebuilt-test >/dev/null 2>&1 || true
 
       - name: Stop server
         if: always()
@@ -1700,9 +1742,8 @@ jobs:
           set -euo pipefail
           mkdir -p pg-native-test-results
           cp pg-server.log pg-native-test-results/ 2>/dev/null || true
-          cp pg-pgrx-setup-output.txt pg-native-test-results/ 2>/dev/null || true
+          cp pg-postgres.log pg-native-test-results/ 2>/dev/null || true
           cp pg-native-test-output.txt pg-native-test-results/ 2>/dev/null || true
-          cp "$HOME/.pgrx/data-${PG_EXTENSION_MAJOR}/pgrx.log" pg-native-test-results/pgrx.log 2>/dev/null || true
 
       - name: Upload PG native test results
         if: always()
@@ -1748,7 +1789,7 @@ jobs:
         (needs.sync_versions_manifest.result == 'success') &&
         (needs.license_compliance.result == 'success') &&
         (needs.read_version.result == 'success') &&
-        (needs.build_pg_extension_x86_64.result == 'success') &&
+        (needs.build_pg_extension_x86_64.result == 'success' || needs.build_pg_extension_x86_64.result == 'skipped') &&
         (needs.cli_build_wave.result == 'success' || needs.cli_build_wave.result == 'skipped') &&
         (needs.server_build_wave.result == 'success' || needs.server_build_wave.result == 'skipped') &&
         (needs.build_cli_linux_x86_64.result == 'success' || needs.build_cli_linux_x86_64.result == 'skipped') &&
@@ -1820,10 +1861,12 @@ jobs:
             exit 1
           fi
 
-          PG_EXTENSION_ASSET="pg_kalam-${VERSION}-${PG_EXTENSION_FLAVOR}-linux-x86_64.tar.gz"
-          if [[ ! -f "$PG_EXTENSION_ASSET" ]]; then
-            echo "Missing PostgreSQL extension release asset: $PG_EXTENSION_ASSET" >&2
-            exit 1
+          if [[ "${{ github.event.inputs.build_pg_extension }}" == "true" ]]; then
+            PG_EXTENSION_ASSET="pg_kalam-${VERSION}-${PG_EXTENSION_FLAVOR}-linux-x86_64.tar.gz"
+            if [[ ! -f "$PG_EXTENSION_ASSET" ]]; then
+              echo "Missing PostgreSQL extension release asset: $PG_EXTENSION_ASSET" >&2
+              exit 1
+            fi
           fi
 
           # Keep asset names unprefixed (no ./) so update clients can match by exact filename.
@@ -2462,6 +2505,7 @@ jobs:
     if: >-
       ${{
         (github.event_name == 'push' || github.event.inputs.docker_push == 'true') &&
+        github.event.inputs.build_pg_extension == 'true' &&
         !cancelled() &&
         (needs.build_pg_extension_x86_64.result == 'success') &&
         (needs.read_version.result == 'success') &&

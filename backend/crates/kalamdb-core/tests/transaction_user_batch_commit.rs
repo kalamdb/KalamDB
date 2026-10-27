@@ -1,5 +1,3 @@
-mod support;
-
 use std::sync::Arc;
 
 use datafusion_common::ScalarValue;
@@ -12,7 +10,7 @@ use kalamdb_pg::OperationExecutor;
 use kalamdb_pg_bridge::OperationService;
 use kalamdb_sharding::ShardRouter;
 use kalamdb_tables::UserTableProvider;
-use support::{create_cluster_app_context, create_user_table, row, unique_namespace};
+use crate::support::{create_cluster_app_context, create_user_table, row, unique_namespace};
 
 fn insert_mutation(
     transaction_id: &kalamdb_commons::models::TransactionId,
@@ -224,22 +222,22 @@ async fn operation_service_preserves_user_scope_for_same_primary_keys() {
 
     service
         .execute_insert(InsertRequest {
-            table_id:   table_id.clone(),
+            table_id: table_id.clone(),
             table_type: TableType::User,
             session_id: Some(session_id.to_string()),
-            user_id:    Some(first_user_id.clone()),
-            rows:       vec![row(1, "alpha-a"), row(2, "beta-a")],
+            user_id: Some(first_user_id.clone()),
+            rows: vec![row(1, "alpha-a"), row(2, "beta-a")],
         })
         .await
         .expect("first user staged write succeeds");
 
     service
         .execute_insert(InsertRequest {
-            table_id:   table_id.clone(),
+            table_id: table_id.clone(),
             table_type: TableType::User,
             session_id: Some(session_id.to_string()),
-            user_id:    Some(second_user_id.clone()),
-            rows:       vec![row(1, "alpha-b"), row(2, "beta-b")],
+            user_id: Some(second_user_id.clone()),
+            rows: vec![row(1, "alpha-b"), row(2, "beta-b")],
         })
         .await
         .expect("second user staged write succeeds");

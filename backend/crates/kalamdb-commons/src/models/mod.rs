@@ -12,11 +12,11 @@
 //! ## Examples
 //!
 //! ```rust
-//! use kalamdb_commons::models::{NamespaceId, TableName, UserId};
+//! use kalamdb_commons::models::{SchemaId, TableName, UserId};
 //! use kalamdb_system::{Job, LiveQuery, User};
 //!
 //! let user_id = UserId::new("user_123");
-//! let namespace_id = NamespaceId::default();
+//! let namespace_id = SchemaId::default();
 //! let table_name = TableName::new("conversations");
 //!
 //! // Type safety prevents mixing
@@ -40,6 +40,7 @@ mod auth_type;
 mod call_argument;
 mod catalog_type_kind;
 mod connection;
+mod domain_value;
 mod file_ref;
 mod function_runtime;
 mod payload_mode;
@@ -47,11 +48,19 @@ mod read_context;
 mod role;
 mod routine_call;
 mod routine_grantee;
+mod routine_kind;
+mod routine_null_safety;
+mod routine_parallel_safety;
+mod routine_parameter_mode;
 mod routine_security;
+mod routine_volatility;
 pub mod row_level_security;
 mod session_origin;
+mod storage_mode;
+mod storage_type;
 mod topic_op;
 mod transaction;
+mod vector_metric;
 
 // Row types only available with full feature (datafusion dependency)
 #[cfg(feature = "rows")]
@@ -70,6 +79,7 @@ pub use datatypes::{
     assert_finite_type_graph, assert_finite_type_graph_with_limits, KalamDataType, LogicalTypeRef,
     TypeGraphNode,
 };
+pub use domain_value::{DomainFileRef, DomainValue};
 pub use file_ref::FileRef;
 pub use function_runtime::FunctionRuntime;
 pub use ids::*;
@@ -77,9 +87,16 @@ pub use kalam_cell_value::KalamCellValue;
 pub use payload_mode::PayloadMode;
 pub use read_context::ReadContext;
 pub use role::Role;
-pub use routine_call::{is_builtin_default_name, normalize_builtin_name, RoutineCall};
+pub use routine_call::{
+    is_builtin_default_name, normalize_builtin_name, BuiltinDefault, RoutineCall,
+};
 pub use routine_grantee::RoutineGrantee;
+pub use routine_kind::RoutineKind;
+pub use routine_null_safety::RoutineNullSafety;
+pub use routine_parallel_safety::RoutineParallelSafety;
+pub use routine_parameter_mode::RoutineParameterMode;
 pub use routine_security::RoutineSecurityMode;
+pub use routine_volatility::RoutineVolatility;
 pub use row_level_security::{
     AuthorizationRelation, BoundExprShape, InvalidationStrategy, PolicyCommand, PolicyId,
     PolicyProgram, PolicyScalar, PolicyTarget, PredicateOperator, PrincipalExpr, ScalarPredicate,
@@ -89,8 +106,11 @@ pub use row_level_security::{
 pub use rows::{KTableRow, SharedTableRow, StreamTableRow, SystemTableRow, UserTableRow};
 pub use schemas::{FieldFlag, FieldFlags, SchemaField, TableAccess, TableName};
 pub use session_origin::SessionOrigin;
+pub use storage_mode::StorageMode;
+pub use storage_type::StorageType;
 pub use topic_op::TopicOp;
 pub use transaction::{OperationKind, TransactionOrigin, TransactionState};
+pub use vector_metric::VectorMetric;
 
 #[cfg(test)]
 mod tests {

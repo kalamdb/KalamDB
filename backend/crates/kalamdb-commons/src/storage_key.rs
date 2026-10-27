@@ -146,7 +146,7 @@ pub fn next_storage_key_bytes(bytes: &[u8]) -> Vec<u8> {
 ///
 ///     fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
 ///         let (ns, table): (String, String) = decode_key(bytes)?;
-///         Ok(TableId::new(NamespaceId::new(ns), TableName::new(table)))
+///         Ok(TableId::new(SchemaId::new(ns), TableName::new(table)))
 ///     }
 /// }
 /// ```

@@ -140,7 +140,7 @@ pub struct ConnectionOptions {
 
     /// Protocol options for the WebSocket connection.
     ///
-    /// Controls the serialization format (JSON or MessagePack) and compression
+    /// Controls the serialization format (JSON text or domain frames) and compression
     /// (None or Gzip) used for WebSocket messages after authentication.
     ///
     /// Authentication messages are always sent as JSON text frames regardless
@@ -175,17 +175,17 @@ fn default_ws_lazy_connect() -> bool {
 impl Default for ConnectionOptions {
     fn default() -> Self {
         Self {
-            http_version:            HttpVersion::default(),
-            auto_reconnect:          true,
-            reconnect_delay_ms:      1000,
-            max_reconnect_delay_ms:  30000,
-            max_reconnect_attempts:  None,
-            timestamp_format:        TimestampFormat::Iso8601,
-            ping_interval_ms:        5000,
+            http_version: HttpVersion::default(),
+            auto_reconnect: true,
+            reconnect_delay_ms: 1000,
+            max_reconnect_delay_ms: 30000,
+            max_reconnect_attempts: None,
+            timestamp_format: TimestampFormat::Iso8601,
+            ping_interval_ms: 5000,
             ws_local_bind_addresses: Vec::new(),
-            disable_compression:     false,
-            ws_lazy_connect:         true,
-            protocol:                ProtocolOptions::default(),
+            disable_compression: false,
+            ws_lazy_connect: true,
+            protocol: ProtocolOptions::default(),
         }
     }
 }

@@ -18,7 +18,7 @@ fn test_minio_storage_compact_table_command_runs() {
     let full_table = format!("{}.{}", namespace, table);
 
     setup_minio_storage(&storage_id, "MinIO Compaction Storage");
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace))
         .expect("namespace creation");
     execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, body TEXT NOT NULL) WITH (TYPE='SHARED', \

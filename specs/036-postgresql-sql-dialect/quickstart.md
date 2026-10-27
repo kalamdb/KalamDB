@@ -8,7 +8,7 @@ Run existing focused tests under the default dev profile:
 
 ```bash
 cargo nextest run -p kalamdb-dialect
-cargo nextest run -p kalamdb-core --test test_datafusion55_sql_features --test prepared_metadata_cache
+cargo nextest run -p kalamdb-core --test sql_semantics test_datafusion55_sql_features prepared_metadata_cache
 ```
 
 Setup tasks add a corpus directory `backend/crates/kalamdb-dialect/tests/fixtures/postgresql/`, an inventory and `validation.md` in this feature. Freeze currently working GUI/JDBC SQL, schemas, visible rows and column metadata. Record client/server/dependency versions and which transports were exercised. Existing failures are recorded, not relabeled as passes. Required feature cases that currently fail are regression targets.

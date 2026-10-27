@@ -104,7 +104,7 @@ pub enum ExtensionStatement {
     ClusterTransferLeader { node_id: u64 },
     /// CLUSTER JOIN command
     ClusterJoin {
-        node_id:  u64,
+        node_id: u64,
         rpc_addr: String,
         api_addr: String,
     },
@@ -485,7 +485,7 @@ impl ExtensionStatement {
                         return Err("Unknown CLUSTER subcommand. Supported: SNAPSHOT, PURGE, \
                                     TRIGGER ELECTION, TRANSFER-LEADER, JOIN, REBALANCE, \
                                     STEPDOWN, CLEAR"
-                            .to_string())
+                            .to_string());
                     },
                 }
             }

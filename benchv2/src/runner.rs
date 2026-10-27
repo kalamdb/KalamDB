@@ -1,12 +1,13 @@
 use std::time::Instant;
 
-use crate::benchmarks::{enabled_in_default_suite, Benchmark};
-use crate::client::KalamClient;
-use crate::comparison::{self, PreviousRun};
-use crate::config::Config;
-use crate::metrics::BenchmarkResult;
-use crate::selected_benchmarks;
-use crate::verdict;
+use crate::{
+    benchmarks::{enabled_in_default_suite, Benchmark},
+    client::KalamClient,
+    comparison::{self, PreviousRun},
+    config::Config,
+    metrics::BenchmarkResult,
+    selected_benchmarks, verdict,
+};
 
 /// Runs all registered benchmarks according to config, returning results.
 pub async fn run_all(
@@ -63,7 +64,8 @@ pub async fn run_all(
                 .unwrap_or_default();
 
             println!(
-                "  ✅ {} iterations | mean={:.0}µs  p50={:.0}µs  p95={:.0}µs  p99={:.0}µs  ops/s={:.0}  │ {}{}",
+                "  ✅ {} iterations | mean={:.0}µs  p50={:.0}µs  p95={:.0}µs  p99={:.0}µs  \
+                 ops/s={:.0}  │ {}{}",
                 result.iterations,
                 result.mean_us,
                 result.median_us,

@@ -18,9 +18,11 @@ pub enum CallArgument {
     /// Catalog-typed literal, including typed `NULL` (`CAST(NULL AS UUID)`).
     Typed {
         data_type: KalamDataType,
-        value:     JsonValue,
+        value: JsonValue,
     },
     Placeholder(usize),
+    /// Positional composite tuple literal (`ROW(a, b, ...)`).
+    Tuple(Vec<CallArgument>),
 }
 
 impl CallArgument {
@@ -67,7 +69,11 @@ impl CallArgument {
     }
 
     pub fn is_placeholder(&self) -> bool {
-        matches!(self, Self::Placeholder(_))
+        match self {
+            Self::Placeholder(_) => true,
+            Self::Tuple(items) => items.iter().any(Self::is_placeholder),
+            _ => false,
+        }
     }
 
     pub fn to_sql(&self) -> String {
@@ -75,6 +81,10 @@ impl CallArgument {
             Self::Null => "NULL".to_string(),
             Self::Placeholder(index) => format!("${index}"),
             Self::Typed { data_type, value } => typed_to_sql(data_type, value),
+            Self::Tuple(items) => {
+                let inner = items.iter().map(Self::to_sql).collect::<Vec<_>>().join(", ");
+                format!("ROW({inner})")
+            },
         }
     }
 }

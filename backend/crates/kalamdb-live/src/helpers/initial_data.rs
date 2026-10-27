@@ -57,13 +57,13 @@ pub struct InitialDataOptions {
 impl Default for InitialDataOptions {
     fn default() -> Self {
         Self {
-            since_seq:        None,
-            until_seq:        None,
+            since_seq: None,
+            until_seq: None,
             since_commit_seq: None,
             until_commit_seq: None,
-            limit:            100,
-            include_deleted:  false,
-            fetch_last:       false,
+            limit: 100,
+            include_deleted: false,
+            fetch_last: false,
         }
     }
 }
@@ -72,13 +72,13 @@ impl InitialDataOptions {
     /// Create options to fetch changes since a specific sequence ID
     pub fn since(seq: VersionId) -> Self {
         Self {
-            since_seq:        Some(seq),
-            until_seq:        None,
+            since_seq: Some(seq),
+            until_seq: None,
             since_commit_seq: None,
             until_commit_seq: None,
-            limit:            100,
-            include_deleted:  false,
-            fetch_last:       false,
+            limit: 100,
+            include_deleted: true,
+            fetch_last: false,
         }
     }
 
@@ -108,7 +108,7 @@ impl InitialDataOptions {
             since_commit_seq: None,
             until_commit_seq: None,
             limit: batch_size,
-            include_deleted: false,
+            include_deleted: since_seq.is_some(),
             fetch_last: false,
         }
     }
@@ -163,7 +163,7 @@ pub struct InitialDataResult {
 /// Service for fetching initial data when subscribing to live queries
 pub struct InitialDataFetcher {
     schema_lookup: Arc<dyn LiveSchemaLookup>,
-    sql_executor:  Arc<OnceCell<Arc<dyn LiveSqlExecutor>>>,
+    sql_executor: Arc<OnceCell<Arc<dyn LiveSqlExecutor>>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -213,7 +213,7 @@ impl InitialDataFetcher {
     /// * `table_type` - User or Shared table
     /// * `options` - Options for the fetch (timestamp, limit, etc.)
     /// * `where_clause` - Optional WHERE clause string to include in the query
-    /// * `projections` - Optional column projections (None = SELECT *, all columns)
+    /// * `projections` - Optional column projections (`None` selects every column)
     ///
     /// # Returns
     /// InitialDataResult with rows and metadata
@@ -230,11 +230,11 @@ impl InitialDataFetcher {
         let limit = options.limit;
         if limit == 0 {
             return Ok(InitialDataResult {
-                rows:                    Vec::new(),
-                last_seq:                None,
-                last_commit_seq:         None,
-                has_more:                false,
-                snapshot_end_seq:        None,
+                rows: Vec::new(),
+                last_seq: None,
+                last_commit_seq: None,
+                has_more: false,
+                snapshot_end_seq: None,
                 snapshot_end_commit_seq: None,
             });
         }
@@ -245,8 +245,7 @@ impl InitialDataFetcher {
         // Execute via trait — handles user scoping and RLS internally
         let table_name = quoted_table_sql(table_id);
 
-        // Build SELECT clause: either specific columns or *
-        // Always include _seq column for pagination, even if not in projections
+        // `None` is `*`. Star expansion keeps `_version`, which this snapshot orders by.
         let table_capabilities = self.table_capabilities(table_id)?;
         let select_clause = if let Some(cols) = projections {
             let mut columns = cols.to_vec();
@@ -561,7 +560,7 @@ mod tests {
     };
     use async_trait::async_trait;
     use kalamdb_commons::{
-        models::{LiveQueryId, NamespaceId, TableName, UserId},
+        models::{LiveQueryId, SchemaId, TableName, UserId},
         schemas::TableDefinition,
     };
     use parking_lot::Mutex;
@@ -636,7 +635,7 @@ mod tests {
 
     struct CountingSchemaLookup {
         schema: Arc<Schema>,
-        calls:  StdArc<AtomicUsize>,
+        calls: StdArc<AtomicUsize>,
     }
 
     impl LiveSchemaLookup for CountingSchemaLookup {
@@ -669,7 +668,7 @@ mod tests {
 
     struct CaptureFetchExecutor {
         seen_sql: Mutex<Vec<String>>,
-        batches:  Vec<RecordBatch>,
+        batches: Vec<RecordBatch>,
     }
 
     #[async_trait]
@@ -701,7 +700,7 @@ mod tests {
         let options = InitialDataOptions::since(seq);
         assert_eq!(options.since_seq, Some(seq));
         assert_eq!(options.limit, 100);
-        assert!(!options.include_deleted);
+        assert!(options.include_deleted);
         assert!(!options.fetch_last);
     }
 
@@ -795,7 +794,7 @@ mod tests {
         });
         fetcher.set_sql_executor(executor.clone());
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -830,7 +829,7 @@ mod tests {
         });
         fetcher.set_sql_executor(executor.clone());
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -870,7 +869,7 @@ mod tests {
             calls: AtomicUsize::new(0),
         }));
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -902,7 +901,7 @@ mod tests {
         ]));
         let executor = Arc::new(CaptureFetchExecutor {
             seen_sql: Mutex::new(Vec::new()),
-            batches:  Vec::new(),
+            batches: Vec::new(),
         });
         let fetcher = InitialDataFetcher::new(Arc::new(CountingSchemaLookup {
             schema,
@@ -910,7 +909,7 @@ mod tests {
         }));
         fetcher.set_sql_executor(executor.clone());
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -952,7 +951,7 @@ mod tests {
         ]));
         let executor = Arc::new(CaptureFetchExecutor {
             seen_sql: Mutex::new(Vec::new()),
-            batches:  Vec::new(),
+            batches: Vec::new(),
         });
         let fetcher = InitialDataFetcher::new(Arc::new(CountingSchemaLookup {
             schema,
@@ -960,7 +959,7 @@ mod tests {
         }));
         fetcher.set_sql_executor(executor.clone());
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -999,7 +998,7 @@ mod tests {
         ]));
         let executor = Arc::new(CaptureFetchExecutor {
             seen_sql: Mutex::new(Vec::new()),
-            batches:  Vec::new(),
+            batches: Vec::new(),
         });
         let fetcher = InitialDataFetcher::new(Arc::new(CountingSchemaLookup {
             schema,
@@ -1007,7 +1006,7 @@ mod tests {
         }));
         fetcher.set_sql_executor(executor.clone());
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -1089,7 +1088,7 @@ mod tests {
             batches: vec![batch],
         }));
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -1144,7 +1143,7 @@ mod tests {
             batches: vec![batch],
         }));
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -1202,7 +1201,7 @@ mod tests {
             batches: vec![batch],
         }));
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -1264,7 +1263,7 @@ mod tests {
             batches: vec![batch],
         }));
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -1322,7 +1321,7 @@ mod tests {
             batches: vec![batch],
         }));
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),

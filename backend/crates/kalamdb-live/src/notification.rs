@@ -65,8 +65,8 @@ const NOTIFY_QUEUE_PER_WORKER: usize = 4_096;
 const SHARED_NOTIFY_CHUNK_SIZE: usize = 2_048;
 
 struct NotificationTask {
-    user_id:      Option<UserId>,
-    table_id:     TableId,
+    user_id: Option<UserId>,
+    table_id: TableId,
     notification: Arc<ChangeNotification>,
 }
 
@@ -225,7 +225,7 @@ fn project_update_delta(
 /// Build the `SharedChangePayload` for a notification.
 /// Converts Row data to `RowData` (`HashMap<String, KalamCellValue>`) once per
 /// projection group; the result is shared via `Arc` across all subscribers.
-/// JSON and MessagePack bytes are then cached lazily inside `SharedChangePayload`,
+/// JSON and domain row bytes are then cached lazily inside `SharedChangePayload`,
 /// so notification fanout only needs to group by projection requirements here.
 fn build_shared_payload(
     change: VisibleChange,
@@ -321,7 +321,7 @@ fn signal_lapse(handle: &SubscriptionHandle) {
         subscription_id: Arc::clone(&handle.subscription_id),
     });
     log::warn!(
-        "Subscription {} missed a live change; client must resubscribe without a resume cursor",
+        "Subscription {} missed a live change; client resumes from its last cursor",
         handle.subscription_id
     );
 }
@@ -356,24 +356,16 @@ fn try_deliver(
             handle.runtime_metadata.record_delivery_at(delivery_timestamp_ms);
             true
         },
-        Err(e) => {
-            use tokio::sync::mpsc::error::TrySendError;
-            match e {
-                TrySendError::Full(_) => {
-                    log::warn!(
-                        "Notification channel full for subscription_id={}; requesting resubscribe",
-                        handle.subscription_id
-                    );
-                    signal_lapse(handle);
-                },
-                TrySendError::Closed(_) => {
-                    log::debug!(
-                        "Notification channel closed for subscription_id={}, connection likely \
-                         disconnected",
-                        handle.subscription_id
-                    );
-                },
-            }
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            log::debug!(
+                "Notification channel closed for subscription_id={}, connection likely \
+                 disconnected",
+                handle.subscription_id
+            );
+            false
+        },
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            signal_lapse(handle);
             false
         },
     }
@@ -391,7 +383,7 @@ fn try_deliver(
 /// subscribers when the committed Raft entry is applied on that node.
 pub struct NotificationService {
     /// Manager uses DashMap internally for lock-free access
-    registry:   Arc<ConnectionsManager>,
+    registry: Arc<ConnectionsManager>,
     /// Sharded notification channels — deterministic routing by table_id hash
     /// preserves per-table ordering while achieving parallelism across tables.
     worker_txs: Vec<mpsc::Sender<NotificationTask>>,
@@ -571,7 +563,7 @@ impl NotificationService {
     /// Groups subscribers by projection requirements so equivalent projections
     /// share a single `Arc<SharedChangePayload>` even when they come from different
     /// subscription objects. Serialization reuse stays inside `SharedChangePayload`,
-    /// which lazily caches JSON and MessagePack bytes for the shared row payload.
+    /// which lazily caches JSON and domain row bytes for the shared row payload.
     /// For large subscriber counts (>SHARED_NOTIFY_CHUNK_SIZE), uses parallel chunked
     /// fan-out via `tokio::spawn`.
     async fn dispatch_to_subscribers(
@@ -699,7 +691,7 @@ fn dispatch_change_chunk(
 /// Groups subscribers by projection requirements so that subscribers with
 /// identical projections share a single `Arc<SharedChangePayload>`, avoiding
 /// redundant Row→RowData conversion. The shared payload then reuses cached JSON
-/// and MessagePack bytes across subscribers that serialize the same change.
+/// and domain row bytes across subscribers that serialize the same change.
 fn dispatch_chunk(
     handles: Vec<SubscriptionHandle>,
     new_row: &Row,
@@ -726,7 +718,7 @@ fn dispatch_chunk(
         for handle in handles {
             let notification = Arc::new(WireNotification {
                 subscription_id: Arc::clone(&handle.subscription_id),
-                payload:         Arc::clone(&payload),
+                payload: Arc::clone(&payload),
             });
 
             if try_deliver(&handle, notification, seq_value, delivery_timestamp_ms) {
@@ -874,7 +866,7 @@ mod tests {
 
     use datafusion_common::ScalarValue;
     use kalamdb_commons::{
-        models::{rows::Row, ConnectionId, LiveQueryId, NamespaceId, TableName},
+        models::{rows::Row, ConnectionId, LiveQueryId, SchemaId, TableName},
         NodeId,
     };
     use kalamdb_row_filter::parse_where_clause;
@@ -898,7 +890,7 @@ mod tests {
     }
 
     fn make_table_id(ns: &str, table: &str) -> TableId {
-        TableId::new(NamespaceId::from(ns), TableName::from(table))
+        TableId::new(SchemaId::from(ns), TableName::from(table))
     }
 
     fn make_row(id: i64, body: &str, seq: i64) -> Row {
@@ -917,17 +909,17 @@ mod tests {
         projections: Option<Vec<&str>>,
     ) -> SubscriptionHandle {
         SubscriptionHandle {
-            subscription_id:  Arc::from(subscription_id),
-            filter_expr:      filter_expr
+            subscription_id: Arc::from(subscription_id),
+            filter_expr: filter_expr
                 .map(|sql| parse_where_clause(sql).expect("filter should parse"))
                 .map(Arc::new),
-            authorization:    None,
-            projections:      projections.map(|cols| {
+            authorization: None,
+            projections: projections.map(|cols| {
                 Arc::new(cols.into_iter().map(std::string::ToString::to_string).collect())
             }),
-            notification_tx:  tx,
-            event_tx:         tokio::sync::mpsc::channel(1).0,
-            flow_control:     Some(flow_control),
+            notification_tx: tx,
+            event_tx: tokio::sync::mpsc::channel(1).0,
+            flow_control: Some(flow_control),
             runtime_metadata: Arc::new(SubscriptionRuntimeMetadata::new(
                 "SELECT * FROM shared.events",
                 None,
@@ -1239,8 +1231,9 @@ mod tests {
         assert!(first_json["rows"][0].get("id").is_some());
         assert!(first_json["rows"][0].get("body").is_none());
 
-        let second_msgpack = second.to_msgpack();
-        assert!(!second_msgpack.is_empty());
+        let second_json: serde_json::Value =
+            serde_json::from_slice(&second.to_json()).expect("shared json payload");
+        assert!(second_json["rows"][0].get("id").is_some());
     }
 
     #[test]

@@ -23,6 +23,8 @@ pub enum CatalogTypeKind {
     Composite,
     /// Named `CREATE TYPE ... AS ENUM (...)`.
     Enum,
+    /// Named `CREATE DOMAIN ... AS ...`.
+    Domain,
 }
 
 impl CatalogTypeKind {
@@ -33,6 +35,7 @@ impl CatalogTypeKind {
             Self::RowAlias => "row_alias",
             Self::Composite => "composite",
             Self::Enum => "enum",
+            Self::Domain => "domain",
         }
     }
 
@@ -43,6 +46,7 @@ impl CatalogTypeKind {
             "row_alias" => Some(Self::RowAlias),
             "composite" => Some(Self::Composite),
             "enum" => Some(Self::Enum),
+            "domain" => Some(Self::Domain),
             _ => None,
         }
     }

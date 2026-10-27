@@ -1,4 +1,4 @@
-use kalamdb_commons::{models::NamespaceId, TableId};
+use kalamdb_commons::{models::SchemaId, TableId};
 use sqlparser::ast::{CreatePolicy, CreatePolicyCommand, CreatePolicyType, Statement};
 
 use super::{parse_one, parse_targets, resolve_table_id, PolicyCommand, PolicyTarget};
@@ -7,17 +7,17 @@ use crate::ddl::DdlResult;
 /// Validated, PostgreSQL-shaped `CREATE POLICY` statement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreatePolicyStatement {
-    pub policy_name:    String,
-    pub table_id:       TableId,
-    pub command:        PolicyCommand,
-    pub targets:        Vec<PolicyTarget>,
-    pub using_sql:      Option<String>,
+    pub policy_name: String,
+    pub table_id: TableId,
+    pub command: PolicyCommand,
+    pub targets: Vec<PolicyTarget>,
+    pub using_sql: Option<String>,
     pub with_check_sql: Option<String>,
-    pub original_sql:   String,
+    pub original_sql: String,
 }
 
 impl CreatePolicyStatement {
-    pub fn parse(sql: &str, default_namespace: &NamespaceId) -> DdlResult<Self> {
+    pub fn parse(sql: &str, default_namespace: &SchemaId) -> DdlResult<Self> {
         let Statement::CreatePolicy(CreatePolicy {
             name,
             table_name,

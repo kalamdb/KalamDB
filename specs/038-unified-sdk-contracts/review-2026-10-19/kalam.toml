@@ -1,0 +1,19 @@
+[project]
+name = "sdk_review"
+default_env = "dev"
+
+[connection.dev]
+url = "http://localhost:39999"
+namespace = "public"
+
+[schema]
+mode = "sql"
+path = "schema.sql"
+languages = ["typescript", "dart"]
+watch = false
+
+[schema.targets.typescript]
+output = "ts/kalam.ts"
+
+[schema.targets.dart]
+output = "dart/kalam.dart"

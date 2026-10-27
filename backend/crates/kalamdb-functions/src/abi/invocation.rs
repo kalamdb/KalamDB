@@ -10,8 +10,8 @@ use crate::{FunctionsError, ModuleRevision, Result, RoutineValue};
 #[derive(Clone)]
 pub struct InvocationScope {
     pub deadline: Instant,
-    pub cancel:   CancellationToken,
-    pub depth:    usize,
+    pub cancel: CancellationToken,
+    pub depth: usize,
 }
 
 impl InvocationScope {
@@ -22,8 +22,8 @@ impl InvocationScope {
         }
         Ok(Self {
             deadline: self.deadline,
-            cancel:   self.cancel.clone(),
-            depth:    self.depth + 1,
+            cancel: self.cancel.clone(),
+            depth: self.depth + 1,
         })
     }
 
@@ -39,9 +39,9 @@ impl InvocationScope {
 }
 
 pub struct Invocation {
-    pub routine_id:      RoutineId,
-    pub revision:        Arc<ModuleRevision>,
-    pub args:            Vec<RoutineValue>,
-    pub scope:           InvocationScope,
+    pub routine_id: RoutineId,
+    pub revision: Arc<ModuleRevision>,
+    pub args: Vec<RoutineValue>,
+    pub scope: InvocationScope,
     pub return_template: Option<RoutineValue>,
 }

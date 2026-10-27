@@ -32,11 +32,11 @@ impl Display for PostgresExplainFormat {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RewrittenPostgresExplain {
     /// DataFusion-compatible `EXPLAIN ...` SQL.
-    pub sql:     String,
+    pub sql: String,
     /// Whether the plan should be executed (`ANALYZE`).
     pub analyze: bool,
     /// Requested client-visible format.
-    pub format:  PostgresExplainFormat,
+    pub format: PostgresExplainFormat,
 }
 
 /// Adapt PostgreSQL `EXPLAIN (option, ...)` into DataFusion SQL.
@@ -74,25 +74,25 @@ pub fn rewrite_explain_for_datafusion(
     }
 
     Ok(Some(RewrittenPostgresExplain {
-        sql:     render_datafusion_explain(&options, statement),
+        sql: render_datafusion_explain(&options, statement),
         analyze: options.analyze,
-        format:  options.format,
+        format: options.format,
     }))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedExplainOptions {
-    analyze:   bool,
-    verbose:   bool,
+    analyze: bool,
+    verbose: bool,
     /// Client-visible reshape (`QUERY PLAN` JSON vs text).
-    format:    PostgresExplainFormat,
+    format: PostgresExplainFormat,
     /// DataFusion `FORMAT` name (`indent`, `tree`, `pgjson`, `graphviz`).
     df_format: Option<String>,
-    metrics:   Option<String>,
-    level:     Option<String>,
-    timing:    Option<bool>,
-    summary:   Option<bool>,
-    costs:     Option<bool>,
+    metrics: Option<String>,
+    level: Option<String>,
+    timing: Option<bool>,
+    summary: Option<bool>,
+    costs: Option<bool>,
 }
 
 fn strip_explain_keyword(sql: &str) -> Result<Option<&str>, String> {
@@ -175,15 +175,15 @@ fn option_list_is_parenthesized_query(options: &str) -> bool {
 
 fn parse_explain_options(src: &str) -> Result<ParsedExplainOptions, String> {
     let mut options = ParsedExplainOptions {
-        analyze:   false,
-        verbose:   false,
-        format:    PostgresExplainFormat::Text,
+        analyze: false,
+        verbose: false,
+        format: PostgresExplainFormat::Text,
         df_format: None,
-        metrics:   None,
-        level:     None,
-        timing:    None,
-        summary:   None,
-        costs:     None,
+        metrics: None,
+        level: None,
+        timing: None,
+        summary: None,
+        costs: None,
     };
     let tokens = tokenize_options(src)?;
     let mut idx = 0usize;

@@ -38,8 +38,8 @@ async fn test_scenario_02_offline_sync_parallel() -> anyhow::Result<()> {
     // =========================================================
     // Step 1: Create namespace and wide-column table
     // =========================================================
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    assert_success(&resp, "CREATE NAMESPACE");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    assert_success(&resp, "CREATE SCHEMA");
 
     // Create items table with ~10 columns
     let resp = server
@@ -231,7 +231,7 @@ async fn test_scenario_02_offline_sync_parallel() -> anyhow::Result<()> {
     );
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -242,8 +242,8 @@ async fn test_scenario_02_offline_drift_resume() -> anyhow::Result<()> {
     let ns = unique_ns("sync_drift");
 
     // Create namespace and table
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    assert_success(&resp, "CREATE NAMESPACE");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    assert_success(&resp, "CREATE SCHEMA");
 
     let resp = server
         .execute_sql(&format!(
@@ -320,7 +320,7 @@ async fn test_scenario_02_offline_drift_resume() -> anyhow::Result<()> {
     subscription.close().await?;
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -331,8 +331,8 @@ async fn test_scenario_02_changes_during_snapshot() -> anyhow::Result<()> {
     let ns = unique_ns("sync_concurrent");
 
     // Create namespace and table
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    assert_success(&resp, "CREATE NAMESPACE");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    assert_success(&resp, "CREATE SCHEMA");
 
     let resp = server
         .execute_sql(&format!(
@@ -436,6 +436,6 @@ async fn test_scenario_02_changes_during_snapshot() -> anyhow::Result<()> {
     subscription.close().await?;
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }

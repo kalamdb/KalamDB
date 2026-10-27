@@ -30,11 +30,11 @@ use crate::{
 ///
 /// # Example
 /// ```ignore
-/// let handler = CreateNamespaceHandler::new(app_context);
+/// let handler = CreateSchemaHandler::new(app_context);
 /// let adapter = TypedHandlerAdapter::new(
 ///     handler,
 ///     |stmt| match stmt {
-///         SqlStatement::CreateNamespace(s) => Some(s),
+///         SqlStatement::CreateSchema(s) => Some(s),
 ///         _ => None,
 ///     }
 /// );
@@ -46,9 +46,9 @@ where
     T: DdlAst,
     F: Fn(SqlStatement) -> Option<T> + Send + Sync,
 {
-    handler:   H,
+    handler: H,
     extractor: F,
-    _phantom:  PhantomData<T>,
+    _phantom: PhantomData<T>,
 }
 
 impl<H, T, F> TypedHandlerAdapter<H, T, F>

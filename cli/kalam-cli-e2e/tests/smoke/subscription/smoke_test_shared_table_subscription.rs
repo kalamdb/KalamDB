@@ -83,7 +83,7 @@ fn smoke_shared_table_subscription_lifecycle() {
     let full = format!("{}.{}", namespace, table);
 
     // 1) Create namespace
-    let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
+    let ns_sql = format!("CREATE SCHEMA IF NOT EXISTS {}", namespace);
     execute_sql_as_root_via_client(&ns_sql).expect("create namespace should succeed");
 
     // 2) Create public shared table
@@ -207,7 +207,7 @@ fn smoke_shared_table_subscription_lifecycle() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", user));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 // Default-deny shared tables still allow User subscribe; RLS filters events.
@@ -225,7 +225,7 @@ fn smoke_shared_table_subscription_default_deny_allowed() {
     let password = "smoke_pass_123";
 
     // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, name TEXT) WITH (TYPE='SHARED')",
@@ -248,8 +248,7 @@ fn smoke_shared_table_subscription_default_deny_allowed() {
                 "Skipping transient live-query backend failure for shared subscription: {}",
                 error
             );
-            let _ =
-                execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+            let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
             let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", user));
             return;
         }
@@ -261,6 +260,6 @@ fn smoke_shared_table_subscription_default_deny_allowed() {
     );
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", user));
 }

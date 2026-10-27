@@ -17,15 +17,15 @@ use crate::{
 
 /// Runtime dependencies required to start the PostgreSQL wire listener.
 pub struct PostgresWireRuntimeDeps {
-    pub app_context:  Arc<AppContext>,
+    pub app_context: Arc<AppContext>,
     pub sql_executor: Arc<SqlExecutor>,
-    pub user_repo:    Arc<dyn UserRepository>,
+    pub user_repo: Arc<dyn UserRepository>,
 }
 
 /// Background task handle for the PostgreSQL wire listener.
 pub struct PostgresWireListener {
-    shutdown:  Option<oneshot::Sender<()>>,
-    task:      tokio::task::JoinHandle<std::io::Result<()>>,
+    shutdown: Option<oneshot::Sender<()>>,
+    task: tokio::task::JoinHandle<std::io::Result<()>>,
     completed: bool,
 }
 
@@ -125,12 +125,12 @@ fn flatten_task_result(
 impl From<&PostgresWireSettings> for PostgresWireListenerConfig {
     fn from(settings: &PostgresWireSettings) -> Self {
         Self {
-            enabled:       settings.enabled,
-            host:          settings.host.clone(),
-            port:          settings.port,
-            tls_enabled:   settings.tls_enabled,
+            enabled: settings.enabled,
+            host: settings.host.clone(),
+            port: settings.port,
+            tls_enabled: settings.tls_enabled,
             tls_cert_path: settings.tls_cert_path.clone(),
-            tls_key_path:  settings.tls_key_path.clone(),
+            tls_key_path: settings.tls_key_path.clone(),
         }
     }
 }

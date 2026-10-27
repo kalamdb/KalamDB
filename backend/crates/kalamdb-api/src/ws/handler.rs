@@ -58,7 +58,10 @@ pub async fn websocket_handler(
     }
 
     let compression_enabled = compression_enabled_from_query(&req);
-    let pre_auth = parse_upgrade_auth(&req);
+    let pre_auth = match parse_upgrade_auth(&req) {
+        Ok(auth) => auth,
+        Err(message) => return Ok(HttpResponse::BadRequest().body(message)),
+    };
     let echo_subprotocol = pre_auth.as_ref().and_then(|auth| auth.echo_subprotocol.clone());
 
     let connection_id = ConnectionId::new(uuid::Uuid::new_v4().simple().to_string());

@@ -254,14 +254,25 @@ where
     K: StorageKey,
     V: KSerializable + 'static,
 {
-    backend:          Arc<dyn StorageBackend>,
-    partition:        String,
-    main_partition:   Partition,
-    indexes:          Vec<Arc<dyn IndexDefinition<K, V>>>,
+    backend: Arc<dyn StorageBackend>,
+    partition: String,
+    main_partition: Partition,
+    indexes: Vec<Arc<dyn IndexDefinition<K, V>>>,
     index_partitions: Vec<Partition>,
-    codec:            Arc<dyn EntityCodec<K, V>>,
-    _marker:          std::marker::PhantomData<(K, V)>,
+    codec: Arc<dyn EntityCodec<K, V>>,
+    _marker: std::marker::PhantomData<(K, V)>,
 }
+
+/// Visible rows in one integer index range.
+#[cfg(feature = "datafusion")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IndexRangeSum {
+    pub count: u64,
+    pub sum: i128,
+}
+
+#[cfg(feature = "datafusion")]
+const INDEX_SUM_BATCH: usize = 64;
 
 impl<K, V> IndexedEntityStore<K, V>
 where
@@ -387,8 +398,8 @@ where
             if let Some(index_key) = index.extract_key(&key, &entity) {
                 operations.push(Operation::Put {
                     partition: index_partition.clone(),
-                    key:       index_key,
-                    value:     index.index_value(&key, &entity),
+                    key: index_key,
+                    value: index.index_value(&key, &entity),
                 });
                 count += 1;
                 if operations.len() >= BATCH_SIZE {
@@ -521,8 +532,8 @@ where
                 let index_value = index.index_value(key, entity);
                 operations.push(Operation::Put {
                     partition: index_partition.clone(),
-                    key:       index_key,
-                    value:     index_value,
+                    key: index_key,
+                    value: index_value,
                 });
             }
         }
@@ -591,8 +602,8 @@ where
                     let index_value = index.index_value(key, entity);
                     operations.push(Operation::Put {
                         partition: index_partition.clone(),
-                        key:       index_key,
-                        value:     index_value,
+                        key: index_key,
+                        value: index_value,
                     });
                 }
             }
@@ -605,8 +616,8 @@ where
     /// Batch insert with pre-encoded entity bytes.
     ///
     /// Unlike [`insert_batch`] which encodes each entity at the storage boundary,
-    /// this method accepts pre-encoded bytes produced by `ObjectEncoder` /
-    /// `encode_user_row` (or the matching shared/stream helpers).
+    /// this method accepts pre-encoded bytes produced by `encode_user_row`
+    /// (or the matching shared/stream helpers).
     ///
     /// The caller is responsible for ensuring that `encoded_values[i]`
     /// corresponds to `entries[i]`. The entries are still needed for index
@@ -647,8 +658,8 @@ where
                     let index_value = index.index_value(key, entity);
                     operations.push(Operation::Put {
                         partition: index_partition.clone(),
-                        key:       index_key,
-                        value:     index_value,
+                        key: index_key,
+                        value: index_value,
                     });
                 }
             }
@@ -711,7 +722,7 @@ where
                 if let Some(old_key) = old_index_key {
                     operations.push(Operation::Delete {
                         partition: index_partition.clone(),
-                        key:       old_key,
+                        key: old_key,
                     });
                 }
 
@@ -719,8 +730,8 @@ where
                     let index_value = index.index_value(key, new_entity);
                     operations.push(Operation::Put {
                         partition: index_partition.clone(),
-                        key:       idx_key,
-                        value:     index_value,
+                        key: idx_key,
+                        value: index_value,
                     });
                 }
             }
@@ -762,7 +773,7 @@ where
             if let Some(index_key) = index.extract_key(key, entity) {
                 operations.push(Operation::Delete {
                     partition: index_partition.clone(),
-                    key:       index_key,
+                    key: index_key,
                 });
             }
         }
@@ -794,7 +805,7 @@ where
             // Main entity delete is always needed
             operations.push(Operation::Delete {
                 partition: self.main_partition.clone(),
-                key:       key.storage_key(),
+                key: key.storage_key(),
             });
 
             // Index cleanup requires fetching the entity to extract index keys
@@ -806,7 +817,7 @@ where
                         if let Some(index_key) = index.extract_key(key, &entity) {
                             operations.push(Operation::Delete {
                                 partition: index_partition.clone(),
-                                key:       index_key,
+                                key: index_key,
                             });
                         }
                     }
@@ -815,6 +826,102 @@ where
         }
 
         self.backend.batch(operations)
+    }
+
+    /// Replace one hot key with another in a single `WriteBatch`.
+    ///
+    /// `previous` is the row already loaded by the caller. Index deletes are
+    /// built from that value, so this does not read RocksDB again. When
+    /// `previous` is `None`, this is an insert. When the keys match, stale
+    /// index entries are dropped and the entity is overwritten.
+    pub fn replace(&self, previous: Option<(&K, &V)>, new_key: &K, new_entity: &V) -> Result<()> {
+        let mut operations = Vec::with_capacity(2 + self.indexes.len() * 2);
+        self.push_replace(&mut operations, previous, new_key, new_entity)?;
+        self.backend.batch(operations)
+    }
+
+    /// Replace many hot keys in one `WriteBatch`.
+    ///
+    /// Each item is `(previous row, new key, new entity)`. `previous` is
+    /// `None` when the primary key has no hot row to delete.
+    pub fn replace_batch(&self, items: &[(Option<(K, V)>, K, V)]) -> Result<()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+        if items.len() == 1 {
+            let (previous, new_key, new_entity) = &items[0];
+            return self.replace(
+                previous.as_ref().map(|(key, entity)| (key, entity)),
+                new_key,
+                new_entity,
+            );
+        }
+
+        let ops_per_item = 2 + self.indexes.len() * 2;
+        let mut operations = Vec::with_capacity(items.len() * ops_per_item);
+        for (previous, new_key, new_entity) in items {
+            self.push_replace(
+                &mut operations,
+                previous.as_ref().map(|(key, entity)| (key, entity)),
+                new_key,
+                new_entity,
+            )?;
+        }
+        self.backend.batch(operations)
+    }
+
+    fn push_replace(
+        &self,
+        operations: &mut Vec<Operation>,
+        previous: Option<(&K, &V)>,
+        new_key: &K,
+        new_entity: &V,
+    ) -> Result<()> {
+        let new_storage = new_key.storage_key();
+        if let Some((old_key, old_entity)) = previous {
+            let old_storage = old_key.storage_key();
+            let same_key = old_storage == new_storage;
+            if !same_key {
+                operations.push(Operation::Delete {
+                    partition: self.main_partition.clone(),
+                    key: old_storage,
+                });
+            }
+            for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
+                let old_index_key = index.extract_key(old_key, old_entity);
+                let drop_old = if same_key {
+                    old_index_key != index.extract_key(new_key, new_entity)
+                } else {
+                    true
+                };
+                if drop_old {
+                    if let Some(index_key) = old_index_key {
+                        operations.push(Operation::Delete {
+                            partition: index_partition.clone(),
+                            key: index_key,
+                        });
+                    }
+                }
+            }
+        }
+
+        let value = self.codec.encode(new_key, new_entity)?;
+        operations.push(Operation::Put {
+            partition: self.main_partition.clone(),
+            key: new_storage,
+            value,
+        });
+        for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
+            if let Some(index_key) = index.extract_key(new_key, new_entity) {
+                let index_value = index.index_value(new_key, new_entity);
+                operations.push(Operation::Put {
+                    partition: index_partition.clone(),
+                    key: index_key,
+                    value: index_value,
+                });
+            }
+        }
+        Ok(())
     }
 
     // ========================================================================
@@ -876,6 +983,17 @@ where
         prefix: Option<&[u8]>,
         limit: Option<usize>,
     ) -> Result<EntityIterator<'_, K, V>> {
+        self.scan_by_index_iter_selected(index_idx, prefix, limit, None)
+    }
+
+    /// Index scan that decodes only `ordinals` from each entity payload.
+    pub fn scan_by_index_iter_selected(
+        &self,
+        index_idx: usize,
+        prefix: Option<&[u8]>,
+        limit: Option<usize>,
+        ordinals: Option<Vec<usize>>,
+    ) -> Result<EntityIterator<'_, K, V>> {
         let index_partition = self
             .index_partitions
             .get(index_idx)
@@ -884,31 +1002,107 @@ where
         let mut iter = self.backend.scan(&index_partition, prefix, None, limit)?;
         let mut remaining = limit.unwrap_or(usize::MAX);
 
+        let mut pending = std::collections::VecDeque::new();
         let mapped = std::iter::from_fn(move || {
+            if let Some(next) = pending.pop_front() {
+                return Some(next);
+            }
             if remaining == 0 {
                 return None;
             }
-
-            loop {
-                let next = iter.next()?;
-                let (_index_key, primary_key_bytes) = next;
-                let primary_key = match K::from_storage_key(&primary_key_bytes) {
-                    Ok(key) => key,
-                    Err(e) => return Some(Err(StorageError::SerializationError(e))),
+            let mut keys = Vec::new();
+            while keys.len() < 32 && remaining > keys.len() {
+                let Some((_index_key, primary_key_bytes)) = iter.next() else {
+                    break;
                 };
-
-                match self.get(&primary_key) {
-                    Ok(Some(entity)) => {
-                        remaining -= 1;
-                        return Some(Ok((primary_key, entity)));
+                match K::from_storage_key(&primary_key_bytes) {
+                    Ok(key) => keys.push(key),
+                    Err(error) => {
+                        return Some(Err(StorageError::SerializationError(error)));
                     },
-                    Ok(None) => continue,
-                    Err(e) => return Some(Err(e)),
                 }
             }
+            if keys.is_empty() {
+                return None;
+            }
+            let fetched = match self.fetch_entities_in_index_order(keys, ordinals.as_deref()) {
+                Ok(rows) => rows,
+                Err(error) => return Some(Err(error)),
+            };
+            for row in fetched {
+                if remaining == 0 {
+                    break;
+                }
+                remaining -= 1;
+                pending.push_back(Ok(row));
+            }
+            pending.pop_front()
         });
 
         Ok(Box::new(mapped))
+    }
+
+    /// Load entities for index hits in that order, skipping missing keys.
+    fn fetch_entities_in_index_order(
+        &self,
+        keys: Vec<K>,
+        ordinals: Option<&[usize]>,
+    ) -> Result<Vec<(K, V)>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let storage_keys: Vec<Vec<u8>> = keys.iter().map(K::storage_key).collect();
+        let values = self.backend.get_many(&self.main_partition, &storage_keys)?;
+        let mut rows = Vec::with_capacity(keys.len());
+        for (key, value) in keys.into_iter().zip(values) {
+            let Some(bytes) = value else {
+                continue;
+            };
+            let entity = match ordinals {
+                Some(ordinals) if !ordinals.is_empty() => {
+                    self.codec.decode_selected(&key, &bytes, ordinals)?
+                },
+                _ => self.codec.decode(&key, &bytes)?,
+            };
+            rows.push((key.clone(), entity));
+        }
+        Ok(rows)
+    }
+
+    /// Newest index hit's tombstone flag, without decoding user columns when the codec can say.
+    pub fn get_latest_deleted_flag_by_index_prefix(
+        &self,
+        index_idx: usize,
+        prefix: &[u8],
+    ) -> Result<Option<(K, bool)>> {
+        let index_partition = self
+            .index_partitions
+            .get(index_idx)
+            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?
+            .clone();
+        let mut iter =
+            match self.backend.scan_reverse(&index_partition, Some(prefix), None, Some(1)) {
+                Ok(iter) => iter,
+                Err(StorageError::PartitionNotFound(_)) => return Ok(None),
+                Err(error) => return Err(error),
+            };
+        let Some((_index_key, primary_key_bytes)) = iter.next() else {
+            return Ok(None);
+        };
+        let primary_key =
+            K::from_storage_key(&primary_key_bytes).map_err(StorageError::SerializationError)?;
+        let Some(bytes) = self.backend.get(&self.main_partition, &primary_key.storage_key())?
+        else {
+            return Ok(None);
+        };
+        if let Some(deleted) = self.codec.row_deleted_flag(&bytes)? {
+            return Ok(Some((primary_key, deleted)));
+        }
+        let entity = self.codec.decode(&primary_key, &bytes)?;
+        let _ = entity;
+        Err(StorageError::Other(
+            "row codec cannot report a tombstone without a full decode".to_string(),
+        ))
     }
 
     /// Scan an index using a planned prefix, optional UTF-8 bounds, and residual key filters.
@@ -917,6 +1111,17 @@ where
         &self,
         plan: &crate::index::seek::IndexScanPlan,
         limit: Option<usize>,
+    ) -> Result<EntityIterator<'_, K, V>> {
+        self.scan_by_index_plan_iter_selected(plan, limit, None)
+    }
+
+    /// Planned index scan that decodes only `ordinals` from each entity payload.
+    #[cfg(feature = "datafusion")]
+    pub fn scan_by_index_plan_iter_selected(
+        &self,
+        plan: &crate::index::seek::IndexScanPlan,
+        limit: Option<usize>,
+        ordinals: Option<Vec<usize>>,
     ) -> Result<EntityIterator<'_, K, V>> {
         let index_partition = self
             .index_partitions
@@ -939,36 +1144,150 @@ where
         let plan = plan.clone();
         let mut remaining = limit.unwrap_or(usize::MAX);
 
+        let mut pending = std::collections::VecDeque::new();
         let mapped = std::iter::from_fn(move || {
+            if let Some(next) = pending.pop_front() {
+                return Some(next);
+            }
             if remaining == 0 {
                 return None;
             }
-
-            loop {
-                let (index_key, primary_key_bytes) = iter.next()?;
+            let mut keys = Vec::new();
+            while keys.len() < 32 && remaining > keys.len() {
+                let Some((index_key, primary_key_bytes)) = iter.next() else {
+                    break;
+                };
                 if plan.is_past_end(&index_key) {
-                    return None;
+                    break;
                 }
                 if !plan.matches_key_predicates(&index_key) {
                     continue;
                 }
-                let primary_key = match K::from_storage_key(&primary_key_bytes) {
-                    Ok(key) => key,
-                    Err(e) => return Some(Err(StorageError::SerializationError(e))),
-                };
-
-                match self.get(&primary_key) {
-                    Ok(Some(entity)) => {
-                        remaining -= 1;
-                        return Some(Ok((primary_key, entity)));
+                match K::from_storage_key(&primary_key_bytes) {
+                    Ok(key) => keys.push(key),
+                    Err(error) => {
+                        return Some(Err(StorageError::SerializationError(error)));
                     },
-                    Ok(None) => continue,
-                    Err(e) => return Some(Err(e)),
                 }
             }
+            if keys.is_empty() {
+                return None;
+            }
+            let fetched = match self.fetch_entities_in_index_order(keys, ordinals.as_deref()) {
+                Ok(rows) => rows,
+                Err(error) => return Some(Err(error)),
+            };
+            for row in fetched {
+                if remaining == 0 {
+                    break;
+                }
+                remaining -= 1;
+                pending.push_back(Ok(row));
+            }
+            pending.pop_front()
         });
 
         Ok(Box::new(mapped))
+    }
+
+    /// Count and sum of one integer index column, skipping tombstones.
+    ///
+    /// `Ok(None)` means the keys are not integers, the sum overflowed, or the
+    /// row codec cannot report a tombstone. Callers must fall back. A missing
+    /// index partition is an empty sum. Deleted rows stay in the secondary
+    /// index, so each hit still reads the row header and skips `_deleted`.
+    #[cfg(feature = "datafusion")]
+    pub fn sum_visible_index_integers(
+        &self,
+        plan: &crate::index::seek::IndexScanPlan,
+    ) -> Result<Option<IndexRangeSum>> {
+        if plan.value_column_index().is_none() {
+            return Ok(None);
+        }
+        let Some(index_partition) = self.index_partitions.get(plan.index_idx).cloned() else {
+            return Ok(None);
+        };
+        let mut iter = match self.backend.scan(
+            &index_partition,
+            Some(plan.prefix.as_slice()),
+            plan.start_key.as_deref(),
+            None,
+        ) {
+            Ok(iter) => iter,
+            Err(StorageError::PartitionNotFound(_)) => {
+                return Ok(Some(IndexRangeSum { count: 0, sum: 0 }));
+            },
+            Err(error) => return Err(error),
+        };
+
+        let mut count = 0u64;
+        let mut sum = 0i128;
+        let mut keys = Vec::new();
+        let mut values = Vec::new();
+        while let Some((index_key, primary_key_bytes)) = iter.next() {
+            if plan.is_past_end(&index_key) {
+                break;
+            }
+            if !plan.matches_key_predicates(&index_key) {
+                continue;
+            }
+            let Some(value) = plan.range_column_integer(&index_key) else {
+                return Ok(None);
+            };
+            let key = K::from_storage_key(&primary_key_bytes)
+                .map_err(StorageError::SerializationError)?;
+            keys.push(key);
+            values.push(value);
+            if keys.len() == INDEX_SUM_BATCH {
+                if self.accumulate_visible_integers(&mut keys, &mut values, &mut count, &mut sum)?
+                    .is_none()
+                {
+                    return Ok(None);
+                }
+            }
+        }
+        if self.accumulate_visible_integers(&mut keys, &mut values, &mut count, &mut sum)?.is_none()
+        {
+            return Ok(None);
+        }
+        Ok(Some(IndexRangeSum { count, sum }))
+    }
+
+    #[cfg(feature = "datafusion")]
+    fn accumulate_visible_integers(
+        &self,
+        keys: &mut Vec<K>,
+        values: &mut Vec<i128>,
+        count: &mut u64,
+        sum: &mut i128,
+    ) -> Result<Option<()>> {
+        if keys.is_empty() {
+            return Ok(Some(()));
+        }
+        let storage_keys: Vec<Vec<u8>> = keys.iter().map(K::storage_key).collect();
+        let loaded = self.backend.get_many(&self.main_partition, &storage_keys)?;
+        if loaded.len() != values.len() {
+            return Ok(None);
+        }
+        for (bytes, value) in loaded.into_iter().zip(values.iter()) {
+            let Some(bytes) = bytes else {
+                continue;
+            };
+            match self.codec.row_deleted_flag(&bytes)? {
+                Some(true) => {},
+                Some(false) => {
+                    let Some(next) = sum.checked_add(*value) else {
+                        return Ok(None);
+                    };
+                    *sum = next;
+                    *count += 1;
+                },
+                None => return Ok(None),
+            }
+        }
+        keys.clear();
+        values.clear();
+        Ok(Some(()))
     }
 
     /// Returns the newest entity matching an index prefix.
@@ -1142,6 +1461,18 @@ where
         self.codec.decode(key, bytes)
     }
 
+    fn deserialize_selected(
+        &self,
+        key: &K,
+        bytes: &[u8],
+        ordinals: Option<&[usize]>,
+    ) -> Result<V> {
+        match ordinals {
+            Some(ordinals) if !ordinals.is_empty() => self.codec.decode_selected(key, bytes, ordinals),
+            _ => self.codec.decode(key, bytes),
+        }
+    }
+
     fn scan_iterator(
         &self,
         prefix: Option<&K>,
@@ -1180,13 +1511,13 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            backend:          Arc::clone(&self.backend),
-            partition:        self.partition.clone(),
-            main_partition:   self.main_partition.clone(),
-            indexes:          self.indexes.clone(),
+            backend: Arc::clone(&self.backend),
+            partition: self.partition.clone(),
+            main_partition: self.main_partition.clone(),
+            indexes: self.indexes.clone(),
             index_partitions: self.index_partitions.clone(),
-            codec:            Arc::clone(&self.codec),
-            _marker:          std::marker::PhantomData,
+            codec: Arc::clone(&self.codec),
+            _marker: std::marker::PhantomData,
         }
     }
 }
@@ -1202,10 +1533,34 @@ where
 {
     /// Async version of `insert()`.
     ///
-    /// Uses `spawn_blocking` to avoid blocking the async runtime.
+    /// Runs inline. One memtable write is cheaper than cloning this store
+    /// onto the blocking pool.
+    #[allow(clippy::unused_async)]
     pub async fn insert_async(&self, key: K, entity: V) -> Result<()> {
+        self.insert(&key, &entity)
+    }
+
+    /// Async version of [`Self::replace`]. Runs inline for the same reason as
+    /// [`Self::insert_async`].
+    #[allow(clippy::unused_async)]
+    pub async fn replace_async(
+        &self,
+        previous: Option<(K, V)>,
+        new_key: K,
+        new_entity: V,
+    ) -> Result<()> {
+        self.replace(previous.as_ref().map(|(key, entity)| (key, entity)), &new_key, &new_entity)
+    }
+
+    /// Async version of [`Self::replace_batch`].
+    ///
+    /// One replacement runs inline. Larger batches go to the blocking pool.
+    pub async fn replace_batch_async(&self, items: Vec<(Option<(K, V)>, K, V)>) -> Result<()> {
+        if items.len() <= 1 {
+            return self.replace_batch(&items);
+        }
         let store = self.clone();
-        run_blocking_result(move || store.insert(&key, &entity)).await
+        run_blocking_result(move || store.replace_batch(&items)).await
     }
 
     /// Async version of `insert_batch()`.
@@ -1488,6 +1843,29 @@ mod tests {
         let completed_jobs = store.scan_by_index(0, Some(&[4]), None).unwrap();
         assert_eq!(completed_jobs.len(), 1);
         assert_eq!(completed_jobs[0].0, job.job_id);
+    }
+
+    #[test]
+    fn test_replace_deletes_previous_key_and_index_without_reread() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+        let store =
+            IndexedEntityStore::new(backend.clone(), "test_jobs", vec![Arc::new(TestStatusIndex)]);
+
+        let old_job = create_test_job("job1", JobStatus::Running);
+        store.insert(&old_job.job_id, &old_job).unwrap();
+
+        let mut new_job = create_test_job("job2", JobStatus::Completed);
+        new_job.finished_at = Some(new_job.created_at + 1000);
+        store
+            .replace(Some((&old_job.job_id, &old_job)), &new_job.job_id, &new_job)
+            .unwrap();
+
+        assert!(store.get(&old_job.job_id).unwrap().is_none());
+        assert_eq!(store.get(&new_job.job_id).unwrap().unwrap().job_id, new_job.job_id);
+        assert!(store.scan_by_index(0, Some(&[2]), None).unwrap().is_empty());
+        let completed = store.scan_by_index(0, Some(&[4]), None).unwrap();
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].0, new_job.job_id);
     }
 
     #[test]

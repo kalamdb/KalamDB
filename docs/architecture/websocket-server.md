@@ -6,6 +6,18 @@ KalamDB's WebSocket server provides real-time live query subscriptions. Clients 
 
 **Stack**: actix-web HTTP upgrade → actix-ws (non-actor) → per-connection Tokio task → `ConnectionsManager` (shared heartbeat checker)
 
+## Wire format
+
+Binary frames are current-epoch `KDOM` domain frames from `kalamdb-serialization::ws_domain`. The slot layout and [`WS_CONTRACT_DESCRIPTOR_ID`](../../backend/crates/kalamdb-serialization/src/ws_domain.rs) live in that module. A frame whose descriptor id is not the current layout revision is rejected before subscribe, snapshot, change, or ack handling.
+
+Clients select the path with the upgrade query:
+
+- `serialization=domain` — binary domain frames after authentication
+- `serialization=json` or no serialization parameter — JSON text, the explicit external representation
+- `serialization=msgpack` — rejected. There is no MessagePack fallback
+
+Row arrays for a shared change are encoded once and spliced into each subscriber's frame. JSON text encoding remains for connections that negotiated JSON.
+
 ---
 
 ## Connection Lifecycle
@@ -140,9 +152,9 @@ NotificationService::notify_table_change()
 Per-connection select! loop
     │
     ├── notification_rx.recv()
-    ├── serde_json::to_string(notification)  ← serialized per-connection
+    ├── JSON text, or one domain frame reusing the shared row bytes
     ├── maybe_compress() if > 512 bytes
-    └── session.text(json) or session.binary(compressed)
+    └── session.text(json) or session.binary(frame)
 ```
 
 ---

@@ -4,9 +4,9 @@
 //! `scalar_value_to_bytes`), and `seq`. PK indexes are this adapter with a
 //! single column. User-scoped keys include `user_id` once.
 //!
-//! With DataFusion, composite equalities become a longer prefix. A trailing
-//! UTF-8 range can use byte bounds; numeric ranges stay prefix scans with
-//! residual key filters so decimal encoding is not treated as sort order.
+//! With DataFusion, composite equalities become a longer prefix. Integer and
+//! UTF-8 ranges use byte bounds because their index bytes sort in value order.
+//! Other trailing ranges stay residual key filters.
 
 use std::marker::PhantomData;
 
@@ -41,10 +41,10 @@ pub trait PrefixIndexedValue {
 /// Column-list prefix index. PK is this type with a single column name.
 #[derive(Clone, Debug)]
 pub struct PrefixIndex<K, V> {
-    partition:   Partition,
-    columns:     Vec<String>,
+    partition: Partition,
+    columns: Vec<String>,
     user_scoped: bool,
-    _marker:     PhantomData<(K, V)>,
+    _marker: PhantomData<(K, V)>,
 }
 
 impl<K, V> PrefixIndex<K, V> {

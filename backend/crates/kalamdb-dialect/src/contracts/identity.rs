@@ -21,7 +21,7 @@ pub struct TypeIdentityManifest {
 pub struct TypeIdentityEntry {
     pub type_id: TypeId,
     #[serde(default)]
-    pub slots:   BTreeMap<String, i32>,
+    pub slots: BTreeMap<String, i32>,
 }
 
 impl TypeIdentityManifest {
@@ -116,6 +116,7 @@ fn rewrite_type_id_refs(snapshot: &mut ContractSnapshot) {
         if let Some(ret) = &mut routine.return_type {
             rewrite(ret);
         }
+        routine.returns_table.iter_mut().for_each(&rewrite);
     }
 }
 
@@ -164,7 +165,7 @@ mod tests {
             key.clone(),
             TypeIdentityEntry {
                 type_id: opaque.clone(),
-                slots:   BTreeMap::from([("line1".to_string(), 1)]),
+                slots: BTreeMap::from([("line1".to_string(), 1)]),
             },
         );
         apply_identity_manifest(&mut snapshot, &manifest).unwrap();

@@ -12,7 +12,7 @@
 use async_trait::async_trait;
 use kalamdb_commons::models::{
     schemas::{TableDefinition, TableType},
-    FunctionRevisionId, JobId, NamespaceId, NodeId, StorageId, TableId, UserId,
+    FunctionRevisionId, JobId, NodeId, SchemaId, StorageId, TableId, UserId,
 };
 use kalamdb_system::{
     providers::jobs::models::Job, CatalogFunctionArtifact, CatalogFunctionModule,
@@ -43,12 +43,12 @@ pub trait MetaApplier: Send + Sync {
     /// Create a namespace in persistent storage
     async fn create_namespace(
         &self,
-        namespace_id: &NamespaceId,
+        namespace_id: &SchemaId,
         created_by: Option<&UserId>,
     ) -> Result<String, RaftError>;
 
     /// Delete a namespace from persistent storage
-    async fn delete_namespace(&self, namespace_id: &NamespaceId) -> Result<String, RaftError>;
+    async fn delete_namespace(&self, namespace_id: &SchemaId) -> Result<String, RaftError>;
 
     // =========================================================================
     // Table Operations
@@ -249,12 +249,12 @@ impl MetaApplier for NoOpMetaApplier {
     // Namespace operations
     async fn create_namespace(
         &self,
-        _: &NamespaceId,
+        _: &SchemaId,
         _: Option<&UserId>,
     ) -> Result<String, RaftError> {
         Ok(String::new())
     }
-    async fn delete_namespace(&self, _: &NamespaceId) -> Result<String, RaftError> {
+    async fn delete_namespace(&self, _: &SchemaId) -> Result<String, RaftError> {
         Ok(String::new())
     }
 
@@ -372,7 +372,7 @@ mod tests {
     };
 
     use kalamdb_commons::{
-        models::{AuthType, NamespaceId, TableName},
+        models::{AuthType, SchemaId, TableName},
         Role,
     };
     use kalamdb_system::JobType;
@@ -382,20 +382,20 @@ mod tests {
     /// Mock applier that tracks all operations
     struct MockMetaApplier {
         namespace_ops: Arc<AtomicUsize>,
-        table_ops:     Arc<AtomicUsize>,
-        user_ops:      Arc<AtomicUsize>,
-        job_ops:       Arc<AtomicUsize>,
-        storage_ops:   Arc<AtomicUsize>,
+        table_ops: Arc<AtomicUsize>,
+        user_ops: Arc<AtomicUsize>,
+        job_ops: Arc<AtomicUsize>,
+        storage_ops: Arc<AtomicUsize>,
     }
 
     impl MockMetaApplier {
         fn new() -> Self {
             Self {
                 namespace_ops: Arc::new(AtomicUsize::new(0)),
-                table_ops:     Arc::new(AtomicUsize::new(0)),
-                user_ops:      Arc::new(AtomicUsize::new(0)),
-                job_ops:       Arc::new(AtomicUsize::new(0)),
-                storage_ops:   Arc::new(AtomicUsize::new(0)),
+                table_ops: Arc::new(AtomicUsize::new(0)),
+                user_ops: Arc::new(AtomicUsize::new(0)),
+                job_ops: Arc::new(AtomicUsize::new(0)),
+                storage_ops: Arc::new(AtomicUsize::new(0)),
             }
         }
 
@@ -414,13 +414,13 @@ mod tests {
     impl MetaApplier for MockMetaApplier {
         async fn create_namespace(
             &self,
-            _: &NamespaceId,
+            _: &SchemaId,
             _: Option<&UserId>,
         ) -> Result<String, RaftError> {
             self.namespace_ops.fetch_add(1, Ordering::SeqCst);
             Ok(String::new())
         }
-        async fn delete_namespace(&self, _: &NamespaceId) -> Result<String, RaftError> {
+        async fn delete_namespace(&self, _: &SchemaId) -> Result<String, RaftError> {
             self.namespace_ops.fetch_add(1, Ordering::SeqCst);
             Ok(String::new())
         }
@@ -551,7 +551,7 @@ mod tests {
     #[tokio::test]
     async fn test_namespace_operations() {
         let applier = MockMetaApplier::new();
-        let ns_id = NamespaceId::from("test_namespace");
+        let ns_id = SchemaId::from("test_namespace");
         let user_id = UserId::from("user_123");
 
         applier.create_namespace(&ns_id, Some(&user_id)).await.unwrap();
@@ -564,9 +564,9 @@ mod tests {
     async fn test_table_operations() {
         use kalamdb_commons::models::schemas::TableDefinition;
         let applier = MockMetaApplier::new();
-        let table_id = TableId::new(NamespaceId::from("ns"), TableName::from("table"));
+        let table_id = TableId::new(SchemaId::from("ns"), TableName::from("table"));
         let table_def = TableDefinition::new_with_defaults(
-            NamespaceId::from("ns"),
+            SchemaId::from("ns"),
             TableName::from("table"),
             TableType::User,
             vec![],
@@ -585,24 +585,24 @@ mod tests {
     async fn test_user_operations() {
         let applier = MockMetaApplier::new();
         let user = User {
-            user_id:               UserId::from("user_123"),
-            password_hash:         "$2b$12$hash".to_string(),
-            role:                  Role::User,
-            name:                  None,
-            email:                 None,
-            auth_type:             AuthType::Password,
-            auth_data:             None,
-            storage_mode:          kalamdb_system::providers::storages::models::StorageMode::Table,
-            storage_id:            None,
+            user_id: UserId::from("user_123"),
+            password_hash: "$2b$12$hash".to_string(),
+            role: Role::User,
+            name: None,
+            email: None,
+            auth_type: AuthType::Password,
+            auth_data: None,
+            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
+            storage_id: None,
             failed_login_attempts: 0,
-            locked_until:          None,
-            last_login_at:         None,
-            created_at:            1000,
-            updated_at:            1000,
-            last_seen:             None,
-            deleted_at:            None,
-            invite_expires_at:     None,
-            invited_by:            None,
+            locked_until: None,
+            last_login_at: None,
+            created_at: 1000,
+            updated_at: 1000,
+            last_seen: None,
+            deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         };
 
         applier.create_user(&user).await.unwrap();
@@ -619,26 +619,26 @@ mod tests {
         let applier = MockMetaApplier::new();
         let job_id = JobId::from("FL-12345");
         let job = Job {
-            job_id:          job_id.clone(),
-            job_type:        JobType::Flush,
-            status:          JobStatus::Queued,
-            leader_status:   None,
-            parameters:      None,
+            job_id: job_id.clone(),
+            job_type: JobType::Flush,
+            status: JobStatus::Queued,
+            leader_status: None,
+            parameters: None,
             idempotency_key: None,
-            max_retries:     3,
-            retry_count:     0,
-            queue:           None,
-            priority:        None,
-            node_id:         NodeId::from(1),
-            leader_node_id:  None,
-            message:         None,
+            max_retries: 3,
+            retry_count: 0,
+            queue: None,
+            priority: None,
+            node_id: NodeId::from(1),
+            leader_node_id: None,
+            message: None,
             exception_trace: None,
-            memory_used:     None,
-            cpu_used:        None,
-            created_at:      1000,
-            updated_at:      1000,
-            started_at:      None,
-            finished_at:     None,
+            memory_used: None,
+            cpu_used: None,
+            created_at: 1000,
+            updated_at: 1000,
+            started_at: None,
+            finished_at: None,
         };
 
         applier.create_job(&job).await.unwrap();
@@ -654,18 +654,17 @@ mod tests {
         let applier = MockMetaApplier::new();
         let storage_id = StorageId::from("local");
         let storage = Storage {
-            storage_id:             storage_id.clone(),
-            storage_name:           "local_storage".to_string(),
-            description:            None,
-            storage_type:
-                kalamdb_system::providers::storages::models::StorageType::Filesystem,
-            base_directory:         "/tmp/local".to_string(),
-            credentials:            None,
-            config_json:            Some(serde_json::json!({ "type": "local" })),
+            storage_id: storage_id.clone(),
+            storage_name: "local_storage".to_string(),
+            description: None,
+            storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
+            base_directory: "/tmp/local".to_string(),
+            credentials: None,
+            config_json: Some(serde_json::json!({ "type": "local" })),
             shared_tables_template: "shared".to_string(),
-            user_tables_template:   "user".to_string(),
-            created_at:             0,
-            updated_at:             0,
+            user_tables_template: "user".to_string(),
+            created_at: 0,
+            updated_at: 0,
         };
 
         applier.register_storage(&storage_id, &storage).await.unwrap();
@@ -678,7 +677,7 @@ mod tests {
     async fn test_noop_applier_all_operations() {
         use kalamdb_commons::models::schemas::TableDefinition;
         let applier = NoOpMetaApplier;
-        let ns_id = NamespaceId::from("test");
+        let ns_id = SchemaId::from("test");
         let table_id = TableId::new(ns_id.clone(), TableName::from("table"));
         let table_def = TableDefinition::new_with_defaults(
             ns_id.clone(),
@@ -690,38 +689,37 @@ mod tests {
         .expect("Failed to create table definition");
         let user_id = UserId::from("user");
         let user = User {
-            user_id:               user_id.clone(),
-            password_hash:         "$2b$12$hash".to_string(),
-            role:                  Role::User,
-            name:                  None,
-            email:                 None,
-            auth_type:             AuthType::Password,
-            auth_data:             None,
-            storage_mode:          kalamdb_system::providers::storages::models::StorageMode::Table,
-            storage_id:            None,
+            user_id: user_id.clone(),
+            password_hash: "$2b$12$hash".to_string(),
+            role: Role::User,
+            name: None,
+            email: None,
+            auth_type: AuthType::Password,
+            auth_data: None,
+            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
+            storage_id: None,
             failed_login_attempts: 0,
-            locked_until:          None,
-            last_login_at:         None,
-            created_at:            1000,
-            updated_at:            1000,
-            last_seen:             None,
-            deleted_at:            None,
-            invite_expires_at:     None,
-            invited_by:            None,
+            locked_until: None,
+            last_login_at: None,
+            created_at: 1000,
+            updated_at: 1000,
+            last_seen: None,
+            deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         };
         let storage = Storage {
-            storage_id:             StorageId::from("s1"),
-            storage_name:           "test_storage".to_string(),
-            description:            None,
-            storage_type:
-                kalamdb_system::providers::storages::models::StorageType::Filesystem,
-            base_directory:         "/tmp/test".to_string(),
-            credentials:            None,
-            config_json:            None,
+            storage_id: StorageId::from("s1"),
+            storage_name: "test_storage".to_string(),
+            description: None,
+            storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
+            base_directory: "/tmp/test".to_string(),
+            credentials: None,
+            config_json: None,
             shared_tables_template: "shared".to_string(),
-            user_tables_template:   "user".to_string(),
-            created_at:             0,
-            updated_at:             0,
+            user_tables_template: "user".to_string(),
+            created_at: 0,
+            updated_at: 0,
         };
 
         // All operations should succeed and do nothing
@@ -729,26 +727,26 @@ mod tests {
         assert!(applier.create_table(&table_id, TableType::User, &table_def).await.is_ok());
         assert!(applier.create_user(&user).await.is_ok());
         let job = Job {
-            job_id:          JobId::from("J-1"),
-            job_type:        JobType::Flush,
-            status:          JobStatus::Queued,
-            leader_status:   None,
-            parameters:      None,
+            job_id: JobId::from("J-1"),
+            job_type: JobType::Flush,
+            status: JobStatus::Queued,
+            leader_status: None,
+            parameters: None,
             idempotency_key: None,
-            max_retries:     3,
-            retry_count:     0,
-            queue:           None,
-            priority:        None,
-            node_id:         NodeId::from(1),
-            leader_node_id:  None,
-            message:         None,
+            max_retries: 3,
+            retry_count: 0,
+            queue: None,
+            priority: None,
+            node_id: NodeId::from(1),
+            leader_node_id: None,
+            message: None,
             exception_trace: None,
-            memory_used:     None,
-            cpu_used:        None,
-            created_at:      1000,
-            updated_at:      1000,
-            started_at:      None,
-            finished_at:     None,
+            memory_used: None,
+            cpu_used: None,
+            created_at: 1000,
+            updated_at: 1000,
+            started_at: None,
+            finished_at: None,
         };
         assert!(applier.create_job(&job).await.is_ok());
         assert!(applier.register_storage(&StorageId::from("s1"), &storage).await.is_ok());
@@ -759,26 +757,26 @@ mod tests {
         let applier = MockMetaApplier::new();
         let job_id = JobId::from("FL-lifecycle");
         let job = Job {
-            job_id:          job_id.clone(),
-            job_type:        JobType::Flush,
-            status:          JobStatus::Queued,
-            leader_status:   None,
-            parameters:      None,
+            job_id: job_id.clone(),
+            job_type: JobType::Flush,
+            status: JobStatus::Queued,
+            leader_status: None,
+            parameters: None,
             idempotency_key: None,
-            max_retries:     3,
-            retry_count:     0,
-            queue:           None,
-            priority:        None,
-            node_id:         NodeId::from(1),
-            leader_node_id:  None,
-            message:         None,
+            max_retries: 3,
+            retry_count: 0,
+            queue: None,
+            priority: None,
+            node_id: NodeId::from(1),
+            leader_node_id: None,
+            message: None,
             exception_trace: None,
-            memory_used:     None,
-            cpu_used:        None,
-            created_at:      1000,
-            updated_at:      1000,
-            started_at:      None,
-            finished_at:     None,
+            memory_used: None,
+            cpu_used: None,
+            created_at: 1000,
+            updated_at: 1000,
+            started_at: None,
+            finished_at: None,
         };
 
         // Create -> Claim -> Update -> Complete
@@ -795,26 +793,26 @@ mod tests {
         let applier = MockMetaApplier::new();
         let job_id = JobId::from("FL-fail");
         let job = Job {
-            job_id:          job_id.clone(),
-            job_type:        JobType::Flush,
-            status:          JobStatus::Queued,
-            leader_status:   None,
-            parameters:      None,
+            job_id: job_id.clone(),
+            job_type: JobType::Flush,
+            status: JobStatus::Queued,
+            leader_status: None,
+            parameters: None,
             idempotency_key: None,
-            max_retries:     3,
-            retry_count:     0,
-            queue:           None,
-            priority:        None,
-            node_id:         NodeId::from(1),
-            leader_node_id:  None,
-            message:         None,
+            max_retries: 3,
+            retry_count: 0,
+            queue: None,
+            priority: None,
+            node_id: NodeId::from(1),
+            leader_node_id: None,
+            message: None,
             exception_trace: None,
-            memory_used:     None,
-            cpu_used:        None,
-            created_at:      1000,
-            updated_at:      1000,
-            started_at:      None,
-            finished_at:     None,
+            memory_used: None,
+            cpu_used: None,
+            created_at: 1000,
+            updated_at: 1000,
+            started_at: None,
+            finished_at: None,
         };
 
         applier.create_job(&job).await.unwrap();
@@ -828,7 +826,7 @@ mod tests {
     async fn test_mixed_operations() {
         use kalamdb_commons::models::schemas::TableDefinition;
         let applier = MockMetaApplier::new();
-        let ns_id = NamespaceId::from("mixed");
+        let ns_id = SchemaId::from("mixed");
         let table_id = TableId::new(ns_id.clone(), TableName::from("t1"));
         let table_def = TableDefinition::new_with_defaults(
             ns_id.clone(),
@@ -840,24 +838,24 @@ mod tests {
         .expect("Failed to create table definition");
         let user_id = UserId::from("u1");
         let user = User {
-            user_id:               user_id.clone(),
-            password_hash:         "$2b$12$hash".to_string(),
-            role:                  Role::User,
-            name:                  None,
-            email:                 None,
-            auth_type:             AuthType::Password,
-            auth_data:             None,
-            storage_mode:          kalamdb_system::providers::storages::models::StorageMode::Table,
-            storage_id:            None,
+            user_id: user_id.clone(),
+            password_hash: "$2b$12$hash".to_string(),
+            role: Role::User,
+            name: None,
+            email: None,
+            auth_type: AuthType::Password,
+            auth_data: None,
+            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
+            storage_id: None,
             failed_login_attempts: 0,
-            locked_until:          None,
-            last_login_at:         None,
-            created_at:            1000,
-            updated_at:            1000,
-            last_seen:             None,
-            deleted_at:            None,
-            invite_expires_at:     None,
-            invited_by:            None,
+            locked_until: None,
+            last_login_at: None,
+            created_at: 1000,
+            updated_at: 1000,
+            last_seen: None,
+            deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         };
 
         // Mix of different operation types
@@ -865,26 +863,26 @@ mod tests {
         applier.create_table(&table_id, TableType::User, &table_def).await.unwrap();
         applier.create_user(&user).await.unwrap();
         let job = Job {
-            job_id:          JobId::from("J1"),
-            job_type:        JobType::Cleanup,
-            status:          JobStatus::Queued,
-            leader_status:   None,
-            parameters:      None,
+            job_id: JobId::from("J1"),
+            job_type: JobType::Cleanup,
+            status: JobStatus::Queued,
+            leader_status: None,
+            parameters: None,
             idempotency_key: None,
-            max_retries:     3,
-            retry_count:     0,
-            queue:           None,
-            priority:        None,
-            node_id:         NodeId::from(1),
-            leader_node_id:  None,
-            message:         None,
+            max_retries: 3,
+            retry_count: 0,
+            queue: None,
+            priority: None,
+            node_id: NodeId::from(1),
+            leader_node_id: None,
+            message: None,
             exception_trace: None,
-            memory_used:     None,
-            cpu_used:        None,
-            created_at:      1000,
-            updated_at:      1000,
-            started_at:      None,
-            finished_at:     None,
+            memory_used: None,
+            cpu_used: None,
+            created_at: 1000,
+            updated_at: 1000,
+            started_at: None,
+            finished_at: None,
         };
         applier.create_job(&job).await.unwrap();
 

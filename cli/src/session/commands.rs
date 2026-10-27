@@ -315,7 +315,7 @@ impl CLISession {
         }
 
         let qualified_relation = TableTarget {
-            namespace:  None,
+            namespace: None,
             table_name: parts[0].clone(),
         }
         .qualify(default_namespace)

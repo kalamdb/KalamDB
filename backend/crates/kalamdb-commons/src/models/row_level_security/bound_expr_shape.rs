@@ -18,7 +18,7 @@ pub enum BoundExprShape {
     },
     ColumnEqualsScalar {
         column_id: u64,
-        value:     PolicyScalar,
+        value: PolicyScalar,
     },
     And(Vec<BoundExprShape>),
     Or(Vec<BoundExprShape>),

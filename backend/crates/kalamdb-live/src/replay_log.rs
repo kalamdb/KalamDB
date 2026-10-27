@@ -20,42 +20,42 @@ use kalamdb_commons::{
 use parking_lot::Mutex;
 
 /// Changes retained for one table scope. Shared by all of its subscribers.
-const MAX_EVENTS_PER_SCOPE: usize = 1_024;
+const MAX_EVENTS_PER_SCOPE: usize = 16_384;
 
 /// Table scopes that keep a resume log. Idle scopes are evicted first.
 const MAX_SCOPES: usize = 64;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct ScopeKey {
-    user_id:  Option<UserId>,
+    user_id: Option<UserId>,
     table_id: TableId,
 }
 
 struct ReplayEvent {
-    version:      VersionId,
+    version: VersionId,
     notification: Arc<ChangeNotification>,
 }
 
 struct ScopeLog {
-    domain:         Option<VersionDomain>,
+    domain: Option<VersionDomain>,
     /// Exclusive resume floor. A cursor `from` is covered when `from >= covered_from`
     /// and every later commit is still queued.
-    covered_from:   Option<VersionId>,
+    covered_from: Option<VersionId>,
     /// Front of the log has been dropped, or an event arrived without a version.
-    discarded:      bool,
+    discarded: bool,
     /// Snapshot saw no row, so the first recorded version is a valid floor.
     empty_snapshot: bool,
-    events:         VecDeque<ReplayEvent>,
+    events: VecDeque<ReplayEvent>,
 }
 
 impl ScopeLog {
     fn new() -> Self {
         Self {
-            domain:         None,
-            covered_from:   None,
-            discarded:      false,
+            domain: None,
+            covered_from: None,
+            discarded: false,
             empty_snapshot: false,
-            events:         VecDeque::new(),
+            events: VecDeque::new(),
         }
     }
 
@@ -116,14 +116,14 @@ impl ScopeLog {
 
 struct ReplayState {
     scopes: HashMap<ScopeKey, ScopeLog>,
-    lru:    VecDeque<ScopeKey>,
+    lru: VecDeque<ScopeKey>,
 }
 
 impl ReplayState {
     fn new() -> Self {
         Self {
             scopes: HashMap::new(),
-            lru:    VecDeque::new(),
+            lru: VecDeque::new(),
         }
     }
 
@@ -179,7 +179,7 @@ impl ReplayLog {
     pub(crate) fn begin(&self, user_id: Option<&UserId>, table_id: &TableId) {
         let mut inner = self.inner.lock();
         inner.begin(ScopeKey {
-            user_id:  user_id.cloned(),
+            user_id: user_id.cloned(),
             table_id: table_id.clone(),
         });
     }
@@ -193,7 +193,7 @@ impl ReplayLog {
     ) {
         let mut inner = self.inner.lock();
         let key = ScopeKey {
-            user_id:  user_id.cloned(),
+            user_id: user_id.cloned(),
             table_id: table_id.clone(),
         };
         inner.begin(key.clone());
@@ -212,7 +212,7 @@ impl ReplayLog {
     ) -> ResumeCursor {
         let inner = self.inner.lock();
         let Some(scope) = inner.scopes.get(&ScopeKey {
-            user_id:  user_id.cloned(),
+            user_id: user_id.cloned(),
             table_id: table_id.clone(),
         }) else {
             return ResumeCursor::Expired;
@@ -229,7 +229,7 @@ impl ReplayLog {
     pub(crate) fn tracking(&self, user_id: Option<&UserId>, table_id: &TableId) -> bool {
         let inner = self.inner.lock();
         inner.scopes.contains_key(&ScopeKey {
-            user_id:  user_id.cloned(),
+            user_id: user_id.cloned(),
             table_id: table_id.clone(),
         })
     }
@@ -242,7 +242,7 @@ impl ReplayLog {
     ) {
         let mut inner = self.inner.lock();
         let key = ScopeKey {
-            user_id:  user_id.cloned(),
+            user_id: user_id.cloned(),
             table_id: table_id.clone(),
         };
         inner.begin(key.clone());
@@ -254,7 +254,7 @@ impl ReplayLog {
     pub(crate) fn note_empty(&self, user_id: Option<&UserId>, table_id: &TableId) {
         let mut inner = self.inner.lock();
         let key = ScopeKey {
-            user_id:  user_id.cloned(),
+            user_id: user_id.cloned(),
             table_id: table_id.clone(),
         };
         inner.begin(key.clone());
@@ -271,7 +271,7 @@ impl ReplayLog {
     ) {
         let mut inner = self.inner.lock();
         let key = ScopeKey {
-            user_id:  user_id.cloned(),
+            user_id: user_id.cloned(),
             table_id: table_id.clone(),
         };
         let Some(scope) = inner.scopes.get_mut(&key) else {
@@ -295,7 +295,7 @@ impl ReplayLog {
         inner
             .scopes
             .get(&ScopeKey {
-                user_id:  user_id.cloned(),
+                user_id: user_id.cloned(),
                 table_id: table_id.clone(),
             })
             .is_some_and(|scope| scope.covers(from))
@@ -309,7 +309,7 @@ impl ReplayLog {
     ) -> Option<Vec<Arc<ChangeNotification>>> {
         let inner = self.inner.lock();
         let scope = inner.scopes.get(&ScopeKey {
-            user_id:  user_id.cloned(),
+            user_id: user_id.cloned(),
             table_id: table_id.clone(),
         })?;
         if !scope.covers(from) {
@@ -339,14 +339,14 @@ mod tests {
     use kalamdb_commons::{
         constants::SystemColumnNames,
         ids::{VersionDomain, VersionId},
-        models::{rows::Row, NamespaceId, TableId, TableName, UserId},
+        models::{rows::Row, SchemaId, TableId, TableName, UserId},
         websocket::ChangeNotification,
     };
 
     use super::*;
 
     fn table() -> TableId {
-        TableId::new(NamespaceId::from("app"), TableName::from("items"))
+        TableId::new(SchemaId::from("app"), TableName::from("items"))
     }
 
     fn change(version: i64) -> Arc<ChangeNotification> {

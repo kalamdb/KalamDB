@@ -12,6 +12,7 @@ use crate::{
     access::{TransactionAccessError, TransactionAccessValidator},
     commit_sequence::SNAPSHOT_UNSET,
     overlay::TransactionOverlay,
+    pk_claims::PrimaryKeyClaims,
     staged_mutation::StagedMutation,
 };
 
@@ -79,12 +80,13 @@ pub trait TransactionMutationSink: std::fmt::Debug + Send + Sync {
 /// Query-time transaction context shared between the coordinator and providers.
 #[derive(Debug, Clone)]
 pub struct TransactionQueryContext {
-    pub transaction_id:     TransactionId,
+    pub transaction_id: TransactionId,
     /// Live pin cell shared with [`crate::TransactionHandle`].
-    snapshot_log_index:     Arc<AtomicU64>,
-    pub overlay_view:       Arc<dyn TransactionOverlayView>,
-    pub mutation_sink:      Arc<dyn TransactionMutationSink>,
-    pub access_validator:   Arc<dyn TransactionAccessValidator>,
+    snapshot_log_index: Arc<AtomicU64>,
+    pub overlay_view: Arc<dyn TransactionOverlayView>,
+    pub mutation_sink: Arc<dyn TransactionMutationSink>,
+    pub access_validator: Arc<dyn TransactionAccessValidator>,
+    pk_claims: Option<PrimaryKeyClaims>,
 }
 
 impl TransactionQueryContext {
@@ -102,7 +104,21 @@ impl TransactionQueryContext {
             overlay_view,
             mutation_sink,
             access_validator,
+            pk_claims: None,
         }
+    }
+
+    /// Attach the process-local primary-key claims used to serialize deletes.
+    #[inline]
+    pub fn with_pk_claims(mut self, claims: PrimaryKeyClaims) -> Self {
+        self.pk_claims = Some(claims);
+        self
+    }
+
+    /// Claims for this transaction, when the caller asked deletes to wait.
+    #[inline]
+    pub fn pk_claims(&self) -> Option<&PrimaryKeyClaims> {
+        self.pk_claims.as_ref()
     }
 
     /// Pinned group frontier log index, or `0` when still unset (empty view).

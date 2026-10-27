@@ -99,19 +99,19 @@ async fn create_test_app_context() -> (Arc<AppContext>, TestDb) {
 }
 
 #[tokio::test]
-#[ignore = "Requires Raft for CREATE NAMESPACE"]
+#[ignore = "Requires Raft for CREATE SCHEMA"]
 async fn test_typed_handler_create_namespace() {
     let (app_ctx, _test_db) = create_test_app_context().await;
     let executor = create_executor(Arc::clone(&app_ctx));
     let exec_ctx =
         ExecutionContext::new(UserId::from("admin"), Role::Dba, app_ctx.base_session_context());
 
-    // Test CREATE NAMESPACE with typed handler
+    // Test CREATE SCHEMA with typed handler
     let namespace = format!("integration_test_ns_{}", std::process::id());
-    let sql = format!("CREATE NAMESPACE {}", namespace);
+    let sql = format!("CREATE SCHEMA {}", namespace);
     let result = executor.execute(&sql, &exec_ctx, vec![]).await;
 
-    assert!(result.is_ok(), "CREATE NAMESPACE should succeed");
+    assert!(result.is_ok(), "CREATE SCHEMA should succeed");
 
     match result.unwrap() {
         ExecutionResult::Success { message } => {
@@ -133,7 +133,7 @@ async fn test_typed_handler_authorization() {
     );
 
     // Regular users cannot create namespaces
-    let sql = "CREATE NAMESPACE unauthorized_ns";
+    let sql = "CREATE SCHEMA unauthorized_ns";
     let result = executor.execute(sql, &user_ctx, vec![]).await;
 
     assert!(result.is_err(), "Regular users should not create namespaces");
@@ -164,8 +164,8 @@ async fn test_storage_flush_table_returns_noop_when_no_pending_writes() {
     let exec_ctx =
         ExecutionContext::new(UserId::from("admin"), Role::Dba, app_ctx.base_session_context());
 
-    let create_namespace = executor.execute("CREATE NAMESPACE flush_test", &exec_ctx, vec![]).await;
-    assert!(create_namespace.is_ok(), "CREATE NAMESPACE should succeed");
+    let create_namespace = executor.execute("CREATE SCHEMA flush_test", &exec_ctx, vec![]).await;
+    assert!(create_namespace.is_ok(), "CREATE SCHEMA should succeed");
 
     let create_table = executor
         .execute(
@@ -197,8 +197,8 @@ async fn test_storage_flush_table_returns_noop_when_flush_already_in_progress() 
     let exec_ctx =
         ExecutionContext::new(UserId::from("admin"), Role::Dba, app_ctx.base_session_context());
 
-    let create_namespace = executor.execute("CREATE NAMESPACE flush_busy", &exec_ctx, vec![]).await;
-    assert!(create_namespace.is_ok(), "CREATE NAMESPACE should succeed");
+    let create_namespace = executor.execute("CREATE SCHEMA flush_busy", &exec_ctx, vec![]).await;
+    assert!(create_namespace.is_ok(), "CREATE SCHEMA should succeed");
 
     let create_table = executor
         .execute(

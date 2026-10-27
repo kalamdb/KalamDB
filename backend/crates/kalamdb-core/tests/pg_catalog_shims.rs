@@ -1,5 +1,3 @@
-mod support;
-
 use datafusion_common::ScalarValue;
 use kalamdb_backend::session::BackendAuth;
 use kalamdb_commons::{
@@ -7,7 +5,7 @@ use kalamdb_commons::{
         datatypes::KalamDataType, KalamCellValue, RoutineId, RoutineParameterId,
         RoutineSecurityMode, SessionOrigin, UserId,
     },
-    NamespaceId, Role,
+    Role, SchemaId,
 };
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::{
@@ -15,7 +13,7 @@ use kalamdb_core::{
     sql::{context::ExecutionContext, ExecutionResult},
 };
 use kalamdb_system::{CatalogRoutine, CatalogRoutineParameter};
-use support::{
+use crate::support::{
     create_cluster_app_context, create_cluster_app_context_with_config, create_executor,
     create_shared_table, execute_err, execute_ok, execute_ok_with_params, observer_exec_ctx,
     result_rows, unique_namespace,
@@ -175,15 +173,13 @@ async fn pg_catalog_shim_pg_type_lists_column_types_for_namespace() {
     assert!(typnames.contains(&"text".to_string()));
 }
 
-const DBEAVER_PG_TYPE_SQL: &str =
-    "\
+const DBEAVER_PG_TYPE_SQL: &str = "\
 SELECT n.nspname as schema, t.typname as typename, t.oid::integer as typeid FROM pg_type t LEFT \
      JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace WHERE (t.typrelid = 0 OR (SELECT \
      c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid)) AND n.nspname NOT IN \
      ('pg_catalog', 'information_schema') AND t.typname !~ '^_';";
 
-const BEEKEEPER_COLUMNS_SQL: &str =
-    "\
+const BEEKEEPER_COLUMNS_SQL: &str = "\
 SELECT a.attname, a.attnum, a.attnotnull, a.atttypid, a.atttypmod, a.attidentity, a.attgenerated, \
      a.attisdropped, pg_catalog.format_type(a.atttypid, a.atttypmod) AS formatted_type, \
      pg_catalog.col_description(c.oid, a.attnum) AS column_comment, \
@@ -194,8 +190,7 @@ SELECT a.attname, a.attnum, a.attnotnull, a.atttypid, a.atttypmod, a.attidentity
      WHERE n.nspname = $1 AND c.relname = $2 AND a.attnum > 0 AND NOT a.attisdropped ORDER BY \
      a.attnum";
 
-const BEEKEEPER_INFORMATION_SCHEMA_COLUMNS_SQL: &str =
-    "\
+const BEEKEEPER_INFORMATION_SCHEMA_COLUMNS_SQL: &str = "\
 SELECT table_schema, table_name, column_name, is_nullable, is_generated, ordinal_position, \
      column_default, CASE WHEN character_maximum_length is not null and udt_name != 'text' THEN \
      udt_name || '(' || character_maximum_length::varchar(255) || ')' WHEN numeric_precision is \
@@ -209,8 +204,7 @@ SELECT table_schema, table_name, column_name, is_nullable, is_generated, ordinal
      ordinal_position ) as column_comment FROM information_schema.columns WHERE table_schema = $1 \
      AND table_name = $2 ORDER BY table_schema, table_name, ordinal_position";
 
-const BEEKEEPER_LIST_TABLE_COLUMNS_BULK_SQL: &str =
-    "\
+const BEEKEEPER_LIST_TABLE_COLUMNS_BULK_SQL: &str = "\
 SELECT table_schema, table_name, column_name, is_nullable, ordinal_position, column_default, CASE \
      WHEN character_maximum_length is not null and udt_name != 'text' THEN udt_name || '(' || \
      character_maximum_length::varchar(255) || ')' WHEN numeric_precision is not null and \
@@ -233,7 +227,7 @@ async fn pg_catalog_shim_dbeaver_unqualified_pg_type_query() {
     let observer_ctx = observer_exec_ctx(&app_ctx);
     let namespace = unique_namespace("pg_type_dbeaver");
     create_shared_table(&app_ctx, &namespace, "items").await;
-    let exec_ctx = observer_ctx.with_namespace_id(NamespaceId::new(namespace.as_str()));
+    let exec_ctx = observer_ctx.with_namespace_id(SchemaId::new(namespace.as_str()));
 
     let rows = result_rows(execute_ok(&executor, &exec_ctx, DBEAVER_PG_TYPE_SQL).await);
     assert!(
@@ -591,7 +585,7 @@ async fn pg_catalog_shim_unqualified_pg_type_resolves_via_rewrite() {
     let type_rows = result_rows(
         execute_ok(
             &executor,
-            &observer_ctx.with_namespace_id(NamespaceId::new(namespace.as_str())),
+            &observer_ctx.with_namespace_id(SchemaId::new(namespace.as_str())),
             "SELECT typname FROM pg_type WHERE typrelid = 0 ORDER BY typname LIMIT 5",
         )
         .await,
@@ -1337,28 +1331,35 @@ async fn pg_catalog_shim_jdbc_and_information_schema_routines() {
 
 fn insert_catalog_procedure(
     app_ctx: &std::sync::Arc<AppContext>,
-    namespace: &NamespaceId,
+    namespace: &SchemaId,
     name: &str,
 ) {
     let stores = app_ctx.system_tables().catalog_stores();
     let routine_id = RoutineId::from_parts(Some(namespace), name);
     stores
         .upsert_routine(CatalogRoutine {
-            routine_id:         routine_id.clone(),
-            namespace_id:       namespace.clone(),
-            name:               name.to_string(),
-            owner:              UserId::new("root"),
-            security:           RoutineSecurityMode::Invoker,
-            language:           Some("sql".to_string()),
-            body:               None,
-            return_type_id:     None,
-            return_type_name:   Some("TEXT".to_string()),
-            return_is_array:    false,
-            return_not_null:    false,
-            comment:            Some("liveness probe".to_string()),
-            return_data_type:   Some(KalamDataType::Text),
+            routine_id: routine_id.clone(),
+            namespace_id: namespace.clone(),
+            name: name.to_string(),
+            owner: UserId::new("root"),
+            security: RoutineSecurityMode::Invoker,
+            language: Some("sql".to_string()),
+            body: None,
+            return_type_id: None,
+            return_type_name: Some("TEXT".to_string()),
+            return_is_array: false,
+            return_not_null: false,
+            comment: Some("liveness probe".to_string()),
+            return_data_type: Some(KalamDataType::Text),
             inline_source_hash: None,
             inline_artifact_id: None,
+            kind: kalamdb_commons::models::RoutineKind::default(),
+            volatility: kalamdb_commons::models::RoutineVolatility::default(),
+            null_safety: kalamdb_commons::models::RoutineNullSafety::default(),
+            parallel_safety: kalamdb_commons::models::RoutineParallelSafety::default(),
+            cost: None,
+            rows: None,
+            config_params: None,
         })
         .expect("upsert catalog routine");
     stores
@@ -1373,6 +1374,8 @@ fn insert_catalog_procedure(
             not_null: false,
             nonempty: false,
             data_type: Some(KalamDataType::Text),
+            mode: kalamdb_commons::models::RoutineParameterMode::default(),
+            default_expr: None,
         })
         .expect("upsert catalog routine parameter");
 }

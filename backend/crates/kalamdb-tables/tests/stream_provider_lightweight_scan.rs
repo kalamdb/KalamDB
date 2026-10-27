@@ -10,7 +10,7 @@ use kalamdb_commons::{
         datatypes::KalamDataType,
         rows::Row,
         schemas::{ColumnDefinition, TableDefinition, TableOptions},
-        NamespaceId, ReadContext, Role, StorageId, TableId, TableName,
+        ReadContext, Role, SchemaId, StorageId, TableId, TableName,
     },
     schemas::ColumnDefault,
     websocket::ChangeNotification,
@@ -37,8 +37,8 @@ fn row(values: Vec<(&str, ScalarValue)>) -> Row {
 
 #[derive(Debug, Clone)]
 struct TestSchemaRegistry {
-    table_def:  Arc<TableDefinition>,
-    schema:     SchemaRef,
+    table_def: Arc<TableDefinition>,
+    schema: SchemaRef,
     storage_id: StorageId,
 }
 
@@ -245,7 +245,7 @@ impl CommitSequenceSource for TestCommitSequence {
 
 struct OwnedServices {
     services: Arc<TableServices>,
-    schema:   SchemaRef,
+    schema: SchemaRef,
     temp_dir: TempDir,
 }
 
@@ -267,17 +267,17 @@ fn build_storage_registry(
     let base_directory = temp_dir.path().to_string_lossy().into_owned();
     storages_provider
         .create_storage(Storage {
-            storage_id:             StorageId::local(),
-            storage_name:           "Local Storage".to_string(),
-            description:            Some("Stream planning test storage".to_string()),
-            storage_type:           StorageType::Filesystem,
-            base_directory:         base_directory.clone(),
-            credentials:            None,
-            config_json:            None,
+            storage_id: StorageId::local(),
+            storage_name: "Local Storage".to_string(),
+            description: Some("Stream planning test storage".to_string()),
+            storage_type: StorageType::Filesystem,
+            base_directory: base_directory.clone(),
+            credentials: None,
+            config_json: None,
             shared_tables_template: "shared/{namespace}/{table}".to_string(),
-            user_tables_template:   "user/{namespace}/{table}/{userId}".to_string(),
-            created_at:             1_000,
-            updated_at:             1_000,
+            user_tables_template: "user/{namespace}/{table}/{userId}".to_string(),
+            created_at: 1_000,
+            updated_at: 1_000,
         })
         .expect("seed local storage");
 
@@ -351,17 +351,17 @@ fn build_stream_table_definition(table_id: &TableId) -> Arc<TableDefinition> {
 #[ntest::timeout(10000)]
 async fn stream_provider_planning_stays_lightweight_until_execution() {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("events_planning"));
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new("events_planning"));
     let table_def = build_stream_table_definition(&table_id);
     let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
     let store = Arc::new(new_stream_table_store(
         &table_id,
         StreamTableStoreConfig {
-            base_dir:          services.temp_dir.path().join("streams").join("events_planning"),
+            base_dir: services.temp_dir.path().join("streams").join("events_planning"),
             max_rows_per_user: 64,
-            shard_router:      ShardRouter::default_config(),
-            ttl_seconds:       Some(3_600),
-            storage_mode:      StreamTableStorageMode::Memory,
+            shard_router: ShardRouter::default_config(),
+            ttl_seconds: Some(3_600),
+            storage_mode: StreamTableStorageMode::Memory,
         },
         kalamdb_tables::storage_schema_for_table(&table_def).expect("stream storage schema"),
     ));

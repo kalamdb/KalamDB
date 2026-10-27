@@ -32,8 +32,10 @@ import {
   recordSyncedFile,
   removeLocalRecord,
 } from './local-cache.js';
-import { contextFiles as context_files, type ContextFiles } from './models/kalam.js';
+import { contextFiles as context_files } from './models/kalam.js';
 import { toSyncFileRecord } from './models/schema.local.js';
+
+type RemoteContextFileRow = typeof context_files.$inferSelect;
 import {
   deleteRemoteFile,
   downloadFileBytes,
@@ -120,13 +122,13 @@ export class FolderSyncApp {
     this.kalamDb = createDb(this.client);
   }
 
-  private async loadRemoteRows(): Promise<ContextFiles[]> {
+  private async loadRemoteRows(): Promise<RemoteContextFileRow[]> {
     const remoteRows = await this.kalamDb.select().from(context_files);
     this.remotePaths = new Set(remoteRows.map((row) => row.path));
     return remoteRows;
   }
 
-  private async seedFolderIfServerEmpty(remoteRows: ContextFiles[]): Promise<void> {
+  private async seedFolderIfServerEmpty(remoteRows: RemoteContextFileRow[]): Promise<void> {
     const seeded = await maybeSeedSyncFolder(this.syncDir, remoteRows.length > 0);
     if (seeded > 0) {
       console.log(`[sync] seeded ${seeded} file(s) from seed/ into ${this.syncDir}`);
@@ -229,7 +231,7 @@ export class FolderSyncApp {
     }
 
     try {
-      await upsertSyncFile(this.kalamDb, {
+      await upsertSyncFile(this.client, this.kalamDb, {
         path: relativePath,
         fileBytes: bytes,
         mimeType: guessMimeType(relativePath),
@@ -344,7 +346,7 @@ export class FolderSyncApp {
   }
 
   private async pullInitialRemoteFiles(
-    rows: ContextFiles[],
+    rows: RemoteContextFileRow[],
     initialSync: InitialSyncTracker,
   ): Promise<void> {
     if (rows.length === 0) {
@@ -379,7 +381,7 @@ export class FolderSyncApp {
   }
 
   private async pullRemoteRow(
-    row: ContextFiles,
+    row: RemoteContextFileRow,
     options: { skipLocalConflicts?: boolean } = {},
   ): Promise<void> {
     const relativePath = row.path;
@@ -459,7 +461,7 @@ export class FolderSyncApp {
     logFileDeleted(relativePath);
   }
 
-  private async handleLiveRows(rows: ContextFiles[]): Promise<void> {
+  private async handleLiveRows(rows: RemoteContextFileRow[]): Promise<void> {
     const nextPaths = new Set(
       rows.map((row) => row.path).filter((path) => isSafeSyncPath(path)),
     );

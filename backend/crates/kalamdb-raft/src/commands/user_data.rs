@@ -27,15 +27,15 @@ pub enum UserDataCommand {
         /// Watermark: Meta group's last_applied_index at proposal time
         required_meta_index: u64,
         #[serde(default)]
-        transaction_id:      Option<TransactionId>,
-        table_id:            TableId,
-        user_id:             UserId,
+        transaction_id: Option<TransactionId>,
+        table_id: TableId,
+        user_id: UserId,
         /// Rows to insert. Empty when [`Self::Insert::encoded_fields`] is set.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        rows:                Vec<kalamdb_commons::models::rows::Row>,
+        rows: Vec<kalamdb_commons::models::rows::Row>,
         /// Ordinal KOBJ field payloads (same codec as RocksDB rows).
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        encoded_fields:      Vec<Vec<u8>>,
+        encoded_fields: Vec<Vec<u8>>,
     },
 
     /// Update rows in a user table
@@ -43,13 +43,13 @@ pub enum UserDataCommand {
         /// Watermark: Meta group's last_applied_index at proposal time
         required_meta_index: u64,
         #[serde(default)]
-        transaction_id:      Option<TransactionId>,
-        table_id:            TableId,
-        user_id:             UserId,
+        transaction_id: Option<TransactionId>,
+        table_id: TableId,
+        user_id: UserId,
         /// Updates to apply
-        updates:             Vec<kalamdb_commons::models::rows::Row>,
+        updates: Vec<kalamdb_commons::models::rows::Row>,
         /// Optional filter (primary key value)
-        filter:              Option<String>,
+        filter: Option<String>,
     },
 
     /// Delete rows from a user table
@@ -57,11 +57,11 @@ pub enum UserDataCommand {
         /// Watermark: Meta group's last_applied_index at proposal time
         required_meta_index: u64,
         #[serde(default)]
-        transaction_id:      Option<TransactionId>,
-        table_id:            TableId,
-        user_id:             UserId,
+        transaction_id: Option<TransactionId>,
+        table_id: TableId,
+        user_id: UserId,
         /// Primary keys to delete
-        pk_values:           Option<Vec<String>>,
+        pk_values: Option<Vec<String>>,
     },
 }
 
@@ -137,7 +137,7 @@ impl UserDataCommand {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{SchemaId, TableName};
 
     use super::*;
 
@@ -145,11 +145,11 @@ mod tests {
     fn test_user_data_command_watermark_get_set() {
         let mut cmd = UserDataCommand::Insert {
             required_meta_index: 100,
-            transaction_id:      None,
-            table_id:            TableId::new(NamespaceId::from("ns"), TableName::from("table")),
-            user_id:             UserId::from("user_1"),
-            rows:                vec![],
-            encoded_fields:      Vec::new(),
+            transaction_id: None,
+            table_id: TableId::new(SchemaId::from("ns"), TableName::from("table")),
+            user_id: UserId::from("user_1"),
+            rows: vec![],
+            encoded_fields: Vec::new(),
         };
 
         assert_eq!(cmd.required_meta_index(), 100);
@@ -162,10 +162,10 @@ mod tests {
         let user_id = UserId::from("user_123");
         let cmd = UserDataCommand::Delete {
             required_meta_index: 50,
-            transaction_id:      None,
-            table_id:            TableId::new(NamespaceId::from("ns"), TableName::from("table")),
-            user_id:             user_id.clone(),
-            pk_values:           None,
+            transaction_id: None,
+            table_id: TableId::new(SchemaId::from("ns"), TableName::from("table")),
+            user_id: user_id.clone(),
+            pk_values: None,
         };
 
         assert_eq!(cmd.user_id(), &user_id);
@@ -175,14 +175,11 @@ mod tests {
     fn test_user_command_serialization() {
         let cmd = UserDataCommand::Insert {
             required_meta_index: 123,
-            transaction_id:      None,
-            table_id:            TableId::new(
-                NamespaceId::from("test_ns"),
-                TableName::from("test_table"),
-            ),
-            user_id:             UserId::from("user_456"),
-            rows:                vec![],
-            encoded_fields:      Vec::new(),
+            transaction_id: None,
+            table_id: TableId::new(SchemaId::from("test_ns"), TableName::from("test_table")),
+            user_id: UserId::from("user_456"),
+            rows: vec![],
+            encoded_fields: Vec::new(),
         };
 
         assert_eq!(cmd.required_meta_index(), 123);
@@ -191,32 +188,32 @@ mod tests {
 
     #[test]
     fn test_all_user_command_variants_get_watermark() {
-        let table_id = TableId::new(NamespaceId::from("n"), TableName::from("t"));
+        let table_id = TableId::new(SchemaId::from("n"), TableName::from("t"));
         let user_id = UserId::from("u");
 
         let commands = vec![
             UserDataCommand::Insert {
                 required_meta_index: 1,
-                transaction_id:      None,
-                table_id:            table_id.clone(),
-                user_id:             user_id.clone(),
-                rows:                vec![],
-                encoded_fields:      Vec::new(),
+                transaction_id: None,
+                table_id: table_id.clone(),
+                user_id: user_id.clone(),
+                rows: vec![],
+                encoded_fields: Vec::new(),
             },
             UserDataCommand::Update {
                 required_meta_index: 2,
-                transaction_id:      None,
-                table_id:            table_id.clone(),
-                user_id:             user_id.clone(),
-                updates:             vec![],
-                filter:              None,
+                transaction_id: None,
+                table_id: table_id.clone(),
+                user_id: user_id.clone(),
+                updates: vec![],
+                filter: None,
             },
             UserDataCommand::Delete {
                 required_meta_index: 3,
-                transaction_id:      None,
-                table_id:            table_id.clone(),
-                user_id:             user_id.clone(),
-                pk_values:           None,
+                transaction_id: None,
+                table_id: table_id.clone(),
+                user_id: user_id.clone(),
+                pk_values: None,
             },
         ];
 
@@ -230,32 +227,32 @@ mod tests {
         // DML commands should support setting watermark to 0 for performance optimization
         // See spec 021 section 5.4.1 "Watermark Nuance"
         let user_id = UserId::from("user123");
-        let table_id = TableId::new(NamespaceId::from("ns"), TableName::from("table"));
+        let table_id = TableId::new(SchemaId::from("ns"), TableName::from("table"));
 
         let mut insert = UserDataCommand::Insert {
             required_meta_index: 100, // Initially non-zero
-            transaction_id:      None,
-            table_id:            table_id.clone(),
-            user_id:             user_id.clone(),
-            rows:                vec![],
-            encoded_fields:      Vec::new(),
+            transaction_id: None,
+            table_id: table_id.clone(),
+            user_id: user_id.clone(),
+            rows: vec![],
+            encoded_fields: Vec::new(),
         };
 
         let mut update = UserDataCommand::Update {
             required_meta_index: 100,
-            transaction_id:      None,
-            table_id:            table_id.clone(),
-            user_id:             user_id.clone(),
-            updates:             vec![],
-            filter:              None,
+            transaction_id: None,
+            table_id: table_id.clone(),
+            user_id: user_id.clone(),
+            updates: vec![],
+            filter: None,
         };
 
         let mut delete = UserDataCommand::Delete {
             required_meta_index: 100,
-            transaction_id:      None,
-            table_id:            table_id.clone(),
-            user_id:             user_id.clone(),
-            pk_values:           None,
+            transaction_id: None,
+            table_id: table_id.clone(),
+            user_id: user_id.clone(),
+            pk_values: None,
         };
 
         // Set to 0 - this is what RaftExecutor does for DML

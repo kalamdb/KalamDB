@@ -6,7 +6,7 @@ use crate::{AuthorizationPolicyGuard, BoundAuthorization, LiveAuthorizationRoute
 #[derive(Debug, Clone)]
 pub struct BoundLiveAuthorization {
     authorization: BoundAuthorization,
-    policy_guard:  Option<AuthorizationPolicyGuard>,
+    policy_guard: Option<AuthorizationPolicyGuard>,
 }
 
 impl BoundLiveAuthorization {
@@ -50,8 +50,8 @@ mod tests {
     use kalamdb_commons::{
         datatypes::KalamDataType,
         schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType},
-        AuthorizationRelation, BoundExprShape, InvalidationStrategy, NamespaceId, PolicyCommand,
-        PolicyId, PolicyProgram, PolicyTarget, PrincipalExpr, Role, TableId, TableName,
+        AuthorizationRelation, BoundExprShape, InvalidationStrategy, PolicyCommand, PolicyId,
+        PolicyProgram, PolicyTarget, PrincipalExpr, Role, SchemaId, TableId, TableName,
         TablePolicy, UserId,
     };
 
@@ -82,7 +82,7 @@ mod tests {
     fn table() -> Arc<TableDefinition> {
         Arc::new(
             TableDefinition::new(
-                NamespaceId::new("app"),
+                SchemaId::new("app"),
                 TableName::new("messages"),
                 TableType::Shared,
                 vec![
@@ -180,15 +180,15 @@ mod tests {
         let table_id = TableId::from_strings("app", "messages");
         let relation_table = TableId::from_strings("app", "conversation_members");
         let relation = AuthorizationRelation {
-            protected_table:   table_id.clone(),
-            protected_keys:    vec![2],
-            relation_table:    relation_table.clone(),
-            relation_keys:     vec![3],
-            principal_column:  2,
-            principal:         PrincipalExpr::CurrentUser,
+            protected_table: table_id.clone(),
+            protected_keys: vec![2],
+            relation_table: relation_table.clone(),
+            relation_keys: vec![3],
+            principal_column: 2,
+            principal: PrincipalExpr::CurrentUser,
             static_predicates: Vec::new(),
-            dependencies:      vec![relation_table],
-            invalidation:      InvalidationStrategy::TargetedPrincipal,
+            dependencies: vec![relation_table],
+            invalidation: InvalidationStrategy::TargetedPrincipal,
         };
         let policy_id = PolicyId::new(table_id.clone(), "member_read").unwrap();
         let policy = TablePolicy::new(

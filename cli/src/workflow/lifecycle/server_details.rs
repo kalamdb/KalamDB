@@ -5,7 +5,7 @@ use std::{env, fs, path::PathBuf};
 use crate::{error::Result, workflow::instance::ManagedLayout};
 
 pub(super) struct ServerDetails {
-    pub data_path:          PathBuf,
+    pub data_path: PathBuf,
     pub bootstrap_password: Option<String>,
 }
 

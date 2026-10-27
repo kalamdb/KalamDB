@@ -31,7 +31,7 @@ async fn seed_membership_fixture(
     let members = "rls_members";
 
     for sql in [
-        format!("CREATE NAMESPACE IF NOT EXISTS {ns}"),
+        format!("CREATE SCHEMA IF NOT EXISTS {ns}"),
         format!(
             "CREATE TABLE {ns}.{messages} (id TEXT PRIMARY KEY, group_id TEXT NOT NULL) WITH \
              (TYPE='SHARED')"
@@ -113,7 +113,7 @@ async fn test_rls_role_targets_user_service_and_public() -> anyhow::Result<()> {
         create_user_auth_header(&server, "rls_role_dba", USER_PASSWORD, &Role::Dba).await?;
 
     for sql in [
-        format!("CREATE NAMESPACE IF NOT EXISTS {ns}"),
+        format!("CREATE SCHEMA IF NOT EXISTS {ns}"),
         format!(
             "CREATE TABLE {full} (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, label TEXT) WITH \
              (TYPE='SHARED')"
@@ -181,7 +181,7 @@ async fn test_rls_role_targets_user_service_and_public() -> anyhow::Result<()> {
         "PUBLIC policy must combine permissively with service-targeted policy"
     );
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE")).await;
     Ok(())
 }
 
@@ -217,7 +217,7 @@ async fn test_rls_membership_authorization_cache_warms_on_repeat_select() -> any
         "second membership select must hit the authorization cache"
     );
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE")).await;
     Ok(())
 }
 
@@ -262,7 +262,7 @@ async fn test_rls_repeat_membership_scan_performance_stays_bounded() -> anyhow::
         "warmed membership scans must record authorization cache hits"
     );
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE")).await;
     Ok(())
 }
 
@@ -302,7 +302,7 @@ async fn test_rls_membership_revoke_invalidates_authorization_cache() -> anyhow:
         "revoked membership must rebuild authorization state"
     );
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE")).await;
     Ok(())
 }
 
@@ -317,7 +317,7 @@ async fn test_rls_rejects_unbounded_not_policy() -> anyhow::Result<()> {
 
     ensure_user_exists(&server, "alice", USER_PASSWORD, &Role::User).await?;
     for sql in [
-        format!("CREATE NAMESPACE IF NOT EXISTS {ns}"),
+        format!("CREATE SCHEMA IF NOT EXISTS {ns}"),
         format!("CREATE TABLE {full} (id TEXT PRIMARY KEY, owner_id TEXT) WITH (TYPE='SHARED')"),
         format!("INSERT INTO {full} (id, owner_id) VALUES ('null-row', NULL), ('bob-row', 'bob')"),
     ] {
@@ -338,7 +338,7 @@ async fn test_rls_rejects_unbounded_not_policy() -> anyhow::Result<()> {
         "complex policy rejection should explain the bounded routing requirement: {message}"
     );
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE")).await;
     Ok(())
 }
 
@@ -368,7 +368,7 @@ async fn test_rls_union_and_except_cannot_bypass_membership() -> anyhow::Result<
         "EXCEPT must not surface rows outside membership authorization"
     );
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE")).await;
     Ok(())
 }
 
@@ -382,7 +382,7 @@ async fn test_rls_plan_cache_stays_isolated_across_roles_and_principals() -> any
     let full = format!("{ns}.{table}");
 
     for sql in [
-        format!("CREATE NAMESPACE IF NOT EXISTS {ns}"),
+        format!("CREATE SCHEMA IF NOT EXISTS {ns}"),
         format!(
             "CREATE TABLE {full} (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL) WITH \
              (TYPE='SHARED')"
@@ -425,7 +425,7 @@ async fn test_rls_plan_cache_stays_isolated_across_roles_and_principals() -> any
         "plan cache must bind CURRENT_USER independently per principal"
     );
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE")).await;
     Ok(())
 }
 
@@ -444,7 +444,7 @@ async fn test_rls_multi_subscriber_conversation_membership_isolation() -> anyhow
     const SUBSCRIBER_COUNT: usize = 10;
 
     for sql in [
-        format!("CREATE NAMESPACE IF NOT EXISTS {ns}"),
+        format!("CREATE SCHEMA IF NOT EXISTS {ns}"),
         format!(
             "CREATE TABLE {messages_full} (
                 id TEXT PRIMARY KEY,
@@ -555,7 +555,7 @@ async fn test_rls_multi_subscriber_conversation_membership_isolation() -> anyhow
         );
     }
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE")).await;
     Ok(())
 }
 
@@ -574,7 +574,7 @@ async fn test_rls_unrelated_membership_mutation_fails_closed_without_leak() -> a
     let members_full = format!("{ns}.{members}");
 
     for sql in [
-        format!("CREATE NAMESPACE IF NOT EXISTS {ns}"),
+        format!("CREATE SCHEMA IF NOT EXISTS {ns}"),
         format!(
             "CREATE TABLE {messages_full} (
                 id TEXT PRIMARY KEY,
@@ -665,7 +665,7 @@ async fn test_rls_unrelated_membership_mutation_fails_closed_without_leak() -> a
         .await?;
 
     let _clients = alice_client;
-    let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE")).await;
     Ok(())
 }
 

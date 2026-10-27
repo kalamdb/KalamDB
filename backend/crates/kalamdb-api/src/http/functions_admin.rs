@@ -15,13 +15,13 @@ use serde_json::json;
 
 #[derive(Debug, Deserialize)]
 pub struct ActivateModuleRequest {
-    pub artifact:      String,
+    pub artifact: String,
     #[serde(rename = "contractHash")]
     pub contract_hash: String,
     #[serde(rename = "abiVersion")]
-    pub abi_version:   u32,
+    pub abi_version: u32,
     #[serde(default)]
-    pub exports:       Vec<String>,
+    pub exports: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

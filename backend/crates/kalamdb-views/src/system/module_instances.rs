@@ -18,15 +18,15 @@ crate::memoized_view_schema!(module_instances_schema, ModuleInstancesView);
 /// Snapshot of one resident module isolate (idle or in-flight).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleInstanceSnapshot {
-    pub instance_id:     i64,
-    pub worker:          i64,
-    pub module_id:       String,
-    pub revision_id:     String,
-    pub state:           String,
-    pub reserved_bytes:  i64,
+    pub instance_id: i64,
+    pub worker: i64,
+    pub module_id: String,
+    pub revision_id: String,
+    pub state: String,
+    pub reserved_bytes: i64,
     pub used_heap_bytes: i64,
     pub peak_heap_bytes: i64,
-    pub invocations:     i64,
+    pub invocations: i64,
 }
 
 /// Module-instance snapshot callback type.
@@ -154,15 +154,15 @@ mod tests {
         let view = ModuleInstancesView::new();
         view.set_snapshot_callback(Arc::new(|| {
             vec![ModuleInstanceSnapshot {
-                instance_id:     1,
-                worker:          0,
-                module_id:       "backend".into(),
-                revision_id:     "backend:abc".into(),
-                state:           "idle".into(),
-                reserved_bytes:  64 * 1024 * 1024,
+                instance_id: 1,
+                worker: 0,
+                module_id: "backend".into(),
+                revision_id: "backend:abc".into(),
+                state: "idle".into(),
+                reserved_bytes: 64 * 1024 * 1024,
                 used_heap_bytes: 1024,
                 peak_heap_bytes: 2048,
-                invocations:     3,
+                invocations: 3,
             }]
         }));
         let batch = view.compute_batch().expect("batch");

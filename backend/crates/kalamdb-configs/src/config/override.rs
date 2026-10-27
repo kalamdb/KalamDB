@@ -54,7 +54,8 @@ impl ServerConfig {
     /// - KALAMDB_SERVER_HOST: Override server.host
     /// - KALAMDB_SERVER_PORT: Override server.port
     /// - KALAMDB_SERVER_PUBLIC_ORIGIN: Override server.public_origin (empty keeps Admin UI
-    ///   browser-origin fallback)
+    ///   browser-origin fallback). `KALAMDB_PUBLIC_URL` is the same setting when the canonical
+    ///   variable is unset. Startup adds that origin to `security.cors.allowed_origins`.
     /// - KALAMDB_LOG_LEVEL: Override logging.level
     /// - KALAMDB_LOG_FORMAT: Override logging.format ("compact" | "json")
     /// - KALAMDB_LOGS_DIR: Override logging.logs_path
@@ -116,6 +117,8 @@ impl ServerConfig {
     /// - KALAMDB_ENABLE_PG_EXTENSION: Override pg_extension.enabled ("true" | "false")
     /// - KALAMDB_PGWIRE_HOST: Override postgres_wire.host
     /// - KALAMDB_PGWIRE_PORT: Override postgres_wire.port
+    /// - KALAMDB_PGWIRE_SHOW_SYSTEM_COLUMNS: Override postgres_wire.show_system_columns ("true" |
+    ///   "false")
     ///
     /// Environment variables take precedence over server.toml values (T031)
     pub fn apply_env_overrides(&mut self) -> Result<()> {
@@ -149,6 +152,9 @@ impl ServerConfig {
                 self.postgres_wire.port = port;
             }
         }
+        if let Some(show) = env_truthy("KALAMDB_PGWIRE_SHOW_SYSTEM_COLUMNS") {
+            self.postgres_wire.show_system_columns = show;
+        }
     }
 
     fn apply_pg_extension_env_overrides(&mut self) {
@@ -171,7 +177,9 @@ impl ServerConfig {
         if let Some(port) = parse_env("KALAMDB_SERVER_PORT")? {
             self.server.port = port;
         }
-        if let Ok(origin) = env::var("KALAMDB_SERVER_PUBLIC_ORIGIN") {
+        if let Ok(origin) =
+            env::var("KALAMDB_SERVER_PUBLIC_ORIGIN").or_else(|_| env::var("KALAMDB_PUBLIC_URL"))
+        {
             self.server.public_origin = Some(origin);
         }
         Ok(())
@@ -478,6 +486,28 @@ mod tests {
     }
 
     #[test]
+    fn test_env_override_pgwire_show_system_columns() {
+        let _guard = acquire_env_lock();
+        env::remove_var("KALAMDB_PGWIRE_SHOW_SYSTEM_COLUMNS");
+
+        let config = ServerConfig::default();
+        assert!(config.postgres_wire.show_system_columns);
+
+        env::set_var("KALAMDB_PGWIRE_SHOW_SYSTEM_COLUMNS", "false");
+        let mut hidden = ServerConfig::default();
+        hidden.apply_env_overrides().unwrap();
+        assert!(!hidden.postgres_wire.show_system_columns);
+
+        env::set_var("KALAMDB_PGWIRE_SHOW_SYSTEM_COLUMNS", "true");
+        let mut shown = ServerConfig::default();
+        shown.postgres_wire.show_system_columns = false;
+        shown.apply_env_overrides().unwrap();
+        assert!(shown.postgres_wire.show_system_columns);
+
+        env::remove_var("KALAMDB_PGWIRE_SHOW_SYSTEM_COLUMNS");
+    }
+
+    #[test]
     fn test_pg_extension_is_disabled_unless_enabled() {
         let _guard = acquire_env_lock();
         env::remove_var("KALAMDB_ENABLE_PG_EXTENSION");
@@ -511,6 +541,44 @@ mod tests {
         assert_eq!(config.server.configured_public_origin(), None);
 
         env::remove_var("KALAMDB_SERVER_PUBLIC_ORIGIN");
+        env::remove_var("KALAMDB_PUBLIC_URL");
+    }
+
+    #[test]
+    fn test_public_url_alias_fills_public_origin() {
+        let _guard = acquire_env_lock();
+        env::remove_var("KALAMDB_SERVER_PUBLIC_ORIGIN");
+        env::set_var("KALAMDB_PUBLIC_URL", "https://kalamdb.example.com");
+
+        let mut config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+        config.finalize().unwrap();
+
+        assert_eq!(
+            config.server.configured_public_origin().as_deref(),
+            Some("https://kalamdb.example.com")
+        );
+        assert_eq!(
+            config.security.cors.allowed_origins,
+            vec!["https://kalamdb.example.com".to_string()]
+        );
+
+        env::remove_var("KALAMDB_PUBLIC_URL");
+    }
+
+    #[test]
+    fn test_server_public_origin_wins_over_public_url_alias() {
+        let _guard = acquire_env_lock();
+        env::set_var("KALAMDB_SERVER_PUBLIC_ORIGIN", "https://canonical.example.com");
+        env::set_var("KALAMDB_PUBLIC_URL", "https://alias.example.com");
+
+        let mut config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+
+        assert_eq!(config.server.public_origin.as_deref(), Some("https://canonical.example.com"));
+
+        env::remove_var("KALAMDB_SERVER_PUBLIC_ORIGIN");
+        env::remove_var("KALAMDB_PUBLIC_URL");
     }
 
     #[test]

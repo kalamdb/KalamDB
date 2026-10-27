@@ -100,10 +100,10 @@ async fn test_cluster_snapshot_creation_and_reuse() -> Result<()> {
         let ns = "snap_ns";
         let table = "snap_table";
 
-        let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
+        let resp = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await?;
         anyhow::ensure!(
             resp.status == ResponseStatus::Success,
-            "CREATE NAMESPACE failed: {:?}",
+            "CREATE SCHEMA failed: {:?}",
             resp.error
         );
 

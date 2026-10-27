@@ -33,8 +33,8 @@ fn smoke_test_leader_read_succeeds_on_leader() {
     let full_table_name = format!("{}.{}", namespace, table);
 
     // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE should succeed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA should succeed");
 
     let create_table_sql =
         format!("CREATE TABLE {} (id BIGINT PRIMARY KEY, name TEXT NOT NULL)", full_table_name);
@@ -65,7 +65,7 @@ fn smoke_test_leader_read_succeeds_on_leader() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }
 
 /// Test that SELECT queries with filters work correctly
@@ -87,8 +87,8 @@ fn smoke_test_leader_read_with_filters() {
     let full_table_name = format!("{}.{}", namespace, table);
 
     // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE should succeed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA should succeed");
 
     let create_table_sql = format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, category TEXT, value INT)",
@@ -130,7 +130,7 @@ fn smoke_test_leader_read_with_filters() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }
 
 /// Test that shared table reads work correctly
@@ -152,8 +152,8 @@ fn smoke_test_leader_read_shared_table() {
     let full_table_name = format!("{}.{}", namespace, table);
 
     // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE should succeed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA should succeed");
 
     // Create a SHARED table
     let create_table_sql =
@@ -185,7 +185,7 @@ fn smoke_test_leader_read_shared_table() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }
 
 /// Test that system table queries work (they shouldn't have leader checks)
@@ -271,8 +271,8 @@ fn smoke_test_read_after_write_consistency() {
     let full_table_name = format!("{}.{}", namespace, table);
 
     // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE should succeed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA should succeed");
 
     let create_table_sql =
         format!("CREATE TABLE {} (id BIGINT PRIMARY KEY, counter INT)", full_table_name);
@@ -309,5 +309,5 @@ fn smoke_test_read_after_write_consistency() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }

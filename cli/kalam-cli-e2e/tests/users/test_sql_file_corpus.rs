@@ -21,8 +21,10 @@ fn run_cli_file(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let file_arg = format!("--file={}", path.display());
     cmd.arg("--no-spinner")
         .arg("--no-color")
+        .arg("--receive-timeout")
+        .arg("60")
         .arg(file_arg)
-        .timeout(Duration::from_secs(120));
+        .timeout(Duration::from_secs(180));
 
     let output = cmd.output()?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();

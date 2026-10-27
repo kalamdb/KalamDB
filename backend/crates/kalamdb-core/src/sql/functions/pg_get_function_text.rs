@@ -9,9 +9,7 @@ use std::{
 use datafusion::{
     arrow::array::{ArrayRef, Int32Array, Int64Array, StringBuilder, UInt64Array},
     error::{DataFusionError, Result as DataFusionResult},
-    logical_expr::{
-        ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature, Volatility,
-    },
+    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature},
     scalar::ScalarValue,
 };
 use kalamdb_commons::arrow_utils::{arrow_utf8, ArrowDataType};
@@ -20,6 +18,8 @@ use kalamdb_views::pg_catalog::{
     proc::{function_definition, function_result, identity_arguments},
     proc_oid,
 };
+
+use super::scalar::{cached_signature, one_integer_stable};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum FunctionTextKind {
@@ -33,8 +33,9 @@ enum FunctionTextKind {
 /// / catalog-aware `pg_get_function_result`.
 #[derive(Debug, Clone)]
 pub struct PgGetFunctionTextFunction {
-    name:          &'static str,
-    kind:          FunctionTextKind,
+    name: &'static str,
+    aliases: Vec<String>,
+    kind: FunctionTextKind,
     system_tables: Arc<SystemTablesRegistry>,
 }
 
@@ -57,6 +58,7 @@ impl PgGetFunctionTextFunction {
     pub fn definition(system_tables: Arc<SystemTablesRegistry>) -> Self {
         Self {
             name: "pg_get_functiondef",
+            aliases: vec!["pg_catalog.pg_get_functiondef".to_string()],
             kind: FunctionTextKind::Definition,
             system_tables,
         }
@@ -65,6 +67,7 @@ impl PgGetFunctionTextFunction {
     pub fn identity_arguments(system_tables: Arc<SystemTablesRegistry>) -> Self {
         Self {
             name: "pg_get_function_identity_arguments",
+            aliases: vec!["pg_catalog.pg_get_function_identity_arguments".to_string()],
             kind: FunctionTextKind::IdentityArguments,
             system_tables,
         }
@@ -73,6 +76,7 @@ impl PgGetFunctionTextFunction {
     pub fn arguments(system_tables: Arc<SystemTablesRegistry>) -> Self {
         Self {
             name: "pg_get_function_arguments",
+            aliases: vec!["pg_catalog.pg_get_function_arguments".to_string()],
             kind: FunctionTextKind::Arguments,
             system_tables,
         }
@@ -81,6 +85,7 @@ impl PgGetFunctionTextFunction {
     pub fn result(system_tables: Arc<SystemTablesRegistry>) -> Self {
         Self {
             name: "pg_get_function_result",
+            aliases: vec!["pg_catalog.pg_get_function_result".to_string()],
             kind: FunctionTextKind::Result,
             system_tables,
         }
@@ -92,18 +97,12 @@ impl ScalarUDFImpl for PgGetFunctionTextFunction {
         self.name
     }
 
+    fn aliases(&self) -> &[String] {
+        &self.aliases
+    }
+
     fn signature(&self) -> &Signature {
-        static SIGNATURE: std::sync::OnceLock<Signature> = std::sync::OnceLock::new();
-        SIGNATURE.get_or_init(|| {
-            Signature::one_of(
-                vec![
-                    TypeSignature::Exact(vec![ArrowDataType::Int64]),
-                    TypeSignature::Exact(vec![ArrowDataType::Int32]),
-                    TypeSignature::Exact(vec![ArrowDataType::UInt64]),
-                ],
-                Volatility::Stable,
-            )
-        })
+        cached_signature!(one_integer_stable())
     }
 
     fn return_type(&self, _args: &[ArrowDataType]) -> DataFusionResult<ArrowDataType> {

@@ -36,12 +36,24 @@ fn raise_fd_limit() {
 }
 
 fn main() -> Result<()> {
-    kalamdb_observability::apply_process_memory_policy();
-
-    #[cfg(unix)]
-    raise_fd_limit();
-
-    kalamdb_server::process::run_process(std::env::args())
+    // Linux CI's main thread is 8MB. Unoptimized RocksDB overflows that during
+    // DB::Open; the optimized build still needs more than the main thread gives
+    // the process, so startup runs on an explicit stack.
+    let args: Vec<String> = std::env::args().collect();
+    let handle = std::thread::Builder::new()
+        .name("kalamdb-main".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| {
+            kalamdb_observability::apply_process_memory_policy();
+            #[cfg(unix)]
+            raise_fd_limit();
+            kalamdb_server::process::run_process(args)
+        })
+        .expect("failed to start the server thread");
+    match handle.join() {
+        Ok(result) => result,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
 }
 
 #[cfg(test)]

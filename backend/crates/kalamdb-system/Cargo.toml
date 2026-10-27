@@ -12,7 +12,7 @@ categories = ["database"]
 
 [dependencies]
 # Internal crates
-kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
+kalamdb-commons = { path = "../kalamdb-commons", features = ["full", "scheduling"] }
 kalamdb-macros = { path = "../kalamdb-macros" }
 kalamdb-serialization = { workspace = true }
 kalamdb-session-datafusion = { path = "../kalamdb-session-datafusion" }
@@ -40,8 +40,6 @@ thiserror = { workspace = true }
 
 # Time handling
 chrono = { workspace = true }
-chrono-tz = { workspace = true }
-croner = { workspace = true }
 
 # Logging
 log = { workspace = true }

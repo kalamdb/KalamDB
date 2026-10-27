@@ -35,7 +35,7 @@ fn create_client() -> KalamLinkClient {
 async fn setup_topic_and_table(client: &KalamLinkClient, topic_name: &str, table_name: &str) {
     let ns = topic_name.split('.').next().unwrap_or("test");
     client
-        .execute_query(&format!("CREATE NAMESPACE IF NOT EXISTS {ns}"), None, None, None)
+        .execute_query(&format!("CREATE SCHEMA IF NOT EXISTS {ns}"), None, None, None)
         .await
         .expect("create namespace");
 
@@ -761,16 +761,16 @@ fn test_offset_tracking() {
 
     // Create a mock record
     let record = ConsumerRecord {
-        topic_id:     "topic-123".to_string(),
-        topic_name:   "test.topic".to_string(),
+        topic_id: "topic-123".to_string(),
+        topic_name: "test.topic".to_string(),
         partition_id: 0,
-        offset:       42,
-        message_id:   Some("msg-1".to_string()),
+        offset: 42,
+        message_id: Some("msg-1".to_string()),
         source_table: "test.table".to_string(),
-        op:           kalam_client::TopicOp::Insert,
+        op: kalam_client::TopicOp::Insert,
         timestamp_ms: 1700000000000,
         payload_mode: kalam_client::PayloadMode::Full,
-        payload:      vec![1, 2, 3],
+        payload: vec![1, 2, 3],
     };
 
     assert_eq!(record.offset, 42);

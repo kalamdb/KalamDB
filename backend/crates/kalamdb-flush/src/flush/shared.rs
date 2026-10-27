@@ -25,14 +25,15 @@ use crate::{error::FlushResultExt, FlushError, FlushManifestHelper, ManifestServ
 /// Flushes shared table data to Parquet files. All rows are written to a single
 /// Parquet file per flush operation (no user partitioning like user tables).
 pub struct SharedTableFlushJob {
-    store:           Arc<SharedTableIndexedStore>,
-    table_id:        Arc<TableId>,
-    schema:          SchemaRef,
-    storage_cached:  Arc<StorageCached>,
+    store: Arc<SharedTableIndexedStore>,
+    table_id: Arc<TableId>,
+    schema: SchemaRef,
+    storage_cached: Arc<StorageCached>,
     manifest_helper: FlushManifestHelper,
-    metadata:        FlushTableMetadata,
+    metadata: FlushTableMetadata,
     scan_batch_size: usize,
-    scope_hook:      Arc<dyn FlushScopeHook>,
+    scope_hook: Arc<dyn FlushScopeHook>,
+    retain_latest_hot: bool,
 }
 
 impl SharedTableFlushJob {
@@ -64,7 +65,14 @@ impl SharedTableFlushJob {
             metadata,
             scan_batch_size: helpers::normalize_scan_batch_size(scan_batch_size),
             scope_hook,
+            retain_latest_hot: false,
         }
+    }
+
+    /// Keep the current row of each primary key in hot storage.
+    pub fn retain_latest_hot(mut self, retain: bool) -> Self {
+        self.retain_latest_hot = retain;
+        self
     }
 
     fn scope_writer(&self) -> FlushScopeWriter<'_> {
@@ -113,10 +121,12 @@ impl TableFlush for SharedTableFlushJob {
         let pk_field = helpers::extract_pk_field_name(&self.schema);
         log::debug!("📊 [FLUSH DEDUP] Using primary key field: {}", pk_field);
 
-        // Map: pk_value -> (key_bytes, row, _version)
+        // Map: pk_value -> (key_bytes, row, _version).
+        // Shared hot keys are version ids, so versions of one primary key are not
+        // adjacent. The latest-row map therefore lives for the scan. Superseded
+        // keys are deleted in bounded batches instead of being retained until the end.
         let mut latest_versions: helpers::LatestVersions<SharedTableRow> = HashMap::new();
-        // Track ALL keys to delete (including old versions)
-        let mut all_keys_to_delete: Vec<Vec<u8>> = Vec::new();
+        let mut superseded_keys: Vec<Vec<u8>> = Vec::new();
         let mut stats = FlushDedupStats::default();
 
         // Batched scan with cursor
@@ -149,14 +159,19 @@ impl TableFlush for SharedTableFlushJob {
 
             for (key, row) in batch {
                 let key_bytes = key.storage_key();
-                all_keys_to_delete.push(key_bytes.clone());
-                helpers::track_latest_version(
+                if let Some(displaced) = helpers::track_latest_version(
                     &mut latest_versions,
                     key_bytes,
                     row,
                     &pk_field,
                     &mut stats,
-                );
+                ) {
+                    superseded_keys.push(displaced);
+                    if superseded_keys.len() >= config::DELETE_BATCH_SIZE {
+                        self.delete_flushed_rows(&superseded_keys)?;
+                        superseded_keys.clear();
+                    }
+                }
             }
 
             // Check if we got fewer rows than batch size (end of data)
@@ -165,30 +180,66 @@ impl TableFlush for SharedTableFlushJob {
             }
         }
 
+        if !superseded_keys.is_empty() {
+            self.delete_flushed_rows(&superseded_keys)?;
+        }
+
         stats.rows_after_dedup = latest_versions.len();
+        let latest_key_bytes = latest_versions
+            .values()
+            .map(|(key_bytes, _, _)| key_bytes.clone())
+            .collect::<Vec<_>>();
+        let pk_column_id = crate::flush_helper::TombstoneColdMask::pk_column_id(
+            &self.metadata.indexed_columns,
+            &pk_field,
+        );
+        let cold_mask = self.manifest_helper.cold_mask(self.table_id.as_ref(), None, pk_column_id);
+        let live_hot_keys =
+            self.retain_latest_hot.then(|| helpers::live_hot_keys(&latest_versions));
         let (rows, preserved_tombstone_keys) =
-            helpers::rows_and_tombstones_from_versions(latest_versions, &mut stats);
+            helpers::rows_and_tombstones_from_versions(latest_versions, &mut stats, |pk| {
+                cold_mask.preserves(pk)
+            });
 
         // Log dedup statistics
         stats.log_summary(&self.table_id.to_string());
 
-        let keys_to_delete = helpers::cleanup_keys_excluding_preserved(
-            all_keys_to_delete,
-            &preserved_tombstone_keys,
-        );
+        let mut preserved_keys = preserved_tombstone_keys;
+        if let Some(live_keys) = live_hot_keys {
+            preserved_keys.extend(live_keys);
+        }
+        let keys_to_delete =
+            helpers::cleanup_keys_excluding_preserved(latest_key_bytes, &preserved_keys);
 
-        // If no rows to flush, return early
-        if rows.is_empty() {
+        // Current rows stay hot. Superseded versions are deleted above and are
+        // not copied into the archive.
+        if self.retain_latest_hot || rows.is_empty() {
             self.delete_flushed_rows(&keys_to_delete)?;
-            log::info!(
-                "⚠️  No rows to flush for shared table={} (empty table or all deleted)",
-                self.table_id
-            );
+            if let Err(err) = self.manifest_helper.note_retained_hot(self.table_id.as_ref(), None) {
+                log::warn!(
+                    "Retained hot rows for shared table={} but did not restart the flush \
+                     interval: {}",
+                    self.table_id,
+                    err
+                );
+            }
+            if self.retain_latest_hot {
+                log::debug!(
+                    "Retained current hot rows for shared table={} and dropped {} superseded keys",
+                    self.table_id,
+                    keys_to_delete.len()
+                );
+            } else {
+                log::info!(
+                    "⚠️  No rows to flush for shared table={} (empty table or all deleted)",
+                    self.table_id
+                );
+            }
             return Ok(FlushJobResult {
-                rows_flushed:  0,
+                rows_flushed: 0,
                 parquet_files: vec![],
-                scope_hints:   vec![],
-                metadata:      FlushMetadata::shared_table(),
+                scope_hints: vec![],
+                metadata: FlushMetadata::shared_table(),
             });
         }
 
@@ -207,11 +258,10 @@ impl TableFlush for SharedTableFlushJob {
             write_result.destination_path
         );
 
-        // Delete ALL flushed rows from RocksDB (including old versions)
         log::info!(
-            "📊 [FLUSH CLEANUP] Deleting {} rows from hot storage (including {} old versions)",
+            "📊 [FLUSH CLEANUP] Deleting {} current hot keys for shared table={}",
             keys_to_delete.len(),
-            keys_to_delete.len().saturating_sub(rows_count)
+            self.table_id
         );
         self.delete_flushed_rows(&keys_to_delete)?;
 
@@ -220,10 +270,10 @@ impl TableFlush for SharedTableFlushJob {
         // eliminates a redundant double-compaction.
 
         Ok(FlushJobResult {
-            rows_flushed:  rows_count,
+            rows_flushed: rows_count,
             parquet_files: vec![write_result.destination_path],
-            scope_hints:   vec![FlushScopeHint::Shared],
-            metadata:      FlushMetadata::shared_table(),
+            scope_hints: vec![FlushScopeHint::Shared],
+            metadata: FlushMetadata::shared_table(),
         })
     }
 

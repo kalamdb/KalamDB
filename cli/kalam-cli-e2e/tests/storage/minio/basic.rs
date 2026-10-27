@@ -19,7 +19,7 @@ fn test_minio_storage_end_to_end() {
     let shared_table = generate_unique_table("minio_shared");
 
     setup_minio_storage(&storage_id, "MinIO Test Storage");
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace))
         .expect("namespace creation");
 
     execute_sql_as_root_via_cli(&format!(

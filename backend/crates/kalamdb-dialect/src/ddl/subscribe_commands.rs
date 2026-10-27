@@ -51,18 +51,15 @@
 //! ```
 
 use kalamdb_commons::{
-    ids::VersionDomain, websocket::SubscriptionOptions, NamespaceId, TableId, TableName,
+    ids::VersionDomain, websocket::SubscriptionOptions, SchemaId, TableId, TableName,
 };
 use sqlparser::{
     ast::{ObjectName, ObjectNamePart, SetExpr, Statement, TableFactor},
-    dialect::{GenericDialect, PostgreSqlDialect},
+    tokenizer::Token,
 };
 
 use super::DdlResult;
-use crate::parser::{
-    query_parser::QueryParser,
-    utils::{normalize_context_keyword_calls_for_sqlparser, parse_sql_statements},
-};
+use crate::parser::{query_parser::QueryParser, KalamParser};
 
 /// SUBSCRIBE TO statement for live query subscriptions.
 ///
@@ -72,11 +69,11 @@ pub struct SubscribeStatement {
     /// Full SELECT query (e.g., "SELECT event_type FROM app.messages WHERE user_id = 'alice'")
     pub select_query: String,
     /// Namespace name (e.g., "app") - extracted from query
-    pub namespace:    NamespaceId,
+    pub namespace: SchemaId,
     /// Table name (e.g., "messages") - extracted from query
-    pub table_name:   TableName,
+    pub table_name: TableName,
     /// Optional subscription options (e.g., last_rows=10, batch_size=100, from=123)
-    pub options:      SubscriptionOptions,
+    pub options: SubscriptionOptions,
 }
 
 impl SubscribeStatement {
@@ -105,6 +102,13 @@ impl SubscribeStatement {
     /// assert_eq!(stmt.select_query, "SELECT event_type FROM app.messages");
     /// ```
     pub fn parse(sql: &str) -> DdlResult<Self> {
+        Self::parse_with_default_namespace(sql, &SchemaId::default_ns())
+    }
+
+    pub fn parse_with_default_namespace(
+        sql: &str,
+        default_namespace: &SchemaId,
+    ) -> DdlResult<Self> {
         let sql = sql.trim().trim_end_matches(';').trim();
 
         let Some(subscribe_body) = Self::strip_subscribe_to_prefix(sql) else {
@@ -129,14 +133,7 @@ impl SubscribeStatement {
             select_sql
         };
 
-        let select_sql = match normalize_context_keyword_calls_for_sqlparser(&select_sql) {
-            std::borrow::Cow::Borrowed(_) => select_sql,
-            std::borrow::Cow::Owned(normalized) => normalized,
-        };
-
-        // Parse the SELECT statement using sqlparser
-        let dialect = PostgreSqlDialect {};
-        let mut ast = match parse_sql_statements(&select_sql, &dialect) {
+        let mut ast = match KalamParser::parse(&select_sql) {
             Ok(ast) => ast,
             Err(e) => return Err(format!("Failed to parse SUBSCRIBE TO as SELECT: {}", e)),
         };
@@ -167,16 +164,25 @@ impl SubscribeStatement {
             return Err("SUBSCRIBE TO requires direct table reference".to_string());
         };
 
-        let (namespace, table_name) =
-            Self::extract_namespace_table(name, &NamespaceId::default_ns())?;
+        let was_unqualified = name.0.len() == 1;
+        let (namespace, table_name) = Self::extract_namespace_table(name, default_namespace)?;
         if !domain_parts.is_empty() {
             options.version_domain = Some(
                 domain_parts.into_domain(TableId::new(namespace.clone(), table_name.clone()))?,
             );
         }
 
+        let select_query = if was_unqualified {
+            select_sql.replace(
+                &format!("FROM {}", table_name.as_str()),
+                &format!("FROM {}.{}", namespace.as_str(), table_name.as_str()),
+            )
+        } else {
+            select_sql
+        };
+
         Ok(SubscribeStatement {
-            select_query: select_sql,
+            select_query,
             namespace,
             table_name,
             options,
@@ -189,14 +195,7 @@ impl SubscribeStatement {
     fn extract_options_clause(
         sql: &str,
     ) -> DdlResult<(String, SubscriptionOptions, ResumeDomainParts)> {
-        use sqlparser::tokenizer::{Token, Tokenizer};
-
-        let dialect = GenericDialect {};
-        let mut tokenizer = Tokenizer::new(&dialect, sql);
-
-        // Tokenize to get list of tokens
-        let tokens = tokenizer
-            .tokenize()
+        let tokens = KalamParser::tokenize(sql)
             .map_err(|e| format!("Failed to tokenize SUBSCRIBE TO: {}", e))?;
 
         let mut saw_options = false;
@@ -275,8 +274,8 @@ impl SubscribeStatement {
 
     fn extract_namespace_table(
         name: &ObjectName,
-        default_namespace: &NamespaceId,
-    ) -> DdlResult<(NamespaceId, TableName)> {
+        default_namespace: &SchemaId,
+    ) -> DdlResult<(SchemaId, TableName)> {
         let parts: Vec<String> = name
             .0
             .iter()
@@ -287,7 +286,7 @@ impl SubscribeStatement {
             .collect();
 
         if parts.len() == 2 {
-            Ok((NamespaceId::new(&parts[0]), TableName::new(&parts[1])))
+            Ok((SchemaId::new(&parts[0]), TableName::new(&parts[1])))
         } else if parts.len() == 1 {
             Ok((default_namespace.clone(), TableName::new(&parts[0])))
         } else {
@@ -330,8 +329,8 @@ impl SubscribeStatement {
 #[derive(Default)]
 struct ResumeDomainParts {
     history_incarnation: Option<String>,
-    scope_id:            Option<u64>,
-    partition_id:        Option<u64>,
+    scope_id: Option<u64>,
+    partition_id: Option<u64>,
 }
 
 impl ResumeDomainParts {
@@ -466,7 +465,7 @@ mod tests {
     #[test]
     fn test_parse_basic_subscribe() {
         let stmt = SubscribeStatement::parse("SUBSCRIBE TO app.messages").unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.namespace, SchemaId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
         assert_eq!(stmt.select_query, "SELECT * FROM app.messages");
         assert!(stmt.options.last_rows.is_none());
@@ -475,14 +474,14 @@ mod tests {
     #[test]
     fn test_parse_subscribe_with_semicolon() {
         let stmt = SubscribeStatement::parse("SUBSCRIBE TO app.messages;").unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.namespace, SchemaId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
     }
 
     #[test]
     fn test_parse_subscribe_case_insensitive() {
         let stmt = SubscribeStatement::parse("subscribe to app.messages").unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.namespace, SchemaId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
     }
 
@@ -490,7 +489,7 @@ mod tests {
     fn test_parse_subscribe_with_where_clause() {
         let stmt =
             SubscribeStatement::parse("SUBSCRIBE TO app.messages WHERE user_id = 'alice'").unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.namespace, SchemaId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
         assert_eq!(stmt.select_query, "SELECT * FROM app.messages WHERE user_id = 'alice'");
     }
@@ -499,7 +498,7 @@ mod tests {
     fn test_parse_subscribe_with_options() {
         let stmt =
             SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (last_rows=10)").unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.namespace, SchemaId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
         assert_eq!(stmt.select_query, "SELECT * FROM app.messages");
         assert_eq!(stmt.options.last_rows, Some(10));
@@ -511,7 +510,7 @@ mod tests {
             "SUBSCRIBE TO app.messages WHERE user_id = 'alice' OPTIONS (last_rows=20)",
         )
         .unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.namespace, SchemaId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
         assert_eq!(stmt.select_query, "SELECT * FROM app.messages WHERE user_id = 'alice'");
         assert_eq!(stmt.options.last_rows, Some(20));
@@ -521,16 +520,16 @@ mod tests {
     fn test_parse_subscribe_unqualified_table() {
         // Unqualified table names should use "default" namespace
         let stmt = SubscribeStatement::parse("SUBSCRIBE TO messages").unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("default"));
+        assert_eq!(stmt.namespace, SchemaId::from("default"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
-        assert_eq!(stmt.select_query, "SELECT * FROM messages");
+        assert_eq!(stmt.select_query, "SELECT * FROM default.messages");
     }
 
     #[test]
     fn test_parse_subscribe_custom_columns() {
         let stmt =
             SubscribeStatement::parse("SUBSCRIBE TO SELECT event_type FROM app.messages").unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.namespace, SchemaId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
         assert_eq!(stmt.select_query, "SELECT event_type FROM app.messages");
         assert!(stmt.options.last_rows.is_none());
@@ -542,7 +541,7 @@ mod tests {
             "SUBSCRIBE TO SELECT event_type, user_id FROM app.messages WHERE conversation_id = 1",
         )
         .unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.namespace, SchemaId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
         assert_eq!(
             stmt.select_query,
@@ -556,7 +555,7 @@ mod tests {
             "SUBSCRIBE TO SELECT event_type FROM chat.typing_events OPTIONS (last_rows=20)",
         )
         .unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("chat"));
+        assert_eq!(stmt.namespace, SchemaId::from("chat"));
         assert_eq!(stmt.table_name, TableName::from("typing_events"));
         assert_eq!(stmt.select_query, "SELECT event_type FROM chat.typing_events");
         assert_eq!(stmt.options.last_rows, Some(20));
@@ -673,7 +672,7 @@ mod tests {
     fn test_parse_subscribe_with_batch_size() {
         let stmt = SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (batch_size=500)")
             .unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.namespace, SchemaId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
         assert_eq!(stmt.select_query, "SELECT * FROM app.messages");
         assert_eq!(stmt.options.batch_size, Some(500));
@@ -687,7 +686,7 @@ mod tests {
 
         let stmt =
             SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (from=12345)").unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.namespace, SchemaId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
         assert_eq!(stmt.options.from, Some(VersionId::try_from_i64(12345).unwrap()));
         assert!(stmt.options.batch_size.is_none());
@@ -730,7 +729,7 @@ mod tests {
             "SUBSCRIBE TO app.messages OPTIONS (last_rows=50, batch_size=50, from=999)",
         )
         .unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.namespace, SchemaId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
         assert_eq!(stmt.options.last_rows, Some(50));
         assert_eq!(stmt.options.batch_size, Some(50));
@@ -744,7 +743,7 @@ mod tests {
              batch_size=25)",
         )
         .unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.namespace, SchemaId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
         assert_eq!(stmt.select_query, "SELECT * FROM app.messages WHERE user_id = 'alice'");
         assert_eq!(stmt.options.last_rows, Some(50));
@@ -780,9 +779,7 @@ mod tests {
 
     #[test]
     fn test_parse_subscribe_negative_from() {
-        use kalamdb_commons::ids::VersionId;
-
-        // Negative seq_id should be valid (might be used for special cases)
+        // Negative seq_id is rejected rather than stored as a version.
         let stmt =
             SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (from=-1)").unwrap();
         assert_eq!(stmt.options.from, None /* negative versions rejected */);

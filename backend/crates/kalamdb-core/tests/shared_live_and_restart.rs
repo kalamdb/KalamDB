@@ -1,5 +1,3 @@
-mod support;
-
 use std::{sync::Arc, time::Duration};
 
 use datafusion_common::ScalarValue;
@@ -8,7 +6,7 @@ use kalamdb_commons::{
     ids::VersionId,
     models::{rows::Row, ConnectionId, ConnectionInfo, UserId},
     websocket::{SubscriptionOptions, SubscriptionRequest},
-    NamespaceId, Role, TableId,
+    Role, SchemaId, TableId,
 };
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::{
@@ -19,7 +17,7 @@ use kalamdb_core::{
 use kalamdb_live::{traits::LiveApplyBarrier, InitialDataOptions};
 use kalamdb_raft::{GroupId, RaftExecutor};
 use kalamdb_sharding::ShardRouter;
-use support::{
+use crate::support::{
     create_cluster_app_context_with_shared_shards, execute_ok, observer_exec_ctx, result_rows,
 };
 use tokio::time::timeout;
@@ -30,7 +28,7 @@ async fn shared_table_restart_keeps_owner_and_version_frontier() {
     let (app, db) = create_cluster_app_context_with_shared_shards(ServerConfig::default(), 4).await;
     let executor = sql_executor(&app);
     let observer = observer_exec_ctx(&app);
-    execute_ok(&executor, &observer, "CREATE NAMESPACE restart_ns").await;
+    execute_ok(&executor, &observer, "CREATE SCHEMA restart_ns").await;
     execute_ok(
         &executor,
         &observer,
@@ -43,7 +41,7 @@ async fn shared_table_restart_keeps_owner_and_version_frontier() {
         "INSERT INTO restart_ns.items (id, name) VALUES (1, 'a'), (2, 'b')",
     )
     .await;
-    let table = TableId::new(NamespaceId::new("restart_ns"), "items".into());
+    let table = TableId::new(SchemaId::new("restart_ns"), "items".into());
     let owner = app.shared_group_id(&table).unwrap();
     let before = app
         .schema_registry()
@@ -150,7 +148,7 @@ async fn shared_live_resume_sees_every_version_on_owner_group() {
         create_cluster_app_context_with_shared_shards(ServerConfig::default(), 4).await;
     let executor = sql_executor(&app);
     let observer = observer_exec_ctx(&app);
-    execute_ok(&executor, &observer, "CREATE NAMESPACE live_ns").await;
+    execute_ok(&executor, &observer, "CREATE SCHEMA live_ns").await;
     let mut owner = GroupId::DataSharedShard(0);
     let mut table_name = String::new();
     for i in 0..8 {
@@ -161,7 +159,7 @@ async fn shared_live_resume_sees_every_version_on_owner_group() {
             &format!("CREATE SHARED TABLE live_ns.{name} (id BIGINT PRIMARY KEY, name TEXT)"),
         )
         .await;
-        let id = TableId::new(NamespaceId::new("live_ns"), name.clone().into());
+        let id = TableId::new(SchemaId::new("live_ns"), name.clone().into());
         let group = app.shared_group_id(&id).unwrap();
         if !matches!(group, GroupId::DataSharedShard(0)) {
             owner = group;
@@ -171,7 +169,7 @@ async fn shared_live_resume_sees_every_version_on_owner_group() {
         table_name = name;
         owner = group;
     }
-    let table = TableId::new(NamespaceId::new("live_ns"), table_name.clone().into());
+    let table = TableId::new(SchemaId::new("live_ns"), table_name.clone().into());
     let domain = app
         .schema_registry()
         .get_table_if_exists(&table)
@@ -202,8 +200,8 @@ async fn shared_live_resume_sees_every_version_on_owner_group() {
         .unwrap();
     registration.state.mark_authenticated(UserId::new("root"), Role::Dba);
     let request = SubscriptionRequest {
-        id:      "sub-live".to_string(),
-        sql:     format!("SELECT * FROM live_ns.{table_name}"),
+        id: "sub-live".to_string(),
+        sql: format!("SELECT * FROM live_ns.{table_name}"),
         options: Some(SubscriptionOptions::default()),
     };
     let subscribed = app
@@ -289,8 +287,8 @@ async fn shared_live_resume_sees_every_version_on_owner_group() {
 
     let last = VersionId::try_from_i64(*stored.last().unwrap()).unwrap();
     let resume = SubscriptionRequest {
-        id:      "sub-resume".to_string(),
-        sql:     format!("SELECT * FROM live_ns.{table_name}"),
+        id: "sub-resume".to_string(),
+        sql: format!("SELECT * FROM live_ns.{table_name}"),
         options: Some(SubscriptionOptions {
             version_domain: Some(domain.clone()),
             from: Some(last),
@@ -309,8 +307,8 @@ async fn shared_live_resume_sees_every_version_on_owner_group() {
     let mut foreign = domain.clone();
     foreign.history_incarnation = "rotated-history".to_string();
     let rejected = SubscriptionRequest {
-        id:      "sub-foreign".to_string(),
-        sql:     format!("SELECT * FROM live_ns.{table_name}"),
+        id: "sub-foreign".to_string(),
+        sql: format!("SELECT * FROM live_ns.{table_name}"),
         options: Some(SubscriptionOptions {
             version_domain: Some(foreign),
             from: Some(last),
@@ -330,8 +328,8 @@ async fn shared_live_resume_sees_every_version_on_owner_group() {
     assert!(error.contains("domain"), "{error}");
 
     let missing_domain = SubscriptionRequest {
-        id:      "sub-bare".to_string(),
-        sql:     format!("SELECT * FROM live_ns.{table_name}"),
+        id: "sub-bare".to_string(),
+        sql: format!("SELECT * FROM live_ns.{table_name}"),
         options: Some(SubscriptionOptions {
             from: Some(last),
             ..SubscriptionOptions::default()

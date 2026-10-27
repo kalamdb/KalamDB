@@ -3,15 +3,15 @@
 --   Part B: USER table - two users each with their own data scope; per-user export and
 --           import into a shared target table so both scopes land in the same destination.
 
-DROP NAMESPACE IF EXISTS sql_file_case_31 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_31 CASCADE;
 DROP USER IF EXISTS 'case31_user_alice';
 DROP USER IF EXISTS 'case31_user_bob';
 
 CREATE USER 'case31_user_alice' WITH PASSWORD 'Case31Alice!123' ROLE user;
 CREATE USER 'case31_user_bob' WITH PASSWORD 'Case31Bob!123' ROLE user;
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_31;
-USE NAMESPACE sql_file_case_31;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_31;
+SET SCHEMA sql_file_case_31;
 
 -- Part A: SHARED table
 
@@ -136,6 +136,6 @@ EXECUTE AS USER 'case31_user_bob' (
 
 -- Cleanup
 
-DROP NAMESPACE IF EXISTS sql_file_case_31 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_31 CASCADE;
 DROP USER IF EXISTS 'case31_user_alice';
 DROP USER IF EXISTS 'case31_user_bob';

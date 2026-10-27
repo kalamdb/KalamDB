@@ -396,7 +396,7 @@ mod tests {
         assert_eq!(
             KalamDataType::Decimal {
                 precision: 10,
-                scale:     2,
+                scale: 2,
             }
             .tag(),
             0x0F
@@ -448,7 +448,7 @@ mod tests {
         assert_eq!(
             KalamDataType::Decimal {
                 precision: 10,
-                scale:     2,
+                scale: 2,
             }
             .sql_name(),
             "DECIMAL(10, 2)"
@@ -466,7 +466,7 @@ mod tests {
             KalamDataType::from_sql_name("DECIMAL(10, 2)"),
             Some(KalamDataType::Decimal {
                 precision: 10,
-                scale:     2,
+                scale: 2,
             })
         );
         assert_eq!(
@@ -478,7 +478,7 @@ mod tests {
             KalamDataType::from_sql_name("DECIMAL"),
             Some(KalamDataType::Decimal {
                 precision: 38,
-                scale:     10,
+                scale: 10,
             })
         );
     }

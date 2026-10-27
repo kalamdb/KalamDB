@@ -1,13 +1,16 @@
-//! CREATE / ALTER / DROP TYPE handlers.
+//! CREATE / ALTER / DROP TYPE and DOMAIN handlers.
 
 mod alter;
 mod create;
+mod domain;
 mod drop;
 mod replicate;
 
+pub(crate) use alter::bump_enclosing_type_revisions;
 pub use alter::AlterTypeHandler;
-pub use create::{ensure_implicit_row_type, CreateTypeHandler};
+pub use create::{ensure_implicit_row_type, sync_implicit_row_type, CreateTypeHandler};
 pub(crate) use create::{require_procedure_types, resolve_named_type_id};
+pub use domain::{AlterDomainHandler, CreateDomainHandler, DropDomainHandler};
 pub use drop::DropTypeHandler;
 use kalamdb_system::CatalogType;
 pub(crate) use replicate::{replicate_dropped_type, replicate_named_type, replicate_stored_type};

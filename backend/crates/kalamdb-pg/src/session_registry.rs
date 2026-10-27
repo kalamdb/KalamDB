@@ -1,23 +1,20 @@
-use std::{
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::sync::Arc;
 
 use dashmap::DashMap;
 use kalamdb_backend::{
     manager::{BackendSessionError, BackendSessionManager},
     session::{BackendAuth, BackendSessionSnapshot},
 };
-use kalamdb_commons::models::{Role, SessionOrigin, UserId};
+use kalamdb_commons::{
+    models::{Role, SessionOrigin, UserId},
+    unix_time_millis,
+};
 
 /// Default session lease duration: 30 minutes.
 pub(crate) const DEFAULT_SESSION_LEASE_MS: i64 = 30 * 60 * 1_000;
 
 fn current_timestamp_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or_default()
+    unix_time_millis()
 }
 
 fn normalize_optional(value: Option<&str>) -> Option<String> {
@@ -27,28 +24,28 @@ fn normalize_optional(value: Option<&str>) -> Option<String> {
 /// Authenticated bridge identity stored at session-open time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BridgeAuth {
-    pub user_id:             UserId,
-    pub role:                Role,
-    pub auth_mode:           String,
+    pub user_id: UserId,
+    pub role: Role,
+    pub auth_mode: String,
     pub lease_expires_at_ms: i64,
 }
 
 /// Bridge session projection for gRPC activity metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RemotePgSession {
-    session_id:     String,
+    session_id: String,
     current_schema: Option<String>,
-    last_method:    Option<String>,
-    bridge_auth:    Option<BridgeAuth>,
+    last_method: Option<String>,
+    bridge_auth: Option<BridgeAuth>,
 }
 
 impl RemotePgSession {
     fn new(session_id: impl Into<String>) -> Self {
         Self {
-            session_id:     session_id.into(),
+            session_id: session_id.into(),
             current_schema: None,
-            last_method:    None,
-            bridge_auth:    None,
+            last_method: None,
+            bridge_auth: None,
         }
     }
 

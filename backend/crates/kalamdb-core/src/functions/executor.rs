@@ -2,21 +2,27 @@
 
 use std::sync::Arc;
 
+use super::bind::PinnedRoutineDescriptor;
 use arrow::{
     array::RecordBatch,
-    datatypes::{Field, Schema},
+    datatypes::{DataType, Field, Schema},
 };
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::{
     conversions::arrow_json_conversion::scalar_value_to_json,
-    models::{RoutineCall, RoutineId, TopicId, TransactionId},
-    FunctionModuleId, FunctionRevisionId, FunctionRuntime, Role, UserId,
+    datatypes::ToArrowType,
+    models::{
+        RoutineCall, RoutineId, RoutineKind, RoutineNullSafety, RoutineParameterMode, TopicId,
+        TransactionId,
+    },
+    FunctionModuleId, FunctionRevisionId, FunctionRuntime, KalamDataType, Role, UserId,
 };
 use kalamdb_filestore::StorageCached;
 use kalamdb_functions::{
     now_ms, ActiveFunctionSet, FunctionActivation, FunctionCallOrigin, FunctionCallResult,
-    FunctionExecutionRoot, FunctionsError, ImplementationRef, InlineArtifact, Invocation,
-    InvocationScope, ModuleRevision, ProcedureFrame, RoutineValue, StagedTopicPublish, ABI_VERSION,
+    FunctionErrorCode, FunctionExecutionRoot, FunctionsError, ImplementationRef, InlineArtifact,
+    Invocation, InvocationScope, ModuleRevision, ProcedureFrame, RoutineValue, StagedTopicPublish,
+    ABI_VERSION,
 };
 use kalamdb_sql::ddl::CallStatement;
 use kalamdb_system::{ActivateFunctionOutcome, CatalogRoutine};
@@ -29,7 +35,7 @@ use uuid::Uuid;
 
 use super::{
     acl, bind,
-    convert::{bind_call_arguments, routine_value_as_json},
+    convert::routine_value_as_json,
     host::{frame_principal, push_frame, CoreFunctionHost, HostSession},
 };
 use crate::{
@@ -52,7 +58,37 @@ impl FunctionService {
         statement: &CallStatement,
         params: &[ScalarValue],
     ) -> Result<ExecutionResult, KalamDbError> {
+        let stores = app.system_tables().catalog_stores();
+        if let Some(routine) = stores.get_routine(&statement.call.routine_id).map_err(|error| {
+            KalamDbError::ExecutionError(format!(
+                "failed to load procedure {}: {error}",
+                statement.call.routine_id
+            ))
+        })? {
+            if routine.kind == RoutineKind::Function {
+                return Err(KalamDbError::InvalidSql(format!(
+                    "{} is a function, not a procedure; invoke it with SELECT",
+                    statement.call.routine_id
+                )));
+            }
+        }
+        let routine_params =
+            stores.list_parameters(&statement.call.routine_id).map_err(|error| {
+                KalamDbError::ExecutionError(format!(
+                    "failed to load parameters for procedure {}: {error}",
+                    statement.call.routine_id
+                ))
+            })?;
+        let out_params: Vec<_> = routine_params
+            .into_iter()
+            .filter(|param| {
+                matches!(param.mode, RoutineParameterMode::Out | RoutineParameterMode::InOut)
+            })
+            .collect();
         let result = Self::invoke_sql_call(app, exec_ctx, &statement.call, params).await?;
+        if !out_params.is_empty() {
+            return procedure_out_value_to_execution_result(&result.value, &out_params);
+        }
         routine_value_to_execution_result(&result.value)
     }
 
@@ -66,8 +102,49 @@ impl FunctionService {
                 "DEFAULT procedure arguments cannot use placeholders".to_string(),
             ));
         }
+        let stores = app.system_tables().catalog_stores();
+        if let Some(routine) = stores.get_routine(&call.routine_id).map_err(|error| {
+            KalamDbError::ExecutionError(format!(
+                "failed to load routine {}: {error}",
+                call.routine_id
+            ))
+        })? {
+            if routine.kind == RoutineKind::Procedure {
+                return Err(KalamDbError::InvalidSql(format!(
+                    "{} is a procedure, not a function; procedures cannot be used in scalar or \
+                     DEFAULT expressions",
+                    call.routine_id
+                )));
+            }
+        }
         let result = Self::invoke_sql_call(app, exec_ctx, call, &[]).await?;
         Ok(result.value.value)
+    }
+
+    pub async fn execute_scalar_function_call(
+        app: Arc<AppContext>,
+        exec_ctx: &ExecutionContext,
+        call: &RoutineCall,
+        params: &[ScalarValue],
+    ) -> Result<RoutineValue, KalamDbError> {
+        let stores = app.system_tables().catalog_stores();
+        let Some(routine) = stores.get_routine(&call.routine_id).map_err(|error| {
+            KalamDbError::ExecutionError(format!(
+                "failed to load routine {}: {error}",
+                call.routine_id
+            ))
+        })?
+        else {
+            return Err(FunctionsError::UnknownProcedure(call.routine_id.to_string()).into());
+        };
+        if routine.kind == RoutineKind::Procedure {
+            return Err(KalamDbError::InvalidSql(format!(
+                "{} is a procedure, not a function; invoke it with CALL",
+                call.routine_id
+            )));
+        }
+        let result = Self::invoke_sql_call(app, exec_ctx, call, params).await?;
+        Ok(result.value)
     }
 
     async fn invoke_sql_call(
@@ -76,7 +153,8 @@ impl FunctionService {
         call: &RoutineCall,
         params: &[ScalarValue],
     ) -> Result<FunctionCallResult, KalamDbError> {
-        let args = bind_call_arguments(&call.arguments, params)?;
+        let stores = app.system_tables().catalog_stores();
+        let args = bind::bind_sql_routine_call(&stores, call, params)?;
         Self::invoke(app, exec_ctx, FunctionCallOrigin::Sql, call.routine_id.clone(), args).await
     }
 
@@ -86,6 +164,29 @@ impl FunctionService {
         origin: FunctionCallOrigin,
         routine_id: RoutineId,
         args: Vec<RoutineValue>,
+    ) -> Result<FunctionCallResult, KalamDbError> {
+        Self::invoke_with(app, exec_ctx, origin, routine_id, args, None).await
+    }
+
+    /// Invoke a routine whose descriptor was already pinned by the caller.
+    pub async fn invoke_pinned(
+        app: Arc<AppContext>,
+        exec_ctx: &ExecutionContext,
+        origin: FunctionCallOrigin,
+        descriptor: Arc<PinnedRoutineDescriptor>,
+        args: Vec<RoutineValue>,
+    ) -> Result<FunctionCallResult, KalamDbError> {
+        let routine_id = descriptor.routine_id.clone();
+        Self::invoke_with(app, exec_ctx, origin, routine_id, args, Some(descriptor)).await
+    }
+
+    async fn invoke_with(
+        app: Arc<AppContext>,
+        exec_ctx: &ExecutionContext,
+        origin: FunctionCallOrigin,
+        routine_id: RoutineId,
+        args: Vec<RoutineValue>,
+        pinned: Option<Arc<PinnedRoutineDescriptor>>,
     ) -> Result<FunctionCallResult, KalamDbError> {
         let request_id = exec_ctx
             .request_id()
@@ -104,7 +205,7 @@ impl FunctionService {
         // transaction back if the caller disconnects before commit.
         let owned_tx_guard = OwnedFunctionTx {
             app: Arc::clone(&app),
-            id:  Mutex::new(None),
+            id: Mutex::new(None),
         };
 
         let actor = exec_ctx.user_id().clone();
@@ -118,6 +219,7 @@ impl FunctionService {
             origin,
             routine_id.clone(),
             args,
+            pinned,
             &mut request_state,
             &coordinator,
             owned_tx,
@@ -131,11 +233,19 @@ impl FunctionService {
             {
                 kalamdb_observability::record_function_timeout();
             }
-            log::error!(
-                target: "kalamdb::functions",
-                "execution_id={request_id} request_id={request_id} routine={routine_id} actor={actor} principal={actor} source={origin_kind} code={:?} {error}",
-                error.function_error_code()
-            );
+            if is_client_function_error(error) {
+                log::warn!(
+                    target: "kalamdb::functions",
+                    "execution_id={request_id} request_id={request_id} routine={routine_id} actor={actor} principal={actor} source={origin_kind} code={:?} {error}",
+                    error.function_error_code()
+                );
+            } else {
+                log::error!(
+                    target: "kalamdb::functions",
+                    "execution_id={request_id} request_id={request_id} routine={routine_id} actor={actor} principal={actor} source={origin_kind} code={:?} {error}",
+                    error.function_error_code()
+                );
+            }
         }
         let duration_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
         let (module_id, revision_id) = match app.function_runtime().active_set().lookup(&routine_id)
@@ -161,29 +271,32 @@ impl FunctionService {
                 )),
             ),
         };
-        app.procedure_log_logger()
-            .record(crate::procedure_log_logger::ProcedureLogRecord {
-                execution_id: request_id.clone(),
-                request_id: request_id.clone(),
-                procedure_id: routine_id.to_string(),
-                module_id,
-                revision_id,
-                actor: actor.to_string().into(),
-                origin: origin_kind.into(),
-                outcome: outcome.into(),
-                channel: "invocation".into(),
-                level: if outcome == "error" {
-                    "error".into()
-                } else {
-                    "info".into()
-                },
-                error_code,
-                message,
-                duration_ms,
-                timestamp: now_ms(),
-                node_id: app.node_id().as_ref().to_string(),
-                schedule_id,
-            });
+        {
+            let _span = kalamdb_observability::kdb_info_span_entered!("func.proc_log");
+            app.procedure_log_logger()
+                .record(crate::procedure_log_logger::ProcedureLogRecord {
+                    execution_id: request_id.clone(),
+                    request_id: request_id.clone(),
+                    procedure_id: routine_id.to_string(),
+                    module_id,
+                    revision_id,
+                    actor: actor.to_string().into(),
+                    origin: origin_kind.into(),
+                    outcome: outcome.into(),
+                    channel: "invocation".into(),
+                    level: if outcome == "error" {
+                        "error".into()
+                    } else {
+                        "info".into()
+                    },
+                    error_code,
+                    message,
+                    duration_ms,
+                    timestamp: now_ms(),
+                    node_id: app.node_id().as_ref().to_string(),
+                    schedule_id,
+                });
+        }
         kalamdb_observability::finish_function_run(started.elapsed(), invoke_result.is_err());
         log::debug!(
             target: "kalamdb::functions",
@@ -198,10 +311,11 @@ impl FunctionService {
                     // Disarm before commit so a drop during commit cannot roll
                     // back a transaction that is already committing.
                     owned_tx_guard.disarm();
-                    request_state
-                        .commit(&coordinator)
-                        .await
-                        .map_err(map_request_transaction_error)?;
+                    kalamdb_observability::kdb_await_in_info_span!(
+                        request_state.commit(&coordinator),
+                        "func.tx_commit"
+                    )
+                    .map_err(map_request_transaction_error)?;
                 }
                 Ok(result)
             },
@@ -222,6 +336,7 @@ async fn invoke_root(
     origin: FunctionCallOrigin,
     routine_id: RoutineId,
     args: Vec<RoutineValue>,
+    pinned: Option<Arc<PinnedRoutineDescriptor>>,
     request_state: &mut RequestTransactionState<'_>,
     coordinator: &AppContextRequestTransactionCoordinator<'_>,
     owned_tx: bool,
@@ -263,56 +378,118 @@ async fn invoke_root(
     let root = FunctionExecutionRoot {
         actor_user: exec_ctx.user_id().clone(),
         actor_role: exec_ctx.user_role(),
-        origin:     origin.clone(),
+        origin: origin.clone(),
         deployment: Arc::clone(&deployment),
     };
     let host = CoreFunctionHost {
-        app:      Arc::clone(&app),
-        handle:   tokio::runtime::Handle::current(),
-        session:  Arc::new(HostSession {
+        app: Arc::clone(&app),
+        handle: tokio::runtime::Handle::current(),
+        session: Arc::new(HostSession {
             exec_ctx,
             stack: SmallVec::new(),
             root,
             principal_ctx: Arc::new(Mutex::new(SmallVec::new())),
         }),
-        origin:   origin.clone(),
-        scope:    InvocationScope {
+        origin: origin.clone(),
+        scope: InvocationScope {
             deadline: std::time::Instant::now()
                 + app.function_runtime().engine().map_err(map_functions)?.config().timeout,
             // Cancelled when the HTTP statement future is dropped, and again
             // on timeout inside the engine. The socket watch lives on the
             // connection, not here.
-            cancel:   CancellationToken::new(),
-            depth:    0,
+            cancel: CancellationToken::new(),
+            depth: 0,
         },
         sql_gate: Arc::new(tokio::sync::Mutex::new(())),
     };
     let value = {
-        let (invocation, child) = prepare_call(&host, routine_id.clone(), &args)?;
-        let engine = host.app.function_runtime().engine().map_err(map_functions)?;
-        let admission = engine.admit(&invocation).await.map_err(map_functions)?;
-        if owned_tx {
-            let transaction_id =
-                request_state.begin(coordinator).map_err(map_request_transaction_error)?;
-            *began_owned_tx = true;
-            owned_tx_guard.arm(transaction_id);
+        let prepared = prepare_call_target(&host, routine_id.clone(), &args, pinned.as_deref())?;
+        match prepared {
+            PreparedCall::StrictNull {
+                routine,
+                parameters,
+            } => {
+                let value = RoutineValue::new(ScalarValue::Null);
+                let stores = host.app.system_tables().catalog_stores();
+                bind::validate_call_return(
+                    host.app.schema_registry().type_registry(),
+                    &stores,
+                    &routine,
+                    &value,
+                    parameters.as_ref(),
+                )?;
+                value
+            },
+            PreparedCall::Sql {
+                routine,
+                body,
+                input_args,
+                parameters,
+                child,
+            } => {
+                if owned_tx {
+                    let transaction_id =
+                        request_state.begin(coordinator).map_err(map_request_transaction_error)?;
+                    *began_owned_tx = true;
+                    owned_tx_guard.arm(transaction_id);
+                }
+                let value = Box::pin(invoke_sql_routine_body(
+                    &child,
+                    &routine,
+                    &body,
+                    &input_args,
+                    parameters.as_ref(),
+                ))
+                .await?;
+                let stores = host.app.system_tables().catalog_stores();
+                bind::validate_call_return(
+                    host.app.schema_registry().type_registry(),
+                    &stores,
+                    &routine,
+                    &value,
+                    parameters.as_ref(),
+                )?;
+                value
+            },
+            PreparedCall::V8 {
+                routine,
+                parameters,
+                invocation,
+                child,
+            } => {
+                let engine = host.app.function_runtime().engine().map_err(map_functions)?;
+                let admission = kalamdb_observability::kdb_await_in_info_span!(
+                    engine.admit(&invocation),
+                    "func.admit"
+                )
+                .map_err(map_functions)?;
+                if owned_tx {
+                    let _span = kalamdb_observability::kdb_info_span_entered!("func.tx_begin");
+                    let transaction_id =
+                        request_state.begin(coordinator).map_err(map_request_transaction_error)?;
+                    *began_owned_tx = true;
+                    owned_tx_guard.arm(transaction_id);
+                }
+                let value = kalamdb_observability::kdb_await_in_info_span!(
+                    engine.invoke_admitted(invocation, child, admission),
+                    "func.v8_invoke"
+                )
+                .map_err(map_functions)?;
+                {
+                    let _span =
+                        kalamdb_observability::kdb_info_span_entered!("func.validate_return");
+                    let stores = host.app.system_tables().catalog_stores();
+                    bind::validate_call_return(
+                        host.app.schema_registry().type_registry(),
+                        &stores,
+                        &routine,
+                        &value,
+                        parameters.as_ref(),
+                    )?;
+                }
+                value
+            },
         }
-        let value = engine
-            .invoke_admitted(invocation, child, admission)
-            .await
-            .map_err(map_functions)?;
-        let stores = host.app.system_tables().catalog_stores();
-        if let Some(routine) = stores.get_routine(&routine_id).map_err(|error| {
-            KalamDbError::ExecutionError(format!("failed to load procedure {routine_id}: {error}"))
-        })? {
-            bind::validate_call_return(
-                host.app.schema_registry().type_registry(),
-                &stores,
-                &routine,
-                &value,
-            )?;
-        }
-        value
     };
 
     let (http_status, http_headers) = match origin {
@@ -344,39 +521,129 @@ pub(super) async fn invoke_nested(
     invoke_on_host(&child, routine_id, args).await
 }
 
+enum PreparedCall {
+    StrictNull {
+        routine: CatalogRoutine,
+        parameters: Arc<[kalamdb_system::CatalogRoutineParameter]>,
+    },
+    Sql {
+        routine: CatalogRoutine,
+        body: String,
+        input_args: Vec<(kalamdb_system::CatalogRoutineParameter, RoutineValue)>,
+        parameters: Arc<[kalamdb_system::CatalogRoutineParameter]>,
+        child: CoreFunctionHost,
+    },
+    V8 {
+        routine: CatalogRoutine,
+        parameters: Arc<[kalamdb_system::CatalogRoutineParameter]>,
+        invocation: Invocation,
+        child: Arc<dyn kalamdb_functions::FunctionHost>,
+    },
+}
+
 async fn invoke_on_host(
     host: &CoreFunctionHost,
     routine_id: RoutineId,
     args: &[RoutineValue],
 ) -> Result<RoutineValue, KalamDbError> {
-    let (invocation, child) = prepare_call(host, routine_id.clone(), args)?;
-    let engine = host.app.function_runtime().engine().map_err(map_functions)?;
-    let value = engine.invoke(invocation, child).await.map_err(map_functions)?;
+    let prepared = prepare_call_target(host, routine_id.clone(), args, None)?;
     let stores = host.app.system_tables().catalog_stores();
-    if let Some(routine) = stores.get_routine(&routine_id).map_err(|error| {
-        KalamDbError::ExecutionError(format!("failed to load procedure {routine_id}: {error}"))
-    })? {
-        bind::validate_call_return(
-            host.app.schema_registry().type_registry(),
-            &stores,
-            &routine,
-            &value,
-        )?;
+    match prepared {
+        PreparedCall::StrictNull {
+            routine,
+            parameters,
+        } => {
+            let value = RoutineValue::new(ScalarValue::Null);
+            bind::validate_call_return(
+                host.app.schema_registry().type_registry(),
+                &stores,
+                &routine,
+                &value,
+                parameters.as_ref(),
+            )?;
+            Ok(value)
+        },
+        PreparedCall::Sql {
+            routine,
+            body,
+            input_args,
+            parameters,
+            child,
+        } => {
+            let value = Box::pin(invoke_sql_routine_body(
+                &child,
+                &routine,
+                &body,
+                &input_args,
+                parameters.as_ref(),
+            ))
+            .await?;
+            bind::validate_call_return(
+                host.app.schema_registry().type_registry(),
+                &stores,
+                &routine,
+                &value,
+                parameters.as_ref(),
+            )?;
+            Ok(value)
+        },
+        PreparedCall::V8 {
+            routine,
+            parameters,
+            invocation,
+            child,
+        } => {
+            let engine = host.app.function_runtime().engine().map_err(map_functions)?;
+            let value = engine.invoke(invocation, child).await.map_err(map_functions)?;
+            bind::validate_call_return(
+                host.app.schema_registry().type_registry(),
+                &stores,
+                &routine,
+                &value,
+                parameters.as_ref(),
+            )?;
+            Ok(value)
+        },
     }
-    Ok(value)
 }
 
-pub(super) fn prepare_call(
+pub(super) fn prepare_nested_v8_call(
     host: &CoreFunctionHost,
     routine_id: RoutineId,
     args: &[RoutineValue],
-) -> Result<(Invocation, Arc<dyn kalamdb_functions::FunctionHost>), KalamDbError> {
+) -> Result<Option<(Invocation, Arc<dyn kalamdb_functions::FunctionHost>)>, KalamDbError> {
+    match prepare_call_target(host, routine_id, args, None)? {
+        PreparedCall::V8 {
+            invocation, child, ..
+        } => Ok(Some((invocation, child))),
+        PreparedCall::StrictNull { .. } | PreparedCall::Sql { .. } => Ok(None),
+    }
+}
+
+fn prepare_call_target(
+    host: &CoreFunctionHost,
+    routine_id: RoutineId,
+    args: &[RoutineValue],
+    pinned: Option<&PinnedRoutineDescriptor>,
+) -> Result<PreparedCall, KalamDbError> {
+    let _prepare_span = kalamdb_observability::kdb_info_span_entered!("func.prepare_call");
     let stores = host.app.system_tables().catalog_stores();
-    let routine = stores.get_routine(&routine_id).map_err(|error| {
-        KalamDbError::ExecutionError(format!("failed to load procedure {routine_id}: {error}"))
-    })?;
-    let Some(routine) = routine else {
-        return Err(FunctionsError::UnknownProcedure(routine_id.to_string()).into());
+    let (routine, parameters) = if let Some(pinned) = pinned {
+        (pinned.routine.clone(), Arc::clone(&pinned.parameters))
+    } else {
+        let _span = kalamdb_observability::kdb_info_span_entered!("func.prepare.get_routine");
+        let routine = stores.get_routine(&routine_id).map_err(|error| {
+            KalamDbError::ExecutionError(format!("failed to load procedure {routine_id}: {error}"))
+        })?;
+        let Some(routine) = routine else {
+            return Err(FunctionsError::UnknownProcedure(routine_id.to_string()).into());
+        };
+        let loaded = stores.list_parameters(&routine_id).map_err(|error| {
+            KalamDbError::CatalogError(format!(
+                "failed to load parameters for routine {routine_id}: {error}"
+            ))
+        })?;
+        (routine, Arc::from(loaded))
     };
 
     let (caller_user, caller_role) = {
@@ -386,9 +653,17 @@ pub(super) fn prepare_call(
             None => (session.exec_ctx.user_id().clone(), session.exec_ctx.user_role()),
         }
     };
-    acl::require_execute(&stores, &routine, &caller_user, caller_role)?;
+    {
+        let _span = kalamdb_observability::kdb_info_span_entered!("func.prepare.acl");
+        acl::require_execute(&stores, &routine, &caller_user, caller_role)?;
+    }
 
-    let owner_role = owner_role(&host.app, &routine.owner)?;
+    let owner_role = if routine.security == kalamdb_commons::models::RoutineSecurityMode::Definer {
+        let _span = kalamdb_observability::kdb_info_span_entered!("func.prepare.owner_role");
+        owner_role(&host.app, &routine.owner)?
+    } else {
+        caller_role
+    };
     let (principal_user, principal_role) = frame_principal(
         routine.security,
         caller_user,
@@ -397,14 +672,59 @@ pub(super) fn prepare_call(
         owner_role,
     );
 
-    let revision = revision_for_routine(host, &routine)?;
-    bind::validate_call_arguments(
-        host.app.schema_registry().type_registry(),
-        &stores,
-        &routine.routine_id,
-        args,
-    )?;
-    let args = pack_named_call_input(&stores, &routine.routine_id, args)?;
+    let input_args = {
+        let _span = kalamdb_observability::kdb_info_span_entered!("func.prepare.resolve_args");
+        bind::resolve_and_validate_parameters(
+            host.app.schema_registry().type_registry(),
+            &stores,
+            &routine.routine_id,
+            parameters.as_ref(),
+            args,
+        )?
+    };
+    if routine.null_safety == RoutineNullSafety::ReturnsNullOnNullInput
+        && input_args.iter().any(|(_, val)| is_null_routine_value(val))
+    {
+        return Ok(PreparedCall::StrictNull {
+            routine,
+            parameters,
+        });
+    }
+
+    let language = routine.language.as_deref().unwrap_or("");
+    if is_sql_language(language) {
+        let body = routine.body.clone().ok_or_else(|| {
+            KalamDbError::from(FunctionsError::Invalid(format!(
+                "LANGUAGE SQL routine {} has no body",
+                routine.routine_id
+            )))
+        })?;
+        let frame = ProcedureFrame {
+            routine_id: routine.routine_id.clone(),
+            revision_id: FunctionRevisionId::new("sql:inline"),
+            namespace_id: routine.namespace_id.clone(),
+            principal_user,
+            principal_role,
+            security: routine.security,
+            volatility: routine.volatility,
+        };
+        let mut child = host.clone();
+        child.session = Arc::new(push_frame(host.session.as_ref(), frame)?);
+        return Ok(PreparedCall::Sql {
+            routine,
+            body,
+            input_args,
+            parameters,
+            child,
+        });
+    }
+
+    let (revision, args) = {
+        let _span = kalamdb_observability::kdb_info_span_entered!("func.prepare.revision");
+        let revision = revision_for_routine(host, &routine)?;
+        let args = pack_named_call_input_from_resolved(&input_args);
+        (revision, args)
+    };
     let frame = ProcedureFrame {
         routine_id: routine.routine_id.clone(),
         revision_id: revision.revision_id.clone(),
@@ -412,20 +732,198 @@ pub(super) fn prepare_call(
         principal_user,
         principal_role,
         security: routine.security,
+        volatility: routine.volatility,
     };
 
+    let return_template = return_template_for(&routine);
     let mut child = host.clone();
     child.session = Arc::new(push_frame(host.session.as_ref(), frame)?);
-    Ok((
-        Invocation {
+    Ok(PreparedCall::V8 {
+        routine,
+        parameters,
+        invocation: Invocation {
             routine_id,
             revision,
             args,
             scope: host.scope.clone(),
-            return_template: None,
+            return_template,
         },
-        Arc::new(child),
-    ))
+        child: Arc::new(child),
+    })
+}
+
+fn is_client_function_error(error: &KalamDbError) -> bool {
+    matches!(
+        error.function_error_code(),
+        Some(
+            FunctionErrorCode::InvalidArguments
+                | FunctionErrorCode::ProcedureNotFound
+                | FunctionErrorCode::ExecuteDenied
+                | FunctionErrorCode::AuthenticationRequired
+                | FunctionErrorCode::StaleRevision
+        )
+    )
+}
+
+fn return_template_for(routine: &CatalogRoutine) -> Option<RoutineValue> {
+    let data_type = routine.return_data_type?;
+    if data_type == KalamDataType::Json {
+        return Some(RoutineValue::json(ScalarValue::Utf8(None)));
+    }
+    let arrow = data_type.to_arrow_type().ok()?;
+    let arrow = if routine.return_is_array {
+        DataType::List(Arc::new(Field::new("item", arrow, !routine.return_not_null)))
+    } else {
+        arrow
+    };
+    ScalarValue::try_from(&arrow).ok().map(RoutineValue::new)
+}
+
+fn is_null_routine_value(val: &RoutineValue) -> bool {
+    matches!(
+        &val.value,
+        ScalarValue::Null | ScalarValue::Utf8(None) | ScalarValue::LargeUtf8(None)
+    ) || val.value.is_null()
+}
+
+async fn invoke_sql_routine_body(
+    host: &CoreFunctionHost,
+    routine: &CatalogRoutine,
+    body: &str,
+    input_args: &[(kalamdb_system::CatalogRoutineParameter, RoutineValue)],
+    parameters: &[kalamdb_system::CatalogRoutineParameter],
+) -> Result<RoutineValue, KalamDbError> {
+    host.scope.check().map_err(map_functions)?;
+    let _gate = host.sql_gate.lock().await;
+    host.scope.check().map_err(map_functions)?;
+
+    let mut ctx = host.current_exec_ctx().with_stream_autocommit();
+    if let Some(config_json) = &routine.config_params {
+        if let Ok(config) =
+            serde_json::from_str::<std::collections::BTreeMap<String, String>>(config_json)
+        {
+            if let Some(sp) = config.get("search_path").or_else(|| config.get("schema")) {
+                let ns =
+                    sp.split(',').next().unwrap_or(sp).trim().trim_matches('"').trim_matches('\'');
+                if !ns.is_empty() {
+                    ctx = ctx.with_namespace_id(kalamdb_commons::SchemaId::new(ns));
+                }
+            }
+        }
+    }
+
+    let out_params: Vec<_> = parameters
+        .iter()
+        .filter(|param| {
+            matches!(param.mode, RoutineParameterMode::Out | RoutineParameterMode::InOut)
+        })
+        .cloned()
+        .collect();
+    let has_out_params = !out_params.is_empty();
+
+    let mut env_args = input_args.to_vec();
+    for out_param in &out_params {
+        if !env_args.iter().any(|(p, _)| p.name.eq_ignore_ascii_case(&out_param.name)) {
+            env_args.push((out_param.clone(), RoutineValue::new(ScalarValue::Null)));
+        }
+    }
+
+    let mut working_body = body.trim();
+    let mut declare_decls: Vec<(String, Option<String>)> = Vec::new();
+    if routine.language.as_deref().is_some_and(|l| l.eq_ignore_ascii_case("PLPGSQL")) {
+        let (decls, after_begin) = super::sql_body::extract_plpgsql_declare_and_body(working_body);
+        declare_decls = decls;
+        if let Some(after) = after_begin {
+            working_body = after;
+        }
+    }
+
+    let executor = host.app.sql_executor();
+    for (var_name, init_expr) in declare_decls {
+        let init_val = if let Some(expr_sql) = init_expr {
+            super::sql_body::eval_plpgsql_expr(&executor, &ctx, &expr_sql, &env_args).await?
+        } else {
+            RoutineValue::new(ScalarValue::Null)
+        };
+        let ord = i32::try_from(env_args.len() + 1).unwrap_or(i32::MAX);
+        let pseudo_param = kalamdb_system::CatalogRoutineParameter {
+            parameter_id: kalamdb_commons::models::RoutineParameterId::new(
+                &routine.routine_id,
+                ord,
+            )
+            .map_err(KalamDbError::InvalidSql)?,
+            routine_id: routine.routine_id.clone(),
+            name: var_name,
+            ordinal: ord,
+            type_id: None,
+            type_name: "TEXT".to_string(),
+            is_array: false,
+            not_null: false,
+            nonempty: false,
+            data_type: Some(kalamdb_commons::KalamDataType::Text),
+            mode: RoutineParameterMode::In,
+            default_expr: None,
+        };
+        env_args.push((pseudo_param, init_val));
+    }
+
+    let (returned, last_result) = super::sql_body::execute_plpgsql_block(
+        &executor,
+        &ctx,
+        routine,
+        working_body,
+        &mut env_args,
+    )
+    .await?;
+    if let Some(ret_val) = returned {
+        return Ok(ret_val);
+    }
+
+    if has_out_params
+        && env_args.iter().any(|(p, v)| {
+            matches!(p.mode, RoutineParameterMode::Out | RoutineParameterMode::InOut)
+                && !is_null_routine_value(v)
+        })
+    {
+        if out_params.len() == 1 {
+            if let Some((_, val)) =
+                env_args.iter().find(|(p, _)| p.name.eq_ignore_ascii_case(&out_params[0].name))
+            {
+                if !is_null_routine_value(val) {
+                    return Ok(val.clone());
+                }
+            }
+        } else {
+            let mut map = serde_json::Map::with_capacity(out_params.len());
+            for out_param in &out_params {
+                let json_val = env_args
+                    .iter()
+                    .find(|(p, _)| p.name.eq_ignore_ascii_case(&out_param.name))
+                    .and_then(|(_, v)| routine_value_as_json(v))
+                    .unwrap_or(serde_json::Value::Null);
+                map.insert(out_param.name.clone(), json_val);
+            }
+            return super::convert::json_to_routine_value(&serde_json::Value::Object(map), None);
+        }
+    }
+
+    match last_result {
+        Some(result) => {
+            if routine.kind == RoutineKind::Procedure && !has_out_params {
+                if matches!(
+                    result,
+                    ExecutionResult::Rows { .. } | ExecutionResult::ScalarRows { .. }
+                ) {
+                    super::convert::execution_result_to_routine(result)
+                } else {
+                    Ok(RoutineValue::new(ScalarValue::Null))
+                }
+            } else {
+                super::convert::execution_result_to_routine(result)
+            }
+        },
+        None => Ok(RoutineValue::new(ScalarValue::Null)),
+    }
 }
 
 fn revision_for_routine(
@@ -512,8 +1010,8 @@ pub async fn rebuild_active_function_set(app: &AppContext) -> Result<(), KalamDb
             })?;
             Some(Arc::new(InlineArtifact {
                 artifact_id: artifact_id.clone(),
-                source:      source.into(),
-                language:    routine.language.clone().unwrap_or_default(),
+                source: source.into(),
+                language: routine.language.clone().unwrap_or_default(),
             }))
         } else {
             None
@@ -663,7 +1161,7 @@ pub async fn rollback_module_revision(
 
 struct OwnedFunctionTx {
     app: Arc<AppContext>,
-    id:  Mutex<Option<TransactionId>>,
+    id: Mutex<Option<TransactionId>>,
 }
 
 impl OwnedFunctionTx {
@@ -685,7 +1183,7 @@ impl Drop for OwnedFunctionTx {
 }
 
 struct ActiveRunGuard {
-    runtime:      Arc<crate::functions::FunctionRuntimeState>,
+    runtime: Arc<crate::functions::FunctionRuntimeState>,
     execution_id: String,
 }
 
@@ -713,7 +1211,7 @@ fn owner_role(app: &AppContext, owner: &UserId) -> Result<Role, KalamDbError> {
 }
 
 fn is_sql_language(language: &str) -> bool {
-    language.eq_ignore_ascii_case("SQL")
+    language.eq_ignore_ascii_case("SQL") || language.eq_ignore_ascii_case("PLPGSQL")
 }
 
 pub(super) fn stage_topic_publish(
@@ -779,6 +1277,50 @@ pub(crate) fn drop_staged_publishes(app: &AppContext, transaction_id: &Transacti
     let _ = app.function_runtime().take(transaction_id);
 }
 
+fn procedure_out_value_to_execution_result(
+    value: &RoutineValue,
+    out_params: &[kalamdb_system::CatalogRoutineParameter],
+) -> Result<ExecutionResult, KalamDbError> {
+    let json = routine_value_as_json(value).unwrap_or(serde_json::Value::Null);
+    let parsed_json = match &json {
+        serde_json::Value::String(s) => {
+            serde_json::from_str::<serde_json::Value>(s).unwrap_or(json)
+        },
+        _ => json,
+    };
+    let mut fields = Vec::with_capacity(out_params.len());
+    let mut arrays = Vec::with_capacity(out_params.len());
+    for param in out_params {
+        let cell_json = match &parsed_json {
+            serde_json::Value::Object(map) => map.get(&param.name).cloned().unwrap_or_else(|| {
+                if out_params.len() == 1 {
+                    parsed_json.clone()
+                } else {
+                    serde_json::Value::Null
+                }
+            }),
+            other if out_params.len() == 1 => other.clone(),
+            _ => serde_json::Value::Null,
+        };
+        let rv =
+            super::convert::json_to_routine_value(&cell_json, param.builtin_data_type().as_ref())?;
+        let array = rv
+            .value
+            .to_array()
+            .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
+        fields.push(Field::new(param.name.clone(), array.data_type().clone(), !param.not_null));
+        arrays.push(array);
+    }
+    let schema = Arc::new(Schema::new(fields));
+    let batch = RecordBatch::try_new(schema, arrays)
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
+    Ok(ExecutionResult::Rows {
+        row_count: batch.num_rows(),
+        batches: vec![batch],
+        schema: None,
+    })
+}
+
 fn routine_value_to_execution_result(
     value: &RoutineValue,
 ) -> Result<ExecutionResult, KalamDbError> {
@@ -792,8 +1334,8 @@ fn routine_value_to_execution_result(
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
     Ok(ExecutionResult::Rows {
         row_count: batch.num_rows(),
-        batches:   vec![batch],
-        schema:    None,
+        batches: vec![batch],
+        schema: None,
     })
 }
 
@@ -801,62 +1343,23 @@ fn map_functions(error: FunctionsError) -> KalamDbError {
     error.into()
 }
 
-fn pack_named_call_input(
-    stores: &kalamdb_system::CatalogStores,
-    routine_id: &RoutineId,
-    args: &[RoutineValue],
-) -> Result<Vec<RoutineValue>, KalamDbError> {
-    let params = stores.list_parameters(routine_id).map_err(|error| {
-        KalamDbError::CatalogError(format!(
-            "failed to load parameters for procedure {routine_id}: {error}"
-        ))
-    })?;
-    if params.is_empty() {
-        return Ok(Vec::new());
+fn pack_named_call_input_from_resolved(
+    input_args: &[(kalamdb_system::CatalogRoutineParameter, RoutineValue)],
+) -> Vec<RoutineValue> {
+    if input_args.is_empty() {
+        return Vec::new();
     }
-    if args.len() == 1 && params.iter().all(|param| json_object_has_key(&args[0], &param.name)) {
-        return Ok(args.to_vec());
-    }
-    if params.len() != args.len() {
-        return Err(KalamDbError::from(FunctionsError::InvalidArguments(format!(
-            "procedure {routine_id} expected {} argument(s), got {}",
-            params.len(),
-            args.len()
-        ))));
-    }
-    if args.len() == 1 && json_object_has_key(&args[0], &params[0].name) {
-        return Ok(args.to_vec());
-    }
-    let mut object = serde_json::Map::with_capacity(params.len());
-    for (param, arg) in params.iter().zip(args.iter()) {
-        object
-            .insert(param.name.clone(), json_for_transfer(arg).unwrap_or(serde_json::Value::Null));
-    }
-    Ok(vec![RoutineValue::json(ScalarValue::Utf8(Some(
-        serde_json::Value::Object(object).to_string(),
-    )))])
-}
-
-fn json_object_has_key(arg: &RoutineValue, key: &str) -> bool {
-    match json_for_transfer(arg) {
-        Some(serde_json::Value::Object(map)) => map.contains_key(key),
-        Some(serde_json::Value::String(text)) => serde_json::from_str::<serde_json::Value>(&text)
-            .ok()
-            .and_then(|parsed| parsed.as_object().map(|map| map.contains_key(key)))
-            .unwrap_or(false),
-        _ => false,
-    }
-}
-
-fn json_for_transfer(arg: &RoutineValue) -> Option<serde_json::Value> {
-    routine_value_as_json(arg)
+    let fields: Vec<(String, RoutineValue)> = input_args
+        .iter()
+        .map(|(param, arg)| (param.name.clone(), arg.clone()))
+        .collect();
+    vec![RoutineValue::named_object(fields)]
 }
 
 #[cfg(test)]
 mod tests {
     use kalamdb_commons::{
-        conversions::arrow_json_conversion::scalar_value_to_js_json,
-        models::{NamespaceId, RoutineId, RoutineSecurityMode, UserId},
+        models::{RoutineId, RoutineSecurityMode, SchemaId, UserId},
         ArtifactId,
     };
     use kalamdb_functions::FunctionErrorCode;
@@ -865,23 +1368,30 @@ mod tests {
     use super::*;
 
     fn catalog_routine(language: &str, artifact: bool) -> CatalogRoutine {
-        let ns = NamespaceId::new("api");
+        let ns = SchemaId::new("api");
         CatalogRoutine {
-            routine_id:         RoutineId::from_parts(Some(&ns), "health"),
-            namespace_id:       ns,
-            name:               "health".to_string(),
-            owner:              UserId::new("root"),
-            security:           RoutineSecurityMode::Invoker,
-            language:           Some(language.to_string()),
-            body:               Some("return 1;".to_string()),
-            return_type_id:     None,
-            return_type_name:   None,
-            return_is_array:    false,
-            return_not_null:    false,
-            comment:            None,
-            return_data_type:   None,
+            routine_id: RoutineId::from_parts(Some(&ns), "health"),
+            namespace_id: ns,
+            name: "health".to_string(),
+            owner: UserId::new("root"),
+            security: RoutineSecurityMode::Invoker,
+            language: Some(language.to_string()),
+            body: Some("return 1;".to_string()),
+            return_type_id: None,
+            return_type_name: None,
+            return_is_array: false,
+            return_not_null: false,
+            comment: None,
+            return_data_type: None,
             inline_source_hash: Some("hash".to_string()),
             inline_artifact_id: artifact.then(|| ArtifactId::new("js")),
+            kind: kalamdb_commons::models::RoutineKind::default(),
+            volatility: kalamdb_commons::models::RoutineVolatility::default(),
+            null_safety: kalamdb_commons::models::RoutineNullSafety::default(),
+            parallel_safety: kalamdb_commons::models::RoutineParallelSafety::default(),
+            cost: None,
+            rows: None,
+            config_params: None,
         }
     }
 
@@ -903,53 +1413,30 @@ mod tests {
     }
 
     #[test]
-    fn json_object_has_key_detects_named_input() {
-        let named =
-            RoutineValue::json(ScalarValue::Utf8(Some(r#"{"room_id":"main"}"#.to_string())));
-        assert!(json_object_has_key(&named, "room_id"));
-        assert!(!json_object_has_key(&named, "payload"));
-        assert!(!json_object_has_key(
-            &RoutineValue::new(ScalarValue::Utf8(Some("main".into()))),
-            "room_id",
-        ));
-        let payload = RoutineValue::json(ScalarValue::Utf8(Some(
-            r#"{"role":"user","content":"hi"}"#.to_string(),
-        )));
-        assert!(!json_object_has_key(&payload, "payload"));
+    fn named_object_carries_typed_fields_without_json_packing() {
+        let named = RoutineValue::named_object(vec![(
+            "room_id".to_string(),
+            RoutineValue::new(ScalarValue::Utf8(Some("main".to_string()))),
+        )]);
+        assert!(!named.json_sql);
+        let fields = named.named_fields.as_ref().expect("named fields");
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].0, "room_id");
+        assert_eq!(fields[0].1.value, ScalarValue::Utf8(Some("main".to_string())));
     }
 
     #[test]
-    fn json_sql_named_input_reaches_v8_as_an_object() {
-        let named = RoutineValue::json(ScalarValue::Utf8(Some(r#"{"msg":"hello"}"#.into())));
-        let decoded = json_for_transfer(&named).expect("json_sql named input");
-        assert_eq!(decoded["msg"], "hello");
-        assert!(decoded.is_object(), "V8 must receive an object so input.msg works: {decoded}");
-    }
-
-    #[test]
-    fn named_pack_of_json_sql_keeps_nested_payload_object() {
+    fn named_object_with_nested_json_sql_preserves_json_flag() {
         let payload = RoutineValue::json(ScalarValue::Utf8(Some(
             r#"{"role":"user","content":"hi","_table":"chat_demo:messages"}"#.into(),
         )));
-        let scalar_json = scalar_value_to_js_json(&payload.value).expect("utf8 scalar json").0;
-        assert!(
-            scalar_json.is_string(),
-            "Utf8 json_sql must not be packed with scalar_value_to_js_json: {scalar_json}"
-        );
-
-        let mut object = serde_json::Map::new();
-        object.insert(
-            "payload".into(),
-            json_for_transfer(&payload).expect("json_sql payload should parse"),
-        );
-        let packed = RoutineValue::json(ScalarValue::Utf8(Some(
-            serde_json::Value::Object(object).to_string(),
-        )));
-        let decoded = json_for_transfer(&packed).expect("named trigger input");
-        assert!(
-            decoded["payload"].is_object(),
-            "V8 must receive input.payload as an object so payload.role works: {decoded}"
-        );
+        let packed = RoutineValue::named_object(vec![("payload".to_string(), payload)]);
+        let fields = packed.named_fields.as_ref().expect("named fields");
+        assert_eq!(fields[0].0, "payload");
+        assert!(fields[0].1.json_sql);
+        let decoded = crate::functions::convert::routine_value_as_json(&packed)
+            .expect("routine_value_as_json");
+        assert!(decoded["payload"].is_object());
         assert_eq!(decoded["payload"]["role"], "user");
         assert_eq!(decoded["payload"]["content"], "hi");
     }

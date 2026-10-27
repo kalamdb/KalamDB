@@ -1,0 +1,61 @@
+{
+  "manifest_version": 1,
+  "feature": "038-unified-sdk-contracts",
+  "epoch": 1,
+  "baseline_commit": "e3d6f419268b273f81ba75ca0a4ab3b33880e1f4",
+  "toolchain": {
+    "rustc": "1.99.1 (58cf8f9c3 2026-10-13)",
+    "cargo": "1.99.1 (5f94df478 2026-08-27)",
+    "arch": "aarch64-apple-darwin"
+  },
+  "candidates": [
+    "kalam-packed",
+    "postcard",
+    "prost"
+  ],
+  "promotion_thresholds": {
+    "cpu_per_op_reduction_min_pct": 15.0,
+    "allocated_bytes_per_op_reduction_min_pct": 20.0,
+    "retained_memory_reduction_min_pct": 10.0,
+    "throughput_at_slo_increase_min_pct": 15.0,
+    "tail_latency_p99_regression_max_pct": 5.0,
+    "process_rss_regression_max_pct": 5.0
+  },
+  "workloads": [
+    {
+      "id": "W1-rpc-scalars",
+      "category": "rpc",
+      "weight": 0.2,
+      "slo_p99_ms": 2.0,
+      "description": "Zero-argument, 3 scalar parameters, INT64, NUMERIC(38,10), TIMESTAMPTZ, UUID, and raw bytes"
+    },
+    {
+      "id": "W2-rpc-nested-composite",
+      "category": "rpc",
+      "weight": 0.2,
+      "slo_p99_ms": 5.0,
+      "description": "Nested composite types, enums, domains, and arrays with full validation and model materialization"
+    },
+    {
+      "id": "W3-ws-live-microbatch",
+      "category": "ws",
+      "weight": 0.2,
+      "slo_p99_ms": 10.0,
+      "description": "Live insert/partial-patch/delete events, 1k/10k snapshot batches, and authorized fanout"
+    },
+    {
+      "id": "W4-storage-row-batch",
+      "category": "storage",
+      "weight": 0.25,
+      "slo_p99_ms": 15.0,
+      "description": "Point read/write, multi-key WriteBatch, coexisting schema revisions, and direct Arrow batch decode"
+    },
+    {
+      "id": "W5-adversarial-bounds",
+      "category": "security",
+      "weight": 0.15,
+      "slo_p99_ms": 1.0,
+      "description": "Truncated frames, u32::MAX list length with 4-byte body, deep nesting, skipped ordinals, null-heavy lists, and decompression bomb rejection"
+    }
+  ]
+}

@@ -38,7 +38,7 @@ impl std::error::Error for TypeGraphError {}
 /// One catalog type's named-type children and live field count.
 #[derive(Debug, Clone, Default)]
 pub struct TypeGraphNode {
-    pub children:    Vec<TypeId>,
+    pub children: Vec<TypeId>,
     pub field_count: usize,
 }
 
@@ -123,10 +123,10 @@ pub fn assert_finite_type_graph_with_limits(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::NamespaceId;
+    use crate::models::SchemaId;
 
     fn id(name: &str) -> TypeId {
-        TypeId::from_parts(Some(&NamespaceId::new("chat")), name)
+        TypeId::from_parts(Some(&SchemaId::new("chat")), name)
     }
 
     #[test]
@@ -136,7 +136,7 @@ mod tests {
         nodes.insert(
             a.clone(),
             TypeGraphNode {
-                children:    vec![a.clone()],
+                children: vec![a.clone()],
                 field_count: 1,
             },
         );
@@ -151,14 +151,14 @@ mod tests {
         nodes.insert(
             a.clone(),
             TypeGraphNode {
-                children:    vec![b.clone()],
+                children: vec![b.clone()],
                 field_count: 1,
             },
         );
         nodes.insert(
             b.clone(),
             TypeGraphNode {
-                children:    vec![a.clone()],
+                children: vec![a.clone()],
                 field_count: 1,
             },
         );
@@ -173,14 +173,14 @@ mod tests {
         nodes.insert(
             user.clone(),
             TypeGraphNode {
-                children:    vec![address.clone(), address.clone()],
+                children: vec![address.clone(), address.clone()],
                 field_count: 2,
             },
         );
         nodes.insert(
             address,
             TypeGraphNode {
-                children:    vec![],
+                children: vec![],
                 field_count: 2,
             },
         );
@@ -195,14 +195,14 @@ mod tests {
         nodes.insert(
             a.clone(),
             TypeGraphNode {
-                children:    vec![b.clone()],
+                children: vec![b.clone()],
                 field_count: 1,
             },
         );
         nodes.insert(
             b,
             TypeGraphNode {
-                children:    vec![],
+                children: vec![],
                 field_count: 1,
             },
         );

@@ -30,18 +30,20 @@ pub(crate) fn epoch_millis() -> u64 {
 /// Maximum live-query subscriptions allowed on a single WebSocket connection.
 pub const MAX_SUBSCRIPTIONS_PER_CONNECTION: usize = 100;
 
-/// Maximum pending notifications per connection before dropping new ones.
-/// This must cover one full table fanout for a saturated shared WebSocket.
-/// The benchmark and backend contract allow 100 subscriptions per connection;
-/// 128 keeps a small cushion while staying tight for idle-connection memory.
-pub const NOTIFICATION_CHANNEL_CAPACITY: usize = 128;
+/// Maximum pending notifications per connection before a subscriber must resume.
+///
+/// One connection may fan out to 100 subscriptions, and a single live query can
+/// also burst. The replay log holds a larger window than this buffer, so a full
+/// channel resumes from the last cursor instead of scanning the table again.
+/// Idle connections do not allocate the slots.
+pub const NOTIFICATION_CHANNEL_CAPACITY: usize = 8_192;
 
 /// Maximum pending control events per connection.
 ///
-/// Auth timeout, heartbeat timeout, shutdown, and a subscription lapse each
-/// need a slot. A full data channel must still be able to report that the
-/// client has to resubscribe.
-pub const EVENT_CHANNEL_CAPACITY: usize = 8;
+/// Auth timeout, heartbeat timeout, shutdown, and per-subscription lapse events
+/// each need a slot so a full data channel can notify every subscription on the
+/// connection to resubscribe without dropping control events.
+pub const EVENT_CHANNEL_CAPACITY: usize = MAX_SUBSCRIPTIONS_PER_CONNECTION + 8;
 
 /// Maximum buffered notifications per subscription while initial snapshot loading is in progress.
 ///
@@ -88,20 +90,20 @@ pub enum ConnectionEvent {
 #[derive(Debug, Clone)]
 pub struct SubscriptionHandle {
     /// Stable subscription identifier shared across all notifications for this subscriber.
-    pub subscription_id:  Arc<str>,
+    pub subscription_id: Arc<str>,
     /// Shared compiled filter expression (Arc for zero-copy across indices)
-    pub filter_expr:      Option<Arc<RowFilter>>,
+    pub filter_expr: Option<Arc<RowFilter>>,
     /// Shared-table RLS evaluator bound to this subscription's principal.
-    pub authorization:    Option<Arc<dyn crate::traits::LiveAuthorization>>,
+    pub authorization: Option<Arc<dyn crate::traits::LiveAuthorization>>,
     /// Column projections for filtering notification payload (None = all columns)
-    pub projections:      Option<Arc<Vec<String>>>,
+    pub projections: Option<Arc<Vec<String>>>,
     /// Shared notification channel
-    pub notification_tx:  NotificationSender,
+    pub notification_tx: NotificationSender,
     /// Control channel used to report a delivery gap for this subscription.
-    pub event_tx:         EventSender,
+    pub event_tx: EventSender,
     /// Flow control for initial load buffering and snapshot gating.
     /// None means the subscription was created without initial data.
-    pub flow_control:     Option<Arc<SubscriptionFlowControl>>,
+    pub flow_control: Option<Arc<SubscriptionFlowControl>>,
     /// Runtime metadata shared with the full subscription state.
     pub runtime_metadata: Arc<SubscriptionRuntimeMetadata>,
 }
@@ -109,11 +111,11 @@ pub struct SubscriptionHandle {
 /// In-memory metadata tracked for active subscriptions only.
 #[derive(Debug)]
 pub struct SubscriptionRuntimeMetadata {
-    query:           Arc<str>,
-    options_json:    Option<Arc<str>>,
-    created_at_ms:   i64,
-    last_update_ms:  AtomicI64,
-    changes:         AtomicI64,
+    query: Arc<str>,
+    options_json: Option<Arc<str>>,
+    created_at_ms: i64,
+    last_update_ms: AtomicI64,
+    changes: AtomicI64,
     delivery_gapped: AtomicBool,
 }
 
@@ -182,7 +184,7 @@ impl SubscriptionRuntimeMetadata {
 /// One change held until the snapshot has been handed to the client.
 #[derive(Debug, Clone)]
 pub struct BufferedNotification {
-    pub seq:          Option<VersionId>,
+    pub seq: Option<VersionId>,
     pub notification: Arc<WireNotification>,
 }
 
@@ -208,7 +210,7 @@ const PHASE_FAILED: u8 = 2;
 #[derive(Debug)]
 struct Gate {
     snapshot_end: Option<i64>,
-    pending:      VecDeque<BufferedNotification>,
+    pending: VecDeque<BufferedNotification>,
 }
 
 /// Catch-up buffer for one subscription.
@@ -219,16 +221,16 @@ struct Gate {
 #[derive(Debug)]
 pub struct SubscriptionFlowControl {
     phase: AtomicU8,
-    gate:  Mutex<Gate>,
+    gate: Mutex<Gate>,
 }
 
 impl SubscriptionFlowControl {
     pub fn new() -> Self {
         Self {
             phase: AtomicU8::new(PHASE_CATCHUP),
-            gate:  Mutex::new(Gate {
+            gate: Mutex::new(Gate {
                 snapshot_end: None,
-                pending:      VecDeque::new(),
+                pending: VecDeque::new(),
             }),
         }
     }
@@ -376,16 +378,16 @@ fn take_pending(pending: &mut VecDeque<BufferedNotification>) -> Vec<BufferedNot
 #[derive(Debug, Clone)]
 pub struct InitialLoadState {
     /// Batch size for initial data loading
-    pub batch_size:              usize,
+    pub batch_size: usize,
     /// Snapshot boundary VersionId for consistent batch loading
-    pub snapshot_end_seq:        Option<VersionId>,
+    pub snapshot_end_seq: Option<VersionId>,
     /// Deterministic snapshot boundary for reconnects across followers
     pub snapshot_end_commit_seq: Option<u64>,
     /// Current batch number for pagination tracking (0-indexed)
     /// Incremented after each batch is sent
-    pub current_batch_num:       u32,
+    pub current_batch_num: u32,
     /// Flow control for initial load buffering and snapshot gating
-    pub flow_control:            Arc<SubscriptionFlowControl>,
+    pub flow_control: Arc<SubscriptionFlowControl>,
 }
 
 /// Subscription state - stored only in ConnectionState.subscriptions
@@ -399,19 +401,19 @@ pub struct InitialLoadState {
 /// snapshot/batch state only when the subscription actually requests it.
 #[derive(Debug, Clone)]
 pub struct SubscriptionState {
-    pub live_id:          LiveQueryId,
-    pub table_id:         TableId,
+    pub live_id: LiveQueryId,
+    pub table_id: TableId,
     /// Compiled filter expression from WHERE clause (parsed once at subscription time)
     /// None means no filter (SELECT * without WHERE)
     /// Arc-wrapped for sharing with SubscriptionHandle
-    pub filter_expr:      Option<Arc<RowFilter>>,
+    pub filter_expr: Option<Arc<RowFilter>>,
     /// Column projections from SELECT clause (None = SELECT *, i.e., all columns)
     /// Arc-wrapped for sharing with SubscriptionHandle
-    pub projections:      Option<Arc<Vec<String>>>,
+    pub projections: Option<Arc<Vec<String>>>,
     /// Optional initial-load state. None means the subscription streams live changes only.
-    pub initial_load:     Option<InitialLoadState>,
+    pub initial_load: Option<InitialLoadState>,
     /// Whether this subscription is for a shared table (affects index cleanup)
-    pub is_shared:        bool,
+    pub is_shared: bool,
     /// Runtime metadata exposed by the in-memory live views.
     pub runtime_metadata: Arc<SubscriptionRuntimeMetadata>,
 }
@@ -429,14 +431,14 @@ pub struct SubscriptionState {
 pub struct ConnectionState {
     // === Identity (immutable) ===
     connection_id: ConnectionId,
-    client_ip:     ConnectionInfo,
-    connected_at:  Instant,
+    client_ip: ConnectionInfo,
+    connected_at: Instant,
 
     // === Authentication (set-once) ===
     is_authenticated: AtomicBool,
-    auth_started:     AtomicBool,
-    user_id:          OnceLock<UserId>,
-    user_role:        OnceLock<Role>,
+    auth_started: AtomicBool,
+    user_id: OnceLock<UserId>,
+    user_role: OnceLock<Role>,
 
     // === Protocol negotiation (set-once at auth time) ===
     protocol: OnceLock<ProtocolOptions>,
@@ -449,7 +451,7 @@ pub struct ConnectionState {
 
     // === Channels (immutable after construction) ===
     pub notification_tx: NotificationSender,
-    pub event_tx:        EventSender,
+    pub event_tx: EventSender,
 }
 
 impl ConnectionState {
@@ -765,10 +767,10 @@ fn shrink_subscription_map(subscriptions: &mut HashMap<Arc<str>, SubscriptionSta
 
 /// Registration info returned when a connection is registered
 pub struct ConnectionRegistration {
-    pub connection_id:   ConnectionId,
-    pub state:           SharedConnectionState,
+    pub connection_id: ConnectionId,
+    pub state: SharedConnectionState,
     pub notification_rx: NotificationReceiver,
-    pub event_rx:        EventReceiver,
+    pub event_rx: EventReceiver,
 }
 
 #[cfg(test)]
@@ -780,11 +782,7 @@ mod tests {
     fn make_notification(subscription_id: &str) -> Arc<WireNotification> {
         Arc::new(WireNotification {
             subscription_id: Arc::from(subscription_id),
-            payload:         Arc::new(SharedChangePayload::new(
-                ChangeType::Insert,
-                Some(Vec::new()),
-                None,
-            )),
+            payload: Arc::new(SharedChangePayload::new(ChangeType::Insert, Some(Vec::new()), None)),
         })
     }
 

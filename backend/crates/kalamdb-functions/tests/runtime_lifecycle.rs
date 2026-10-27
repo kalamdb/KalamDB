@@ -17,9 +17,9 @@ use tokio_util::sync::CancellationToken;
 
 struct Host {
     principal: String,
-    revision:  Arc<ModuleRevision>,
-    scope:     InvocationScope,
-    dropped:   Arc<AtomicBool>,
+    revision: Arc<ModuleRevision>,
+    scope: InvocationScope,
+    dropped: Arc<AtomicBool>,
 }
 struct PendingDrop(Arc<AtomicBool>);
 impl Drop for PendingDrop {
@@ -46,6 +46,25 @@ impl FunctionHost for Host {
                 let name = std::thread::current().name().unwrap().to_owned();
                 tokio::time::sleep(Duration::from_millis(30)).await;
                 return Ok(RoutineValue::new(ScalarValue::Utf8(Some(name))));
+            }
+            if sql == "rows" {
+                use arrow::{
+                    array::{Int64Array, RecordBatch, StringArray},
+                    datatypes::{DataType, Field, Schema},
+                };
+                let schema = Arc::new(Schema::new(vec![
+                    Field::new("id", DataType::Int64, false),
+                    Field::new("label", DataType::Utf8, false),
+                ]));
+                let batch = RecordBatch::try_new(
+                    schema,
+                    vec![
+                        Arc::new(Int64Array::from(vec![101, 202])),
+                        Arc::new(StringArray::from(vec!["first", "second"])),
+                    ],
+                )
+                .unwrap();
+                return Ok(RoutineValue::from_row_batches(vec![batch]));
             }
             self.sql(&sql, &[])
         })
@@ -95,14 +114,14 @@ fn request(source: &str, timeout: Duration) -> (Invocation, Arc<Host>) {
     let revision = Arc::new(ModuleRevision::typescript_fixture(source));
     let scope = InvocationScope {
         deadline: Instant::now() + timeout,
-        cancel:   CancellationToken::new(),
-        depth:    0,
+        cancel: CancellationToken::new(),
+        depth: 0,
     };
     let host = Arc::new(Host {
         principal: "root".into(),
-        revision:  Arc::clone(&revision),
-        scope:     scope.clone(),
-        dropped:   Arc::new(AtomicBool::new(false)),
+        revision: Arc::clone(&revision),
+        scope: scope.clone(),
+        dropped: Arc::new(AtomicBool::new(false)),
     });
     (
         Invocation {
@@ -238,10 +257,10 @@ async fn runtime_memory_cpu_soak() {
                   __kalamCtx.db.query('principal'); }";
     let (base, host) = request(source, Duration::from_secs(120));
     let next = || Invocation {
-        routine_id:      base.routine_id.clone(),
-        revision:        base.revision.clone(),
-        args:            vec![],
-        scope:           base.scope.clone(),
+        routine_id: base.routine_id.clone(),
+        revision: base.revision.clone(),
+        args: vec![],
+        scope: base.scope.clone(),
         return_template: None,
     };
     let start = Instant::now();
@@ -337,4 +356,31 @@ fn synchronous_rejection_releases_pending_host_references() {
         .invoke_with_host(&invocation.routine_id, &[], &invocation.scope.cancel, Some(host.clone()))
         .is_err());
     assert_eq!(Arc::strong_count(&host), 1);
+}
+
+#[tokio::test]
+#[ntest::timeout(1500)]
+async fn query_view_and_query_batches_project_and_forward_to_nested_call() {
+    let engine = FunctionEngine::new(EngineConfig::default()).unwrap();
+    let (invocation, host) = request(
+        r#"
+async function kalamInvoke(name, args) {
+    const ctx = __kalamCtx;
+    if (name === 'inspect_row') {
+        const row = args[0];
+        return `${row.id}:${row.label}`;
+    }
+    const view = await ctx.db.queryView('rows');
+    const forwarded = await ctx.functions.call('inspect_row', [view.at(1)]);
+    let batchTotal = 0;
+    for await (const batch of ctx.db.queryBatches('rows')) {
+        batchTotal += batch.length;
+    }
+    return `${view.length}:${forwarded}:${batchTotal}`;
+}
+"#,
+        Duration::from_secs(2),
+    );
+    let result = engine.invoke(invocation, host).await.unwrap();
+    assert_eq!(result.value, ScalarValue::Utf8(Some("2:202:second:2".to_string())));
 }

@@ -91,7 +91,9 @@ default = []
 mimalloc = ["dep:mimalloc", "kalamdb-core/mimalloc", "kalamdb-observability/mimalloc"]
 embedded-ui = ["kalamdb-api/embedded-ui"]
 traceability = [
+    "kalamdb-api/traceability",
     "kalamdb-core/traceability",
+    "kalamdb-functions/traceability",
     "kalamdb-observability/traceability",
     "kalamdb-postgres-wire/traceability",
 ]

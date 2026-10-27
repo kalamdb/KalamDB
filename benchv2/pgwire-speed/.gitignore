@@ -1,0 +1,7 @@
+target/
+sql/
+results/
+logs/
+setups/kalamdb/data/
+setups/kalamdb/logs/
+setups/postgres/

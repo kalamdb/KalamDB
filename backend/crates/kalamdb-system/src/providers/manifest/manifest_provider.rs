@@ -28,16 +28,16 @@ use crate::{
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ManifestStorageRow {
-    cache_key:      String,
-    namespace_id:   String,
-    table_name:     String,
-    scope:          String,
-    etag:           Option<String>,
+    cache_key: String,
+    namespace_id: String,
+    table_name: String,
+    scope: String,
+    etag: Option<String>,
     last_refreshed: i64,
-    last_accessed:  i64,
-    in_memory:      bool,
-    sync_state:     String,
-    manifest_json:  Value,
+    last_accessed: i64,
+    in_memory: bool,
+    sync_state: String,
+    manifest_json: Value,
 }
 
 /// Callback type for checking if a cache key is in process memory.
@@ -45,7 +45,7 @@ pub type InMemoryChecker = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 /// System.manifest table provider using IndexedEntityStore architecture
 pub struct ManifestTableProvider {
-    store:             IndexedEntityStore<ManifestId, SystemTableRow>,
+    store: IndexedEntityStore<ManifestId, SystemTableRow>,
     /// Optional callback to check if a cache key is in process memory (injected from kalamdb-core)
     in_memory_checker: RwLock<Option<InMemoryChecker>>,
 }
@@ -58,7 +58,7 @@ impl Clone for ManifestTableProvider {
         };
 
         Self {
-            store:             self.store.clone(),
+            store: self.store.clone(),
             in_memory_checker: RwLock::new(in_memory_checker),
         }
     }
@@ -425,7 +425,7 @@ crate::impl_simple_system_table_provider!(
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::{datatypes::KalamDataType, NamespaceId, TableId, TableName};
+    use kalamdb_commons::{datatypes::KalamDataType, SchemaId, TableId, TableName};
     use kalamdb_store::{entity_store::EntityStore, test_utils::InMemoryBackend};
 
     use super::*;
@@ -440,7 +440,7 @@ mod tests {
             .find(|column| column.column_name == "manifest_json")
             .expect("manifest_json column exists");
 
-        assert_eq!(manifest_json.data_type, KalamDataType::Json);
+        assert_eq!(manifest_json.data_type(), KalamDataType::Json);
     }
 
     #[tokio::test]
@@ -459,7 +459,7 @@ mod tests {
         let provider = ManifestTableProvider::new(backend.clone());
 
         // Insert test entries directly via store
-        let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("tbl1"));
+        let table_id = TableId::new(SchemaId::new("ns1"), TableName::new("tbl1"));
         let manifest = Manifest::new(table_id, None);
         let entry =
             ManifestCacheEntry::new(manifest, Some("etag123".to_string()), 1000, SyncState::InSync);

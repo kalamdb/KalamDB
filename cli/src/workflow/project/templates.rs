@@ -217,15 +217,15 @@ fn pairs_context(
 }
 
 pub struct KalamTomlScaffoldInput<'a> {
-    pub project_name:        &'a str,
-    pub namespace:           &'a str,
-    pub server_url:          &'a str,
-    pub schema_mode:         &'a str,
-    pub schema_path:         &'a str,
-    pub languages:           &'a [String],
-    pub auto_start_db:       bool,
-    pub package_manager:     Option<&'a str>,
-    pub server_version:      &'a str,
+    pub project_name: &'a str,
+    pub namespace: &'a str,
+    pub server_url: &'a str,
+    pub schema_mode: &'a str,
+    pub schema_path: &'a str,
+    pub languages: &'a [String],
+    pub auto_start_db: bool,
+    pub package_manager: Option<&'a str>,
+    pub server_version: &'a str,
     pub dev_process_command: &'a str,
 }
 

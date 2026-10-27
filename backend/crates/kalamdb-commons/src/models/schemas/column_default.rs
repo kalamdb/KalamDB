@@ -3,7 +3,15 @@
 use serde::{de::Error as DeError, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value as JsonValue;
 
-use crate::models::{CallArgument, RoutineCall, RoutineId};
+use crate::models::{BuiltinDefault, CallArgument, RoutineCall, RoutineId};
+
+/// Sequence name Directus and `SETVAL` share for a `serial_id` column.
+///
+/// The string is a label, not a catalog relation. `pg_get_serial_sequence` returns it and
+/// `SETVAL` looks it up.
+pub fn serial_sequence_name(namespace: &str, table: &str, column: &str) -> String {
+    format!("{namespace}.{table}_{column}_seq")
+}
 
 /// Represents the default value for a column.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -55,7 +63,7 @@ enum ColumnDefaultRepr {
     Literal(JsonValue),
     FunctionCall {
         routine_id: RoutineId,
-        arguments:  Vec<CallArgument>,
+        arguments: Vec<CallArgument>,
     },
 }
 
@@ -66,7 +74,7 @@ impl From<&ColumnDefault> for ColumnDefaultRepr {
             ColumnDefault::Literal(json) => ColumnDefaultRepr::Literal(json.clone()),
             ColumnDefault::FunctionCall(call) => ColumnDefaultRepr::FunctionCall {
                 routine_id: call.routine_id.clone(),
-                arguments:  call.arguments.clone(),
+                arguments: call.arguments.clone(),
             },
         }
     }
@@ -91,7 +99,7 @@ enum StoredColumnDefault {
     Literal(String),
     FunctionCall {
         routine_id: RoutineId,
-        arguments:  Vec<CallArgument>,
+        arguments: Vec<CallArgument>,
     },
 }
 
@@ -102,7 +110,7 @@ impl From<&ColumnDefault> for StoredColumnDefault {
             ColumnDefault::Literal(json) => StoredColumnDefault::Literal(json.to_string()),
             ColumnDefault::FunctionCall(call) => StoredColumnDefault::FunctionCall {
                 routine_id: call.routine_id.clone(),
-                arguments:  call.arguments.clone(),
+                arguments: call.arguments.clone(),
             },
         }
     }
@@ -161,6 +169,37 @@ impl ColumnDefault {
         }
     }
 
+    /// True for an argument-free `serial_id` default.
+    ///
+    /// `bigserial` stays `snowflake_id` and is not a sequence.
+    pub fn is_serial_sequence(&self) -> bool {
+        self.as_routine_call().is_some_and(|call| {
+            call.arguments.is_empty() && call.builtin_default() == Some(BuiltinDefault::SerialId)
+        })
+    }
+
+    /// Catalog text for `information_schema.columns.column_default`.
+    ///
+    /// A `serial_id` default is shown as `nextval(...)` so PostgreSQL schema inspectors treat the
+    /// column as `AUTO_INCREMENT` and reset it with `SETVAL` after an explicit key.
+    pub fn postgres_display_sql(
+        &self,
+        namespace: &str,
+        table: &str,
+        column: &str,
+    ) -> Option<String> {
+        if self.is_serial_sequence() {
+            let sequence = serial_sequence_name(namespace, table, column).replace('\'', "''");
+            return Some(format!("nextval('{sequence}'::regclass)"));
+        }
+        let sql = self.to_sql();
+        if sql.is_empty() {
+            None
+        } else {
+            Some(sql)
+        }
+    }
+
     pub fn to_sql(&self) -> String {
         match self {
             ColumnDefault::None => "".to_string(),
@@ -210,6 +249,18 @@ mod tests {
     }
 
     #[test]
+    fn serial_id_displays_as_nextval_and_snowflake_does_not() {
+        let serial = ColumnDefault::function("serial_id", vec![]);
+        assert_eq!(
+            serial.postgres_display_sql("directus", "articles", "id").as_deref(),
+            Some("nextval('directus.articles_id_seq'::regclass)")
+        );
+        let snowflake = ColumnDefault::function("snowflake_id", vec![]);
+        let displayed = snowflake.postgres_display_sql("directus", "articles", "id").unwrap();
+        assert!(!displayed.starts_with("nextval("));
+    }
+
+    #[test]
     fn test_function_call_defaults() {
         let default = ColumnDefault::function("NOW", vec![]);
         assert_eq!(default.to_sql(), "NOW()");
@@ -233,7 +284,7 @@ mod tests {
             ColumnDefault::literal(json!(42)),
             ColumnDefault::function("NOW", vec![]),
             ColumnDefault::procedure(
-                RoutineId::from_parts(Some(&crate::models::NamespaceId::new("app")), "gen_id"),
+                RoutineId::from_parts(Some(&crate::models::SchemaId::new("app")), "gen_id"),
                 vec![CallArgument::bigint(1)],
             ),
         ];

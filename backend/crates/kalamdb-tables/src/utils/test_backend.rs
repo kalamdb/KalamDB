@@ -13,26 +13,26 @@ use kalamdb_store::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScanArgs {
-    pub prefix:    Option<Vec<u8>>,
+    pub prefix: Option<Vec<u8>>,
     pub start_key: Option<Vec<u8>>,
-    pub limit:     Option<usize>,
+    pub limit: Option<usize>,
     pub partition: String,
 }
 
 /// StorageBackend wrapper that records the last scan call.
 pub struct RecordingBackend {
-    inner:       InMemoryBackend,
-    last_scan:   Mutex<Option<ScanArgs>>,
-    scan_calls:  AtomicUsize,
+    inner: InMemoryBackend,
+    last_scan: Mutex<Option<ScanArgs>>,
+    scan_calls: AtomicUsize,
     batch_calls: AtomicUsize,
 }
 
 impl RecordingBackend {
     pub fn new() -> Self {
         Self {
-            inner:       InMemoryBackend::new(),
-            last_scan:   Mutex::new(None),
-            scan_calls:  AtomicUsize::new(0),
+            inner: InMemoryBackend::new(),
+            last_scan: Mutex::new(None),
+            scan_calls: AtomicUsize::new(0),
             batch_calls: AtomicUsize::new(0),
         }
     }

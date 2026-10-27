@@ -20,9 +20,9 @@ use crate::error::{CLIError, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcedureBinding {
-    pub routine_id:  String,
-    pub schema:      String,
-    pub name:        String,
+    pub routine_id: String,
+    pub schema: String,
+    pub name: String,
     pub export_name: String,
     pub source_path: PathBuf,
     pub implemented: bool,
@@ -30,7 +30,7 @@ pub struct ProcedureBinding {
 
 #[derive(Debug, Default)]
 struct ProcedureImports {
-    aliases:    HashSet<String>,
+    aliases: HashSet<String>,
     namespaces: HashSet<String>,
 }
 
@@ -254,8 +254,8 @@ enum InitKind {
     Ignore,
     Malformed,
     Binding {
-        namespace:   String,
-        method:      String,
+        namespace: String,
+        method: String,
         implemented: bool,
     },
 }
@@ -359,16 +359,12 @@ mod tests {
             snapshot.routines.insert(
                 routine_id.clone(),
                 ContractRoutine {
-                    routine_id:  RoutineId::new(&routine_id),
-                    schema:      (*schema).into(),
-                    name:        (*name).into(),
-                    parameters:  Vec::new(),
-                    return_type: None,
-                    language:    None,
-                    security:    kalamdb_commons::RoutineSecurityMode::Invoker,
-                    body:        None,
-                    grants:      Default::default(),
-                    comment:     None,
+                    routine_id: RoutineId::new(&routine_id),
+                    schema: (*schema).into(),
+                    name: (*name).into(),
+                    kind: kalamdb_commons::models::RoutineKind::Procedure,
+                    security: kalamdb_commons::RoutineSecurityMode::Invoker,
+                    ..Default::default()
                 },
             );
         }

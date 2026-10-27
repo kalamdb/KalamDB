@@ -147,7 +147,7 @@ async function runTests() {
   console.log('\n📋 Test 2: Setup Test Tables');
   try {
     // Create namespace
-    const nsResult = await executeSQL(`CREATE NAMESPACE IF NOT EXISTS ${TEST_NAMESPACE}`);
+    const nsResult = await executeSQL(`CREATE SCHEMA IF NOT EXISTS ${TEST_NAMESPACE}`);
     pass(`Namespace ${TEST_NAMESPACE} created`);
     
     // Create todos table
@@ -439,7 +439,7 @@ async function runTests() {
   try {
     await executeSQL(`DROP TABLE IF EXISTS ${TODOS_TABLE}`);
     await executeSQL(`DROP TABLE IF EXISTS ${EVENTS_TABLE}`);
-    await executeSQL(`DROP NAMESPACE IF EXISTS ${TEST_NAMESPACE}`);
+    await executeSQL(`DROP SCHEMA IF EXISTS ${TEST_NAMESPACE}`);
     pass('Test tables and namespace cleaned up');
   } catch (error) {
     log(`  ⚠️  Cleanup warning: ${getErrorMessage(error)}`);

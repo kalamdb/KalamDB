@@ -8,15 +8,15 @@ use crate::TableId;
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct TablePolicy {
-    pub policy_id:         PolicyId,
-    pub table_id:          TableId,
-    pub policy_name:       String,
-    pub command:           PolicyCommand,
-    pub targets:           Vec<PolicyTarget>,
-    pub using_sql:         Option<String>,
-    pub with_check_sql:    Option<String>,
-    pub using_program:     Option<PolicyProgram>,
-    pub check_program:     Option<PolicyProgram>,
+    pub policy_id: PolicyId,
+    pub table_id: TableId,
+    pub policy_name: String,
+    pub command: PolicyCommand,
+    pub targets: Vec<PolicyTarget>,
+    pub using_sql: Option<String>,
+    pub with_check_sql: Option<String>,
+    pub using_program: Option<PolicyProgram>,
+    pub check_program: Option<PolicyProgram>,
     pub policy_generation: u64,
     pub schema_generation: u64,
 }

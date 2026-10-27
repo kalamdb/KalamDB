@@ -1,8 +1,8 @@
 -- Mix additional supported dialect statements with DML lifecycle.
 
-DROP NAMESPACE IF EXISTS sql_file_case_19 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_19 CASCADE;
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_19;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_19;
 USE sql_file_case_19;
 
 DROP TABLE IF EXISTS case19_metrics;
@@ -29,4 +29,4 @@ DELETE FROM case19_metrics WHERE id = 1902;
 INSERT INTO case19_metrics (id, metric_name, metric_value, is_valid)
 VALUES (1902, 'mem-reinsert', 0.71, true);
 
-DROP NAMESPACE IF EXISTS sql_file_case_19 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_19 CASCADE;

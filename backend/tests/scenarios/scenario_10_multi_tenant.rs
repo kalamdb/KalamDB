@@ -25,13 +25,13 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
     let tenant_b = unique_ns("tenant_b");
     let global = unique_ns("global");
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", tenant_a)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", tenant_a)).await?;
     assert_success(&resp, "CREATE tenant_a namespace");
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", tenant_b)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", tenant_b)).await?;
     assert_success(&resp, "CREATE tenant_b namespace");
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", global)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", global)).await?;
     assert_success(&resp, "CREATE global namespace");
 
     // =========================================================
@@ -273,9 +273,9 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
     }
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", tenant_a)).await;
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", tenant_b)).await;
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", global)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", tenant_a)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", tenant_b)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", global)).await;
     Ok(())
 }
 
@@ -287,10 +287,10 @@ async fn test_scenario_10_subscription_namespace_isolation() -> anyhow::Result<(
     let ns_b = unique_ns("sub_ns_b");
 
     // Create namespaces and tables
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns_a)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns_a)).await?;
     assert_success(&resp, "CREATE namespace A");
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns_b)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns_b)).await?;
     assert_success(&resp, "CREATE namespace B");
 
     let resp = server
@@ -364,8 +364,8 @@ async fn test_scenario_10_subscription_namespace_isolation() -> anyhow::Result<(
     sub_b.close().await?;
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns_a)).await;
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns_b)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns_a)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns_b)).await;
     Ok(())
 }
 
@@ -377,10 +377,10 @@ async fn test_scenario_10_same_table_name_different_namespaces() -> anyhow::Resu
     let ns2 = unique_ns("same_name_2");
 
     // Create namespaces
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns1)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns1)).await?;
     assert_success(&resp, "CREATE namespace 1");
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns2)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns2)).await?;
     assert_success(&resp, "CREATE namespace 2");
 
     // Create same table name "users" in both
@@ -446,7 +446,7 @@ async fn test_scenario_10_same_table_name_different_namespaces() -> anyhow::Resu
     assert_eq!(name2, "NS2 User", "ns2.users should have NS2 User");
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns1)).await;
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns2)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns1)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns2)).await;
     Ok(())
 }

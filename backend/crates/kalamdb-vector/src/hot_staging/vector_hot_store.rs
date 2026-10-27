@@ -66,7 +66,7 @@ pub fn new_indexed_shared_vector_hot_store(
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{SchemaId, TableName};
 
     use super::*;
 
@@ -79,7 +79,7 @@ mod tests {
 
     #[test]
     fn test_partition_names() {
-        let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("tbl1"));
+        let table_id = TableId::new(SchemaId::new("ns1"), TableName::new("tbl1"));
 
         assert_eq!(
             user_vector_ops_partition_name(&table_id, "embedding"),

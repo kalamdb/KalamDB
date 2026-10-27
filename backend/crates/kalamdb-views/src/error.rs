@@ -8,10 +8,7 @@ use kalamdb_commons::models::StorageId;
 #[derive(Debug, Clone)]
 pub enum RegistryError {
     /// Table not found in cache
-    TableNotFound {
-        namespace: String,
-        table:     String,
-    },
+    TableNotFound { namespace: String, table: String },
 
     /// Storage not found
     StorageNotFound { storage_id: StorageId },

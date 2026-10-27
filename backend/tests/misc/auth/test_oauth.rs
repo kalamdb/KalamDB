@@ -94,7 +94,7 @@ async fn test_oauth_user_password_rejected() {
 
     // Attempt credential auth (login flow)
     let auth_request = AuthRequest::Credentials {
-        user:     oauth_username.clone(),
+        user: oauth_username.clone(),
         password: "somepassword".to_string(),
     };
 

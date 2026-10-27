@@ -119,7 +119,7 @@ fn tables_to_views_batch(tables_batch: &RecordBatch) -> DataFusionResult<RecordB
 #[derive(Debug)]
 pub struct InformationSchemaViewsProvider {
     inner_tables: Arc<dyn TableProvider>,
-    schema:       SchemaRef,
+    schema: SchemaRef,
 }
 
 impl InformationSchemaViewsProvider {
@@ -142,13 +142,13 @@ impl InformationSchemaViewsProvider {
 }
 
 struct ViewsScanSource {
-    provider:        Arc<InformationSchemaViewsProvider>,
-    session_state:   SessionState,
+    provider: Arc<InformationSchemaViewsProvider>,
+    session_state: SessionState,
     physical_filter: Option<Arc<dyn datafusion::physical_expr::PhysicalExpr>>,
-    projection:      Option<Vec<usize>>,
-    limit:           Option<usize>,
-    output_schema:   SchemaRef,
-    filters:         Vec<Expr>,
+    projection: Option<Vec<usize>>,
+    limit: Option<usize>,
+    output_schema: SchemaRef,
+    filters: Vec<Expr>,
 }
 
 #[async_trait]
@@ -219,7 +219,7 @@ impl TableProvider for InformationSchemaViewsProvider {
         Ok(Arc::new(DeferredBatchExec::new(Arc::new(ViewsScanSource {
             provider: Arc::new(InformationSchemaViewsProvider {
                 inner_tables: Arc::clone(&self.inner_tables),
-                schema:       Arc::clone(&self.schema),
+                schema: Arc::clone(&self.schema),
             }),
             session_state,
             physical_filter,

@@ -1,4 +1,4 @@
-use kalamdb_commons::{models::NamespaceId, TableId};
+use kalamdb_commons::{models::SchemaId, TableId};
 use sqlparser::ast::{DropBehavior, DropPolicy, Statement};
 
 use super::{parse_one, resolve_table_id};
@@ -8,12 +8,12 @@ use crate::ddl::DdlResult;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropPolicyStatement {
     pub policy_name: String,
-    pub table_id:    TableId,
-    pub if_exists:   bool,
+    pub table_id: TableId,
+    pub if_exists: bool,
 }
 
 impl DropPolicyStatement {
-    pub fn parse(sql: &str, default_namespace: &NamespaceId) -> DdlResult<Self> {
+    pub fn parse(sql: &str, default_namespace: &SchemaId) -> DdlResult<Self> {
         let Statement::DropPolicy(DropPolicy {
             if_exists,
             name,

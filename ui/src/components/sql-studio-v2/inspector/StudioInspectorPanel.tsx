@@ -183,7 +183,7 @@ function buildTableInfoItems(selectedTable: StudioTable): InspectorItem[] {
   const retention = deriveRetentionValue(selectedTable.options);
 
   const items: InspectorItem[] = [
-    { label: "Namespace", value: selectedTable.namespace },
+    { label: "Schema", value: selectedTable.namespace },
     { label: "Type", value: formatTableType(selectedTable.tableType) },
     { label: "Columns", value: selectedTable.columns.length.toLocaleString() },
     {

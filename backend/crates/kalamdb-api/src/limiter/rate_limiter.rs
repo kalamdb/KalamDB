@@ -1,7 +1,8 @@
-//! User and connection-based rate limiter
+//! User and connection-based rate limiter.
 //!
-//! Uses Moka cache for automatic TTL-based cleanup and high concurrency.
-//! Optimized for zero-copy access patterns where possible.
+//! Uses a Moka cache for TTL cleanup. Each counter is an atomic window: the
+//! request updates the count and returns. The next request sees that count.
+//! Nothing on this path waits for a lock or a spawned task.
 
 use std::{
     sync::{
@@ -14,36 +15,34 @@ use std::{
 use kalamdb_commons::models::{ConnectionInfo, UserId};
 use kalamdb_configs::RateLimitSettings;
 use kalamdb_live::ConnectionId;
+use kalamdb_observability::AtomicRateWindow;
 use moka::sync::Cache;
-use parking_lot::Mutex;
-
-use super::token_bucket::TokenBucket;
 
 /// Rate limiter for users and connections
 ///
 /// Provides three layers of rate limiting:
-/// 1. Per-user query rate limiting (token bucket)
+/// 1. Per-user query rate limiting (atomic window)
 /// 2. Per-user subscription limits (counter)
-/// 3. Per-connection message rate limiting (token bucket)
+/// 3. Per-connection message rate limiting (atomic window)
 ///
 /// Uses Moka cache with TTL for automatic cleanup of inactive entries.
 pub struct RateLimiter {
     /// Max queries per second per user
-    max_queries_per_sec:              u32,
+    max_queries_per_sec: u32,
     /// Max subscriptions per user
-    max_subscriptions_per_user:       u32,
+    max_subscriptions_per_user: u32,
     /// Max messages per second per connection
-    max_messages_per_sec:             u32,
+    max_messages_per_sec: u32,
     /// Max auth requests per second per IP
     max_auth_requests_per_ip_per_sec: u32,
-    /// User query rate buckets - keyed by user_id string
-    user_query_buckets:               Cache<Arc<str>, Arc<Mutex<TokenBucket>>>,
-    /// User subscription counts - keyed by user_id string
-    user_subscription_counts:         Cache<Arc<str>, Arc<AtomicU32>>,
-    /// Auth rate buckets - keyed by client IP
-    auth_ip_buckets:                  Cache<Arc<str>, Arc<Mutex<TokenBucket>>>,
-    /// Connection message rate buckets - keyed by connection_id
-    connection_message_buckets:       Cache<ConnectionId, Arc<Mutex<TokenBucket>>>,
+    /// User query windows. `UserId` is already an `Arc`, so a hit does not allocate.
+    user_query_buckets: Cache<UserId, Arc<AtomicRateWindow>>,
+    /// User subscription counts - keyed by user id
+    user_subscription_counts: Cache<UserId, Arc<AtomicU32>>,
+    /// Auth rate windows - keyed by client IP
+    auth_ip_buckets: Cache<Arc<str>, Arc<AtomicRateWindow>>,
+    /// Connection message rate windows - keyed by connection_id
+    connection_message_buckets: Cache<ConnectionId, Arc<AtomicRateWindow>>,
 }
 
 impl RateLimiter {
@@ -88,22 +87,21 @@ impl RateLimiter {
         }
     }
 
-    /// Check if a user can execute a query
+    /// Check if a user can execute a query.
     ///
-    /// Returns `true` if allowed, `false` if rate limit exceeded.
-    /// Uses `Arc<str>` for zero-copy key reuse.
+    /// Returns `true` if this window still has room. The count is updated before
+    /// this function returns, so the next call observes it without waiting.
     #[inline]
     pub fn check_query_rate(&self, user_id: &UserId) -> bool {
-        // Use Arc<str> for efficient key - avoids repeated String allocations
-        let user_key: Arc<str> = Arc::from(user_id.as_str());
+        if let Some(window) = self.user_query_buckets.get(user_id) {
+            return window.try_acquire();
+        }
+
         let max_queries = self.max_queries_per_sec;
-
-        let bucket = self.user_query_buckets.get_with(user_key, || {
-            Arc::new(Mutex::new(TokenBucket::new(max_queries, max_queries, Duration::from_secs(1))))
-        });
-
-        let mut guard = bucket.lock();
-        guard.try_consume(1)
+        let window = self
+            .user_query_buckets
+            .get_with(user_id.clone(), || Arc::new(AtomicRateWindow::per_second(max_queries)));
+        window.try_acquire()
     }
 
     /// Check if a user can create a new subscription
@@ -111,10 +109,8 @@ impl RateLimiter {
     /// Returns `true` if allowed, `false` if limit exceeded.
     #[inline]
     pub fn check_subscription_limit(&self, user_id: &UserId) -> bool {
-        let user_key: Arc<str> = Arc::from(user_id.as_str());
-
         self.user_subscription_counts
-            .get(&user_key)
+            .get(user_id)
             .map(|count| count.load(Ordering::Relaxed) < self.max_subscriptions_per_user)
             .unwrap_or(true)
     }
@@ -122,10 +118,9 @@ impl RateLimiter {
     /// Increment user subscription count
     #[inline]
     pub fn increment_subscription(&self, user_id: &UserId) {
-        let user_key: Arc<str> = Arc::from(user_id.as_str());
-
-        let count =
-            self.user_subscription_counts.get_with(user_key, || Arc::new(AtomicU32::new(0)));
+        let count = self
+            .user_subscription_counts
+            .get_with(user_id.clone(), || Arc::new(AtomicU32::new(0)));
 
         count.fetch_add(1, Ordering::Relaxed);
     }
@@ -133,9 +128,7 @@ impl RateLimiter {
     /// Decrement user subscription count
     #[inline]
     pub fn decrement_subscription(&self, user_id: &UserId) {
-        let user_key: Arc<str> = Arc::from(user_id.as_str());
-
-        if let Some(count) = self.user_subscription_counts.get(&user_key) {
+        if let Some(count) = self.user_subscription_counts.get(user_id) {
             #[allow(deprecated)]
             count
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(1)))
@@ -148,18 +141,15 @@ impl RateLimiter {
     /// Returns `true` if allowed, `false` if rate limit exceeded.
     #[inline]
     pub fn check_message_rate(&self, connection_id: &ConnectionId) -> bool {
+        if let Some(window) = self.connection_message_buckets.get(connection_id) {
+            return window.try_acquire();
+        }
+
         let max_messages = self.max_messages_per_sec;
-
-        let bucket = self.connection_message_buckets.get_with(connection_id.clone(), || {
-            Arc::new(Mutex::new(TokenBucket::new(
-                max_messages,
-                max_messages,
-                Duration::from_secs(1),
-            )))
+        let window = self.connection_message_buckets.get_with(connection_id.clone(), || {
+            Arc::new(AtomicRateWindow::per_second(max_messages))
         });
-
-        let mut guard = bucket.lock();
-        guard.try_consume(1)
+        window.try_acquire()
     }
 
     /// Check if a client IP can attempt authentication
@@ -167,20 +157,16 @@ impl RateLimiter {
     /// Returns `true` if allowed, `false` if rate limit exceeded.
     #[inline]
     pub fn check_auth_rate(&self, connection_info: &ConnectionInfo) -> bool {
-        let max_auth_requests = self.max_auth_requests_per_ip_per_sec;
         let ip_key = connection_info.remote_addr.as_deref().unwrap_or("unknown");
-        let key: Arc<str> = Arc::from(ip_key);
+        if let Some(window) = self.auth_ip_buckets.get(ip_key) {
+            return window.try_acquire();
+        }
 
-        let bucket = self.auth_ip_buckets.get_with(key, || {
-            Arc::new(Mutex::new(TokenBucket::new(
-                max_auth_requests,
-                max_auth_requests,
-                Duration::from_secs(1),
-            )))
+        let max_auth_requests = self.max_auth_requests_per_ip_per_sec;
+        let window = self.auth_ip_buckets.get_with(Arc::from(ip_key), || {
+            Arc::new(AtomicRateWindow::per_second(max_auth_requests))
         });
-
-        let mut guard = bucket.lock();
-        guard.try_consume(1)
+        window.try_acquire()
     }
 
     /// Clean up rate limit state for a connection
@@ -195,18 +181,15 @@ impl RateLimiter {
     ///
     /// Returns (available_queries, subscription_count)
     pub fn get_user_stats(&self, user_id: &UserId) -> (u32, u32) {
-        let user_key: Arc<str> = Arc::from(user_id.as_str());
-
-        let available_queries = if let Some(bucket) = self.user_query_buckets.get(&user_key) {
-            let mut guard = bucket.lock();
-            guard.available_tokens()
+        let available_queries = if let Some(window) = self.user_query_buckets.get(user_id) {
+            window.available()
         } else {
             self.max_queries_per_sec
         };
 
         let subscription_count = self
             .user_subscription_counts
-            .get(&user_key)
+            .get(user_id)
             .map(|count| count.load(Ordering::Relaxed))
             .unwrap_or(0);
 

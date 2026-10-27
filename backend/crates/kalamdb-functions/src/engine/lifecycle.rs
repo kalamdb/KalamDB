@@ -33,17 +33,17 @@ impl FunctionLifecycleKind {
 /// One isolate state change. Isolates are per module revision, not per procedure.
 #[derive(Debug, Clone)]
 pub struct FunctionLifecycleEvent {
-    pub kind:            FunctionLifecycleKind,
-    pub reason:          &'static str,
-    pub instance_id:     u64,
-    pub worker:          usize,
-    pub module_id:       String,
-    pub revision_id:     String,
-    pub procedure_id:    Option<String>,
-    pub reserved_bytes:  u64,
+    pub kind: FunctionLifecycleKind,
+    pub reason: &'static str,
+    pub instance_id: u64,
+    pub worker: usize,
+    pub module_id: String,
+    pub revision_id: String,
+    pub procedure_id: Option<String>,
+    pub reserved_bytes: u64,
     pub used_heap_bytes: u64,
     /// Calls served by this isolate so far; lets a single `dropped` record summarise its life.
-    pub invocations:     u64,
+    pub invocations: u64,
 }
 
 /// Receives isolate lifecycle events. Implementations must not block the V8 worker for long.

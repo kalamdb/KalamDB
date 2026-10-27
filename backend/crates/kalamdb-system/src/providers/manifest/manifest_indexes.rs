@@ -65,7 +65,7 @@ mod tests {
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
         models::rows::{Row, SystemTableRow},
-        NamespaceId, TableId, TableName, UserId,
+        SchemaId, TableId, TableName, UserId,
     };
 
     use super::*;
@@ -80,7 +80,7 @@ mod tests {
 
     #[test]
     fn test_pending_write_index_only_indexes_pending() {
-        let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("tbl1"));
+        let table_id = TableId::new(SchemaId::new("ns1"), TableName::new("tbl1"));
         let manifest_id = ManifestId::new(table_id.clone(), None);
 
         let index = ManifestPendingWriteIndex;
@@ -114,7 +114,7 @@ mod tests {
 
     #[test]
     fn test_pending_write_index_user_scoped() {
-        let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("user_tbl"));
+        let table_id = TableId::new(SchemaId::new("ns1"), TableName::new("user_tbl"));
         let user_id = UserId::new("user1");
         let manifest_id = ManifestId::new(table_id.clone(), Some(user_id.clone()));
 

@@ -23,8 +23,8 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    decode as bincode_decode, encode as bincode_encode, get_coordinator, ApplyResult,
-    KalamStateMachine, PendingBuffer, PendingCommand, StateMachineSnapshot,
+    decode, encode, get_coordinator, ApplyResult, KalamStateMachine, PendingBuffer, PendingCommand,
+    StateMachineSnapshot,
 };
 use crate::{
     applier::UserDataApplier, assign_entry_versions, DataResponse, GroupId, RaftCommand, RaftError,
@@ -35,7 +35,7 @@ use crate::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UserDataSnapshot {
     /// Shard number
-    shard:            u32,
+    shard: u32,
     /// Total operations count
     total_operations: u64,
     /// Pending commands waiting for Meta to catch up (for crash recovery)
@@ -47,8 +47,8 @@ enum UserApplyCommand {
     User(UserDataCommand),
     TransactionCommit {
         required_meta_index: u64,
-        transaction_id:      TransactionId,
-        mutations:           Vec<StagedMutation>,
+        transaction_id: TransactionId,
+        mutations: Vec<StagedMutation>,
     },
 }
 
@@ -86,21 +86,21 @@ impl UserApplyCommand {
 /// are drained once Meta is satisfied.
 pub struct UserDataStateMachine {
     /// Which shard this state machine handles (0-31)
-    shard:              u32,
+    shard: u32,
     /// Last applied log index (for idempotency)
     last_applied_index: AtomicU64,
     /// Last applied log term
-    last_applied_term:  AtomicU64,
+    last_applied_term: AtomicU64,
     /// Notifies waiters when the applied index advances.
-    last_applied_tx:    tokio::sync::watch::Sender<u64>,
+    last_applied_tx: tokio::sync::watch::Sender<u64>,
     /// Approximate data size in bytes
-    approximate_size:   AtomicU64,
+    approximate_size: AtomicU64,
     /// Total operations processed
-    total_operations:   AtomicU64,
+    total_operations: AtomicU64,
     /// Optional applier for persisting data to providers
-    applier:            RwLock<Option<Arc<dyn UserDataApplier>>>,
+    applier: RwLock<Option<Arc<dyn UserDataApplier>>>,
     /// Buffer for commands waiting for Meta to catch up
-    pending_buffer:     PendingBuffer,
+    pending_buffer: PendingBuffer,
 }
 
 impl std::fmt::Debug for UserDataStateMachine {
@@ -445,10 +445,10 @@ impl KalamStateMachine for UserDataStateMachine {
                     current_meta
                 );
                 self.pending_buffer.add(PendingCommand {
-                    log_index:           index,
-                    log_term:            term,
+                    log_index: index,
+                    log_term: term,
                     required_meta_index: required_meta,
-                    command_bytes:       command.to_vec(),
+                    command_bytes: command.to_vec(),
                 });
 
                 // Mark as applied (buffered) to satisfy Raft log progress
@@ -521,7 +521,7 @@ impl KalamStateMachine for UserDataStateMachine {
             pending_commands,
         };
 
-        let data = bincode_encode(&snapshot)?;
+        let data = encode(&snapshot)?;
 
         Ok(StateMachineSnapshot::new(
             self.group_id(),
@@ -532,7 +532,7 @@ impl KalamStateMachine for UserDataStateMachine {
     }
 
     async fn restore(&self, snapshot: StateMachineSnapshot) -> Result<(), RaftError> {
-        let data: UserDataSnapshot = bincode_decode(&snapshot.data)?;
+        let data: UserDataSnapshot = decode(&snapshot.data)?;
 
         if data.shard != self.shard {
             return Err(RaftError::InvalidState(format!(
@@ -572,7 +572,7 @@ mod tests {
 
     use async_trait::async_trait;
     use kalamdb_commons::{
-        models::{rows::Row, NamespaceId, OperationKind},
+        models::{rows::Row, OperationKind, SchemaId},
         TableId, UserId,
     };
 
@@ -621,11 +621,11 @@ mod tests {
             versions: &[kalamdb_commons::ids::VersionId],
         ) -> Result<crate::TransactionApplyResult, RaftError> {
             Ok(crate::TransactionApplyResult {
-                rows_affected:      mutations.len(),
-                log_index:          versions.first().map(|v| v.as_u64() >> 16).unwrap_or(1),
+                rows_affected: mutations.len(),
+                log_index: versions.first().map(|v| v.as_u64() >> 16).unwrap_or(1),
                 notifications_sent: 0,
-                manifest_updates:   0,
-                publisher_events:   0,
+                manifest_updates: 0,
+                publisher_events: 0,
             })
         }
     }
@@ -635,12 +635,12 @@ mod tests {
         let sm = UserDataStateMachine::new(0);
 
         let cmd = UserDataCommand::Insert {
-            table_id:            TableId::new(NamespaceId::default(), "users".into()),
-            user_id:             UserId::new("user123"),
-            rows:                vec![],
-            encoded_fields:      Vec::new(),
+            table_id: TableId::new(SchemaId::default(), "users".into()),
+            user_id: UserId::new("user123"),
+            rows: vec![],
+            encoded_fields: Vec::new(),
             required_meta_index: 0,
-            transaction_id:      None,
+            transaction_id: None,
         };
 
         let payload = crate::codec::command_codec::encode_user_data_command(&cmd).unwrap();
@@ -654,12 +654,12 @@ mod tests {
     async fn test_user_data_state_machine_transaction_commit() {
         let sm = UserDataStateMachine::with_applier(0, Arc::new(TransactionBatchUserApplier));
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::default(), "users".into());
+        let table_id = TableId::new(SchemaId::default(), "users".into());
 
         let cmd = RaftCommand::TransactionCommit {
             required_meta_index: 0,
-            transaction_id:      transaction_id.clone(),
-            mutations:           vec![StagedMutation::new(
+            transaction_id: transaction_id.clone(),
+            mutations: vec![StagedMutation::new(
                 transaction_id,
                 table_id,
                 TableType::User,

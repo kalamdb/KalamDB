@@ -13,16 +13,16 @@ pub type HostFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>
 pub enum InvocationSource {
     Call,
     Schedule {
-        schedule_id:  kalamdb_commons::ScheduleId,
-        run_id:       String,
+        schedule_id: kalamdb_commons::ScheduleId,
+        run_id: String,
         scheduled_at: i64,
     },
     Topic {
         topic_name: String,
-        event_id:   String,
-        partition:  u32,
-        offset:     u64,
-        attempt:    u32,
+        event_id: String,
+        partition: u32,
+        offset: u64,
+        attempt: u32,
     },
 }
 
@@ -40,6 +40,25 @@ pub trait FunctionHost: Send + Sync {
     fn is_http_root(&self) -> bool;
     fn query(&self, sql: String, params: Vec<RoutineValue>) -> HostFuture<'_, RoutineValue> {
         Box::pin(async move { self.sql(&sql, &params) })
+    }
+    fn query_view(&self, sql: String, params: Vec<RoutineValue>) -> HostFuture<'_, RoutineValue> {
+        Box::pin(async move {
+            let res = self.query(sql, params).await?;
+            if let Some(batches) = res.row_batches {
+                return Ok(RoutineValue::from_read_view_batches(batches.to_vec()));
+            }
+            if res.read_view_batches.is_some() {
+                return Ok(res);
+            }
+            Ok(res)
+        })
+    }
+    fn query_batches(
+        &self,
+        sql: String,
+        params: Vec<RoutineValue>,
+    ) -> HostFuture<'_, RoutineValue> {
+        self.query_view(sql, params)
     }
     fn execute(&self, sql: String, params: Vec<RoutineValue>) -> HostFuture<'_, RoutineValue> {
         self.query(sql, params)

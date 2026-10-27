@@ -9,7 +9,8 @@
 //! - **extensions.rs**: Custom parsers for KalamDB-specific commands (CREATE STORAGE, STORAGE
 //!   FLUSH, STORAGE COMPACT, etc.)
 //! - **system.rs**: Parsers for system table queries
-//! - **utils.rs**: Common parsing utilities (keyword extraction, normalization, etc.)
+//! - **utils**: Statement helpers. Catalog text rewrites, AST compatibility rewrites, and the byte
+//!   scans they share live in `utils::wire_text`, `utils::ast_compat`, and `utils::sql_scan`.
 //! - **query_parser.rs**: Safe SQL query parsing for live queries and subscriptions
 //!
 //! ## Design Principles
@@ -22,8 +23,11 @@
 pub mod dml;
 pub mod explain;
 pub mod extensions;
+mod kalam;
 mod pg_unnest;
 pub mod query_parser;
+mod sort_alias;
+mod star_columns;
 pub mod system;
 pub mod utils;
 
@@ -31,10 +35,11 @@ pub use dml::{
     build_on_conflict_update_assignments, build_on_conflict_update_assignments_with_params,
     conflict_target_is_primary_key, expr_to_scalar, expr_to_scalar_with_params,
     insert_from_statement, insert_has_on_conflict, insert_returning_items, is_default_expr,
-    on_conflict_update_should_apply, on_conflict_values_insert, parse_on_conflict_action,
-    parse_on_conflict_action_with_params, single_values_insert_row, sql_value_to_scalar,
-    strip_nested_expr, validate_primary_key_conflict_target, values_insert_view,
-    values_insert_view_from_statement, values_rows_from_insert, values_to_rows,
+    on_conflict_update_should_apply, on_conflict_values_insert, parameterize_literals,
+    parse_on_conflict_action, parse_on_conflict_action_with_params, returning_describe_sql,
+    single_values_insert_row,
+    sql_value_to_scalar, strip_nested_expr, validate_primary_key_conflict_target,
+    values_insert_view, values_insert_view_from_statement, values_rows_from_insert, values_to_rows,
     OnConflictUpdateAssignment, OnConflictUpdateValue, ParsedOnConflictAction,
     ValuesInsertShapeOptions, ValuesInsertView,
 };
@@ -42,11 +47,16 @@ pub use explain::{
     rewrite_explain_for_datafusion, PostgresExplainFormat, RewrittenPostgresExplain,
 };
 pub use extensions::*;
+pub use kalam::KalamParser;
 pub use query_parser::*;
+pub use star_columns::{
+    expand_stars_without_row_id, expand_stars_without_storage_columns, storage_star_table_names,
+};
 pub use system::*;
 pub use utils::{
-    extract_dml_table_id, extract_dml_table_id_fast, extract_dml_table_id_from_statement,
-    insert_column_names_from_statement, insert_columns_match,
-    normalize_context_keyword_calls_for_sqlparser, object_name_to_string, parse_single_statement,
-    parse_sql_expression, rewrite_context_functions_for_datafusion,
+    apply_datafusion_ast_rewrites, extract_dml_table_id, extract_dml_table_id_fast,
+    extract_dml_table_id_from_statement, insert_column_names_from_statement, insert_columns_match,
+    needs_ast_operator_rewrite, object_name_to_string, parse_single_statement,
+    parse_sql_expression, parse_statement_for_datafusion, rewrite_context_functions_for_datafusion,
+    rewrite_wire_catalog_compat_for_datafusion, sql_needs_wire_catalog_text_rewrite,
 };

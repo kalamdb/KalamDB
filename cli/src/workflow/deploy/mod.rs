@@ -20,7 +20,7 @@ use crate::{
 };
 
 pub struct DeployOptions {
-    pub env:     Option<String>,
+    pub env: Option<String>,
     pub dry_run: bool,
 }
 
@@ -41,7 +41,7 @@ pub async fn run_deploy(ctx: &WorkflowContext, options: &DeployOptions) -> Resul
             .schema_source_path(&ctx.project_root)
             .is_some_and(|path| path.is_file());
         if has_schema && !ctx.config.schema.languages.is_empty() {
-            generate_schema_artifacts(&ctx, &GenerateOptions { languages: None }, &output)?;
+            generate_schema_artifacts(&ctx, &GenerateOptions::default(), &output)?;
         }
         if ctx.project_root.join(&ctx.config.functions.path).join("package.json").is_file() {
             crate::workflow::functions::build_functions(&ctx).await?;
@@ -52,7 +52,7 @@ pub async fn run_deploy(ctx: &WorkflowContext, options: &DeployOptions) -> Resul
     }
 
     if !ctx.config.schema.languages.is_empty() {
-        generate_schema_artifacts(&ctx, &GenerateOptions { languages: None }, &output)?;
+        generate_schema_artifacts(&ctx, &GenerateOptions::default(), &output)?;
     }
     crate::workflow::functions::build_functions(&ctx).await?;
     print_deploy_plan(&ctx, &env, &output);
@@ -198,7 +198,7 @@ mod tests {
         run_deploy(
             &ctx,
             &DeployOptions {
-                env:     Some("prod".into()),
+                env: Some("prod".into()),
                 dry_run: true,
             },
         )

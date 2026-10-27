@@ -20,15 +20,15 @@ pub(super) fn target_selector(
     namespace: Option<&str>,
 ) -> TargetSelector {
     TargetSelector {
-        start_dir:   start_dir(project_dir),
+        start_dir: start_dir(project_dir),
         project_dir: project_dir.map(std::path::Path::to_path_buf),
-        global:      cli.global,
-        env:         cli.env.clone(),
-        url:         cli.url.clone(),
-        host:        cli.host.clone(),
-        port:        cli.port,
-        namespace:   namespace.map(str::to_string),
-        instance:    cli.explicit_instance().map(str::to_string),
+        global: cli.global,
+        env: cli.env.clone(),
+        url: cli.url.clone(),
+        host: cli.host.clone(),
+        port: cli.port,
+        namespace: namespace.map(str::to_string),
+        instance: cli.explicit_instance().map(str::to_string),
     }
 }
 

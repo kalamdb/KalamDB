@@ -1,1 +1,3 @@
-{"feature_directory": "specs/036-postgresql-sql-dialect"}
+{
+  "feature_directory": "specs/039-unified-table-transactions"
+}

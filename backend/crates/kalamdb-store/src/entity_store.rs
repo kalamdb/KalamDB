@@ -238,6 +238,17 @@ where
         decode_entity(bytes)
     }
 
+    /// Decode `ordinals` when the store's codec can skip the other columns.
+    fn deserialize_selected(
+        &self,
+        key: &K,
+        bytes: &[u8],
+        ordinals: Option<&[usize]>,
+    ) -> Result<V> {
+        let _ = ordinals;
+        self.deserialize(key, bytes)
+    }
+
     /// Stores an entity with the given key.
     ///
     /// The entity is serialized using `serialize()` before storage.
@@ -463,6 +474,17 @@ where
         start_key: Option<&[u8]>,
         limit: usize,
     ) -> Result<Vec<(K, V)>> {
+        self.scan_with_raw_prefix_selected(prefix, start_key, limit, None)
+    }
+
+    /// Like [`Self::scan_with_raw_prefix`], decoding only `ordinals` when present.
+    fn scan_with_raw_prefix_selected(
+        &self,
+        prefix: &[u8],
+        start_key: Option<&[u8]>,
+        limit: usize,
+        ordinals: Option<&[usize]>,
+    ) -> Result<Vec<(K, V)>> {
         const MAX_PREALLOC_CAPACITY: usize = 100_000;
         let partition = self.partition();
         let iter = self.backend().scan(&partition, Some(prefix), start_key, Some(limit))?;
@@ -476,7 +498,7 @@ where
                     continue;
                 },
             };
-            let entity = match self.deserialize(&key, &value_bytes) {
+            let entity = match self.deserialize_selected(&key, &value_bytes, ordinals) {
                 Ok(v) => v,
                 Err(e) => {
                     log::warn!("Skipping entry with malformed value: {}", e);
@@ -500,6 +522,17 @@ where
         start_key: Option<&K>,
         limit: usize,
     ) -> Result<Vec<(K, V)>> {
+        self.scan_typed_with_prefix_and_start_selected(prefix, start_key, limit, None)
+    }
+
+    /// Like [`Self::scan_typed_with_prefix_and_start`], decoding only `ordinals`.
+    fn scan_typed_with_prefix_and_start_selected(
+        &self,
+        prefix: Option<&K>,
+        start_key: Option<&K>,
+        limit: usize,
+        ordinals: Option<&[usize]>,
+    ) -> Result<Vec<(K, V)>> {
         const MAX_PREALLOC_CAPACITY: usize = 100_000;
         let partition = self.partition();
         let prefix_bytes = prefix.map(|k| k.storage_key());
@@ -520,7 +553,7 @@ where
                     continue;
                 },
             };
-            let entity = match self.deserialize(&key, &value_bytes) {
+            let entity = match self.deserialize_selected(&key, &value_bytes, ordinals) {
                 Ok(v) => v,
                 Err(e) => {
                     log::warn!("Skipping entry with malformed value: {}", e);
@@ -737,7 +770,7 @@ where
             .iter()
             .map(|key| Operation::Delete {
                 partition: partition.clone(),
-                key:       key.storage_key(),
+                key: key.storage_key(),
             })
             .collect();
 
@@ -835,6 +868,28 @@ where
         .await
     }
 
+    /// Async selected decode for a raw prefix scan.
+    async fn scan_with_raw_prefix_selected_async(
+        &self,
+        prefix: &[u8],
+        start_key: Option<&[u8]>,
+        limit: usize,
+        ordinals: Vec<usize>,
+    ) -> Result<Vec<(K, V)>> {
+        let store = self.clone();
+        let prefix = prefix.to_vec();
+        let start_key = start_key.map(|key| key.to_vec());
+        run_blocking_result(move || {
+            store.scan_with_raw_prefix_selected(
+                &prefix,
+                start_key.as_deref(),
+                limit,
+                Some(ordinals.as_slice()),
+            )
+        })
+        .await
+    }
+
     /// Async version of `scan_typed_with_prefix_and_start()` - scans entities with typed prefix and
     /// start key.
     ///
@@ -850,6 +905,28 @@ where
         let start_key = start_key.cloned();
         run_blocking_result(move || {
             store.scan_typed_with_prefix_and_start(prefix.as_ref(), start_key.as_ref(), limit)
+        })
+        .await
+    }
+
+    /// Async selected decode for a typed prefix scan.
+    async fn scan_typed_with_prefix_and_start_selected_async(
+        &self,
+        prefix: Option<&K>,
+        start_key: Option<&K>,
+        limit: usize,
+        ordinals: Vec<usize>,
+    ) -> Result<Vec<(K, V)>> {
+        let store = self.clone();
+        let prefix = prefix.cloned();
+        let start_key = start_key.cloned();
+        run_blocking_result(move || {
+            store.scan_typed_with_prefix_and_start_selected(
+                prefix.as_ref(),
+                start_key.as_ref(),
+                limit,
+                Some(ordinals.as_slice()),
+            )
         })
         .await
     }
@@ -956,7 +1033,7 @@ mod tests {
     // Mock implementation for testing
     struct MockStore {
         backend: Arc<dyn StorageBackend>,
-        access:  Option<TableAccess>,
+        access: Option<TableAccess>,
     }
 
     impl EntityStore<UserId, String> for MockStore {
@@ -976,7 +1053,7 @@ mod tests {
     }
 
     struct BinaryStore {
-        backend:   Arc<dyn StorageBackend>,
+        backend: Arc<dyn StorageBackend>,
         partition: String,
     }
 
@@ -995,7 +1072,7 @@ mod tests {
         // System table (table_access = None)
         let store = MockStore {
             backend: Arc::new(crate::test_utils::InMemoryBackend::new()),
-            access:  None,
+            access: None,
         };
 
         assert!(!store.can_read(&Role::User)); // Regular users cannot read system tables
@@ -1008,7 +1085,7 @@ mod tests {
     fn test_public_table_access() {
         let store = MockStore {
             backend: Arc::new(crate::test_utils::InMemoryBackend::new()),
-            access:  Some(TableAccess::Public),
+            access: Some(TableAccess::Public),
         };
 
         assert!(store.can_read(&Role::User));
@@ -1021,7 +1098,7 @@ mod tests {
     fn test_private_table_access() {
         let store = MockStore {
             backend: Arc::new(crate::test_utils::InMemoryBackend::new()),
-            access:  Some(TableAccess::Private),
+            access: Some(TableAccess::Private),
         };
 
         assert!(!store.can_read(&Role::User));
@@ -1034,7 +1111,7 @@ mod tests {
     fn test_restricted_table_access() {
         let store = MockStore {
             backend: Arc::new(crate::test_utils::InMemoryBackend::new()),
-            access:  Some(TableAccess::Restricted),
+            access: Some(TableAccess::Restricted),
         };
 
         assert!(!store.can_read(&Role::User));

@@ -42,6 +42,24 @@ impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableP
         !scan_context.policies.bypasses_rls()
     }
 
+    async fn try_columnar_hot_scan(
+        &self,
+        scan_context: &Self::ScanContext,
+        projection: Option<&Vec<usize>>,
+        filter: Option<&Expr>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+    ) -> Result<Option<(RecordBatch, usize)>, KalamDbError> {
+        self.columnar_hot_scan(
+            scan_context.snapshot_commit_seq,
+            projection,
+            filter,
+            limit,
+            keep_deleted,
+        )
+        .await
+    }
+
     fn authorization_plan_details(
         &self,
         scan_context: &Self::ScanContext,
@@ -132,6 +150,74 @@ impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableP
             cold_columns.as_deref(),
             scan_context.snapshot_commit_seq,
             true,
+            None,
+        )
+        .await
+    }
+
+    fn additional_stored_column_names(&self, scan_context: &Self::ScanContext) -> Vec<String> {
+        let mut names = Vec::new();
+        for column_id in scan_context.policies.required_column_ids() {
+            if let Some(column) = self
+                .core
+                .table_def()
+                .columns
+                .iter()
+                .find(|column| column.column_id == column_id)
+            {
+                names.push(column.column_name.clone());
+            }
+        }
+        names
+    }
+
+    async fn scan_kvs_with_context_projected(
+        &self,
+        scan_context: &Self::ScanContext,
+        filter: Option<&Expr>,
+        since_seq: Option<VersionId>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+        cold_columns: Option<&[String]>,
+        storage_ordinals: Option<&[usize]>,
+    ) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
+        let scan_limit = scan_context.policies.bypasses_rls().then_some(limit).flatten();
+        let cold_columns = self.authorization_cold_columns(scan_context, cold_columns);
+        self.scan_with_version_resolution_to_kvs_result_async(
+            filter,
+            since_seq,
+            scan_limit,
+            keep_deleted,
+            cold_columns.as_deref(),
+            scan_context.snapshot_commit_seq,
+            false,
+            storage_ordinals.map(|ordinals| ordinals.to_vec()),
+        )
+        .await
+        .map(|result| result.rows)
+    }
+
+    async fn scan_kvs_with_diagnostics_projected(
+        &self,
+        scan_context: &Self::ScanContext,
+        filter: Option<&Expr>,
+        since_seq: Option<VersionId>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+        cold_columns: Option<&[String]>,
+        storage_ordinals: Option<&[usize]>,
+    ) -> Result<base::MvccScanResult<SharedTableRowId, SharedTableRow>, KalamDbError> {
+        let scan_limit = scan_context.policies.bypasses_rls().then_some(limit).flatten();
+        let cold_columns = self.authorization_cold_columns(scan_context, cold_columns);
+        self.scan_with_version_resolution_to_kvs_result_async(
+            filter,
+            since_seq,
+            scan_limit,
+            keep_deleted,
+            cold_columns.as_deref(),
+            scan_context.snapshot_commit_seq,
+            true,
+            storage_ordinals.map(|ordinals| ordinals.to_vec()),
         )
         .await
     }
@@ -240,7 +326,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             )?;
 
             // IGNORE user_id parameter - no RLS for shared tables
-            base::ensure_unique_pk_value(self, None, &row_data).await?;
+            let predecessor = self.insert_predecessor(&row_data).await?;
 
             // Generate new SeqId via SystemColumnsService
             let seq_id = version;
@@ -255,10 +341,13 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             // Key is just the SeqId (SharedTableRowId is type alias for SeqId)
             let row_key = seq_id;
 
-            // Store the entity in RocksDB (hot storage) using insert() to update PK index
-            self.store.insert_async(row_key, entity.clone()).await.map_err(|e| {
-                KalamDbError::InvalidOperation(format!("Failed to insert shared table row: {}", e))
-            })?;
+            self.write_replaced_row(
+                predecessor,
+                row_key,
+                entity.clone(),
+                "Failed to insert shared table row",
+            )
+            .await?;
 
             log::debug!("Inserted shared table row with _seq {}", seq_id);
 
@@ -466,6 +555,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             cold_columns,
             snapshot_commit_seq,
             false,
+            None,
         )
         .await
         .map(|result| result.rows)
@@ -474,6 +564,94 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
     fn extract_row(row: &SharedTableRow) -> &Row {
         &row.fields
     }
+}
+
+impl SharedTableProvider {
+    /// SELECT visibility for one shared FILE path.
+    ///
+    /// DBA and System bypass. An empty policy set denies. Otherwise a current
+    /// row must contain this `{subfolder}/{stored_name}` in a FILE column and
+    /// survive `authorize_resolved_rows`.
+    pub async fn select_authorizes_file_path(
+        &self,
+        user_id: &UserId,
+        role: kalamdb_commons::Role,
+        subfolder: &str,
+        stored_name: &str,
+    ) -> Result<bool, KalamDbError> {
+        let policies = self.bind_policies(user_id, role, PolicyCommand::Select, false)?;
+        if policies.bypasses_rls() {
+            return Ok(true);
+        }
+        if policies.is_default_deny() {
+            return Ok(false);
+        }
+
+        let file_columns = file_column_names(self.core.table_def());
+        if file_columns.is_empty() {
+            return Ok(false);
+        }
+
+        let scan_context = SharedScanContext {
+            snapshot_commit_seq: None,
+            policies,
+        };
+        if !self.authorization.pre_authorize_scan(self, &scan_context, None).await? {
+            return Ok(false);
+        }
+
+        let rows = DeferredMvccScanProvider::scan_kvs_with_context(
+            self,
+            &scan_context,
+            None,
+            None,
+            None,
+            false,
+            Some(file_columns.as_slice()),
+        )
+        .await?;
+
+        for (row_id, row) in rows {
+            if !row_contains_file_path(&row.fields, &file_columns, subfolder, stored_name) {
+                continue;
+            }
+            let authorized =
+                self.authorize_resolved_rows(&scan_context, vec![(row_id, row)]).await?;
+            if !authorized.is_empty() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
+fn file_column_names(table_def: &kalamdb_commons::models::schemas::TableDefinition) -> Vec<String> {
+    table_def
+        .columns
+        .iter()
+        .filter(|column| column.data_type() == kalamdb_commons::KalamDataType::File)
+        .map(|column| column.column_name.clone())
+        .collect()
+}
+
+fn row_contains_file_path(
+    row: &Row,
+    file_columns: &[String],
+    subfolder: &str,
+    stored_name: &str,
+) -> bool {
+    file_columns.iter().any(|column| {
+        let Some(value) = row.values.get(column) else {
+            return false;
+        };
+        let json = match value {
+            ScalarValue::Utf8(Some(json)) | ScalarValue::LargeUtf8(Some(json)) => json.as_str(),
+            _ => return false,
+        };
+        kalamdb_commons::FileRef::try_from_json(json).is_ok_and(|file_ref| {
+            file_ref.sub == subfolder && file_ref.stored_name() == stored_name
+        })
+    })
 }
 
 impl SharedTableProvider {
@@ -486,10 +664,9 @@ impl SharedTableProvider {
         cold_columns: Option<&[String]>,
         snapshot_commit_seq: Option<VersionId>,
         include_diagnostics: bool,
+        storage_ordinals: Option<Vec<usize>>,
     ) -> Result<base::MvccScanResult<SharedTableRowId, SharedTableRow>, KalamDbError> {
         use kalamdb_store::EntityStoreAsync;
-
-        base::warn_if_unfiltered_scan(self.core.table_id(), filter, limit, self.core.table_type());
 
         let start_key =
             since_seq.and_then(|seq| VersionId::try_from_i64(seq.as_i64().saturating_add(1)).ok());
@@ -498,24 +675,43 @@ impl SharedTableProvider {
         let hot_future = async {
             if since_seq.is_none() {
                 if let Some(plan) = base::hot_index_seek(self.store.as_ref(), filter, None) {
-                    return base::scan_hot_index_resolved(
+                    let rows = base::scan_hot_index_resolved(
                         &self.store,
                         plan,
                         scan_limit,
                         pk_name,
                         None,
+                        storage_ordinals.clone(),
                     )
-                    .await;
+                    .await?;
+                    base::reject_truncated_unbounded_scan(limit, rows.len())?;
+                    return Ok(rows);
                 }
             }
-            self.store
-                .scan_typed_with_prefix_and_start_async(None, start_key.as_ref(), scan_limit)
-                .await
+            let scanned = if let Some(ordinals) = storage_ordinals.clone() {
+                self.store
+                    .scan_typed_with_prefix_and_start_selected_async(
+                        None,
+                        start_key.as_ref(),
+                        scan_limit,
+                        ordinals,
+                    )
+                    .await
+            } else {
+                self.store
+                    .scan_typed_with_prefix_and_start_async(None, start_key.as_ref(), scan_limit)
+                    .await
+            };
+            scanned
                 .map_err(|e| {
                     KalamDbError::InvalidOperation(format!(
                         "Failed to scan shared table hot storage: {}",
                         e
                     ))
+                })
+                .and_then(|rows| {
+                    base::reject_truncated_unbounded_scan(limit, rows.len())?;
+                    Ok(rows)
                 })
         };
         let cold_future = async {

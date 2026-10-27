@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMetricChartData } from "@/components/dashboard/MetricsChart";
+import { buildMetricChartData, subscriptionDeliveryScale } from "@/components/dashboard/MetricsChart";
 
 describe("buildMetricChartData", () => {
   it("preserves backend-provided rate metrics in timestamp order", () => {
@@ -87,5 +87,18 @@ describe("buildMetricChartData", () => {
 
     expect(chartData).toHaveLength(1);
     expect(chartData[0].select_queries_per_second).toBe(1);
+  });
+});
+
+describe("subscriptionDeliveryScale", () => {
+  it("keeps bytes until the series reaches a mebibyte", () => {
+    expect(subscriptionDeliveryScale([256, 2048])).toEqual({ divisor: 1, name: "Bytes/s" });
+  });
+
+  it("switches the series to mebibytes when delivery is larger", () => {
+    expect(subscriptionDeliveryScale([2048, 2 * 1024 * 1024])).toEqual({
+      divisor: 1024 * 1024,
+      name: "MB/s",
+    });
   });
 });

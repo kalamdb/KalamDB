@@ -26,7 +26,7 @@ DROP SCHEDULE IF EXISTS reports.daily_summary;
 - SQL identifiers use PostgreSQL tokenization: unquoted names fold to lowercase, double-quoted names preserve case, and backticks are rejected.
 - Both overlap and misfire policies are `skip`. Unsupported policies are rejected. There is no retry or catch-up queue.
 - Enabling a disabled schedule computes a future next run. Disabling prevents future dispatch and lets a claimed invocation finish. Drop rejects an active claim: disable, wait for completion/recovery, then drop. This also prevents overlap after drop/recreate of the same name.
-- Drop dependent schedules before dropping their procedure. `DROP NAMESPACE` removes schedules in that namespace, matching triggers.
+- Drop dependent schedules before dropping their procedure. `DROP SCHEMA` removes schedules in that namespace, matching triggers.
 
 ## Execution and ownership
 
@@ -36,7 +36,7 @@ Interval schedules advance from their previous intended deadline, preserving cad
 
 Every definition, claim, and completion uses one compare-and-swap mutation path. In a cluster the mutation is serialized and replicated by the existing metadata Raft group; standalone execution serializes mutations locally. Versions are fresh UUIDs, including after recreate, so stale completions cannot overwrite a replacement schedule. The new Raft command is appended to preserve existing serialized command discriminants.
 
-Before invocation, the owner persists a run ID, owner node, latest start time, and next future firing. Missed firings from before leadership acquisition or more than two seconds late are skipped, as are overlaps and capacity overflow. The procedure runtime enforces its configured timeout; the durable claim extends that deadline by 60 seconds for cleanup. Expired claims become interrupted results and are never replayed. Like other leader/lease-based systems, ownership depends on healthy clock synchronization and bounded procedure cancellation; this does not promise exactly-once external effects.
+Before invocation, the owner persists a run ID, owner node, latest start time, and next future firing. Missed firings from before leadership acquisition or more than fifteen seconds late are skipped, as are overlaps and capacity overflow. A firing that comes due while a claim is still held is an overlap skip even when the scheduler notices it only as that run finishes. The procedure runtime enforces its configured timeout; the durable claim extends that deadline by 60 seconds for cleanup. Expired claims become interrupted results and are never replayed. Like other leader/lease-based systems, ownership depends on healthy clock synchronization and bounded procedure cancellation; this does not promise exactly-once external effects.
 
 Execution calls the existing `FunctionService::invoke`, retaining transaction, nested procedure, authorization, logging, and runtime limits. Scheduled calls receive:
 

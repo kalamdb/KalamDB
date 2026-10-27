@@ -1,14 +1,13 @@
 /**
  * Remote OKF file rows in KalamDB.
  *
- * Reads, writes, and deletes all go through Drizzle. FILE uploads pass a
- * `kalamFile()` value in `.values()` / `.set()`; `kalamDriver()` routes to
- * multipart SQL automatically.
+ * Reads and deletes go through Drizzle. Generated FILE columns are stored
+ * `PgCatalogFile` values, so uploads use `FILE("upload")` with `queryWithFiles`.
  */
 
 import type { FileRef, KalamDBClient } from '@kalamdb/client';
-import { kalamFile } from '@kalamdb/orm';
-import { eq } from 'drizzle-orm';
+import { queryWithFiles } from '@kalamdb/orm';
+import { eq, sql } from 'drizzle-orm';
 import type { KalamDb } from './db/client.js';
 import { NAMESPACE, TABLE } from './db/client.js';
 import {
@@ -28,8 +27,9 @@ export type RemoteFileVersion = {
   seq: string | null;
 };
 
-/** Upsert path + bytes through Drizzle; the driver handles multipart upload. */
+/** Upsert path + bytes. Generated FILE columns take `FILE("upload")` plus the multipart file. */
 export async function upsertSyncFile(
+  client: KalamDBClient,
   db: KalamDb,
   input: {
     path: string;
@@ -39,22 +39,25 @@ export async function upsertSyncFile(
 ): Promise<void> {
   const upload = buildUploadFile(input.path, input.fileBytes, input.mimeType);
   const now = new Date();
-  const fileRef = kalamFile('upload', upload);
 
-  await db
-    .insert(context_files)
-    .values({
-      path: input.path,
-      file_ref: fileRef,
-      updated_at: now,
-    })
-    .onConflictDoUpdate({
-      target: context_files.path,
-      set: {
-        file_ref: fileRef,
+  await queryWithFiles(
+    client,
+    db
+      .insert(context_files)
+      .values({
+        path: input.path,
+        file_ref: sql.raw('FILE("upload")'),
         updated_at: now,
-      },
-    });
+      })
+      .onConflictDoUpdate({
+        target: context_files.path,
+        set: {
+          file_ref: sql.raw('FILE("upload")'),
+          updated_at: now,
+        },
+      }),
+    { upload },
+  );
 }
 
 export async function fetchRemoteHash(db: KalamDb, relativePath: string): Promise<string | null> {

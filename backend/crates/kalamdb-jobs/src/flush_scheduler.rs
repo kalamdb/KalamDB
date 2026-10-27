@@ -14,10 +14,10 @@ use crate::{
 
 #[derive(Debug, Default)]
 struct PendingFlushScan {
-    table_ids:         Vec<TableId>,
-    pending_entries:   usize,
+    table_ids: Vec<TableId>,
+    pending_entries: usize,
     duplicate_entries: usize,
-    read_errors:       usize,
+    read_errors: usize,
 }
 
 fn collect_pending_flush_tables(
@@ -78,9 +78,7 @@ impl FlushScheduler {
         }
 
         let manifest_service = app_context.manifest_service();
-        let default_row_limit = app_context.config().flush.default_row_limit as u64;
         let pending_scan = collect_pending_flush_tables(&manifest_service)?;
-
         let schema_registry = app_context.schema_registry();
 
         let mut tables_checked: u32 = 0;
@@ -117,23 +115,34 @@ impl FlushScheduler {
 
             // Respect flush_policy: skip tables with no policy (hot-only)
             let flush_policy = table_def.table_options.flush_policy();
-            if flush_policy.is_none() {
+            let Some(flush_policy) = flush_policy else {
                 log::trace!("FlushScheduler: skipping {} (no flush_policy, hot-only)", table_id);
                 continue;
-            }
+            };
 
             tables_checked += 1;
 
-            // Extract per-table row limit from policy, fall back to config default
-            let flush_threshold = flush_policy
-                .and_then(|p| p.get_row_limit())
-                .map(|r| r as u64)
-                .unwrap_or(default_row_limit);
+            // A time interval flushes whatever is still hot once the pending
+            // window is old enough. Row limits keep the previous threshold.
+            let interval_due = match flush_policy.interval_seconds() {
+                Some(interval) => pending_write_age_secs(&manifest_service, table_id)
+                    .await
+                    .is_some_and(|age| age >= u64::from(interval)),
+                None => false,
+            };
+            let flush_threshold = if interval_due {
+                Some(1)
+            } else if let Some(rows) = flush_policy.get_row_limit() {
+                Some(u64::from(rows))
+            } else {
+                log::trace!("FlushScheduler: skipping {} (interval not due)", table_id);
+                continue;
+            };
 
             let params = FlushParams {
-                table_id:        (*table_id).clone(),
-                table_type:      table_def.table_type,
-                flush_threshold: Some(flush_threshold),
+                table_id: (*table_id).clone(),
+                table_type: table_def.table_type,
+                flush_threshold,
             };
 
             // Hourly idempotency key prevents duplicate flush jobs
@@ -195,4 +204,17 @@ impl FlushScheduler {
 
         Ok(())
     }
+}
+
+/// Age of the shared manifest's last refresh. Pending writes do not bump
+/// `last_refreshed`, so this is the time since the last flush (or since the
+/// table started taking writes).
+async fn pending_write_age_secs(
+    manifest_service: &ManifestService,
+    table_id: &TableId,
+) -> Option<u64> {
+    let entry = manifest_service.get_or_load_async(table_id, None).await.ok()??;
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let age_ms = now_ms.saturating_sub(entry.last_refreshed_millis());
+    Some(u64::try_from(age_ms.max(0)).unwrap_or(u64::MAX) / 1000)
 }

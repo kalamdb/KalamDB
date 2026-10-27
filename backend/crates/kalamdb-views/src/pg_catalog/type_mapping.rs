@@ -1,25 +1,161 @@
 use kalamdb_commons::datatypes::KalamDataType;
 
+use crate::pg_catalog::catalog_type_oid;
+
 /// PostgreSQL `pg_type.oid` for `void`.
 pub(crate) const PG_VOID_OID: i64 = 2278;
+
+/// One built-in `pg_type` row. OID, `typname`, `typlen`, and `format_type` stay together.
+pub(crate) struct BuiltinPgType {
+    pub typname: &'static str,
+    pub oid: i64,
+    pub typlen: i64,
+    pub format_type: &'static str,
+}
+
+pub(crate) const BUILTIN_PG_TYPES: &[BuiltinPgType] = &[
+    BuiltinPgType {
+        typname: "bool",
+        oid: 16,
+        typlen: 1,
+        format_type: "boolean",
+    },
+    BuiltinPgType {
+        typname: "bytea",
+        oid: 17,
+        typlen: -1,
+        format_type: "bytea",
+    },
+    BuiltinPgType {
+        typname: "name",
+        oid: 19,
+        typlen: 64,
+        format_type: "name",
+    },
+    BuiltinPgType {
+        typname: "int8",
+        oid: 20,
+        typlen: 8,
+        format_type: "bigint",
+    },
+    BuiltinPgType {
+        typname: "int2",
+        oid: 21,
+        typlen: 2,
+        format_type: "smallint",
+    },
+    BuiltinPgType {
+        typname: "int4",
+        oid: 23,
+        typlen: 4,
+        format_type: "integer",
+    },
+    BuiltinPgType {
+        typname: "text",
+        oid: 25,
+        typlen: -1,
+        format_type: "text",
+    },
+    BuiltinPgType {
+        typname: "bpchar",
+        oid: 1042,
+        typlen: -1,
+        format_type: "character",
+    },
+    BuiltinPgType {
+        typname: "varchar",
+        oid: 1043,
+        typlen: -1,
+        format_type: "character varying",
+    },
+    BuiltinPgType {
+        typname: "oid",
+        oid: 26,
+        typlen: 4,
+        format_type: "oid",
+    },
+    BuiltinPgType {
+        typname: "json",
+        oid: 114,
+        typlen: -1,
+        format_type: "json",
+    },
+    BuiltinPgType {
+        typname: "float4",
+        oid: 700,
+        typlen: 4,
+        format_type: "real",
+    },
+    BuiltinPgType {
+        typname: "float8",
+        oid: 701,
+        typlen: 8,
+        format_type: "double precision",
+    },
+    BuiltinPgType {
+        typname: "date",
+        oid: 1082,
+        typlen: 4,
+        format_type: "date",
+    },
+    BuiltinPgType {
+        typname: "time",
+        oid: 1083,
+        typlen: 8,
+        format_type: "time without time zone",
+    },
+    BuiltinPgType {
+        typname: "timestamp",
+        oid: 1114,
+        typlen: 8,
+        format_type: "timestamp without time zone",
+    },
+    BuiltinPgType {
+        typname: "numeric",
+        oid: 1700,
+        typlen: -1,
+        format_type: "numeric",
+    },
+    BuiltinPgType {
+        typname: "uuid",
+        oid: 2950,
+        typlen: 16,
+        format_type: "uuid",
+    },
+    BuiltinPgType {
+        typname: "void",
+        oid: PG_VOID_OID,
+        typlen: 4,
+        format_type: "void",
+    },
+];
+
+pub(crate) fn builtin_oid(typname: &str) -> i64 {
+    BUILTIN_PG_TYPES
+        .iter()
+        .find(|entry| entry.typname == typname)
+        .map(|entry| entry.oid)
+        .expect("builtin pg type is registered")
+}
+
+pub(crate) fn builtin_typlen(oid: i64) -> i64 {
+    BUILTIN_PG_TYPES
+        .iter()
+        .find(|entry| entry.oid == oid)
+        .map(|entry| entry.typlen)
+        .unwrap_or(-1)
+}
+
+fn extension_type_oid(name: &str) -> i64 {
+    catalog_type_oid(kalamdb_commons::constants::PG_CATALOG_NAMESPACE, name)
+}
 
 /// PostgreSQL `pg_type.oid` for a Kalam column type.
 pub(crate) fn pg_type_oid(data_type: &KalamDataType) -> i64 {
     match data_type {
-        KalamDataType::Boolean => 16,
-        KalamDataType::SmallInt => 21,
-        KalamDataType::Int => 23,
-        KalamDataType::BigInt => 20,
-        KalamDataType::Float => 700,
-        KalamDataType::Double => 701,
-        KalamDataType::Timestamp | KalamDataType::DateTime => 1114,
-        KalamDataType::Date => 1082,
-        KalamDataType::Time => 1083,
-        KalamDataType::Decimal { .. } => 1700,
-        KalamDataType::Json => 114,
-        KalamDataType::Uuid => 2950,
-        KalamDataType::Bytes => 17,
-        KalamDataType::Text | KalamDataType::Embedding(_) | KalamDataType::File => 25,
+        KalamDataType::File => extension_type_oid("file"),
+        KalamDataType::Embedding(_) => extension_type_oid("embedding"),
+        other => builtin_oid(pg_type_name(other)),
     }
 }
 
@@ -124,25 +260,44 @@ pub(crate) fn udt_name_to_info_schema_data_type(udt_name: &str) -> &'static str 
 
 /// PostgreSQL `format_type()` display name for a `pg_type.oid`.
 pub fn pg_format_type(oid: i64) -> &'static str {
-    match oid {
-        16 => "boolean",
-        17 => "bytea",
-        19 => "name",
-        20 => "bigint",
-        21 => "smallint",
-        23 => "integer",
-        25 => "text",
-        26 => "oid",
-        114 => "json",
-        700 => "real",
-        701 => "double precision",
-        1082 => "date",
-        1083 => "time without time zone",
-        1114 => "timestamp without time zone",
-        1700 => "numeric",
-        2278 => "void",
-        2950 => "uuid",
-        _ => "unknown",
+    if let Some(entry) = BUILTIN_PG_TYPES.iter().find(|entry| entry.oid == oid) {
+        return entry.format_type;
+    }
+    if oid == extension_type_oid("file") {
+        return "file";
+    }
+    if oid == extension_type_oid("embedding") {
+        return "embedding";
+    }
+    if oid == extension_type_oid("geometry") {
+        return "geometry";
+    }
+    "unknown"
+}
+
+/// PostgreSQL `pg_attribute` `(atttypid, atttypmod)` for a column.
+///
+/// `varchar(n)` is oid 1043 with typmod `n + 4`. `numeric(p, s)` packs
+/// precision and scale the same way PostgreSQL does. Unlimited `text` stays
+/// oid 25 with typmod `-1`.
+pub(crate) fn pg_attribute_type(
+    data_type: &KalamDataType,
+    character_maximum_length: Option<u32>,
+    modifier: Option<&str>,
+) -> (i64, i64) {
+    if modifier == Some("geometry") {
+        return (extension_type_oid("geometry"), -1);
+    }
+    match data_type {
+        KalamDataType::Text => match character_maximum_length {
+            Some(length) => (1043, i64::from(length).saturating_add(4)),
+            None => (pg_type_oid(data_type), -1),
+        },
+        KalamDataType::Decimal { precision, scale } => {
+            let packed = (i64::from(*precision) << 16) | (i64::from(*scale) & 0xffff);
+            (1700, packed.saturating_add(4))
+        },
+        other => (pg_type_oid(other), -1),
     }
 }
 
@@ -162,7 +317,9 @@ pub(crate) fn pg_type_name(data_type: &KalamDataType) -> &'static str {
         KalamDataType::Json => "json",
         KalamDataType::Uuid => "uuid",
         KalamDataType::Bytes => "bytea",
-        KalamDataType::Text | KalamDataType::Embedding(_) | KalamDataType::File => "text",
+        KalamDataType::Text => "text",
+        KalamDataType::File => "file",
+        KalamDataType::Embedding(_) => "embedding",
     }
 }
 
@@ -182,5 +339,61 @@ mod tests {
     fn udt_name_to_info_schema_data_type_maps_pg_names() {
         assert_eq!(udt_name_to_info_schema_data_type("int8"), "bigint");
         assert_eq!(udt_name_to_info_schema_data_type("text"), "text");
+    }
+
+    #[test]
+    fn kalam_scalars_use_the_builtin_type_table() {
+        let scalars = [
+            KalamDataType::Boolean,
+            KalamDataType::SmallInt,
+            KalamDataType::Int,
+            KalamDataType::BigInt,
+            KalamDataType::Float,
+            KalamDataType::Double,
+            KalamDataType::Timestamp,
+            KalamDataType::DateTime,
+            KalamDataType::Date,
+            KalamDataType::Time,
+            KalamDataType::Decimal {
+                precision: 10,
+                scale: 2,
+            },
+            KalamDataType::Json,
+            KalamDataType::Uuid,
+            KalamDataType::Bytes,
+            KalamDataType::Text,
+        ];
+        for data_type in scalars {
+            let oid = pg_type_oid(&data_type);
+            assert!(
+                BUILTIN_PG_TYPES.iter().any(|entry| entry.oid == oid),
+                "{data_type:?} oid {oid} is missing from the builtin table"
+            );
+            assert_ne!(pg_format_type(oid), "unknown");
+        }
+        assert_eq!(pg_format_type(pg_type_oid(&KalamDataType::File)), "file");
+        assert_eq!(pg_format_type(pg_type_oid(&KalamDataType::Embedding(3))), "embedding");
+    }
+
+    #[test]
+    fn varchar_limit_is_a_postgres_typmod() {
+        assert_eq!(pg_attribute_type(&KalamDataType::Text, Some(255), None), (1043, 259));
+        assert_eq!(pg_attribute_type(&KalamDataType::Text, None, None), (25, -1));
+        assert_eq!(pg_format_type(1043), "character varying");
+        assert_eq!(
+            pg_attribute_type(
+                &KalamDataType::Decimal {
+                    precision: 10,
+                    scale: 5,
+                },
+                None,
+                None
+            ),
+            (1700, ((10_i64 << 16) | 5) + 4)
+        );
+        let (geometry_oid, geometry_typmod) =
+            pg_attribute_type(&KalamDataType::Text, None, Some("geometry"));
+        assert_eq!(geometry_typmod, -1);
+        assert_eq!(pg_format_type(geometry_oid), "geometry");
     }
 }

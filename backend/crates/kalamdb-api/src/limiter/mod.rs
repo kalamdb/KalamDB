@@ -5,16 +5,15 @@
 //!
 //! ## Components
 //!
-//! - [`RateLimiter`]: User and connection-based rate limiting using token buckets
+//! - [`RateLimiter`]: User and connection-based rate limiting using atomic windows
 //!
 //! ## Design Principles
 //!
 //! - **Zero-copy**: Uses `Arc` for sharing without cloning data
-//! - **Lock-free reads**: Moka cache provides concurrent access without global locks
+//! - **Lock-free admission**: each request updates an atomic window and returns
 //! - **Automatic cleanup**: TTL-based eviction eliminates manual cleanup overhead
 //! - **Minimal allocations**: Keys are interned, values use interior mutability
 
 mod rate_limiter;
-mod token_bucket;
 
 pub use rate_limiter::RateLimiter;

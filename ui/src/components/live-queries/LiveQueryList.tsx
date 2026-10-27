@@ -164,7 +164,7 @@ export function LiveQueryList() {
             onChange={(e) => setFilters({ ...filters, user_id: e.target.value })}
           />
           <Input
-            placeholder="Filter by Namespace"
+            placeholder="Filter by schema"
             value={filters.namespace_id}
             onChange={(e) => setFilters({ ...filters, namespace_id: e.target.value })}
           />
@@ -224,7 +224,7 @@ export function LiveQueryList() {
               <TableRow>
                 <TableHead>Subscription ID</TableHead>
                 <TableHead>User</TableHead>
-                <TableHead>Namespace</TableHead>
+                <TableHead>Schema</TableHead>
                 <TableHead>Table</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Duration</TableHead>

@@ -21,7 +21,7 @@ pub struct CatalogTriggerAttempt {
         default = "None",
         comment = "trigger:partition:offset:attempt"
     )]
-    pub attempt_id:       TriggerAttemptId,
+    pub attempt_id: TriggerAttemptId,
     #[column(
         id = 2,
         ordinal = 2,
@@ -31,7 +31,7 @@ pub struct CatalogTriggerAttempt {
         default = "None",
         comment = "Parent trigger"
     )]
-    pub trigger_id:       TriggerId,
+    pub trigger_id: TriggerId,
     #[column(
         id = 3,
         ordinal = 3,
@@ -41,7 +41,7 @@ pub struct CatalogTriggerAttempt {
         default = "None",
         comment = "Source topic"
     )]
-    pub topic_id:         TopicId,
+    pub topic_id: TopicId,
     #[column(
         id = 4,
         ordinal = 4,
@@ -51,7 +51,7 @@ pub struct CatalogTriggerAttempt {
         default = "None",
         comment = "Topic partition"
     )]
-    pub partition_id:     i32,
+    pub partition_id: i32,
     #[column(
         id = 5,
         ordinal = 5,
@@ -61,7 +61,7 @@ pub struct CatalogTriggerAttempt {
         default = "None",
         comment = "Topic offset"
     )]
-    pub offset:           i64,
+    pub offset: i64,
     #[column(
         id = 6,
         ordinal = 6,
@@ -71,7 +71,7 @@ pub struct CatalogTriggerAttempt {
         default = "None",
         comment = "Stable event identity"
     )]
-    pub event_id:         String,
+    pub event_id: String,
     #[column(
         id = 7,
         ordinal = 7,
@@ -81,7 +81,7 @@ pub struct CatalogTriggerAttempt {
         default = "None",
         comment = "1-based attempt number"
     )]
-    pub attempt:          i32,
+    pub attempt: i32,
     #[column(
         id = 8,
         ordinal = 8,
@@ -91,7 +91,7 @@ pub struct CatalogTriggerAttempt {
         default = "None",
         comment = "running | succeeded | retry | dlq"
     )]
-    pub status:           String,
+    pub status: String,
     #[column(
         id = 9,
         ordinal = 9,
@@ -102,7 +102,7 @@ pub struct CatalogTriggerAttempt {
         comment = "Lease owner node"
     )]
     #[serde(default)]
-    pub lease_owner:      Option<String>,
+    pub lease_owner: Option<String>,
     #[column(
         id = 10,
         ordinal = 10,
@@ -124,7 +124,7 @@ pub struct CatalogTriggerAttempt {
         comment = "Last error"
     )]
     #[serde(default)]
-    pub error:            Option<String>,
+    pub error: Option<String>,
     #[column(
         id = 12,
         ordinal = 12,
@@ -134,7 +134,7 @@ pub struct CatalogTriggerAttempt {
         default = "None",
         comment = "Created unix millis"
     )]
-    pub created_at:       i64,
+    pub created_at: i64,
     #[column(
         id = 13,
         ordinal = 13,
@@ -144,7 +144,7 @@ pub struct CatalogTriggerAttempt {
         default = "None",
         comment = "Updated unix millis"
     )]
-    pub updated_at:       i64,
+    pub updated_at: i64,
 }
 
 impl kalamdb_commons::KSerializable for CatalogTriggerAttempt {}

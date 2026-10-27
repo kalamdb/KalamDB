@@ -48,6 +48,17 @@ impl UserDataApplier for ProviderUserDataApplier {
         encoded_fields: &[Vec<u8>],
         versions: &[VersionId],
     ) -> Result<usize, RaftError> {
+        if !encoded_fields.is_empty() {
+            if let Some(count) = self
+                .executor
+                .dml()
+                .insert_user_encoded_fields(table_id, user_id, encoded_fields, versions)
+                .await
+                .map_err(ApplierError::into_raft)?
+            {
+                return Ok(count);
+            }
+        }
         let rows = crate::applier::ordinal_dml::decode_insert_rows(
             self.executor.app_context(),
             table_id,
@@ -65,7 +76,7 @@ impl UserDataApplier for ProviderUserDataApplier {
 
         self.executor
             .dml()
-            .insert_user_data_with_versions(table_id, user_id, &rows, versions)
+            .insert_user_data_with_versions(table_id, user_id, rows, versions)
             .await
             .map_err(ApplierError::into_raft)
     }

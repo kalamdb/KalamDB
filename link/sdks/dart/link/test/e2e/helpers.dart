@@ -19,6 +19,10 @@ final serverUrl = _env(['KALAMDB_URL', 'KALAM_URL'], 'http://localhost:2900');
 final adminUser = _env(['KALAMDB_USER', 'KALAM_USER'], 'admin');
 final adminPass = _env(['KALAMDB_PASSWORD', 'KALAM_PASS'], 'kalamdb123');
 
+/// HTTP budget for e2e clients. DDL on a long-lived debug server regularly
+/// exceeds the 10s connect default once several tests share that process.
+const e2eRequestTimeout = Duration(seconds: 60);
+
 String _env(List<String> keys, String defaultValue) {
   for (final key in keys) {
     final value = Platform.environment[key];
@@ -66,7 +70,7 @@ Future<KalamClient> connectJwtClient() async {
   final anonClient = await KalamClient.connect(
     url: serverUrl,
     authProvider: () async => Auth.none(),
-    timeout: const Duration(seconds: 10),
+    timeout: e2eRequestTimeout,
   );
 
   try {
@@ -74,7 +78,7 @@ Future<KalamClient> connectJwtClient() async {
     return await KalamClient.connect(
       url: serverUrl,
       authProvider: () async => Auth.jwt(login.accessToken),
-      timeout: const Duration(seconds: 10),
+      timeout: e2eRequestTimeout,
       maxRetries: 2,
     );
   } finally {
@@ -96,7 +100,7 @@ Future<KalamClient> connectWithAuthProvider() async {
         final bootstrap = await KalamClient.connect(
           url: serverUrl,
           authProvider: () async => Auth.basic(adminUser, adminPass),
-          timeout: const Duration(seconds: 10),
+          timeout: e2eRequestTimeout,
         );
         try {
           final loginResp = await bootstrap.login(adminUser, adminPass);
@@ -107,7 +111,7 @@ Future<KalamClient> connectWithAuthProvider() async {
       }
       return Auth.jwt(cachedToken!);
     },
-    timeout: const Duration(seconds: 10),
+    timeout: e2eRequestTimeout,
   );
 }
 
@@ -121,7 +125,7 @@ String uniqueName(String prefix) {
 
 /// Ensure a namespace exists.
 Future<void> ensureNamespace(KalamClient client, String name) async {
-  await client.query('CREATE NAMESPACE IF NOT EXISTS $name');
+  await client.query('CREATE SCHEMA IF NOT EXISTS $name');
 }
 
 /// Drop a table, ignoring errors.

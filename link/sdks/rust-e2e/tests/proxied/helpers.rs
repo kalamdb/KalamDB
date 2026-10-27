@@ -29,19 +29,19 @@ fn reconnect_test_timeouts() -> KalamLinkTimeouts {
         // suite) do not time out before the in-process isolated server finishes
         // the WebSocket handshake.  When the TCP proxy is paused, connections
         // fail immediately regardless of this value.
-        connection_timeout:   Duration::from_secs(15),
-        receive_timeout:      Duration::from_secs(5),
-        send_timeout:         Duration::from_secs(2),
+        connection_timeout: Duration::from_secs(15),
+        receive_timeout: Duration::from_secs(5),
+        send_timeout: Duration::from_secs(2),
         // Reconnect involves auth + resubscribe handshakes. CI full-suite runs
         // regularly push the isolated server beyond 5s here, so keep the
         // handshake budget above that while the outer test timeout remains the
         // main guardrail.
-        subscribe_timeout:    Duration::from_secs(10),
-        auth_timeout:         Duration::from_secs(10),
+        subscribe_timeout: Duration::from_secs(10),
+        auth_timeout: Duration::from_secs(10),
         initial_data_timeout: Duration::from_secs(30),
-        idle_timeout:         Duration::ZERO,
-        keepalive_interval:   Duration::from_secs(1),
-        pong_timeout:         Duration::from_secs(2),
+        idle_timeout: Duration::ZERO,
+        keepalive_interval: Duration::from_secs(1),
+        pong_timeout: Duration::from_secs(2),
     }
 }
 
@@ -139,12 +139,7 @@ pub async fn ensure_table(client: &KalamLinkClient, table: &str) {
 
 pub async fn query_max_seq(client: &KalamLinkClient, table: &str) -> VersionId {
     let result = client
-        .execute_query(
-            &format!("SELECT MAX(_version) AS max_seq FROM {}", table),
-            None,
-            None,
-            None,
-        )
+        .execute_query(&format!("SELECT MAX(_version) AS max_seq FROM {}", table), None, None, None)
         .await
         .expect("max seq query should succeed");
 

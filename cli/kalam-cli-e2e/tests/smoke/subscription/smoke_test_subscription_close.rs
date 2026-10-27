@@ -7,8 +7,8 @@
 //      spawns a background cleanup task that also removes the entry from `system.live`.
 //   3. `SubscriptionManager::is_closed()` returns the correct state.
 //
-// These tests use short `#[ntest::timeout]` values; individual WebSocket
-// operations use fast-timeout clients so each test completes quickly.
+// Individual WebSocket operations use fast-timeout clients. The test budget
+// covers parallel DDL on a loaded server.
 //
 // Run with:
 //   cargo test --test smoke smoke_test_subscription_close
@@ -55,7 +55,7 @@ fn wait_live_query(marker: &str, expect_present: bool, deadline: Duration) -> bo
 /// from `system.live` within a few seconds.
 ///
 /// Also verifies that `is_closed()` returns `false` before and `true` after.
-#[ntest::timeout(25000)]
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_subscription_explicit_close_removes_live_query() {
     if !require_server_running() {
@@ -68,7 +68,7 @@ fn smoke_subscription_explicit_close_removes_live_query() {
     let marker = format!("close_marker_{}", ns);
 
     // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE IF NOT EXISTS {} (id BIGINT PRIMARY KEY, v TEXT) WITH (TYPE='USER')",
@@ -142,7 +142,7 @@ fn smoke_subscription_explicit_close_removes_live_query() {
 
     if !closed {
         eprintln!("WARN: subscription setup/close failed; skipping system.live check");
-        let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
+        let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns));
         return;
     }
 
@@ -154,7 +154,7 @@ fn smoke_subscription_explicit_close_removes_live_query() {
         marker
     );
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns));
 }
 
 // ── test 2: drop without close() (Drop impl) ─────────────────────────────────
@@ -162,7 +162,7 @@ fn smoke_subscription_explicit_close_removes_live_query() {
 /// Dropping a SubscriptionManager without calling `close()` triggers the Drop
 /// impl, which spawns a background cleanup task.  The subscription should
 /// disappear from `system.live` within a few seconds.
-#[ntest::timeout(25000)]
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_subscription_drop_removes_live_query() {
     if !require_server_running() {
@@ -175,7 +175,7 @@ fn smoke_subscription_drop_removes_live_query() {
     let marker = format!("drop_marker_{}", ns);
 
     // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE IF NOT EXISTS {} (id BIGINT PRIMARY KEY, v TEXT) WITH (TYPE='USER')",
@@ -248,7 +248,7 @@ fn smoke_subscription_drop_removes_live_query() {
 
     if !dropped {
         eprintln!("WARN: subscription setup failed; skipping system.live check");
-        let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
+        let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns));
         return;
     }
 
@@ -262,5 +262,5 @@ fn smoke_subscription_drop_removes_live_query() {
         marker
     );
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns));
 }

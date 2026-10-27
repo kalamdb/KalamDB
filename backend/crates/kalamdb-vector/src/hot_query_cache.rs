@@ -29,28 +29,28 @@ const HOT_RESERVE_STEP: usize = 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct HotCacheKey {
-    table_id:    String,
+    table_id: TableId,
     column_name: String,
-    table_type:  TableType,
-    user_id:     Option<String>,
+    table_type: TableType,
+    user_id: Option<UserId>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct HotSearchResult {
-    pub candidates:  Vec<(String, f32)>,
+    pub candidates: Vec<(String, f32)>,
     pub touched_pks: HashSet<String>,
 }
 
 struct HotCacheState {
     base_last_applied_seq: i64,
-    last_scanned_seq:      i64,
-    dimensions:            u32,
-    metric:                VectorMetric,
-    next_key:              u64,
-    index:                 Index,
-    pk_to_key:             HashMap<String, u64>,
-    key_to_pk:             HashMap<u64, String>,
-    latest_seq_by_pk:      HashMap<String, i64>,
+    last_scanned_seq: i64,
+    dimensions: u32,
+    metric: VectorMetric,
+    next_key: u64,
+    index: Index,
+    pk_to_key: HashMap<String, u64>,
+    key_to_pk: HashMap<u64, String>,
+    latest_seq_by_pk: HashMap<String, i64>,
 }
 
 impl HotCacheState {
@@ -164,10 +164,10 @@ fn build_cache_key(
     user_id: Option<&UserId>,
 ) -> HotCacheKey {
     HotCacheKey {
-        table_id: table_id.to_string(),
+        table_id: table_id.clone(),
         column_name: column_name.to_string(),
         table_type,
-        user_id: user_id.map(|v| v.as_str().to_string()),
+        user_id: user_id.cloned(),
     }
 }
 
@@ -307,6 +307,10 @@ pub(crate) fn search_hot_candidates(
         candidates,
         touched_pks,
     })
+}
+
+pub fn invalidate_hot_query_cache_for_table(table_id: &TableId) {
+    HOT_QUERY_CACHE.retain(|key, _| &key.table_id != table_id);
 }
 
 #[cfg(test)]

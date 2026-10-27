@@ -1,6 +1,12 @@
 # Rust build artifacts
 /target/
 **/target/
+*.rs.bk
+*.rlib
+*.prof*
+# sqlparser_derive 0.5.0 reads this path; build.rs regenerates it.
+backend/crates/kalamdb-dialect/src/dialect/
+scripts/pg18-rewrite/state/
 # Cargo.lock - Committed for reproducible builds (this is an application, not a library)
 
 # WASM build outputs
@@ -111,7 +117,13 @@ ui/package-lock.json
 /link/sdks/typescript/.wasm-cargo-home-test2
 ts-sdk-repro/server.toml
 /benchv2/logs
-/benchv2/logs
+/benchv2/pgwire-speed/sql/
+/benchv2/pgwire-speed/results/
+/benchv2/pgwire-speed/logs/
+/benchv2/pgwire-speed/target/
+/benchv2/pgwire-speed/setups/kalamdb/data/
+/benchv2/pgwire-speed/setups/kalamdb/logs/
+/benchv2/pgwire-speed/setups/postgres/
 /link/kalam-client/sdks/typescript/.wasm-cargo-home
 /link/kalam-client/sdks/typescript/.wasm-target
 /link/kalam-client/sdks/typescript/client/.wasm-cargo-home
@@ -149,3 +161,4 @@ rust-toolchain.toml
 /cli/kalam-cli-e2e/logs
 /cli/kalam-cli-e2e/logs
 /cli/kalam-cli-e2e/logs
+/scripts/__pycache__

@@ -144,7 +144,7 @@ impl TableVersionId {
     ///
     /// Matches both latest pointers and versioned entries within the namespace.
     #[cfg(feature = "storage")]
-    pub fn namespace_scan_prefix(namespace_id: &crate::models::ids::NamespaceId) -> Vec<u8> {
+    pub fn namespace_scan_prefix(namespace_id: &crate::models::ids::SchemaId) -> Vec<u8> {
         encode_prefix(&(namespace_id.as_str(),))
     }
 
@@ -211,10 +211,10 @@ impl StorageKey for TableVersionId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{ids::NamespaceId, schemas::TableName};
+    use crate::models::{ids::SchemaId, schemas::TableName};
 
     fn test_table_id() -> TableId {
-        TableId::new(NamespaceId::default(), TableName::new("users"))
+        TableId::new(SchemaId::default(), TableName::new("users"))
     }
 
     #[cfg(feature = "storage")]

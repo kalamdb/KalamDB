@@ -9,7 +9,7 @@ use kalamdb_commons::{
     conversions::{
         mask_sensitive_rows_for_role, record_batch_to_json_arrays, schema_fields_from_arrow_schema,
     },
-    models::{ConnectionInfo, KalamCellValue, NamespaceId, UserId},
+    models::{ConnectionInfo, KalamCellValue, SchemaId, UserId},
     schemas::SchemaField,
     Role,
 };
@@ -39,28 +39,28 @@ use crate::{
 
 #[derive(Serialize)]
 struct ForwardedResponse<'a> {
-    status:  &'static str,
+    status: &'static str,
     results: &'a [ForwardedResult],
-    took:    f64,
+    took: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    error:   Option<ForwardedError<'a>>,
+    error: Option<ForwardedError<'a>>,
 }
 
 #[derive(Serialize)]
 struct ForwardedResult {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    schema:    Vec<SchemaField>,
+    schema: Vec<SchemaField>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    rows:      Option<Vec<Vec<KalamCellValue>>>,
+    rows: Option<Vec<Vec<KalamCellValue>>>,
     row_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
-    message:   Option<String>,
-    as_user:   String,
+    message: Option<String>,
+    as_user: String,
 }
 
 #[derive(Serialize)]
 struct ForwardedError<'a> {
-    code:    &'a str,
+    code: &'a str,
     message: &'a str,
 }
 
@@ -81,10 +81,10 @@ impl CoreClusterHandler {
         started_at: Instant,
     ) -> ForwardSqlResponsePayload {
         let resp = ForwardedResponse {
-            status:  "error",
+            status: "error",
             results: &[],
-            took:    started_at.elapsed().as_secs_f64() * 1000.0,
-            error:   Some(ForwardedError {
+            took: started_at.elapsed().as_secs_f64() * 1000.0,
+            error: Some(ForwardedError {
                 code: error_code,
                 message,
             }),
@@ -126,11 +126,11 @@ impl CoreClusterHandler {
         let result = result.into_arrow_rows()?;
         match result {
             ExecutionResult::Success { message } => Ok(ForwardedResult {
-                schema:    Vec::new(),
-                rows:      None,
+                schema: Vec::new(),
+                rows: None,
                 row_count: 0,
-                message:   Some(message),
-                as_user:   as_user.to_string(),
+                message: Some(message),
+                as_user: as_user.to_string(),
             }),
             ExecutionResult::Rows {
                 batches,
@@ -159,60 +159,60 @@ impl CoreClusterHandler {
                 })
             },
             ExecutionResult::Inserted { rows_affected } => Ok(ForwardedResult {
-                schema:    Vec::new(),
-                rows:      None,
+                schema: Vec::new(),
+                rows: None,
                 row_count: rows_affected,
-                message:   Some(format!("Inserted {} row(s)", rows_affected)),
-                as_user:   as_user.to_string(),
+                message: Some(format!("Inserted {} row(s)", rows_affected)),
+                as_user: as_user.to_string(),
             }),
             ExecutionResult::Updated { rows_affected } => Ok(ForwardedResult {
-                schema:    Vec::new(),
-                rows:      None,
+                schema: Vec::new(),
+                rows: None,
                 row_count: rows_affected,
-                message:   Some(format!("Updated {} row(s)", rows_affected)),
-                as_user:   as_user.to_string(),
+                message: Some(format!("Updated {} row(s)", rows_affected)),
+                as_user: as_user.to_string(),
             }),
             ExecutionResult::Deleted { rows_affected } => Ok(ForwardedResult {
-                schema:    Vec::new(),
-                rows:      None,
+                schema: Vec::new(),
+                rows: None,
                 row_count: rows_affected,
-                message:   Some(format!("Deleted {} row(s)", rows_affected)),
-                as_user:   as_user.to_string(),
+                message: Some(format!("Deleted {} row(s)", rows_affected)),
+                as_user: as_user.to_string(),
             }),
             ExecutionResult::Flushed {
                 tables,
                 bytes_written,
             } => Ok(ForwardedResult {
-                schema:    Vec::new(),
-                rows:      None,
+                schema: Vec::new(),
+                rows: None,
                 row_count: tables.len(),
-                message:   Some(format!(
+                message: Some(format!(
                     "Flushed {} table(s), {} bytes written",
                     tables.len(),
                     bytes_written
                 )),
-                as_user:   as_user.to_string(),
+                as_user: as_user.to_string(),
             }),
             ExecutionResult::Subscription {
                 subscription_id,
                 channel,
                 select_query,
             } => Ok(ForwardedResult {
-                schema:    Vec::new(),
-                rows:      None,
+                schema: Vec::new(),
+                rows: None,
                 row_count: 1,
-                message:   Some(format!(
+                message: Some(format!(
                     "Subscription {subscription_id} created. Connect to {channel} to receive \
                      updates for query: {select_query}"
                 )),
-                as_user:   as_user.to_string(),
+                as_user: as_user.to_string(),
             }),
             ExecutionResult::JobKilled { job_id, status } => Ok(ForwardedResult {
-                schema:    Vec::new(),
-                rows:      None,
+                schema: Vec::new(),
+                rows: None,
                 row_count: 1,
-                message:   Some(format!("Job {} killed: {}", job_id, status)),
-                as_user:   as_user.to_string(),
+                message: Some(format!("Job {} killed: {}", job_id, status)),
+                as_user: as_user.to_string(),
             }),
             ExecutionResult::ScalarRows { .. } => {
                 unreachable!("converted by into_arrow_rows")
@@ -232,7 +232,7 @@ impl CoreClusterHandler {
     fn prepare_forwarded_statement(
         &self,
         statement: &str,
-        default_namespace: &NamespaceId,
+        default_namespace: &SchemaId,
         actor_role: Role,
     ) -> Result<(PreparedExecutionStatement, Option<String>), String> {
         let trimmed = statement.trim().trim_end_matches(';').trim();
@@ -320,7 +320,7 @@ impl ClusterMessageHandler for CoreClusterHandler {
         let mut exec_ctx = ExecutionContext::from_session(session, base_session);
         if let Some(namespace_id) = req.namespace_id.as_deref() {
             let namespace_id =
-                NamespaceId::try_parse_reference(namespace_id).map_err(|e| e.to_string());
+                SchemaId::try_parse_reference(namespace_id).map_err(|e| e.to_string());
             let namespace_id = match namespace_id {
                 Ok(ns) => ns,
                 Err(e) => {
@@ -539,10 +539,10 @@ impl ClusterMessageHandler for CoreClusterHandler {
         }
 
         let resp = ForwardedResponse {
-            status:  "success",
+            status: "success",
             results: &results,
-            took:    started_at.elapsed().as_secs_f64() * 1000.0,
-            error:   None,
+            took: started_at.elapsed().as_secs_f64() * 1000.0,
+            error: None,
         };
         let body = serde_json::to_vec(&resp)
             .map_err(|e| format!("Failed to serialize forwarded SQL success payload: {}", e))?;
@@ -637,9 +637,9 @@ mod tests {
 
         let result = CoreClusterHandler::execution_result_to_forwarded(
             ExecutionResult::Rows {
-                batches:   vec![batch],
+                batches: vec![batch],
                 row_count: 1,
-                schema:    Some(schema),
+                schema: Some(schema),
             },
             "root",
             Role::System,
@@ -667,9 +667,9 @@ mod tests {
 
         let result = CoreClusterHandler::execution_result_to_forwarded(
             ExecutionResult::Rows {
-                batches:   vec![batch],
+                batches: vec![batch],
                 row_count: 1,
-                schema:    Some(schema),
+                schema: Some(schema),
             },
             "alice",
             Role::User,

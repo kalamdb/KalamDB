@@ -208,7 +208,7 @@ fn sanitize_path_component(s: &str) -> String {
 }
 
 /// Detect MIME type from filename extension and magic bytes.
-fn detect_mime_type(filename: &str, data: &[u8]) -> String {
+pub(crate) fn detect_mime_type(filename: &str, data: &[u8]) -> String {
     // Try magic bytes first
     if data.len() >= 8 {
         // PNG

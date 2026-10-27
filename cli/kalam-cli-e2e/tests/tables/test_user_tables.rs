@@ -28,7 +28,7 @@ fn test_cli_basic_query_execution() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Create namespace and table via CLI
-    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace));
     let _ = execute_sql_as_root_via_cli(&format!(
         r#"CREATE TABLE {} (
             id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -69,7 +69,7 @@ fn test_cli_basic_query_execution() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }
 
 /// T038: Test table output formatting
@@ -85,8 +85,8 @@ fn test_cli_table_output_formatting() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup table and data via CLI
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE failed");
+    execute_sql_as_root_via_cli(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA failed");
     execute_sql_as_root_via_cli(&format!(
         r#"CREATE TABLE {} (
             id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -118,7 +118,7 @@ fn test_cli_table_output_formatting() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }
 
 /// T039: Test JSON output format
@@ -134,7 +134,7 @@ fn test_cli_json_output_format() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup table and data via CLI
-    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace));
     let _ = execute_sql_as_root_via_cli(&format!(
         r#"CREATE TABLE {} (
             id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -173,7 +173,7 @@ fn test_cli_json_output_format() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }
 
 /// T040: Test CSV output format
@@ -190,7 +190,7 @@ fn test_cli_csv_output_format() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup table and data via CLI
-    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace));
     let _ = execute_sql_as_root_via_cli(&format!(
         r#"CREATE TABLE {} (
             id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -228,7 +228,7 @@ fn test_cli_csv_output_format() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }
 
 /// T064: Test multi-line query input
@@ -244,7 +244,7 @@ fn test_cli_multiline_query() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup table via CLI
-    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace));
     let _ = execute_sql_as_root_via_cli(&format!(
         r#"CREATE TABLE {} (
             id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -273,7 +273,7 @@ fn test_cli_multiline_query() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }
 
 /// T065: Test query with comments
@@ -349,7 +349,7 @@ fn test_cli_result_pagination() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup table via CLI
-    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace));
     let _ = execute_sql_as_root_via_cli(&format!(
         r#"CREATE TABLE {} (
             id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -379,5 +379,5 @@ fn test_cli_result_pagination() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }

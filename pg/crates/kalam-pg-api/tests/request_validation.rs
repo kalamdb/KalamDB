@@ -1,14 +1,14 @@
 use datafusion_common::ScalarValue;
 use kalam_pg_api::{InsertRequest, RemoteSessionContext, ScanRequest, TenantContext};
 use kalamdb_commons::{
-    models::{rows::Row, NamespaceId, TableName, UserId},
+    models::{rows::Row, SchemaId, TableName, UserId},
     TableId, TableType,
 };
 
 #[test]
 fn user_table_scan_requires_user_id() {
     let request = ScanRequest::new(
-        TableId::new(NamespaceId::new("app"), TableName::new("messages")),
+        TableId::new(SchemaId::new("app"), TableName::new("messages")),
         TableType::User,
         TenantContext::anonymous(),
     );
@@ -20,7 +20,7 @@ fn user_table_scan_requires_user_id() {
 #[test]
 fn shared_table_scan_allows_missing_user_id() {
     let request = ScanRequest::new(
-        TableId::new(NamespaceId::new("app"), TableName::new("messages")),
+        TableId::new(SchemaId::new("app"), TableName::new("messages")),
         TableType::Shared,
         TenantContext::anonymous(),
     );
@@ -37,7 +37,7 @@ fn tenant_context_uses_explicit_user_id() {
 #[test]
 fn user_table_insert_requires_user_id() {
     let request = InsertRequest::new(
-        TableId::new(NamespaceId::new("app"), TableName::new("messages")),
+        TableId::new(SchemaId::new("app"), TableName::new("messages")),
         TableType::User,
         TenantContext::anonymous(),
         vec![Row::from_vec(vec![(
@@ -53,7 +53,7 @@ fn user_table_insert_requires_user_id() {
 #[test]
 fn insert_requires_rows() {
     let request = InsertRequest::new(
-        TableId::new(NamespaceId::new("app"), TableName::new("messages")),
+        TableId::new(SchemaId::new("app"), TableName::new("messages")),
         TableType::Shared,
         TenantContext::anonymous(),
         Vec::new(),
@@ -82,7 +82,7 @@ fn remote_session_requires_non_empty_current_schema() {
 #[test]
 fn scan_request_validates_remote_session_context() {
     let mut request = ScanRequest::new(
-        TableId::new(NamespaceId::new("app"), TableName::new("messages")),
+        TableId::new(SchemaId::new("app"), TableName::new("messages")),
         TableType::User,
         TenantContext::with_user_id(UserId::new("u_123")),
     );

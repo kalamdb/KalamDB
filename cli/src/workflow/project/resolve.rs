@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, env, fs, path::Path};
 
-use kalamdb_commons::NamespaceId;
+use kalamdb_commons::SchemaId;
 
 use crate::error::{CLIError, Result};
 
@@ -23,11 +23,11 @@ pub enum ResolutionSource {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedEnvironment {
-    pub name:             String,
-    pub url:              String,
-    pub namespace:        NamespaceId,
-    pub env_source:       ResolutionSource,
-    pub url_source:       ResolutionSource,
+    pub name: String,
+    pub url: String,
+    pub namespace: SchemaId,
+    pub env_source: ResolutionSource,
+    pub url_source: ResolutionSource,
     pub namespace_source: ResolutionSource,
 }
 

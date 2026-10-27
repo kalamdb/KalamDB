@@ -1,7 +1,7 @@
 //! Type-safe identifier parsing for workflow configuration and execution.
 
 use kalamdb_commons::{
-    models::NamespaceIdValidationError, normalize_sql_identifier, NamespaceId, TableId, TableName,
+    models::NamespaceIdValidationError, normalize_sql_identifier, SchemaId, TableId, TableName,
     UserId,
 };
 use serde::{Deserialize, Deserializer, Serializer};
@@ -13,8 +13,8 @@ pub fn normalize_namespace_name(name: &str) -> String {
     normalize_sql_identifier(name)
 }
 
-pub fn parse_namespace_id(name: &str) -> Result<NamespaceId> {
-    match NamespaceId::try_new(name) {
+pub fn parse_namespace_id(name: &str) -> Result<SchemaId> {
+    match SchemaId::try_new(name) {
         Ok(namespace) => Ok(namespace),
         Err(error) => Err(namespace_error(error, name)),
     }
@@ -124,12 +124,12 @@ fn namespace_error(error: NamespaceIdValidationError, raw: &str) -> CLIError {
 pub mod serde_namespace {
     use super::*;
 
-    pub fn deserialize<'de, D>(deserializer: D) -> std::result::Result<NamespaceId, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> std::result::Result<SchemaId, D::Error>
     where
         D: Deserializer<'de>,
     {
         let value = String::deserialize(deserializer)?;
-        NamespaceId::try_new(&value).map_err(|error| {
+        SchemaId::try_new(&value).map_err(|error| {
             let message = error.to_string();
             if message.contains("invalid characters") {
                 let suggested = normalize_namespace_name(&value);
@@ -140,7 +140,7 @@ pub mod serde_namespace {
         })
     }
 
-    pub fn serialize<S>(value: &NamespaceId, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    pub fn serialize<S>(value: &SchemaId, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: Serializer,
     {

@@ -77,11 +77,11 @@ pub struct ViewTableProvider<V: VirtualView> {
 }
 
 struct ViewScanSource<V: VirtualView> {
-    view:            Arc<V>,
+    view: Arc<V>,
     physical_filter: Option<Arc<dyn PhysicalExpr>>,
-    projection:      Option<Vec<usize>>,
-    limit:           Option<usize>,
-    output_schema:   SchemaRef,
+    projection: Option<Vec<usize>>,
+    limit: Option<usize>,
+    output_schema: SchemaRef,
 }
 
 impl<V: VirtualView> std::fmt::Debug for ViewScanSource<V> {

@@ -15,38 +15,38 @@ pub struct ValuesInsertShapeOptions {
     /// Accept `INSERT ... ON CONFLICT`.
     pub allow_on_conflict: bool,
     /// Accept `INSERT ... RETURNING` (when false, RETURNING rejects the shape).
-    pub allow_returning:   bool,
+    pub allow_returning: bool,
     /// Accept `INSERT OVERWRITE`.
-    pub allow_overwrite:   bool,
+    pub allow_overwrite: bool,
 }
 
 impl ValuesInsertShapeOptions {
     /// Plain literal INSERT (RETURNING allowed, no ON CONFLICT).
     pub const PLAIN: Self = Self {
         allow_on_conflict: false,
-        allow_returning:   true,
-        allow_overwrite:   false,
+        allow_returning: true,
+        allow_overwrite: false,
     };
 
     /// VALUES extraction for `INSERT ... ON CONFLICT` (RETURNING handled by caller).
     pub const ON_CONFLICT_ROWS: Self = Self {
         allow_on_conflict: true,
-        allow_returning:   true,
-        allow_overwrite:   false,
+        allow_returning: true,
+        allow_overwrite: false,
     };
 
     /// Batch INSERT inside an active transaction.
     pub const BATCH: Self = Self {
         allow_on_conflict: false,
-        allow_returning:   false,
-        allow_overwrite:   false,
+        allow_returning: false,
+        allow_overwrite: false,
     };
 }
 
 /// A VALUES-only INSERT view with its parsed row list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ValuesInsertView<'a> {
-    pub insert:     &'a Insert,
+    pub insert: &'a Insert,
     pub value_rows: &'a [Parens<Vec<Expr>>],
 }
 
@@ -62,6 +62,29 @@ pub fn insert_from_statement(statement: &Statement) -> Option<&Insert> {
 #[inline]
 pub fn insert_has_on_conflict(insert: &Insert) -> bool {
     matches!(insert.on.as_ref(), Some(OnInsert::OnConflict(_)))
+}
+
+/// DataFusion cannot plan `INSERT`/`UPDATE`/`DELETE ... RETURNING`.
+/// Describe the result as `SELECT <returning> FROM <table> WHERE FALSE`.
+pub fn returning_describe_sql(statement: &Statement) -> Option<String> {
+    use sqlparser::ast::FromTable;
+
+    let (from, returning) = match statement {
+        Statement::Insert(insert) => (insert.table.to_string(), insert.returning.as_deref()?),
+        Statement::Update(update) => (update.table.to_string(), update.returning.as_deref()?),
+        Statement::Delete(delete) => {
+            let tables = match &delete.from {
+                FromTable::WithFromKeyword(tables) | FromTable::WithoutKeyword(tables) => tables,
+            };
+            (tables.first()?.to_string(), delete.returning.as_deref()?)
+        },
+        _ => return None,
+    };
+    if returning.is_empty() {
+        return None;
+    }
+    let projection = returning.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+    Some(format!("SELECT {projection} FROM {from} WHERE FALSE"))
 }
 
 /// Returns the RETURNING projection list when present.

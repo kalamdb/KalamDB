@@ -24,8 +24,8 @@ fn start_subscription_with_config(
 /// Advanced subscription listener with additional capabilities
 pub struct SubscriptionListenerAdvanced {
     event_receiver: std::sync::mpsc::Receiver<String>,
-    stop_sender:    Option<tokio::sync::oneshot::Sender<()>>,
-    _handle:        Option<std::thread::JoinHandle<()>>,
+    stop_sender: Option<tokio::sync::oneshot::Sender<()>>,
+    _handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Drop for SubscriptionListenerAdvanced {
@@ -166,8 +166,8 @@ impl SubscriptionListenerAdvanced {
 
         Ok(Self {
             event_receiver: event_rx,
-            stop_sender:    Some(stop_tx),
-            _handle:        Some(handle),
+            stop_sender: Some(stop_tx),
+            _handle: Some(handle),
         })
     }
 
@@ -217,7 +217,7 @@ impl SubscriptionListenerAdvanced {
 }
 
 fn create_namespace(ns: &str) {
-    let _ = execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns));
+    let _ = execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns));
 }
 
 // ============================================================================
@@ -332,7 +332,7 @@ fn smoke_subscription_multi_batch_initial_data() {
     println!("[TEST] Multi-batch initial data test passed!");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 // ============================================================================
@@ -483,7 +483,7 @@ fn smoke_subscription_resume_from_seq_id() {
     println!("[TEST] Subscription resume test passed! (seq_id capture: {:?})", last_seq_id);
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 // ============================================================================
@@ -642,7 +642,7 @@ fn smoke_subscription_high_volume_changes() {
     );
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 // ============================================================================
@@ -733,7 +733,7 @@ fn smoke_subscription_delete_events() {
     );
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 // Helper extension for SubscriptionListener to collect until ready
@@ -991,5 +991,5 @@ fn smoke_subscription_column_projection() {
     );
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }

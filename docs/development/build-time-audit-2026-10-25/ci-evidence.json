@@ -1,0 +1,726 @@
+{
+  "read_date": "2026-10-25",
+  "main_ci": [
+    {
+      "run_id": 40219152857,
+      "url": "https://github.com/kalamdb/KalamDB/actions/runs/40219152857",
+      "head_sha": "444c994d3207b19c84497c4edd1bf89370f91083",
+      "jobs": [
+        {
+          "job_id": 121246739724,
+          "conclusion": "failure",
+          "started_at": "2026-10-25T18:00:19Z",
+          "completed_at": "2026-10-25T18:49:11Z",
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "seconds": 2
+            },
+            {
+              "name": "Checkout code",
+              "conclusion": "success",
+              "seconds": 5
+            },
+            {
+              "name": "Free disk space",
+              "conclusion": "success",
+              "seconds": 177
+            },
+            {
+              "name": "Install Rust toolchain",
+              "conclusion": "success",
+              "seconds": 10
+            },
+            {
+              "name": "Install system dependencies",
+              "conclusion": "success",
+              "seconds": 10
+            },
+            {
+              "name": "Cache Rust",
+              "conclusion": "success",
+              "seconds": 1
+            },
+            {
+              "name": "Drop cached RocksDB objects",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Repair stale rusty_v8 cache",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Install cargo-nextest",
+              "conclusion": "success",
+              "seconds": 1
+            },
+            {
+              "name": "Build kalam CLI binary for e2e tests",
+              "conclusion": "success",
+              "seconds": 727
+            },
+            {
+              "name": "Setup Node 24",
+              "conclusion": "success",
+              "seconds": 1
+            },
+            {
+              "name": "Install wasm-pack",
+              "conclusion": "success",
+              "seconds": 1
+            },
+            {
+              "name": "Build unpublished TypeScript SDKs for CLI template e2e",
+              "conclusion": "success",
+              "seconds": 87
+            },
+            {
+              "name": "Report disk space",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Serialization boundary",
+              "conclusion": "success",
+              "seconds": 1
+            },
+            {
+              "name": "Codec ownership",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Run tests (nextest)",
+              "conclusion": "success",
+              "seconds": 1903
+            },
+            {
+              "name": "Report disk space after tests",
+              "conclusion": "success",
+              "seconds": 1
+            },
+            {
+              "name": "Collect fresh server log",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Upload fresh server log",
+              "conclusion": "success",
+              "seconds": 1
+            },
+            {
+              "name": "Normalize JUnit suite durations for test-reporter",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Parse test results and generate badge",
+              "conclusion": "failure",
+              "seconds": 0
+            },
+            {
+              "name": "Fail if JUnit report is missing after a successful nextest run",
+              "conclusion": "skipped",
+              "seconds": 0
+            },
+            {
+              "name": "Publish test report",
+              "conclusion": "failure",
+              "seconds": 1
+            },
+            {
+              "name": "Fail workflow if nextest did not complete successfully",
+              "conclusion": "failure",
+              "seconds": 0
+            },
+            {
+              "name": "Commit badge",
+              "conclusion": "skipped",
+              "seconds": 0
+            },
+            {
+              "name": "Post Setup Node 24",
+              "conclusion": "skipped",
+              "seconds": 0
+            },
+            {
+              "name": "Post Cache Rust",
+              "conclusion": "skipped",
+              "seconds": 0
+            },
+            {
+              "name": "Post Checkout code",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "seconds": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "run_id": 40214424430,
+      "url": "https://github.com/kalamdb/KalamDB/actions/runs/40214424430",
+      "head_sha": "f4e8bf757113d6b4c52fd8f18968963a755be097",
+      "jobs": [
+        {
+          "job_id": 121232374406,
+          "conclusion": "failure",
+          "started_at": "2026-10-25T17:01:08Z",
+          "completed_at": "2026-10-25T17:56:02Z",
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "seconds": 1
+            },
+            {
+              "name": "Checkout code",
+              "conclusion": "success",
+              "seconds": 5
+            },
+            {
+              "name": "Free disk space",
+              "conclusion": "success",
+              "seconds": 99
+            },
+            {
+              "name": "Install Rust toolchain",
+              "conclusion": "success",
+              "seconds": 10
+            },
+            {
+              "name": "Install system dependencies",
+              "conclusion": "success",
+              "seconds": 8
+            },
+            {
+              "name": "Cache Rust",
+              "conclusion": "success",
+              "seconds": 1
+            },
+            {
+              "name": "Drop cached RocksDB objects",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Repair stale rusty_v8 cache",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Install cargo-nextest",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Build kalam CLI binary for e2e tests",
+              "conclusion": "success",
+              "seconds": 957
+            },
+            {
+              "name": "Setup Node 24",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Install wasm-pack",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Build unpublished TypeScript SDKs for CLI template e2e",
+              "conclusion": "success",
+              "seconds": 99
+            },
+            {
+              "name": "Report disk space",
+              "conclusion": "success",
+              "seconds": 1
+            },
+            {
+              "name": "Serialization boundary",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Codec ownership",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Run tests (nextest)",
+              "conclusion": "success",
+              "seconds": 2109
+            },
+            {
+              "name": "Report disk space after tests",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Collect fresh server log",
+              "conclusion": "success",
+              "seconds": 1
+            },
+            {
+              "name": "Upload fresh server log",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Normalize JUnit suite durations for test-reporter",
+              "conclusion": "skipped",
+              "seconds": 0
+            },
+            {
+              "name": "Parse test results and generate badge",
+              "conclusion": "skipped",
+              "seconds": 0
+            },
+            {
+              "name": "Fail if JUnit report is missing after a successful nextest run",
+              "conclusion": "skipped",
+              "seconds": 0
+            },
+            {
+              "name": "Publish test report",
+              "conclusion": "skipped",
+              "seconds": 0
+            },
+            {
+              "name": "Fail workflow if nextest did not complete successfully",
+              "conclusion": "failure",
+              "seconds": 0
+            },
+            {
+              "name": "Commit badge",
+              "conclusion": "skipped",
+              "seconds": 0
+            },
+            {
+              "name": "Post Setup Node 24",
+              "conclusion": "skipped",
+              "seconds": 0
+            },
+            {
+              "name": "Post Cache Rust",
+              "conclusion": "skipped",
+              "seconds": 0
+            },
+            {
+              "name": "Post Checkout code",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "seconds": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "run_id": 40209243939,
+      "url": "https://github.com/kalamdb/KalamDB/actions/runs/40209243939",
+      "head_sha": "b5352cee2426b9ade021f4156ff11b6869798f1d",
+      "jobs": [
+        {
+          "job_id": 121216730759,
+          "conclusion": "failure",
+          "started_at": "2026-10-25T15:55:44Z",
+          "completed_at": "2026-10-25T16:55:14Z",
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success",
+              "seconds": 2
+            },
+            {
+              "name": "Checkout code",
+              "conclusion": "success",
+              "seconds": 6
+            },
+            {
+              "name": "Free disk space",
+              "conclusion": "success",
+              "seconds": 126
+            },
+            {
+              "name": "Install Rust toolchain",
+              "conclusion": "success",
+              "seconds": 10
+            },
+            {
+              "name": "Install system dependencies",
+              "conclusion": "success",
+              "seconds": 9
+            },
+            {
+              "name": "Cache Rust",
+              "conclusion": "success",
+              "seconds": 1
+            },
+            {
+              "name": "Repair stale rusty_v8 cache",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Install cargo-nextest",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Build kalam CLI binary for e2e tests",
+              "conclusion": "success",
+              "seconds": 971
+            },
+            {
+              "name": "Setup Node 24",
+              "conclusion": "success",
+              "seconds": 1
+            },
+            {
+              "name": "Install wasm-pack",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Build unpublished TypeScript SDKs for CLI template e2e",
+              "conclusion": "success",
+              "seconds": 101
+            },
+            {
+              "name": "Report disk space",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Serialization boundary",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Codec ownership",
+              "conclusion": "success",
+              "seconds": 1
+            },
+            {
+              "name": "Run tests (nextest)",
+              "conclusion": "success",
+              "seconds": 2333
+            },
+            {
+              "name": "Report disk space after tests",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Collect fresh server log",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Upload fresh server log",
+              "conclusion": "success",
+              "seconds": 2
+            },
+            {
+              "name": "Normalize JUnit suite durations for test-reporter",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Parse test results and generate badge",
+              "conclusion": "failure",
+              "seconds": 0
+            },
+            {
+              "name": "Fail if JUnit report is missing after a successful nextest run",
+              "conclusion": "skipped",
+              "seconds": 0
+            },
+            {
+              "name": "Publish test report",
+              "conclusion": "failure",
+              "seconds": 1
+            },
+            {
+              "name": "Fail workflow if nextest did not complete successfully",
+              "conclusion": "failure",
+              "seconds": 0
+            },
+            {
+              "name": "Commit badge",
+              "conclusion": "skipped",
+              "seconds": 0
+            },
+            {
+              "name": "Post Setup Node 24",
+              "conclusion": "skipped",
+              "seconds": 0
+            },
+            {
+              "name": "Post Cache Rust",
+              "conclusion": "skipped",
+              "seconds": 0
+            },
+            {
+              "name": "Post Checkout code",
+              "conclusion": "success",
+              "seconds": 0
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success",
+              "seconds": 0
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "cluster": {
+    "run_id": 38174736898,
+    "url": "https://github.com/kalamdb/KalamDB/actions/runs/38174736898",
+    "head_sha": "1a28a6d3f5147f3567229e1b7997b38b33878d2a",
+    "jobs": [
+      {
+        "name": "Resolve Cluster E2E Server Version",
+        "id": 114574635711,
+        "conclusion": "success",
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success",
+            "seconds": 1
+          },
+          {
+            "name": "Checkout",
+            "conclusion": "success",
+            "seconds": 4
+          },
+          {
+            "name": "Setup Python",
+            "conclusion": "success",
+            "seconds": 0
+          },
+          {
+            "name": "Verify versions.json",
+            "conclusion": "success",
+            "seconds": 0
+          },
+          {
+            "name": "Resolve versions from versions.json",
+            "conclusion": "success",
+            "seconds": 0
+          },
+          {
+            "name": "Resolve latest released server asset",
+            "conclusion": "success",
+            "seconds": 1
+          },
+          {
+            "name": "Post Setup Python",
+            "conclusion": "success",
+            "seconds": 0
+          },
+          {
+            "name": "Post Checkout",
+            "conclusion": "success",
+            "seconds": 0
+          },
+          {
+            "name": "Complete job",
+            "conclusion": "success",
+            "seconds": 0
+          }
+        ]
+      },
+      {
+        "name": "Download Released Cluster Server Binary",
+        "id": 114574674643,
+        "conclusion": "success",
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success",
+            "seconds": 1
+          },
+          {
+            "name": "Checkout",
+            "conclusion": "success",
+            "seconds": 3
+          },
+          {
+            "name": "Download latest release server asset",
+            "conclusion": "success",
+            "seconds": 2
+          },
+          {
+            "name": "Upload released cluster server binary",
+            "conclusion": "success",
+            "seconds": 5
+          },
+          {
+            "name": "Post Checkout",
+            "conclusion": "success",
+            "seconds": 0
+          },
+          {
+            "name": "Complete job",
+            "conclusion": "success",
+            "seconds": 0
+          }
+        ]
+      },
+      {
+        "name": "CLI Cluster E2E",
+        "id": 114574758472,
+        "conclusion": "failure",
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success",
+            "seconds": 2
+          },
+          {
+            "name": "Checkout",
+            "conclusion": "success",
+            "seconds": 2
+          },
+          {
+            "name": "Download released server binary",
+            "conclusion": "success",
+            "seconds": 2
+          },
+          {
+            "name": "Install system dependencies",
+            "conclusion": "success",
+            "seconds": 10
+          },
+          {
+            "name": "Setup Rust",
+            "conclusion": "success",
+            "seconds": 8
+          },
+          {
+            "name": "Cache Rust",
+            "conclusion": "success",
+            "seconds": 1
+          },
+          {
+            "name": "Install cargo-nextest",
+            "conclusion": "success",
+            "seconds": 1
+          },
+          {
+            "name": "Prepare released server binary",
+            "conclusion": "success",
+            "seconds": 0
+          },
+          {
+            "name": "Run cluster workspace-e2e workflow",
+            "conclusion": "failure",
+            "seconds": 1224
+          },
+          {
+            "name": "Print cluster logs",
+            "conclusion": "success",
+            "seconds": 0
+          },
+          {
+            "name": "Upload cluster logs",
+            "conclusion": "success",
+            "seconds": 1
+          },
+          {
+            "name": "Post Cache Rust",
+            "conclusion": "success",
+            "seconds": 30
+          },
+          {
+            "name": "Post Checkout",
+            "conclusion": "success",
+            "seconds": 0
+          },
+          {
+            "name": "Complete job",
+            "conclusion": "success",
+            "seconds": 0
+          }
+        ]
+      }
+    ]
+  },
+  "log_excerpts": {
+    "main": [
+      "2026-10-25T18:03:44.4219070Z No cache found.",
+      "2026-10-25T18:05:48.9943282Z    Compiling librocksdb-sys v0.19.0+11.8.1",
+      "2026-10-25T18:06:38.5333106Z    Compiling kalam-cli v0.8.0 (/home/runner/work/KalamDB/KalamDB/cli)",
+      "2026-10-25T18:14:06.6012427Z    Compiling rocksdb v0.25.0",
+      "2026-10-25T18:15:52.2874588Z     Finished `dev` profile [unoptimized] target(s) in 12m 07s",
+      "2026-10-25T18:18:18.7108474Z    Compiling librocksdb-sys v0.19.0+11.8.1",
+      "2026-10-25T18:19:56.7193132Z    Compiling v8 v152.2.0",
+      "2026-10-25T18:21:23.3913386Z    Compiling kalam-cli v0.8.0 (/home/runner/work/KalamDB/KalamDB/cli)",
+      "2026-10-25T18:28:46.0283121Z    Compiling rocksdb v0.25.0",
+      "2026-10-25T18:44:49.4658580Z     Finished `test` profile [unoptimized] target(s) in 27m 24s",
+      "2026-10-25T18:45:01.7506813Z     Starting 5512 tests across 191 binaries (45 tests skipped)",
+      "2026-10-25T18:49:05.7030193Z      Summary [ 243.957s] 556/5512 tests run: 552 passed, 4 failed, 45 skipped"
+    ],
+    "previous": [
+      "2026-10-25T17:03:13.2568358Z No cache found.",
+      "2026-10-25T17:05:52.9110349Z    Compiling librocksdb-sys v0.19.0+11.8.1",
+      "2026-10-25T17:06:56.2950649Z    Compiling kalam-cli v0.8.0 (/home/runner/work/KalamDB/KalamDB/cli)",
+      "2026-10-25T17:16:59.7103868Z    Compiling rocksdb v0.25.0",
+      "2026-10-25T17:19:09.8123153Z     Finished `dev` profile [unoptimized] target(s) in 15m 56s",
+      "2026-10-25T17:22:23.8480828Z    Compiling librocksdb-sys v0.19.0+11.8.1",
+      "2026-10-25T17:24:16.0290924Z    Compiling v8 v152.2.0",
+      "2026-10-25T17:26:11.2791820Z    Compiling kalam-cli v0.8.0 (/home/runner/work/KalamDB/KalamDB/cli)",
+      "2026-10-25T17:36:14.2164595Z    Compiling rocksdb v0.25.0",
+      "2026-10-25T17:53:37.6287388Z           collect2: fatal error: ld terminated with signal 7 [Bus error], core dumped",
+      "2026-10-25T17:53:37.6315409Z error: could not compile `kalamdb-core` (test \"test_flush_operations\") due to 1 previous error",
+      "2026-10-25T17:53:39.3198768Z           collect2: fatal error: ld terminated with signal 7 [Bus error], core dumped",
+      "2026-10-25T17:53:39.3211216Z error: could not compile `kalamdb-core` (test \"shared_shard_ownership\") due to 1 previous error",
+      "2026-10-25T17:53:39.3723100Z           collect2: fatal error: ld terminated with signal 7 [Bus error], core dumped",
+      "2026-10-25T17:53:39.3733310Z error: could not compile `kalamdb-core` (test \"pg_catalog_shims\") due to 1 previous error"
+    ],
+    "earlier": [
+      "2026-10-25T15:58:19.3188580Z No cache found.",
+      "2026-10-25T16:01:05.3365288Z    Compiling librocksdb-sys v0.19.0+11.8.1",
+      "2026-10-25T16:02:04.8284445Z    Compiling kalam-cli v0.8.0 (/home/runner/work/KalamDB/KalamDB/cli)",
+      "2026-10-25T16:12:20.4942741Z    Compiling rocksdb v0.25.0",
+      "2026-10-25T16:14:30.5181617Z     Finished `dev` profile [unoptimized] target(s) in 16m 10s",
+      "2026-10-25T16:17:53.4600944Z    Compiling librocksdb-sys v0.19.0+11.8.1",
+      "2026-10-25T16:19:44.2399186Z    Compiling v8 v152.2.0",
+      "2026-10-25T16:21:41.7550911Z    Compiling kalam-cli v0.8.0 (/home/runner/work/KalamDB/KalamDB/cli)",
+      "2026-10-25T16:31:49.7378127Z    Compiling rocksdb v0.25.0",
+      "2026-10-25T16:50:50.5557125Z     Finished `test` profile [unoptimized] target(s) in 34m 34s",
+      "2026-10-25T16:51:02.3023065Z     Starting 5512 tests across 191 binaries (45 tests skipped)",
+      "2026-10-25T16:55:06.0358620Z      Summary [ 243.735s] 556/5512 tests run: 552 passed, 4 failed, 45 skipped"
+    ],
+    "cluster": [
+      "2026-10-11T21:04:13.1873705Z No cache found.",
+      "2026-10-11T21:07:09.8264389Z    Compiling librocksdb-sys v0.19.0+11.8.1",
+      "2026-10-11T21:08:21.2306241Z    Compiling kalam-cli v0.7.1 (/home/runner/work/KalamDB/KalamDB/cli)",
+      "2026-10-11T21:16:25.3357755Z    Compiling rocksdb v0.25.0",
+      "2026-10-11T21:18:41.0941192Z     Finished `dev` profile [unoptimized + debuginfo] target(s) in 14m 19s",
+      "2026-10-11T21:19:48.7199150Z    Compiling kalam-cli v0.7.1 (/home/runner/work/KalamDB/KalamDB/cli)",
+      "2026-10-11T21:24:37.9524463Z     Finished `test` profile [unoptimized + debuginfo] target(s) in 5m 53s",
+      "2026-10-11T21:24:38.0038858Z     Starting 650 tests across 1 binary (8 tests skipped)",
+      "2026-10-11T21:24:38.2478691Z      Summary [   0.218s] 13/650 tests run: 8 passed, 5 failed, 8 skipped"
+    ]
+  }
+}

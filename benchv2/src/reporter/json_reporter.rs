@@ -1,9 +1,9 @@
-use std::fs;
-use std::path::Path;
-use std::time::Duration;
+use std::{fs, path::Path, time::Duration};
 
-use crate::config::Config;
-use crate::metrics::{BenchmarkReport, BenchmarkResult, ReportConfig, ReportSummary, SystemInfo};
+use crate::{
+    config::Config,
+    metrics::{BenchmarkReport, BenchmarkResult, ReportConfig, ReportSummary, SystemInfo},
+};
 
 /// Write a JSON report to disk and return the file path.
 pub fn write_json_report(
@@ -27,19 +27,19 @@ pub fn write_json_report(
     let total_duration_ms = wall_clock_duration.as_secs_f64() * 1000.0;
 
     let report = BenchmarkReport {
-        version: version.to_string(),
+        version:    version.to_string(),
         server_url: config.urls.join(", "),
-        timestamp: timestamp.to_rfc3339(),
-        config: ReportConfig {
-            iterations: config.iterations,
-            warmup: config.warmup,
-            concurrency: config.concurrency,
-            namespace: config.namespace.clone(),
+        timestamp:  timestamp.to_rfc3339(),
+        config:     ReportConfig {
+            iterations:      config.iterations,
+            warmup:          config.warmup,
+            concurrency:     config.concurrency,
+            namespace:       config.namespace.clone(),
             max_subscribers: Some(config.max_subscribers),
         },
-        system: system.clone(),
-        results: results.to_vec(),
-        summary: ReportSummary {
+        system:     system.clone(),
+        results:    results.to_vec(),
+        summary:    ReportSummary {
             total_benchmarks: results.len() as u32,
             passed,
             failed,

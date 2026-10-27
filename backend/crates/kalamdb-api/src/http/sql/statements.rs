@@ -19,14 +19,14 @@ use super::{
 
 #[derive(Debug)]
 pub(super) struct ParsedExecutionStatement {
-    pub(super) sql:                 String,
+    pub(super) sql: String,
     pub(super) execute_as_username: Option<String>,
 }
 
 #[derive(Debug)]
 pub(super) struct PreparedApiExecutionStatement {
     pub(super) execute_as_username: Option<String>,
-    pub(super) prepared_statement:  PreparedExecutionStatement,
+    pub(super) prepared_statement: PreparedExecutionStatement,
 }
 
 pub(super) fn authorized_username(exec_ctx: &ExecutionContext) -> String {
@@ -65,11 +65,11 @@ pub(super) fn parse_execute_statement(statement: &str) -> Result<ParsedExecution
 
     match kalamdb_sql::execute_as::parse_execute_as(statement)? {
         Some(envelope) => Ok(ParsedExecutionStatement {
-            sql:                 envelope.inner_sql,
+            sql: envelope.inner_sql,
             execute_as_username: Some(envelope.username),
         }),
         None => Ok(ParsedExecutionStatement {
-            sql:                 trimmed.to_string(),
+            sql: trimmed.to_string(),
             execute_as_username: None,
         }),
     }
@@ -225,7 +225,7 @@ fn split_and_prepare_statements_with_depth(
             prepare_api_statement(raw_statement, &prepare_ctx, sql_executor, start_time, light)?;
 
         if let Some(classified) = prepared_stmt.prepared_statement.classified_statement.as_ref() {
-            if let SqlStatementKind::UseNamespace(stmt) = classified.kind() {
+            if let SqlStatementKind::UseSchema(stmt) = classified.kind() {
                 prepare_ctx = prepare_ctx.clone().with_namespace_id(stmt.namespace.clone());
             }
         }

@@ -66,8 +66,37 @@ pub fn try_pk_bucket_key(value: &ScalarValue) -> Result<PkBucketKey, String> {
         ScalarValue::Utf8(Some(s))
         | ScalarValue::LargeUtf8(Some(s))
         | ScalarValue::Utf8View(Some(s)) => Ok(PkBucketKey::Text(s.clone())),
+        ScalarValue::FixedSizeBinary(16, Some(bytes)) => uuid_pk_text(bytes)
+            .map(PkBucketKey::Text)
+            .ok_or_else(|| format!("unsupported primary key type: {value:?}")),
         _ => Err(format!("unsupported primary key type: {value:?}")),
     }
+}
+
+fn uuid_pk_text(bytes: &[u8]) -> Option<String> {
+    if bytes.len() != 16 {
+        return None;
+    }
+    Some(format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:\
+         02x}{:02x}{:02x}",
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15],
+    ))
 }
 
 /// Build a merge bucket key from a cell value without stringifying integers.
@@ -199,6 +228,18 @@ mod tests {
         assert_eq!(
             pk_bucket_key_from_scalar(&ScalarValue::Int64(None), seq),
             PkBucketKey::Version(99)
+        );
+    }
+
+    #[test]
+    fn uuid_primary_key_uses_canonical_text() {
+        let bytes = vec![
+            0xab, 0xf8, 0xa1, 0x54, 0x5b, 0x1c, 0x4a, 0x46, 0xac, 0x9c, 0x73, 0x00, 0x57, 0x0f,
+            0x4f, 0x17,
+        ];
+        assert_eq!(
+            try_pk_bucket_key(&ScalarValue::FixedSizeBinary(16, Some(bytes))).unwrap(),
+            PkBucketKey::Text("abf8a154-5b1c-4a46-ac9c-7300570f4f17".to_string())
         );
     }
 

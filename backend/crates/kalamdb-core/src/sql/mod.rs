@@ -33,11 +33,12 @@ pub mod executor;
 pub mod functions;
 pub mod impersonation;
 pub mod plan_cache;
+pub(crate) mod serial_sequence;
 pub mod table_functions;
 
-pub use context::{ExecutionContext, ScalarValue};
+pub use context::{ExecutionContext, ScalarValue, SessionConfigValues};
 pub use datafusion_session::DataFusionSessionFactory; /* KalamSessionState removed in v3
-                                                        * refactor */
+                                                       * refactor */
 pub use executor::{handlers::ExecutionResult, SqlExecutor};
 pub use functions::{CosineDistanceFunction, CurrentRoleFunction, CurrentUserFunction};
 pub use impersonation::SqlImpersonationService;

@@ -25,12 +25,12 @@ fn file_uri(path: PathBuf) -> String {
 #[tokio::test]
 async fn test_storage_abstraction_over_http() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
-    // T420: StorageBackend trait interface exists (smoke via CREATE NAMESPACE + CREATE STORAGE)
-    let response = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS test_storage_trait").await?;
+    // T420: StorageBackend trait interface exists (smoke via CREATE SCHEMA + CREATE STORAGE)
+    let response = server.execute_sql("CREATE SCHEMA IF NOT EXISTS test_storage_trait").await?;
     assert_eq!(
         response.status,
         ResponseStatus::Success,
-        "CREATE NAMESPACE failed: {:?}",
+        "CREATE SCHEMA failed: {:?}",
         response.error
     );
 
@@ -48,11 +48,11 @@ async fn test_storage_abstraction_over_http() -> anyhow::Result<()> {
     );
 
     // T421: RocksDB implements storage trait (CRUD on a user table)
-    let response = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS test_rocksdb_trait").await?;
+    let response = server.execute_sql("CREATE SCHEMA IF NOT EXISTS test_rocksdb_trait").await?;
     assert_eq!(
         response.status,
         ResponseStatus::Success,
-        "CREATE NAMESPACE failed: {:?}",
+        "CREATE SCHEMA failed: {:?}",
         response.error
     );
 
@@ -109,11 +109,11 @@ async fn test_storage_abstraction_over_http() -> anyhow::Result<()> {
     assert_eq!(response.status, ResponseStatus::Success);
 
     // T424: Column family (partition) abstraction smoke via multi-table isolation
-    let response = server.execute_sql("CREATE NAMESPACE IF NOT EXISTS test_partition_ns").await?;
+    let response = server.execute_sql("CREATE SCHEMA IF NOT EXISTS test_partition_ns").await?;
     assert_eq!(
         response.status,
         ResponseStatus::Success,
-        "CREATE NAMESPACE failed: {:?}",
+        "CREATE SCHEMA failed: {:?}",
         response.error
     );
 
@@ -171,9 +171,9 @@ async fn test_storage_abstraction_over_http() -> anyhow::Result<()> {
     assert_eq!(response.status, ResponseStatus::Error);
 
     // Cleanup best-effort: keep the test idempotent.
-    let _ = server.execute_sql("DROP NAMESPACE test_storage_trait").await;
-    let _ = server.execute_sql("DROP NAMESPACE test_rocksdb_trait").await;
-    let _ = server.execute_sql("DROP NAMESPACE test_partition_ns").await;
+    let _ = server.execute_sql("DROP SCHEMA test_storage_trait").await;
+    let _ = server.execute_sql("DROP SCHEMA test_rocksdb_trait").await;
+    let _ = server.execute_sql("DROP SCHEMA test_partition_ns").await;
     let _ = server.execute_sql("DROP STORAGE test_local").await;
     Ok(())
 }

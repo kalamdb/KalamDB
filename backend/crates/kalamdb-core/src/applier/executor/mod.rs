@@ -34,7 +34,7 @@
 //! The DmlExecutor is stateless, allowing parallel execution across shards.
 
 mod ddl;
-mod dml;
+pub(crate) mod dml;
 mod namespace;
 mod storage;
 mod user;
@@ -69,11 +69,11 @@ use crate::app_context::AppContext;
 /// allows parallel execution across different shards.
 pub struct CommandExecutorImpl {
     app_context: Arc<AppContext>,
-    ddl:         DdlExecutor,
-    dml:         DmlExecutor,
-    namespace:   NamespaceExecutor,
-    storage:     StorageExecutor,
-    user:        UserExecutor,
+    ddl: DdlExecutor,
+    dml: DmlExecutor,
+    namespace: NamespaceExecutor,
+    storage: StorageExecutor,
+    user: UserExecutor,
 }
 
 impl CommandExecutorImpl {

@@ -19,13 +19,25 @@ pub struct Row {
 /// Compact, ordered representation of a row aligned with a physical schema.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RowEnvelope {
+    /// Catalog `schema_version` these columns were validated against.
+    pub schema_version: u16,
     /// Column-aligned scalar values (Null when column missing)
     pub columns: Vec<ScalarValue>,
 }
 
 impl RowEnvelope {
     pub fn new(columns: Vec<ScalarValue>) -> Self {
-        Self { columns }
+        Self {
+            schema_version: 0,
+            columns,
+        }
+    }
+
+    pub fn versioned(schema_version: u16, columns: Vec<ScalarValue>) -> Self {
+        Self {
+            schema_version,
+            columns,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -70,21 +82,21 @@ pub enum StoredScalarValue {
     Binary(Option<Vec<u8>>),
     LargeBinary(Option<Vec<u8>>),
     FixedSizeBinary {
-        size:  i32,
+        size: i32,
         value: Option<Vec<u8>>,
     },
     Date32(Option<i32>),
     Time64Microsecond(Option<i64>),
     TimestampMillisecond {
-        value:    Option<i64>,
+        value: Option<i64>,
         timezone: Option<String>,
     },
     TimestampMicrosecond {
-        value:    Option<i64>,
+        value: Option<i64>,
         timezone: Option<String>,
     },
     TimestampNanosecond {
-        value:    Option<i64>,
+        value: Option<i64>,
         timezone: Option<String>,
     },
     Decimal128 {
@@ -93,12 +105,12 @@ pub enum StoredScalarValue {
             deserialize_with = "deserialize_decimal128_option",
             default
         )]
-        value:     Option<i128>,
+        value: Option<i128>,
         precision: u8,
-        scale:     i8,
+        scale: i8,
     },
     Embedding {
-        size:   i32,
+        size: i32,
         values: Option<Vec<Option<f32>>>,
     },
     /// Named struct. Keys are field names; slots stay in catalog.
@@ -161,27 +173,27 @@ impl From<&ScalarValue> for StoredScalarValue {
             ScalarValue::Binary(v) => StoredScalarValue::Binary(v.clone()),
             ScalarValue::LargeBinary(v) => StoredScalarValue::LargeBinary(v.clone()),
             ScalarValue::FixedSizeBinary(size, v) => StoredScalarValue::FixedSizeBinary {
-                size:  *size,
+                size: *size,
                 value: v.clone(),
             },
             ScalarValue::Date32(v) => StoredScalarValue::Date32(*v),
             ScalarValue::Time64Microsecond(v) => StoredScalarValue::Time64Microsecond(*v),
             ScalarValue::TimestampMillisecond(v, tz) => StoredScalarValue::TimestampMillisecond {
-                value:    *v,
+                value: *v,
                 timezone: tz.as_ref().map(|t| t.to_string()),
             },
             ScalarValue::TimestampMicrosecond(v, tz) => StoredScalarValue::TimestampMicrosecond {
-                value:    *v,
+                value: *v,
                 timezone: tz.as_ref().map(|t| t.to_string()),
             },
             ScalarValue::TimestampNanosecond(v, tz) => StoredScalarValue::TimestampNanosecond {
-                value:    *v,
+                value: *v,
                 timezone: tz.as_ref().map(|t| t.to_string()),
             },
             ScalarValue::Decimal128(value, precision, scale) => StoredScalarValue::Decimal128 {
-                value:     *value,
+                value: *value,
                 precision: *precision,
-                scale:     *scale,
+                scale: *scale,
             },
             ScalarValue::FixedSizeList(array) => match encode_embedding_from_list(array.clone()) {
                 Some(stored) => stored,
@@ -314,6 +326,15 @@ impl Row {
             map.insert(k, v);
         }
         Self { values: map }
+    }
+
+    /// Build a row from values already ordered like `names`.
+    pub fn from_aligned(names: &[String], columns: Vec<ScalarValue>) -> Self {
+        let mut values = BTreeMap::new();
+        for (name, value) in names.iter().zip(columns) {
+            values.insert(name.clone(), value);
+        }
+        Self { values }
     }
 
     pub fn get(&self, key: &str) -> Option<&ScalarValue> {

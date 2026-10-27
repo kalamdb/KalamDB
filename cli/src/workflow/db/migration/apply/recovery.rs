@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use kalam_client::KalamLinkClient;
-use kalamdb_commons::NamespaceId;
+use kalamdb_commons::SchemaId;
 
 use super::{
     load_server_migration_state,
@@ -104,7 +104,7 @@ pub(crate) async fn handle_failed_records(
     options: &ApplyMigrationOptions,
     output: &WorkflowOutput,
     client: &KalamLinkClient,
-    namespace: &NamespaceId,
+    namespace: &SchemaId,
 ) -> Result<()> {
     loop {
         let failed = state.failed_records();
@@ -169,7 +169,7 @@ pub(crate) async fn handle_failed_records(
 async fn mark_migration_applied_on_server(
     state: &mut MigrationState,
     client: &KalamLinkClient,
-    namespace: &NamespaceId,
+    namespace: &SchemaId,
     migration_id: &str,
     output: &WorkflowOutput,
 ) -> Result<()> {
@@ -207,7 +207,7 @@ pub(crate) async fn handle_stuck_applying(
     options: &ApplyMigrationOptions,
     output: &WorkflowOutput,
     client: &KalamLinkClient,
-    _namespace: &NamespaceId,
+    _namespace: &SchemaId,
 ) -> Result<()> {
     let applying = state.applying_records();
     if applying.is_empty() {
@@ -319,17 +319,17 @@ mod tests {
     fn failed_server_record_without_local_file_is_ignored_by_partition() {
         let temp = tempfile::TempDir::new().unwrap();
         let record = MigrationRecord {
-            migration_id:  "0002_auto_missing.sql".into(),
-            namespace:     kalamdb_commons::NamespaceId::new("test1"),
+            migration_id: "0002_auto_missing.sql".into(),
+            namespace: kalamdb_commons::SchemaId::new("test1"),
             migration_key: None,
-            name:          "auto_missing".into(),
-            checksum:      "abc".into(),
-            status:        MigrationStatus::Failed,
-            started_at:    None,
-            finished_at:   None,
+            name: "auto_missing".into(),
+            checksum: "abc".into(),
+            status: MigrationStatus::Failed,
+            started_at: None,
+            finished_at: None,
             error_message: Some("table already exists".into()),
-            sql:           None,
-            source:        Some("0002_auto_missing.sql".into()),
+            sql: None,
+            source: Some("0002_auto_missing.sql".into()),
             kalam_version: None,
         };
 

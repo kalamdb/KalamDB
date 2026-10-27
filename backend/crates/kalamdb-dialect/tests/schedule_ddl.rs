@@ -1,4 +1,4 @@
-use kalamdb_commons::NamespaceId;
+use kalamdb_commons::SchemaId;
 use kalamdb_dialect::classifier::SqlStatement;
 
 #[test]
@@ -14,7 +14,7 @@ fn schedule_ddl_accepts_postgresql_shaped_statements() {
         assert!(
             SqlStatement::classify_and_parse(
                 sql,
-                &NamespaceId::new("default"),
+                &SchemaId::new("default"),
                 kalamdb_commons::Role::System
             )
             .is_ok(),
@@ -42,7 +42,7 @@ fn schedule_ddl_rejects_mysql_and_unsupported_policies() {
         assert!(
             SqlStatement::classify_and_parse(
                 sql,
-                &NamespaceId::new("default"),
+                &SchemaId::new("default"),
                 kalamdb_commons::Role::System
             )
             .is_err(),
@@ -57,7 +57,7 @@ fn quoted_schedule_identifiers_preserve_case_and_escaped_quotes() {
     let stmt = CreateScheduleStatement::parse(
         "CREATE /* clock */ SCHEDULE reports.\"Daily\" INTERVAL '1 hour' EXECUTE PROCEDURE \
          reports.\"Summary\"()",
-        &NamespaceId::new("default"),
+        &SchemaId::new("default"),
     )
     .unwrap();
     assert_eq!(stmt.schedule_id.as_str(), "reports.Daily");
@@ -68,7 +68,7 @@ fn quoted_schedule_identifiers_preserve_case_and_escaped_quotes() {
 fn schedule_ddl_requires_admin() {
     assert!(SqlStatement::classify_and_parse(
         "DROP SCHEDULE reports.daily",
-        &NamespaceId::new("default"),
+        &SchemaId::new("default"),
         kalamdb_commons::Role::User
     )
     .is_err());

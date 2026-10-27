@@ -31,7 +31,7 @@ pub struct CatalogFunctionArtifact {
         default = "None",
         comment = "Artifact size in bytes"
     )]
-    pub size_bytes:  i64,
+    pub size_bytes: i64,
     #[column(
         id = 3,
         ordinal = 3,
@@ -41,7 +41,7 @@ pub struct CatalogFunctionArtifact {
         default = "None",
         comment = "typescript"
     )]
-    pub runtime:     FunctionRuntime,
+    pub runtime: FunctionRuntime,
     #[column(
         id = 4,
         ordinal = 4,
@@ -51,7 +51,7 @@ pub struct CatalogFunctionArtifact {
         default = "None",
         comment = "First-seen time (ms)"
     )]
-    pub created_at:  i64,
+    pub created_at: i64,
 }
 
 impl kalamdb_commons::KSerializable for CatalogFunctionArtifact {}

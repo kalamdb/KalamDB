@@ -11,7 +11,7 @@ use crate::row_access::{column_value, scalar_equals_policy, scalar_equals_princi
 #[derive(Debug, Clone)]
 pub struct AuthorizationSet {
     relation: AuthorizationRelation,
-    keys:     AuthorizationKeys,
+    keys: AuthorizationKeys,
 }
 
 #[derive(Debug, Clone)]
@@ -158,14 +158,14 @@ mod tests {
     use kalamdb_commons::{
         datatypes::KalamDataType,
         schemas::{ColumnDefinition, TableOptions, TableType},
-        InvalidationStrategy, NamespaceId, PolicyScalar, PrincipalExpr, TableId, TableName,
+        InvalidationStrategy, PolicyScalar, PrincipalExpr, SchemaId, TableId, TableName,
     };
 
     use super::*;
 
     fn membership_table() -> TableDefinition {
         TableDefinition::new(
-            NamespaceId::new("app"),
+            SchemaId::new("app"),
             TableName::new("members"),
             TableType::Shared,
             vec![
@@ -182,19 +182,19 @@ mod tests {
     fn relation_with_status_not_equal() -> AuthorizationRelation {
         let relation_table = TableId::from_strings("app", "members");
         AuthorizationRelation {
-            protected_table:   TableId::from_strings("app", "messages"),
-            protected_keys:    vec![2],
-            relation_table:    relation_table.clone(),
-            relation_keys:     vec![2],
-            principal_column:  1,
-            principal:         PrincipalExpr::CurrentUser,
+            protected_table: TableId::from_strings("app", "messages"),
+            protected_keys: vec![2],
+            relation_table: relation_table.clone(),
+            relation_keys: vec![2],
+            principal_column: 1,
+            principal: PrincipalExpr::CurrentUser,
             static_predicates: vec![ScalarPredicate {
                 column_id: 3,
-                operator:  PredicateOperator::NotEq,
-                value:     PolicyScalar::String("blocked".to_string()),
+                operator: PredicateOperator::NotEq,
+                value: PolicyScalar::String("blocked".to_string()),
             }],
-            dependencies:      vec![relation_table],
-            invalidation:      InvalidationStrategy::TargetedPrincipal,
+            dependencies: vec![relation_table],
+            invalidation: InvalidationStrategy::TargetedPrincipal,
         }
     }
 

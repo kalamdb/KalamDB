@@ -51,16 +51,16 @@ fn create_test_jwt_token(
 ) -> String {
     let now = chrono::Utc::now().timestamp() as usize;
     let claims = AuthJwtClaims {
-        sub:            UserId::new(username).to_string(),
-        iss:            issuer.to_string(),
-        exp:            ((now as i64) + exp_offset_secs) as usize,
-        iat:            now,
-        name:           None,
-        email:          Some(format!("{}@example.com", username)),
+        sub: UserId::new(username).to_string(),
+        iss: issuer.to_string(),
+        exp: ((now as i64) + exp_offset_secs) as usize,
+        iat: now,
+        name: None,
+        email: Some(format!("{}@example.com", username)),
         email_verified: None,
-        role:           Some(Role::User),
-        token_type:     None,
-        auth_type:      None,
+        role: Some(Role::User),
+        token_type: None,
+        auth_type: None,
     };
 
     let header = Header::new(Algorithm::HS256);
@@ -157,7 +157,7 @@ async fn test_jwt_auth_expired_token() {
         .insert_header(("Authorization", auth_header.as_str()))
         .insert_header(("Content-Type", "application/json"))
         .set_json(serde_json::json!({
-            "sql": "CREATE NAMESPACE test_ns"
+            "sql": "CREATE SCHEMA test_ns"
         }))
         .to_request();
 
@@ -207,7 +207,7 @@ async fn test_jwt_auth_invalid_signature() {
         .insert_header(("Authorization", auth_header.as_str()))
         .insert_header(("Content-Type", "application/json"))
         .set_json(serde_json::json!({
-            "sql": "CREATE NAMESPACE test_ns"
+            "sql": "CREATE SCHEMA test_ns"
         }))
         .to_request();
 
@@ -257,7 +257,7 @@ async fn test_jwt_auth_untrusted_issuer() {
         .insert_header(("Authorization", auth_header.as_str()))
         .insert_header(("Content-Type", "application/json"))
         .set_json(serde_json::json!({
-            "sql": "CREATE NAMESPACE test_ns"
+            "sql": "CREATE SCHEMA test_ns"
         }))
         .to_request();
 
@@ -297,17 +297,17 @@ async fn test_jwt_auth_missing_sub_claim() {
     // Create claims WITHOUT sub field
     #[derive(Debug, Serialize)]
     struct MalformedClaims {
-        pub iss:      String,
-        pub exp:      usize,
-        pub iat:      usize,
+        pub iss: String,
+        pub exp: usize,
+        pub iat: usize,
         pub username: Option<String>,
     }
 
     let now = chrono::Utc::now().timestamp() as usize;
     let claims = MalformedClaims {
-        iss:      issuer.to_string(),
-        exp:      now + 3600,
-        iat:      now,
+        iss: issuer.to_string(),
+        exp: now + 3600,
+        iat: now,
         username: Some("eve".to_string()),
     };
 
@@ -322,7 +322,7 @@ async fn test_jwt_auth_missing_sub_claim() {
         .insert_header(("Authorization", auth_header.as_str()))
         .insert_header(("Content-Type", "application/json"))
         .set_json(serde_json::json!({
-            "sql": "CREATE NAMESPACE test_ns"
+            "sql": "CREATE SCHEMA test_ns"
         }))
         .to_request();
 
@@ -373,7 +373,7 @@ async fn test_jwt_auth_malformed_header() {
             .insert_header(("Authorization", malformed_header))
             .insert_header(("Content-Type", "application/json"))
             .set_json(serde_json::json!({
-                "sql": "CREATE NAMESPACE test_ns"
+                "sql": "CREATE SCHEMA test_ns"
             }))
             .to_request();
 

@@ -1,8 +1,6 @@
-mod support;
-
 use kalamdb_core::transactions::TransactionRaftBinding;
 use ntest::timeout;
-use support::{
+use crate::support::{
     create_cluster_app_context, create_executor, create_shared_table, create_user_table,
     execute_err, execute_ok, insert_sql, request_exec_ctx, request_transaction_coordinator,
     request_transaction_state, select_names, unique_namespace,

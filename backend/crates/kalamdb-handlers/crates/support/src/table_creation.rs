@@ -5,7 +5,12 @@
 use std::sync::Arc;
 
 use kalamdb_commons::{
-    models::{StorageId, TableId, UserId},
+    constants::SystemColumnNames,
+    datatypes::KalamDataType,
+    models::{
+        schemas::{ColumnDefinition, TableDefinition},
+        StorageId, TableId, UserId,
+    },
     schemas::{ColumnDefault, TableType},
     Role,
 };
@@ -34,11 +39,9 @@ pub fn build_table_definition(
     stmt: &CreateTableStatement,
     user_id: &UserId,
     user_role: Role,
-) -> Result<kalamdb_commons::models::schemas::TableDefinition, KalamDbError> {
+) -> Result<TableDefinition, KalamDbError> {
     use kalamdb_commons::{
-        datatypes::{FromArrowType, KalamDataType},
-        models::schemas::{ColumnDefinition, TableDefinition, TableOptions},
-        schemas::ColumnDefault,
+        datatypes::FromArrowType, models::schemas::TableOptions, schemas::ColumnDefault,
     };
 
     let table_id_str = format!("{}.{}", stmt.namespace_id.as_str(), stmt.table_name.as_str());
@@ -95,20 +98,7 @@ pub fn build_table_definition(
 
     // Type-specific validation
     match stmt.table_type {
-        TableType::User | TableType::Shared => {
-            // PRIMARY KEY validation
-            if stmt.primary_key_column.is_none() {
-                log::error!(
-                    "❌ CREATE TABLE {:?} {}: PRIMARY KEY is required",
-                    stmt.table_type,
-                    table_id_str
-                );
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "{:?} tables require a PRIMARY KEY column",
-                    stmt.table_type
-                )));
-            }
-        },
+        TableType::User | TableType::Shared => {},
         TableType::Stream => {
             // TTL validation
             if stmt.ttl_seconds.is_none() {
@@ -142,6 +132,20 @@ pub fn build_table_definition(
             return Err(KalamDbError::AlreadyExists(format!(
                 "Table {} already exists",
                 table_id_str
+            )));
+        }
+    }
+
+    if let Some(existing_type) = app_context
+        .system_tables()
+        .catalog_stores()
+        .find_type(&stmt.namespace_id, stmt.table_name.as_str())
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+    {
+        if existing_type.kind != kalamdb_commons::models::CatalogTypeKind::ImplicitTableRow {
+            return Err(KalamDbError::AlreadyExists(format!(
+                "type {}.{} already exists",
+                existing_type.namespace_id, existing_type.name
             )));
         }
     }
@@ -188,8 +192,15 @@ pub fn build_table_definition(
                 default_val,
                 None,
             );
+            column.character_maximum_length =
+                kalamdb_commons::conversions::read_character_maximum_length(field);
             if let Some(type_ref) = stmt.column_type_refs.get(field.name()) {
-                apply_column_type_ref(app_context.as_ref(), &stmt.namespace_id, &mut column, type_ref)?;
+                apply_column_type_ref(
+                    app_context.as_ref(),
+                    &stmt.namespace_id,
+                    &mut column,
+                    type_ref,
+                )?;
             }
             Ok(column)
         })
@@ -252,6 +263,9 @@ pub fn build_table_definition(
     // Inject system columns (_version, _deleted)
     let sys_cols = app_context.system_columns_service();
     sys_cols.add_system_columns(&mut table_def)?;
+    // PostgreSQL tables may omit a primary key. Storage still addresses each
+    // row by a stable id, so synthesize one the client catalogs do not show.
+    assign_stable_row_id(&mut table_def);
 
     log::debug!(
         "✅ Built TableDefinition for {} (type: {:?}, columns: {}, version: {})",
@@ -262,6 +276,29 @@ pub fn build_table_definition(
     );
 
     Ok(table_def)
+}
+
+fn assign_stable_row_id(table_def: &mut TableDefinition) {
+    if !matches!(table_def.table_type, TableType::User | TableType::Shared) {
+        return;
+    }
+    if table_def.columns.iter().any(|column| column.is_primary_key) {
+        return;
+    }
+    let column_id = table_def.next_column_id;
+    let ordinal = table_def.columns.len() as u32 + 1;
+    table_def.columns.push(ColumnDefinition::new(
+        column_id,
+        SystemColumnNames::ROW_ID,
+        ordinal,
+        KalamDataType::BigInt,
+        false,
+        true,
+        false,
+        ColumnDefault::function("snowflake_id", Vec::new()),
+        None,
+    ));
+    table_def.next_column_id = column_id + 1;
 }
 
 fn resolve_storage_info(
@@ -320,25 +357,40 @@ pub fn validate_column_default(
 
 pub fn apply_column_type_ref(
     app_context: &AppContext,
-    current_schema: &kalamdb_commons::models::NamespaceId,
+    current_schema: &kalamdb_commons::models::SchemaId,
     column: &mut kalamdb_commons::models::schemas::ColumnDefinition,
     type_ref: &TypeReference,
 ) -> Result<(), KalamDbError> {
-    column.is_array = type_ref.is_array;
-    column.element_nullable = !type_ref.not_null || type_ref.is_array;
-    let Some((namespace_id, name)) = type_ref.resolved_name(current_schema) else {
-        return Ok(());
+    let element_nullable = !type_ref.not_null || type_ref.is_array;
+    let base_type = if let Some((namespace_id, name)) = type_ref.resolved_name(current_schema) {
+        let stores = app_context.system_tables().catalog_stores();
+        let catalog = stores
+            .find_type(&namespace_id, &name)
+            .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+            .ok_or_else(|| {
+                KalamDbError::NotFound(format!("type {namespace_id}.{name} not found"))
+            })?;
+        if catalog.kind == kalamdb_commons::models::CatalogTypeKind::TopicPayload {
+            return Err(KalamDbError::InvalidSql(format!(
+                "topic payload type {namespace_id}.{name} cannot be stored as a column"
+            )));
+        }
+        kalamdb_commons::LogicalTypeRef::named(catalog.type_id)
+    } else if type_ref.name.eq_ignore_ascii_case("jsonb") {
+        kalamdb_commons::LogicalTypeRef::jsonb()
+    } else if type_ref.name.eq_ignore_ascii_case("timestamptz") {
+        kalamdb_commons::LogicalTypeRef::timestamptz()
+    } else if type_ref.name.eq_ignore_ascii_case("geometry") {
+        kalamdb_commons::LogicalTypeRef::geometry()
+    } else {
+        kalamdb_commons::LogicalTypeRef::from_builtin(
+            type_ref.builtin_data_type().unwrap_or_else(|| column.data_type()),
+        )
     };
-    let stores = app_context.system_tables().catalog_stores();
-    let catalog = stores
-        .find_type(&namespace_id, &name)
-        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
-        .ok_or_else(|| KalamDbError::NotFound(format!("type {namespace_id}.{name} not found")))?;
-    if catalog.kind == kalamdb_commons::models::CatalogTypeKind::TopicPayload {
-        return Err(KalamDbError::InvalidSql(format!(
-            "topic payload type {namespace_id}.{name} cannot be stored as a column"
-        )));
-    }
-    column.named_type_id = Some(catalog.type_id);
+    column.logical_type = if type_ref.is_array {
+        kalamdb_commons::LogicalTypeRef::array(base_type, element_nullable)
+    } else {
+        base_type
+    };
     Ok(())
 }

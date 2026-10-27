@@ -28,12 +28,13 @@ use std::{future::Future, sync::Arc, time::Instant};
 
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 use kalamdb_core::{
     app_context::AppContext,
     sql::{context::ExecutionContext, executor::SqlExecutor, SqlImpersonationService},
 };
 use kalamdb_jobs::health_monitor::record_activity_now;
+use kalamdb_observability::stage_trace::{stage_guard, SqlStage};
 use kalamdb_raft::GroupId;
 use kalamdb_session::AuthSession;
 use tokio_util::sync::CancellationToken;
@@ -94,6 +95,48 @@ fn reject_unauthorized_prepared_statements(
     None
 }
 
+fn is_system_catalog_read(sql: &str) -> bool {
+    // Fast zero-allocation guard: skip heap work unless this short query mentions `system`.
+    if sql.len() > 512 || !sql.as_bytes().windows(6).any(|w| w.eq_ignore_ascii_case(b"system")) {
+        return false;
+    }
+    let compact: String = sql
+        .chars()
+        .filter(|ch| !ch.is_whitespace() && *ch != '"')
+        .flat_map(|ch| ch.to_lowercase())
+        .collect();
+    let starts_read = compact.starts_with("select") || compact.starts_with("with");
+    if !starts_read || compact.contains("join") {
+        return false;
+    }
+    // Column names such as created_at and updated_at must not look like DDL.
+    if [
+        "insert", "delete", "truncate", "alter", "drop", "call", "grant", "copy",
+    ]
+    .iter()
+    .any(|word| compact.contains(word))
+    {
+        return false;
+    }
+    // Dashboard polls read system.* on their own. Those must not keep idle trim from
+    // returning the heap. A join into another schema still counts as real work.
+    compact.contains("fromsystem.")
+}
+
+#[inline]
+fn batch_is_pure_select(prepared_statements: &[PreparedApiExecutionStatement]) -> bool {
+    !prepared_statements.is_empty()
+        && prepared_statements.iter().all(|statement| {
+            statement
+                .prepared_statement
+                .classified_statement
+                .as_ref()
+                .is_some_and(|classified| {
+                    matches!(classified.kind(), &kalamdb_sql::classifier::SqlStatementKind::Select)
+                })
+        })
+}
+
 // ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
@@ -121,7 +164,7 @@ pub async fn execute_sql_v1(
     sql_executor: web::Data<Arc<SqlExecutor>>,
     rate_limiter: Option<web::Data<Arc<RateLimiter>>>,
 ) -> impl Responder {
-    record_activity_now();
+    let _handler = stage_guard(SqlStage::Handler);
     let start_time = Instant::now();
     let session: AuthSession = extractor.into();
 
@@ -141,11 +184,13 @@ pub async fn execute_sql_v1(
     }
 
     // 2. Parse payload (JSON or multipart)
-    let parsed_payload =
+    let parsed_payload = {
+        let _parse = stage_guard(SqlStage::Parse);
         match parse_incoming_payload(&http_req, payload, app_context.get_ref(), start_time).await {
             Ok(p) => p,
             Err(resp) => return resp,
-        };
+        }
+    };
 
     let sql = parsed_payload.sql;
     let params_json = parsed_payload.params;
@@ -160,7 +205,7 @@ pub async fn execute_sql_v1(
     }
 
     // 4. Build execution context
-    let default_namespace = namespace_id.clone().unwrap_or_else(|| NamespaceId::new("default"));
+    let default_namespace = namespace_id.clone().unwrap_or_else(|| SchemaId::new("default"));
     let base_session = app_context.base_session_context();
     let mut exec_ctx = ExecutionContext::from_session(session, Arc::clone(&base_session))
         .with_namespace_id(default_namespace);
@@ -169,22 +214,35 @@ pub async fn execute_sql_v1(
     // (classify + table extract only) because execute_file_upload_path fully prepares
     // the substituted SQL before execution.
     let file_upload_request = files_present || sql_may_contain_file_placeholder(&sql);
-    let prepared_statements = if file_upload_request {
-        match split_and_prepare_statements_light(
-            &sql,
-            &exec_ctx,
-            sql_executor.get_ref(),
-            start_time,
-        ) {
-            Ok(stmts) => stmts,
-            Err(resp) => return resp,
-        }
-    } else {
-        match split_and_prepare_statements(&sql, &exec_ctx, sql_executor.get_ref(), start_time) {
-            Ok(stmts) => stmts,
-            Err(resp) => return resp,
+    let prepared_statements = {
+        let _prepare = stage_guard(SqlStage::Prepare);
+        if file_upload_request {
+            match split_and_prepare_statements_light(
+                &sql,
+                &exec_ctx,
+                sql_executor.get_ref(),
+                start_time,
+            ) {
+                Ok(stmts) => stmts,
+                Err(resp) => return resp,
+            }
+        } else {
+            match split_and_prepare_statements(&sql, &exec_ctx, sql_executor.get_ref(), start_time)
+            {
+                Ok(stmts) => stmts,
+                Err(resp) => return resp,
+            }
         }
     };
+
+    // Dashboard polls of system.stats must not keep the process "busy", or idle
+    // trim never returns the heap after a load burst.
+    if file_upload_request
+        || !batch_is_pure_select(&prepared_statements)
+        || !is_system_catalog_read(&sql)
+    {
+        record_activity_now();
+    }
 
     if let Some(resp) =
         reject_unauthorized_prepared_statements(&prepared_statements, &exec_ctx, start_time)
@@ -235,21 +293,24 @@ pub async fn execute_sql_v1(
     // (query, insert, update, transaction, or CALL). Dropping the future is
     // what stops the work, including a procedure running inside CALL.
     let cancel = client_cancel_token(&http_req);
-    if !files_present {
-        let forward = forward_sql_if_follower(
-            &http_req,
-            &sql,
-            &params_json,
-            &namespace_id,
-            app_context.get_ref(),
-            &prepared_statements,
-            exec_ctx.user_id(),
-            exec_ctx.request_id(),
-        );
-        match await_unless_client_gone(cancel.clone(), forward).await {
-            Err(response) => return response,
-            Ok(Some(response)) => return response,
-            Ok(None) => {},
+    {
+        let _forward = stage_guard(SqlStage::Forward);
+        if !files_present {
+            let forward = forward_sql_if_follower(
+                &http_req,
+                &sql,
+                &params_json,
+                &namespace_id,
+                app_context.get_ref(),
+                &prepared_statements,
+                exec_ctx.user_id(),
+                exec_ctx.request_id(),
+            );
+            match await_unless_client_gone(cancel.clone(), forward).await {
+                Err(response) => return response,
+                Ok(Some(response)) => return response,
+                Ok(None) => {},
+            }
         }
     }
 
@@ -354,4 +415,22 @@ fn client_disconnected_response() -> HttpResponse {
         actix_web::http::StatusCode::from_u16(499).expect("499 is a valid status code"),
     )
     .body("client disconnected")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_system_catalog_read;
+
+    #[test]
+    fn dashboard_system_reads_do_not_count_as_activity() {
+        assert!(is_system_catalog_read(
+            "select metric_name, metric_value from system.stats limit $1"
+        ));
+        assert!(is_system_catalog_read(
+            "select job_id, updated_at, created_at from \"system\".\"jobs\" where status = $1"
+        ));
+        assert!(!is_system_catalog_read("select id from app.orders"));
+        assert!(!is_system_catalog_read("select * from system.jobs join app.orders on true"));
+        assert!(!is_system_catalog_read("insert into system.jobs (job_id) values (1)"));
+    }
 }

@@ -20,7 +20,8 @@ use kalamdb_transactions::CommitSequenceSource;
 use crate::{
     error::KalamDbError,
     row_codec::{
-        empty_storage_schema, storage_schema_for_table, storage_schema_for_table_with_arrow,
+        empty_storage_schema, storage_schema_for_table, storage_schema_for_table_versions,
+        storage_schema_for_table_with_arrow,
     },
 };
 
@@ -255,6 +256,43 @@ impl TableProviderCore {
     /// Cached ordinal storage schema for selected-column row decode.
     pub fn storage_schema(&self) -> &Arc<kalamdb_serialization::StorageSchema> {
         &self.storage_schema
+    }
+
+    /// Register layouts for rows written before the current `schema_version`.
+    ///
+    /// Decoding a v2 body uses `layout_for_version`. A schema built from only the
+    /// latest definition cannot place a dropped column's old slot.
+    pub fn with_historical_definitions(mut self, versions: &[TableDefinition]) -> Self {
+        if versions.is_empty() {
+            return self;
+        }
+        let current_version = self.table_def.schema_version;
+        if versions.last().is_some_and(|latest| latest.schema_version == current_version) {
+            if let Ok(schema) =
+                storage_schema_for_table_versions(versions, Some(self.schema.as_ref()))
+            {
+                self.storage_schema = schema;
+                return self;
+            }
+        }
+        let Ok(current_version) = u16::try_from(current_version) else {
+            return self;
+        };
+        let mut schema = (*self.storage_schema).clone();
+        for prior in versions {
+            let Ok(version) = u16::try_from(prior.schema_version) else {
+                continue;
+            };
+            if version == current_version {
+                continue;
+            }
+            let Ok(prior_schema) = storage_schema_for_table(prior) else {
+                continue;
+            };
+            schema.register_historical_version(version, &prior_schema.fields);
+        }
+        self.storage_schema = Arc::new(schema);
+        self
     }
 
     /// Is PK auto-increment? (O(1), precomputed at construction)

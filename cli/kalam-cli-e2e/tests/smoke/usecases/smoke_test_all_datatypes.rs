@@ -50,7 +50,7 @@ fn smoke_all_datatypes_user_shared_stream() {
     let stream_full = format!("{}.{}", namespace, stream_table);
 
     // 0) Create namespace
-    execute_sql_as_root_via_http(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_http(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace should succeed");
 
     // Simplified column list (only types currently stable in end-to-end path).
@@ -284,5 +284,5 @@ fn smoke_all_datatypes_user_shared_stream() {
         .expect("drop shared table should succeed");
     execute_sql_as_root_via_http(&format!("DROP TABLE {}", stream_full))
         .expect("drop stream table should succeed");
-    let _ = execute_sql_as_root_via_http(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_http(&format!("DROP SCHEMA {} CASCADE", namespace));
 }

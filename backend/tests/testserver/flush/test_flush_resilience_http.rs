@@ -51,12 +51,8 @@ async fn create_user_table(
     table: &str,
     flush_policy: &str,
 ) -> Result<()> {
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
-    ensure!(
-        resp.status == ResponseStatus::Success,
-        "CREATE NAMESPACE failed: {:?}",
-        resp.error
-    );
+    let resp = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await?;
+    ensure!(resp.status == ResponseStatus::Success, "CREATE SCHEMA failed: {:?}", resp.error);
 
     let create_sql = format!(
         r#"CREATE TABLE {ns}.{table} (
@@ -79,12 +75,8 @@ async fn create_shared_table(
     table: &str,
     flush_policy: &str,
 ) -> Result<()> {
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
-    ensure!(
-        resp.status == ResponseStatus::Success,
-        "CREATE NAMESPACE failed: {:?}",
-        resp.error
-    );
+    let resp = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await?;
+    ensure!(resp.status == ResponseStatus::Success, "CREATE SCHEMA failed: {:?}", resp.error);
 
     let create_sql = format!(
         r#"CREATE TABLE {ns}.{table} (

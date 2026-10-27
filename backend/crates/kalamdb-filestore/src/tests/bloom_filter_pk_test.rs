@@ -23,17 +23,17 @@ use crate::registry::StorageCached;
 fn create_test_storage(temp_dir: &std::path::Path) -> Storage {
     let now = chrono::Utc::now().timestamp_millis();
     Storage {
-        storage_id:             StorageId::from("test"),
-        storage_name:           "test".to_string(),
-        description:            None,
-        storage_type:           StorageType::Filesystem,
-        base_directory:         temp_dir.to_string_lossy().to_string(),
-        credentials:            None,
-        config_json:            None,
+        storage_id: StorageId::from("test"),
+        storage_name: "test".to_string(),
+        description: None,
+        storage_type: StorageType::Filesystem,
+        base_directory: temp_dir.to_string_lossy().to_string(),
+        credentials: None,
+        config_json: None,
         shared_tables_template: "{namespace}/{tableName}".to_string(),
-        user_tables_template:   "{namespace}/{tableName}/{userId}".to_string(),
-        created_at:             now,
-        updated_at:             now,
+        user_tables_template: "{namespace}/{tableName}/{userId}".to_string(),
+        created_at: now,
+        updated_at: now,
     }
 }
 
@@ -67,8 +67,8 @@ fn test_bloom_filter_for_primary_key_column() {
 
     // Schema with PRIMARY KEY column "id" + _version system column
     let schema = Arc::new(Schema::new(vec![
-        Field::new("id", DataType::Int64, false),   // PRIMARY KEY
-        Field::new("name", DataType::Utf8, true),   // Regular column
+        Field::new("id", DataType::Int64, false), // PRIMARY KEY
+        Field::new("name", DataType::Utf8, true), // Regular column
         Field::new("_version", DataType::Int64, false), // System column
     ]));
 
@@ -162,7 +162,7 @@ fn test_bloom_filter_for_composite_primary_key() {
         Field::new("user_id", DataType::Int64, false), // PRIMARY KEY part 1
         Field::new("order_id", DataType::Int64, false), // PRIMARY KEY part 2
         Field::new("amount", DataType::Int64, true),   // Regular column
-        Field::new("_version", DataType::Int64, false),    // System column
+        Field::new("_version", DataType::Int64, false), // System column
     ]));
 
     // Create batch with 1024 rows (minimum for bloom filters)

@@ -54,7 +54,7 @@ impl WireFormat for KalamDataType {
                 KalamDataType::validate_decimal_params(*precision, *scale).map_err(|_| {
                     WireFormatError::InvalidDecimal {
                         precision: *precision,
-                        scale:     *scale,
+                        scale: *scale,
                     }
                 })?;
                 writer.write_all(&[*precision, *scale])?;
@@ -158,7 +158,7 @@ mod tests {
     fn test_decimal_round_trip() {
         let original = KalamDataType::Decimal {
             precision: 10,
-            scale:     2,
+            scale: 2,
         };
         let mut buffer = Vec::new();
         original.encode(&mut buffer).unwrap();
@@ -187,7 +187,7 @@ mod tests {
         assert_eq!(
             KalamDataType::Decimal {
                 precision: 10,
-                scale:     2,
+                scale: 2,
             }
             .encoded_size(),
             3

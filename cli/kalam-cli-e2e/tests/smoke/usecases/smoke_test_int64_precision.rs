@@ -27,7 +27,7 @@ fn smoke_int64_precision_preserved_as_string() {
     let full_table = format!("{}.{}", namespace, table);
 
     // 0) Create namespace
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace should succeed");
 
     // 1) Create USER table with BIGINT column
@@ -108,7 +108,7 @@ fn smoke_int64_precision_preserved_as_string() {
 
     // Cleanup
     execute_sql_as_root_via_client(&format!("DROP TABLE {}", full_table)).ok();
-    execute_sql_as_root_via_client(&format!("DROP NAMESPACE {}", namespace)).ok();
+    execute_sql_as_root_via_client(&format!("DROP SCHEMA {}", namespace)).ok();
 }
 
 #[ntest::timeout(180000)]
@@ -128,7 +128,7 @@ fn smoke_int64_small_values_remain_numbers() {
     let full_table = format!("{}.{}", namespace, table);
 
     // 0) Create namespace
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace should succeed");
 
     // 1) Create USER table
@@ -186,7 +186,7 @@ fn smoke_int64_small_values_remain_numbers() {
 
     // Cleanup
     execute_sql_as_root_via_client(&format!("DROP TABLE {}", full_table)).ok();
-    execute_sql_as_root_via_client(&format!("DROP NAMESPACE {}", namespace)).ok();
+    execute_sql_as_root_via_client(&format!("DROP SCHEMA {}", namespace)).ok();
 }
 
 #[ntest::timeout(180000)]
@@ -206,7 +206,7 @@ fn smoke_int64_edge_case_exactly_max_safe() {
     let full_table = format!("{}.{}", namespace, table);
 
     // 0) Create namespace
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace should succeed");
 
     // 1) Create USER table
@@ -277,7 +277,7 @@ fn smoke_int64_edge_case_exactly_max_safe() {
 
     // Cleanup
     execute_sql_as_root_via_client(&format!("DROP TABLE {}", full_table)).ok();
-    execute_sql_as_root_via_client(&format!("DROP NAMESPACE {}", namespace)).ok();
+    execute_sql_as_root_via_client(&format!("DROP SCHEMA {}", namespace)).ok();
 }
 
 #[ntest::timeout(180000)]
@@ -297,7 +297,7 @@ fn smoke_int64_negative_large_values() {
     let full_table = format!("{}.{}", namespace, table);
 
     // 0) Create namespace
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace should succeed");
 
     // 1) Create USER table
@@ -370,5 +370,5 @@ fn smoke_int64_negative_large_values() {
 
     // Cleanup
     execute_sql_as_root_via_client(&format!("DROP TABLE {}", full_table)).ok();
-    execute_sql_as_root_via_client(&format!("DROP NAMESPACE {}", namespace)).ok();
+    execute_sql_as_root_via_client(&format!("DROP SCHEMA {}", namespace)).ok();
 }

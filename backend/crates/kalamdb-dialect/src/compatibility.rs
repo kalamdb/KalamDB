@@ -5,7 +5,7 @@
 
 use std::string::String;
 
-use kalamdb_commons::models::{datatypes::KalamDataType, NamespaceId};
+use kalamdb_commons::models::{datatypes::KalamDataType, SchemaId};
 use sqlparser::ast::{
     ArrayElemTypeDef, DataType as SQLDataType, DataType::*, ObjectName, ObjectNamePart,
 };
@@ -75,7 +75,7 @@ pub fn map_sql_type_to_kalam(sql_type: &SQLDataType) -> Result<KalamDataType, St
         Datetime(_) => Ok(KalamDataType::DateTime),
         Time(_, _) => Ok(KalamDataType::Time),
         SQLDataType::Uuid => Ok(KalamDataType::Uuid),
-        Decimal(info) => map_decimal_kalam_type(info),
+        Decimal(info) | Numeric(info) => map_decimal_kalam_type(info),
         Custom(name, modifiers) => map_custom_kalam_type(name, modifiers),
         Array(_) | Enum(_, _) | Set(_) | Struct(_, _) => Ok(KalamDataType::Text),
         other => Err(format!("Unsupported data type: {other:?}")),
@@ -98,9 +98,40 @@ pub fn sql_type_to_type_reference(sql_type: &SQLDataType) -> Result<TypeReferenc
             type_ref.is_array = true;
             Ok(type_ref)
         },
-        Custom(name, modifiers) => match map_custom_kalam_type(name, modifiers) {
-            Ok(data_type) => Ok(builtin_type_reference(data_type)),
-            Err(_) => Ok(named_type_reference(name)?),
+        Custom(name, modifiers) => {
+            let ident = custom_type_identifier(name);
+            if matches!(ident.as_str(), "embedding" | "pg_catalog.embedding") {
+                return Ok(builtin_type_reference(map_custom_kalam_type(name, modifiers)?));
+            }
+            match map_custom_kalam_type(name, modifiers) {
+                Ok(data_type) => {
+                    let mut tr = builtin_type_reference(data_type);
+                    if ident.eq_ignore_ascii_case("jsonb") {
+                        tr.name = "JSONB".to_string();
+                    } else if ident.eq_ignore_ascii_case("timestamptz") {
+                        tr.name = "TIMESTAMPTZ".to_string();
+                    } else if ident.eq_ignore_ascii_case("geometry") {
+                        tr.name = "GEOMETRY".to_string();
+                    }
+                    Ok(tr)
+                },
+                Err(_) => Ok(named_type_reference(name)?),
+            }
+        },
+        SQLDataType::JSONB => {
+            let mut tr = builtin_type_reference(KalamDataType::Json);
+            tr.name = "JSONB".to_string();
+            Ok(tr)
+        },
+        Timestamp(_, tz)
+            if matches!(
+                tz,
+                sqlparser::ast::TimezoneInfo::WithTimeZone | sqlparser::ast::TimezoneInfo::Tz
+            ) =>
+        {
+            let mut tr = builtin_type_reference(KalamDataType::Timestamp);
+            tr.name = "TIMESTAMPTZ".to_string();
+            Ok(tr)
         },
         other => Ok(builtin_type_reference(map_sql_type_to_kalam(other)?)),
     }
@@ -109,11 +140,12 @@ pub fn sql_type_to_type_reference(sql_type: &SQLDataType) -> Result<TypeReferenc
 fn builtin_type_reference(data_type: KalamDataType) -> TypeReference {
     TypeReference {
         namespace_id: None,
-        name:         data_type.sql_name().to_string(),
-        data_type:    Some(data_type),
-        is_array:     false,
-        not_null:     false,
-        nonempty:     false,
+        name: data_type.sql_name().to_string(),
+        data_type: Some(data_type),
+        syntactic_modifier: None,
+        is_array: false,
+        not_null: false,
+        nonempty: false,
     }
 }
 
@@ -121,15 +153,19 @@ fn named_type_reference(name: &ObjectName) -> Result<TypeReference, String> {
     let mut parts = Vec::new();
     for part in &name.0 {
         match part {
-            ObjectNamePart::Identifier(ident) => parts.push(ident.value.clone()),
-            other => parts.push(other.to_string()),
+            ObjectNamePart::Identifier(ident) => {
+                if ident.quote_style.is_some() {
+                    parts.push(ident.value.clone());
+                } else {
+                    parts.push(ident.value.to_ascii_lowercase());
+                }
+            },
+            other => parts.push(other.to_string().to_ascii_lowercase()),
         }
     }
     let (namespace_id, type_name) = match parts.as_slice() {
         [type_name] => (None, type_name.clone()),
-        [schema, type_name] => {
-            (Some(NamespaceId::new(schema.to_ascii_lowercase())), type_name.clone())
-        },
+        [schema, type_name] => (Some(SchemaId::new(schema.clone())), type_name.clone()),
         _ => {
             return Err(format!(
                 "named type '{}' must be unqualified or schema-qualified",
@@ -139,8 +175,9 @@ fn named_type_reference(name: &ObjectName) -> Result<TypeReference, String> {
     };
     Ok(TypeReference {
         namespace_id,
-        name: type_name.to_ascii_lowercase(),
+        name: type_name,
         data_type: None,
+        syntactic_modifier: None,
         is_array: false,
         not_null: false,
         nonempty: false,
@@ -148,21 +185,50 @@ fn named_type_reference(name: &ObjectName) -> Result<TypeReference, String> {
 }
 
 fn map_custom_kalam_type(name: &ObjectName, modifiers: &[String]) -> Result<KalamDataType, String> {
+    if let Some(ObjectNamePart::Identifier(ident)) = name.0.last() {
+        if ident.quote_style.is_some() && ident.value.chars().any(|c| c.is_ascii_uppercase()) {
+            return Err(format!("Quoted custom type '{}' is not a builtin data type", ident.value));
+        }
+    }
     let ident = custom_type_identifier(name);
     match ident.as_str() {
-        "file" => Ok(KalamDataType::File),
-        "embedding" => {
+        "file" | "pg_catalog.file" => Ok(KalamDataType::File),
+        "embedding" | "pg_catalog.embedding" => {
             let dim = parse_embedding_dimension(modifiers)?;
             Ok(KalamDataType::Embedding(dim))
         },
-        "serial" | "serial4" | "signed" => Ok(KalamDataType::Int),
+        // serial/serial4 are int4 and default to serial_id(), so clients receive
+        // a 32-bit integer. bigserial/serial8 stay bigint and use SNOWFLAKE_ID().
+        "serial" | "serial4" => Ok(KalamDataType::Int),
         "bigserial" | "serial8" => Ok(KalamDataType::BigInt),
+        "signed" => Ok(KalamDataType::Int),
         "smallserial" | "serial2" | "int1" | "int2" => Ok(KalamDataType::SmallInt),
         "int4" => Ok(KalamDataType::Int),
         "int8" => Ok(KalamDataType::BigInt),
-        other if other.ends_with("text") || other.ends_with("string") => Ok(KalamDataType::Text),
+        "tinytext" | "mediumtext" | "longtext" | "ntext" | "citext" | "geometry" => {
+            Ok(KalamDataType::Text)
+        },
         other => KalamDataType::from_sql_name(other)
             .ok_or_else(|| format!("Unsupported custom data type '{other}'")),
+    }
+}
+
+/// PostgreSQL character maximum length. `character` with no length is 1.
+/// `varchar` and `text` with no length stay unlimited.
+pub fn character_maximum_length(data_type: &SQLDataType) -> Option<u32> {
+    let (length, bare_character) = match data_type {
+        Char(length) | Character(length) => (length.as_ref(), true),
+        Varchar(length) | CharacterVarying(length) | CharVarying(length) | Nvarchar(length) => {
+            (length.as_ref(), false)
+        },
+        _ => return None,
+    };
+    match length {
+        Some(sqlparser::ast::CharacterLength::IntegerLength { length, .. }) => {
+            u32::try_from(*length).ok()
+        },
+        None if bare_character => Some(1),
+        _ => None,
     }
 }
 
@@ -189,7 +255,9 @@ mod tests {
     #[test]
     fn maps_postgres_serial_types() {
         assert_eq!(map_sql_type_to_kalam(&custom("serial")).unwrap(), KalamDataType::Int);
+        assert_eq!(map_sql_type_to_kalam(&custom("serial4")).unwrap(), KalamDataType::Int);
         assert_eq!(map_sql_type_to_kalam(&custom("serial8")).unwrap(), KalamDataType::BigInt);
+        assert_eq!(map_sql_type_to_kalam(&custom("bigserial")).unwrap(), KalamDataType::BigInt);
         assert_eq!(map_sql_type_to_kalam(&custom("smallserial")).unwrap(), KalamDataType::SmallInt);
     }
 
@@ -216,6 +284,21 @@ mod tests {
     }
 
     #[test]
+    fn maps_numeric_precision_and_scale_onto_decimal128() {
+        let dtype = map_sql_type_to_kalam(&SQLDataType::Numeric(
+            sqlparser::ast::ExactNumberInfo::PrecisionAndScale(12, 2),
+        ))
+        .unwrap();
+        assert_eq!(
+            dtype,
+            KalamDataType::Decimal {
+                precision: 12,
+                scale: 2,
+            }
+        );
+    }
+
+    #[test]
     fn maps_file_custom_type_to_kalam() {
         let dtype = map_sql_type_to_kalam(&custom("file")).unwrap();
         assert_eq!(dtype, KalamDataType::File);
@@ -237,5 +320,32 @@ mod tests {
     fn rejects_embedding_dimension_too_large() {
         let err = map_sql_type_to_kalam(&custom_with_size("EMBEDDING", 9000)).unwrap_err();
         assert!(err.contains("between 1 and 8192"));
+    }
+
+    #[test]
+    fn geometry_subtype_stays_a_builtin_text_column() {
+        let dtype = SQLDataType::Custom(
+            ObjectName(vec![sqlparser::ast::ObjectNamePart::Identifier(Ident::new(
+                "geometry",
+            ))]),
+            vec!["geometry".to_string(), "4326".to_string()],
+        );
+        let type_ref = sql_type_to_type_reference(&dtype).unwrap();
+        assert_eq!(type_ref.name, "GEOMETRY");
+        assert_eq!(type_ref.builtin_data_type(), Some(KalamDataType::Text));
+        assert!(type_ref.namespace_id.is_none());
+    }
+
+    #[test]
+    fn character_limits_follow_postgres() {
+        use sqlparser::ast::CharacterLength;
+        let varchar_255 = SQLDataType::Varchar(Some(CharacterLength::IntegerLength {
+            length: 255,
+            unit: None,
+        }));
+        assert_eq!(character_maximum_length(&varchar_255), Some(255));
+        assert_eq!(character_maximum_length(&SQLDataType::Character(None)), Some(1));
+        assert_eq!(character_maximum_length(&SQLDataType::CharacterVarying(None)), None);
+        assert_eq!(character_maximum_length(&SQLDataType::Text), None);
     }
 }

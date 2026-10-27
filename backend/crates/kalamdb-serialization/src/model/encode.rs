@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
@@ -11,23 +11,18 @@ use serde_json::Value;
 
 use super::map_ser;
 
-/// Serialize a typed model into a schema-aligned [`Row`] without timestamp scaling.
+/// Serialize a typed model into a schema-aligned [`Row`].
 pub(super) fn serialize_model<T: Serialize>(
     model: &T,
     table_def: &TableDefinition,
+    scale_timestamp_ms: bool,
 ) -> crate::error::Result<Row> {
-    let columns = column_types(table_def);
     model
-        .serialize(RowSerializer { table_def, columns })
+        .serialize(RowSerializer {
+            table_def,
+            scale_timestamp_ms,
+        })
         .map_err(|error| map_ser(error.0))
-}
-
-fn column_types(table_def: &TableDefinition) -> HashMap<&str, &KalamDataType> {
-    table_def
-        .columns
-        .iter()
-        .map(|column| (column.column_name.as_str(), &column.data_type))
-        .collect()
 }
 
 fn stores_document(data_type: &KalamDataType) -> bool {
@@ -53,7 +48,7 @@ impl serde::ser::Error for SerError {
 
 struct RowSerializer<'a> {
     table_def: &'a TableDefinition,
-    columns:   HashMap<&'a str, &'a KalamDataType>,
+    scale_timestamp_ms: bool,
 }
 
 impl<'a> Serializer for RowSerializer<'a> {
@@ -212,8 +207,8 @@ impl<'a> Serializer for RowSerializer<'a> {
     ) -> Result<Self::SerializeStruct, Self::Error> {
         Ok(StructFields {
             table_def: self.table_def,
-            columns:   self.columns,
-            fields:    BTreeMap::new(),
+            scale_timestamp_ms: self.scale_timestamp_ms,
+            fields: BTreeMap::new(),
         })
     }
 
@@ -230,8 +225,8 @@ impl<'a> Serializer for RowSerializer<'a> {
 
 struct StructFields<'a> {
     table_def: &'a TableDefinition,
-    columns:   HashMap<&'a str, &'a KalamDataType>,
-    fields:    BTreeMap<String, ScalarValue>,
+    scale_timestamp_ms: bool,
+    fields: BTreeMap<String, ScalarValue>,
 }
 
 impl SerializeStruct for StructFields<'_> {
@@ -242,16 +237,20 @@ impl SerializeStruct for StructFields<'_> {
     where
         T: ?Sized + Serialize,
     {
-        let Some(data_type) = self.columns.get(key).copied() else {
+        let Some(column) = self.table_def.columns.iter().find(|c| c.column_name == key) else {
             return Ok(());
         };
-        let scalar = if stores_document(data_type) {
+        let data_type = column.data_type();
+        let scalar = if stores_document(&data_type) {
             let json = serde_json::to_value(value)
                 .map_err(|error| SerError(format!("json field serialize failed: {error}")))?;
-            json_value_to_scalar_for_column(&json, data_type)
+            json_value_to_scalar_for_column(&json, &data_type)
                 .map_err(|error| SerError(format!("json->scalar conversion failed: {error}")))?
         } else {
-            value.serialize(ScalarSerializer { data_type })?
+            value.serialize(ScalarSerializer {
+                data_type: &data_type,
+                scale_timestamp_ms: self.scale_timestamp_ms,
+            })?
         };
         self.fields.insert(key.to_string(), scalar);
         Ok(())
@@ -268,6 +267,7 @@ impl SerializeStruct for StructFields<'_> {
 
 struct ScalarSerializer<'a> {
     data_type: &'a KalamDataType,
+    scale_timestamp_ms: bool,
 }
 
 impl<'a> Serializer for ScalarSerializer<'a> {
@@ -292,37 +292,37 @@ impl<'a> Serializer for ScalarSerializer<'a> {
     }
 
     fn serialize_i8(self, value: i8) -> Result<Self::Ok, Self::Error> {
-        integer_to_scalar(i64::from(value), self.data_type)
+        integer_to_scalar(i64::from(value), self.data_type, self.scale_timestamp_ms)
     }
 
     fn serialize_i16(self, value: i16) -> Result<Self::Ok, Self::Error> {
-        integer_to_scalar(i64::from(value), self.data_type)
+        integer_to_scalar(i64::from(value), self.data_type, self.scale_timestamp_ms)
     }
 
     fn serialize_i32(self, value: i32) -> Result<Self::Ok, Self::Error> {
-        integer_to_scalar(i64::from(value), self.data_type)
+        integer_to_scalar(i64::from(value), self.data_type, self.scale_timestamp_ms)
     }
 
     fn serialize_i64(self, value: i64) -> Result<Self::Ok, Self::Error> {
-        integer_to_scalar(value, self.data_type)
+        integer_to_scalar(value, self.data_type, self.scale_timestamp_ms)
     }
 
     fn serialize_u8(self, value: u8) -> Result<Self::Ok, Self::Error> {
-        integer_to_scalar(i64::from(value), self.data_type)
+        integer_to_scalar(i64::from(value), self.data_type, self.scale_timestamp_ms)
     }
 
     fn serialize_u16(self, value: u16) -> Result<Self::Ok, Self::Error> {
-        integer_to_scalar(i64::from(value), self.data_type)
+        integer_to_scalar(i64::from(value), self.data_type, self.scale_timestamp_ms)
     }
 
     fn serialize_u32(self, value: u32) -> Result<Self::Ok, Self::Error> {
-        integer_to_scalar(i64::from(value), self.data_type)
+        integer_to_scalar(i64::from(value), self.data_type, self.scale_timestamp_ms)
     }
 
     fn serialize_u64(self, value: u64) -> Result<Self::Ok, Self::Error> {
         let signed = i64::try_from(value)
             .map_err(|_| SerError::custom("u64 value does not fit in signed storage"))?;
-        integer_to_scalar(signed, self.data_type)
+        integer_to_scalar(signed, self.data_type, self.scale_timestamp_ms)
     }
 
     fn serialize_f32(self, value: f32) -> Result<Self::Ok, Self::Error> {
@@ -426,7 +426,7 @@ impl<'a> Serializer for ScalarSerializer<'a> {
         if matches!(self.data_type, KalamDataType::Bytes) {
             Ok(BytesSeq {
                 data_type: self.data_type,
-                bytes:     Vec::new(),
+                bytes: Vec::new(),
             })
         } else {
             Err(SerError(format!(
@@ -484,7 +484,7 @@ impl<'a> Serializer for ScalarSerializer<'a> {
 
 struct BytesSeq<'a> {
     data_type: &'a KalamDataType,
-    bytes:     Vec<u8>,
+    bytes: Vec<u8>,
 }
 
 impl SerializeSeq for BytesSeq<'_> {
@@ -680,15 +680,30 @@ impl Serializer for U8Serializer {
     }
 }
 
-fn integer_to_scalar(value: i64, data_type: &KalamDataType) -> Result<ScalarValue, SerError> {
+fn integer_to_scalar(
+    value: i64,
+    data_type: &KalamDataType,
+    scale_timestamp_ms: bool,
+) -> Result<ScalarValue, SerError> {
+    let ts_micros = |v: i64| -> Result<i64, SerError> {
+        if scale_timestamp_ms {
+            v.checked_mul(1_000).ok_or_else(|| {
+                SerError(format!("timestamp value {v} overflows when converted to microseconds"))
+            })
+        } else {
+            Ok(v)
+        }
+    };
     Ok(match data_type {
         KalamDataType::Boolean => ScalarValue::Boolean(Some(value != 0)),
         KalamDataType::SmallInt => ScalarValue::Int16(Some(value as i16)),
         KalamDataType::Int => ScalarValue::Int32(Some(value as i32)),
         KalamDataType::BigInt => ScalarValue::Int64(Some(value)),
-        KalamDataType::Timestamp => ScalarValue::TimestampMicrosecond(Some(value), None),
+        KalamDataType::Timestamp => {
+            ScalarValue::TimestampMicrosecond(Some(ts_micros(value)?), None)
+        },
         KalamDataType::DateTime => {
-            ScalarValue::TimestampMicrosecond(Some(value), Some("UTC".into()))
+            ScalarValue::TimestampMicrosecond(Some(ts_micros(value)?), Some("UTC".into()))
         },
         KalamDataType::Time => ScalarValue::Time64Microsecond(Some(value)),
         KalamDataType::Date => ScalarValue::Date32(Some(value as i32)),

@@ -13,7 +13,7 @@ use std::sync::Once;
 use datafusion::prelude::SessionContext;
 // ── Imports needed by init_test_app_context / test_app_context ─────────────────
 #[cfg(any(test, feature = "test-helpers"))]
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 use kalamdb_commons::{
     models::{NodeId, StorageId},
     storage::KvIterator,
@@ -40,9 +40,14 @@ static TEST_PORT_OFFSET: AtomicU16 = AtomicU16::new(0);
 
 #[cfg(any(test, feature = "test-helpers"))]
 fn next_test_ports() -> (u16, u16) {
-    let pid_component = ((std::process::id() % 1000) as u16) * 20;
-    let offset = TEST_PORT_OFFSET.fetch_add(2, Ordering::Relaxed);
-    (20_000 + pid_component + offset, 30_000 + pid_component + offset)
+    // Linux assigns outbound sockets from 32768 upward. Listener ports in that
+    // range fail with EADDRINUSE while other tests are connecting.
+    const RPC_BASE: u16 = 10_000;
+    const API_BASE: u16 = 20_000;
+    const SLOTS: u16 = 9_000;
+    let ticket = TEST_PORT_OFFSET.fetch_add(1, Ordering::Relaxed);
+    let slot = (std::process::id() as u16).wrapping_mul(251).wrapping_add(ticket) % SLOTS;
+    (RPC_BASE + slot, API_BASE + slot)
 }
 
 #[cfg(any(test, feature = "test-helpers"))]
@@ -92,8 +97,6 @@ pub fn init_test_app_context() -> Arc<TestDb> {
 
         let mut test_config = kalamdb_configs::ServerConfig::default();
         test_config.storage.data_path = "data".to_string();
-        test_config.execution.max_parameters = 50;
-        test_config.execution.max_parameter_size_bytes = 512 * 1024;
         test_config.cluster = Some(default_test_cluster_config(1));
 
         let app_ctx = AppContext::init(
@@ -150,15 +153,15 @@ pub fn init_test_app_context() -> Arc<TestDb> {
 
         // Ensure default namespace exists
         let namespaces = app_ctx.system_tables().namespaces();
-        let default_namespace = NamespaceId::default();
-        if namespaces.get_namespace_by_id(&default_namespace).unwrap().is_none() {
+        let default_namespace = SchemaId::default();
+        if namespaces.get_namespace(&default_namespace).unwrap().is_none() {
             namespaces
                 .create_namespace(kalamdb_system::Namespace {
                     namespace_id: default_namespace,
-                    name:         "default".to_string(),
-                    created_at:   chrono::Utc::now().timestamp_millis(),
-                    options:      Some(serde_json::json!({})),
-                    table_count:  0,
+                    name: "default".to_string(),
+                    created_at: chrono::Utc::now().timestamp_millis(),
+                    options: Some(serde_json::json!({})),
+                    table_count: 0,
                 })
                 .unwrap();
         }
@@ -218,8 +221,6 @@ pub fn test_app_context_simple() -> Arc<AppContext> {
 
     let mut test_config = kalamdb_configs::ServerConfig::default();
     test_config.storage.data_path = data_path.to_string_lossy().to_string();
-    test_config.execution.max_parameters = 50;
-    test_config.execution.max_parameter_size_bytes = 512 * 1024;
 
     let app_ctx = AppContext::init_test(
         storage_backend,
@@ -276,14 +277,14 @@ pub fn create_test_session_simple() -> Arc<SessionContext> {
 /// filled CI disks near the end of the workspace suite.
 struct OwnedTestBackend {
     inner: Option<Arc<dyn StorageBackend>>,
-    _db:   Option<TestDb>,
+    _db: Option<TestDb>,
 }
 
 impl OwnedTestBackend {
     fn new(db: TestDb) -> Self {
         Self {
             inner: Some(db.backend()),
-            _db:   Some(db),
+            _db: Some(db),
         }
     }
 

@@ -6,7 +6,7 @@ use std::{
 
 use actix_web::{http::StatusCode, HttpRequest, HttpResponse};
 use bytes::Bytes;
-use kalamdb_commons::{models::NamespaceId, schemas::TableType};
+use kalamdb_commons::{models::SchemaId, schemas::TableType};
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -340,7 +340,7 @@ async fn forward_batch_statement_to_group(
     target_group: GroupId,
     statement: &PreparedApiExecutionStatement,
     http_req: &HttpRequest,
-    request_namespace: Option<NamespaceId>,
+    request_namespace: Option<SchemaId>,
     app_context: &AppContext,
     request_id: Option<&str>,
     start_time: Instant,
@@ -350,8 +350,8 @@ async fn forward_batch_statement_to_group(
     const INITIAL_BACKOFF_MS: u64 = 5;
 
     let request = QueryRequest {
-        sql:          statement.prepared_statement.sql.clone(),
-        params:       None,
+        sql: statement.prepared_statement.sql.clone(),
+        params: None,
         namespace_id: request_namespace,
     };
 
@@ -811,7 +811,7 @@ pub(super) async fn execute_batch_path(
                             if let Some(classified) =
                                 stmt.prepared_statement.classified_statement.as_ref()
                             {
-                                if let SqlStatementKind::UseNamespace(use_namespace) =
+                                if let SqlStatementKind::UseSchema(use_namespace) =
                                     classified.kind()
                                 {
                                     statement_exec_ctx = statement_exec_ctx
@@ -938,7 +938,7 @@ pub(super) async fn execute_batch_path(
                 );
 
                 if let Some(classified) = stmt.prepared_statement.classified_statement.as_ref() {
-                    if let SqlStatementKind::UseNamespace(use_namespace) = classified.kind() {
+                    if let SqlStatementKind::UseSchema(use_namespace) = classified.kind() {
                         statement_exec_ctx = statement_exec_ctx
                             .clone()
                             .with_namespace_id(use_namespace.namespace.clone());

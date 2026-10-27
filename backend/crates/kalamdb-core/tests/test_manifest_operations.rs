@@ -3,7 +3,7 @@
 //! These tests cover error scenarios, edge cases, and failure modes
 //! that could occur during manifest read/write operations.
 
-mod support;
+use crate::support;
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -15,7 +15,7 @@ use datafusion::arrow::{
 use futures_util::TryStreamExt;
 use kalamdb_commons::{
     constants::SystemColumnNames, ids::SeqId, models::rows::StoredScalarValue, schemas::TableType,
-    NamespaceId, TableId, TableName, UserId,
+    SchemaId, TableId, TableName, UserId,
 };
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::manifest::{compact_small_segments, FlushManifestHelper};
@@ -111,7 +111,7 @@ async fn read_test_rows_from_parquet(
 
 #[test]
 fn test_manifest_serialization_deserialization() {
-    let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
+    let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("test_table"));
     let user_id = Some(UserId::from("u_123"));
 
     let mut manifest = Manifest::new(table_id.clone(), user_id.clone());
@@ -145,7 +145,7 @@ fn test_manifest_serialization_deserialization() {
 
 #[test]
 fn test_manifest_empty_segments() {
-    let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
+    let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("test_table"));
     let manifest = Manifest::new(table_id.clone(), None);
 
     assert_eq!(manifest.segments.len(), 0);
@@ -164,7 +164,7 @@ fn test_manifest_empty_segments() {
 
 #[test]
 fn test_manifest_multiple_segments() {
-    let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
+    let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("test_table"));
     let mut manifest = Manifest::new(table_id, None);
 
     // Add multiple segments
@@ -199,7 +199,7 @@ fn test_manifest_multiple_segments() {
 
 #[test]
 fn test_manifest_with_column_stats() {
-    let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
+    let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("test_table"));
     let mut manifest = Manifest::new(table_id, None);
 
     // Create column stats using StoredScalarValue
@@ -207,16 +207,16 @@ fn test_manifest_with_column_stats() {
     column_stats.insert(
         1u64,
         kalamdb_system::ColumnStats {
-            min:        Some(StoredScalarValue::Int64(Some("1".to_string()))),
-            max:        Some(StoredScalarValue::Int64(Some("100".to_string()))),
+            min: Some(StoredScalarValue::Int64(Some("1".to_string()))),
+            max: Some(StoredScalarValue::Int64(Some("100".to_string()))),
             null_count: Some(0),
         },
     );
     column_stats.insert(
         2u64,
         kalamdb_system::ColumnStats {
-            min:        Some(StoredScalarValue::Utf8(Some("alice".to_string()))),
-            max:        Some(StoredScalarValue::Utf8(Some("zoe".to_string()))),
+            min: Some(StoredScalarValue::Utf8(Some("alice".to_string()))),
+            max: Some(StoredScalarValue::Utf8(Some("zoe".to_string()))),
             null_count: Some(5),
         },
     );
@@ -272,7 +272,7 @@ fn test_manifest_missing_required_fields() {
 
 #[test]
 fn test_manifest_version_tracking() {
-    let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
+    let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("test_table"));
     let mut manifest = Manifest::new(table_id, None);
 
     let initial_version = manifest.version;
@@ -310,7 +310,7 @@ fn test_manifest_version_tracking() {
 
 #[test]
 fn test_manifest_sequence_number_updates() {
-    let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
+    let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("test_table"));
     let mut manifest = Manifest::new(table_id, None);
 
     assert_eq!(manifest.last_sequence_number, 0);
@@ -388,7 +388,7 @@ fn test_segment_metadata_without_schema_version() {
 
 #[test]
 fn test_manifest_large_sequence_numbers() {
-    let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
+    let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("test_table"));
     let mut manifest = Manifest::new(table_id, None);
 
     // Add segment with large sequence numbers

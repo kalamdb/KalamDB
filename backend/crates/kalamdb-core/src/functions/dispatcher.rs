@@ -26,7 +26,7 @@ const TRIGGER_CACHE_TTL: Duration = Duration::from_secs(1);
 struct TriggerListCache {
     generation: u64,
     fetched_at: Instant,
-    triggers:   Vec<CatalogTrigger>,
+    triggers: Vec<CatalogTrigger>,
 }
 
 fn cached_enabled_triggers(

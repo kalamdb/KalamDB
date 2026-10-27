@@ -12,7 +12,8 @@ use crate::{
     error::RegistryError,
     pg_catalog::{
         class_oid, namespace_oid, pg_relkind, primary_index_oid, primary_index_relname,
-        primary_key_attnums, relation_is_view, visible_table_definitions, PgCatalogView,
+        primary_key_attnums, relation_is_view, scalar_index_attnums, scalar_index_oid,
+        visible_table_definitions, PgCatalogView,
     },
 };
 
@@ -71,14 +72,24 @@ impl PgCatalogView for PgClassView {
                 continue;
             }
             let attnums = primary_key_attnums(&table);
-            if attnums.is_empty() {
-                continue;
+            if !attnums.is_empty() {
+                oids.append_value(primary_index_oid(namespace, table_name));
+                names.append_value(primary_index_relname(table_name));
+                namespace_oids.append_value(namespace_oid(namespace));
+                kinds.append_value("i");
+                tuples.append_value(0.0);
             }
-            oids.append_value(primary_index_oid(namespace, table_name));
-            names.append_value(primary_index_relname(table_name));
-            namespace_oids.append_value(namespace_oid(namespace));
-            kinds.append_value("i");
-            tuples.append_value(0.0);
+
+            for index in &table.scalar_indexes {
+                if scalar_index_attnums(&table, index).is_none() {
+                    continue;
+                }
+                oids.append_value(scalar_index_oid(namespace, table_name, &index.name));
+                names.append_value(index.name.as_str());
+                namespace_oids.append_value(namespace_oid(namespace));
+                kinds.append_value("i");
+                tuples.append_value(0.0);
+            }
         }
 
         RecordBatch::try_new(

@@ -10,23 +10,23 @@ use crate::{ids::VersionId, models::UserId};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UserTableRow {
     /// User who owns this row
-    pub user_id:  UserId,
+    pub user_id: UserId,
     /// Canonical row version. Maps to SQL column `_version`.
     pub _version: VersionId,
     /// Soft delete tombstone marker. Maps to SQL column `_deleted`.
     pub _deleted: bool,
     /// All user-defined columns including PK (serialized as JSON map)
-    pub fields:   Row,
+    pub fields: Row,
 }
 
 impl From<UserTableRow> for KTableRow {
     fn from(row: UserTableRow) -> Self {
         KTableRow {
-            user_id:    row.user_id,
-            _version:   row._version,
+            user_id: row.user_id,
+            _version: row._version,
             _timestamp: None,
-            _deleted:   row._deleted,
-            fields:     row.fields,
+            _deleted: row._deleted,
+            fields: row.fields,
         }
     }
 }

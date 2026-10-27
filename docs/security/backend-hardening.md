@@ -99,7 +99,6 @@ cache_max_entries = 100000
 cache_ttl_seconds = 600
 
 [security]
-max_request_body_size = 10485760
 max_ws_message_size = 1048576
 strict_ws_origin_check = true
 trusted_proxy_ranges = ["10.0.1.9", "10.0.0.0/8"]
@@ -122,7 +121,6 @@ allowed_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
 allowed_headers = ["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"]
 allow_credentials = true
 max_age = 3600
-allow_private_network = false
 ```
 
 ## 7) Localhost-only operational endpoints

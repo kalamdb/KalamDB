@@ -40,10 +40,9 @@ fn smoke_test_user_table_flush() {
     println!("🧪 Testing USER table flush: {}", full_table_name);
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create USER table with flush policy
@@ -165,7 +164,7 @@ fn smoke_test_user_table_flush() {
     // Cleanup
     println!("🧹 Cleaning up...");
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE {}", full_table_name));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("✅ USER table flush smoke test completed successfully!");
 }
@@ -189,10 +188,9 @@ fn smoke_test_shared_table_flush() {
     println!("🧪 Testing SHARED table flush: {}", full_table_name);
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create SHARED table with flush policy
@@ -314,7 +312,7 @@ fn smoke_test_shared_table_flush() {
     // Cleanup
     println!("🧹 Cleaning up...");
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE {}", full_table_name));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("✅ SHARED table flush smoke test completed successfully!");
 }
@@ -339,10 +337,9 @@ fn smoke_test_mixed_source_query() {
     println!("🧪 Testing mixed source (RocksDB + Parquet) query: {}", full_table_name);
 
     // Setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table with small flush policy
@@ -444,7 +441,7 @@ fn smoke_test_mixed_source_query() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE {}", full_table_name));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("✅ Mixed source query smoke test completed successfully!");
 }

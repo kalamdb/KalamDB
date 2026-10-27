@@ -1,4 +1,4 @@
-use kalamdb_commons::{models::NamespaceId, Role};
+use kalamdb_commons::{models::SchemaId, Role};
 
 use super::{
     AlterPolicyOperation, AlterPolicyStatement, CreatePolicyStatement, DropPolicyStatement,
@@ -6,8 +6,8 @@ use super::{
 };
 use crate::{classify_statement, SqlStatementKind};
 
-fn default_namespace() -> NamespaceId {
-    NamespaceId::new("app")
+fn default_namespace() -> SchemaId {
+    SchemaId::new("app")
 }
 
 #[test]

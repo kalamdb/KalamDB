@@ -77,47 +77,27 @@ We will use **sqlparser-rs** (https://github.com/sqlparser-rs/sqlparser-rs) as t
 ### Parsing Strategy
 
 1. **Standard SQL Commands** (SELECT, INSERT, UPDATE, DELETE):
-   - Parsed entirely by sqlparser-rs
-   - Executed by DataFusion via `SessionContext.sql()`
-   - No custom parsing required
+   - Parsed once by `KalamParser` using `KalamDbDialect` (`derive_dialect!(KalamDbDialect, PostgreSqlDialect, preserve_type_id = true)`)
+   - Planned directly from the parsed `sqlparser::ast::Statement` by DataFusion via `SessionState::statement_to_plan(Statement::Statement(Box::new(ast)))` (never reparsed from text via `SessionContext.sql()`)
+   - Parameter and result metadata in `kalamdb-postgres-wire` share one `statement_to_plan` invocation (`SqlExecutor::logical_plan_for_metadata`)
 
-2. **Standard DDL with Extensions** (CREATE TABLE):
-   - Table structure parsed by sqlparser-rs (columns, types, constraints)
-   - KalamDB extensions parsed by custom code (FLUSH POLICY, table type detection)
-   - Hybrid approach: leverage sqlparser for structure, extend for features
+2. **Standard DDL with Extensions** (CREATE TABLE, CREATE TYPE, CREATE DOMAIN, CREATE FUNCTION/PROCEDURE):
+   - Parsed once through the shared `KalamParser` token/AST boundary
+   - KalamDB-specific extensions (`WITH (TYPE='USER'|'SHARED'|'STREAM')`, `FLUSH POLICY`, etc.) are extracted from the shared AST/token stream without reparsing user SQL text
 
 3. **KalamDB-Specific Commands**:
-   - Fully custom parsers (no sqlparser-rs involvement)
-    - Examples: CREATE NAMESPACE, CREATE STORAGE, STORAGE FLUSH, BACKUP/RESTORE
-   - These commands don't exist in standard SQL
+   - Parsed via `KalamParser` into `StatementPayload::Kalam` or `StatementPayload::PostgresCompat` on the same token cursor
+   - Examples: `CREATE STORAGE`, `STORAGE FLUSH`, `BACKUP/RESTORE`, `SUBSCRIBE TO`
 
 ### Custom Dialect Extension
 
-KalamDB extends sqlparser-rs's PostgreSQL dialect:
+KalamDB derives its dialect from `sqlparser::dialect::PostgreSqlDialect` with `preserve_type_id = true`:
 
 ```rust
 use sqlparser::dialect::PostgreSqlDialect;
-use sqlparser::parser::Parser;
+use sqlparser_derive::derive_dialect;
 
-// KalamDB dialect extends PostgreSQL
-pub struct KalamDbDialect {
-    postgres: PostgreSqlDialect,
-}
-
-impl Dialect for KalamDbDialect {
-    fn is_identifier_start(&self, ch: char) -> bool {
-        self.postgres.is_identifier_start(ch)
-    }
-    
-    fn is_identifier_part(&self, ch: char) -> bool {
-        self.postgres.is_identifier_part(ch)
-    }
-    
-    // Custom keyword recognition
-    fn supports_filter_during_aggregation(&self) -> bool {
-        true
-    }
-}
+derive_dialect!(KalamDbDialect, PostgreSqlDialect, preserve_type_id = true);
 ```
 
 ### Data Type Mapping

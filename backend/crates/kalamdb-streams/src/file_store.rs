@@ -11,7 +11,7 @@ use std::{
 use chrono::{Datelike, TimeZone, Timelike, Utc};
 use dashmap::DashMap;
 use kalamdb_commons::{
-    ids::StreamTableRowId,
+    ids::{StreamTableRowId, VersionId},
     models::{StreamTableRow, TableId, UserId},
 };
 use kalamdb_serialization::StorageSchema;
@@ -19,7 +19,7 @@ use kalamdb_serialization::StorageSchema;
 use crate::{
     config::StreamLogConfig,
     error::{Result, StreamLogError},
-    record::{PersistedStreamLogRecord, StreamLogRecord},
+    record::StreamLogRecord,
     store_trait::StreamLogStore,
     time_bucket::StreamTimeBucket,
     utils::{cleanup_empty_dir, visit_dirs},
@@ -49,16 +49,16 @@ const WINDOW_DIR_PREFIX: &str = "w";
 
 /// Cached state for an open segment file.
 struct SegmentWriter {
-    writer:       BufWriter<File>,
+    writer: BufWriter<File>,
     record_count: u32,
-    last_write:   Instant,
+    last_write: Instant,
 }
 
 #[derive(Debug, Clone)]
 struct LogFileEntry {
     window_start: u64,
-    window_end:   u64,
-    path:         PathBuf,
+    window_end: u64,
+    path: PathBuf,
 }
 
 /// File-based stream log store with cached file handles and write buffering.
@@ -74,8 +74,8 @@ struct LogFileEntry {
 /// * **Batch writes** — multiple records targeting the same segment share a single lock
 ///   acquisition.
 pub struct FileStreamLogStore {
-    config:   StreamLogConfig,
-    schema:   Arc<StorageSchema>,
+    config: StreamLogConfig,
+    schema: Arc<StorageSchema>,
     /// Cached open segment writers keyed by log-file path.
     segments: DashMap<PathBuf, Arc<Mutex<SegmentWriter>>>,
 }
@@ -202,10 +202,9 @@ impl FileStreamLogStore {
 
         for (path, mut indices) in by_segment {
             indices.sort_by_key(|&i| rows[i].0.version().as_i64());
-            let mut encoded = Vec::new();
+            let mut encoded = Vec::with_capacity(indices.len() * 128);
             for &i in &indices {
-                let frame = self.encode_put_frame(&rows[i].0, &rows[i].1)?;
-                encoded.extend_from_slice(&frame);
+                self.append_put_frame(&mut encoded, &rows[i].0, &rows[i].1)?;
             }
             self.append_encoded_bytes(&path, &encoded, indices.len() as u32)?;
         }
@@ -458,9 +457,9 @@ impl FileStreamLogStore {
             .open(path)
             .map_err(|e| StreamLogError::Io(e.to_string()))?;
         let writer = Arc::new(Mutex::new(SegmentWriter {
-            writer:       BufWriter::with_capacity(SEGMENT_BUF_CAPACITY, file),
+            writer: BufWriter::with_capacity(SEGMENT_BUF_CAPACITY, file),
             record_count: 0,
-            last_write:   Instant::now(),
+            last_write: Instant::now(),
         }));
 
         // Use `entry` API so a concurrent creation by another thread is
@@ -471,16 +470,27 @@ impl FileStreamLogStore {
     }
 
     fn encode_put_frame(&self, row_id: &StreamTableRowId, row: &StreamTableRow) -> Result<Vec<u8>> {
+        let mut encoded = Vec::with_capacity(128);
+        self.append_put_frame(&mut encoded, row_id, row)?;
+        Ok(encoded)
+    }
+
+    fn append_put_frame(
+        &self,
+        out: &mut Vec<u8>,
+        row_id: &StreamTableRowId,
+        row: &StreamTableRow,
+    ) -> Result<()> {
         let payload = kalamdb_serialization::encode_stream_row(row, &self.schema)
-            .map_err(|e| StreamLogError::Serialization(e.to_string()))?
-            .into_bytes();
-        let persisted = PersistedStreamLogRecord::Put {
-            row_id:    row_id.clone(),
-            timestamp: row._timestamp,
-            payload,
-        };
-        kalamdb_serialization::encode_stream_frame(&persisted)
-            .map_err(|e| StreamLogError::Serialization(e.to_string()))
+            .map_err(|e| StreamLogError::Serialization(e.to_string()))?;
+        kalamdb_serialization::append_stream_put_frame(
+            out,
+            row_id.user_id.as_str(),
+            row_id.version().as_i64(),
+            row._timestamp,
+            payload.as_slice(),
+        )
+        .map_err(|e| StreamLogError::Serialization(e.to_string()))
     }
 
     fn encode_delete_frame(
@@ -488,33 +498,54 @@ impl FileStreamLogStore {
         row_id: &StreamTableRowId,
         timestamp_millis: i64,
     ) -> Result<Vec<u8>> {
-        let persisted = PersistedStreamLogRecord::Delete {
-            row_id:    row_id.clone(),
-            timestamp: timestamp_millis,
-        };
-        kalamdb_serialization::encode_stream_frame(&persisted)
-            .map_err(|e| StreamLogError::Serialization(e.to_string()))
+        let mut encoded = Vec::with_capacity(64);
+        kalamdb_serialization::append_stream_delete_frame(
+            &mut encoded,
+            row_id.user_id.as_str(),
+            row_id.version().as_i64(),
+            timestamp_millis,
+        )
+        .map_err(|e| StreamLogError::Serialization(e.to_string()))?;
+        Ok(encoded)
     }
 
-    fn hydrate_record(&self, persisted: PersistedStreamLogRecord) -> Result<StreamLogRecord> {
-        match persisted {
-            PersistedStreamLogRecord::Put {
-                row_id,
+    fn decode_frame_payload(&self, payload: &[u8]) -> Result<StreamLogRecord> {
+        match kalamdb_serialization::decode_raw_stream_record(payload)
+            .map_err(|e| StreamLogError::Serialization(e.to_string()))?
+        {
+            kalamdb_serialization::RawStreamRecord::Put {
+                user_id,
+                version,
                 timestamp,
-                payload,
+                row_payload,
             } => {
+                let uid = UserId::new(user_id);
+                let ver = VersionId::try_from_i64(version)
+                    .map_err(|e| StreamLogError::Serialization(e.to_string()))?;
                 let row = kalamdb_serialization::decode_stream_row(
-                    &payload,
+                    row_payload,
                     &self.schema,
-                    row_id.user_id.clone(),
-                    row_id.version(),
+                    uid.clone(),
+                    ver,
                     timestamp,
                 )
                 .map_err(|e| StreamLogError::Serialization(e.to_string()))?;
-                Ok(StreamLogRecord::Put { row_id, row })
+                Ok(StreamLogRecord::Put {
+                    row_id: StreamTableRowId::new(uid, ver),
+                    row,
+                })
             },
-            PersistedStreamLogRecord::Delete { row_id, timestamp } => {
-                Ok(StreamLogRecord::Delete { row_id, timestamp })
+            kalamdb_serialization::RawStreamRecord::Delete {
+                user_id,
+                version,
+                timestamp,
+            } => {
+                let ver = VersionId::try_from_i64(version)
+                    .map_err(|e| StreamLogError::Serialization(e.to_string()))?;
+                Ok(StreamLogRecord::Delete {
+                    row_id: StreamTableRowId::new(UserId::new(user_id), ver),
+                    timestamp,
+                })
             },
         }
     }
@@ -550,6 +581,7 @@ impl FileStreamLogStore {
     {
         let file = File::open(path).map_err(|e| StreamLogError::Io(e.to_string()))?;
         let mut reader = BufReader::new(file);
+        let mut payload = Vec::new();
         loop {
             let mut len_buf = [0u8; 4];
             match reader.read_exact(&mut len_buf) {
@@ -562,7 +594,7 @@ impl FileStreamLogStore {
                 },
             }
             let len = u32::from_le_bytes(len_buf) as usize;
-            let mut payload = vec![0u8; len];
+            payload.resize(len, 0);
             match reader.read_exact(&mut payload) {
                 Ok(_) => {},
                 Err(err) => {
@@ -572,24 +604,12 @@ impl FileStreamLogStore {
                     return Err(StreamLogError::Io(err.to_string()));
                 },
             }
-            let persisted =
-                kalamdb_serialization::decode_stream::<PersistedStreamLogRecord>(&payload)
-                    .map_err(|e| StreamLogError::Serialization(e.to_string()))?;
-            let record = self.hydrate_record(persisted)?;
+            let record = self.decode_frame_payload(&payload)?;
             if !visitor(record)? {
                 return Ok(false);
             }
         }
         Ok(true)
-    }
-
-    fn read_records(&self, path: &Path) -> Result<Vec<StreamLogRecord>> {
-        let mut records = Vec::new();
-        self.visit_records(path, |record| {
-            records.push(record);
-            Ok(true)
-        })?;
-        Ok(records)
     }
 
     fn collect_user_ids(&self, users: &mut HashSet<UserId>) -> Result<()> {
@@ -703,10 +723,14 @@ impl FileStreamLogStore {
                             return Ok(false);
                         }
                     },
-                    StreamLogRecord::Delete { row_id, timestamp: _ } => {
+                    StreamLogRecord::Delete {
+                        row_id,
+                        timestamp: _,
+                    } => {
                         let version = row_id.version().as_i64();
                         deleted.insert(version);
-                        results.retain(|(existing_id, _)| existing_id.version().as_i64() != version);
+                        results
+                            .retain(|(existing_id, _)| existing_id.version().as_i64() != version);
                     },
                 }
                 Ok(true)
@@ -748,26 +772,61 @@ impl FileStreamLogStore {
             return Ok(Vec::new());
         }
 
-        let mut results: Vec<(StreamTableRowId, StreamTableRow)> = Vec::new();
+        let mut results: Vec<(StreamTableRowId, StreamTableRow)> = Vec::with_capacity(limit);
         let mut deleted: HashSet<i64> = HashSet::new();
 
         for entry in &entries {
             self.flush_segment(&entry.path);
-            let records = self.read_records(&entry.path)?;
-            for record in records.into_iter().rev() {
-                match record {
-                    StreamLogRecord::Put { row_id, row } => {
-                        let version = row_id.version().as_i64();
+            let file_bytes =
+                fs::read(&entry.path).map_err(|e| StreamLogError::Io(e.to_string()))?;
+            let mut frames: Vec<&[u8]> = Vec::new();
+            let mut cursor = 0usize;
+            while let Some(len_bytes) = file_bytes.get(cursor..cursor + 4) {
+                let len =
+                    u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
+                        as usize;
+                let start = cursor + 4;
+                let Some(end) = start.checked_add(len) else {
+                    break;
+                };
+                let Some(frame) = file_bytes.get(start..end) else {
+                    break;
+                };
+                frames.push(frame);
+                cursor = end;
+            }
+
+            for frame in frames.into_iter().rev() {
+                match kalamdb_serialization::decode_raw_stream_record(frame)
+                    .map_err(|e| StreamLogError::Serialization(e.to_string()))?
+                {
+                    kalamdb_serialization::RawStreamRecord::Put {
+                        user_id,
+                        version,
+                        timestamp,
+                        row_payload,
+                    } => {
                         if deleted.contains(&version) {
                             continue;
                         }
-                        results.push((row_id, row));
+                        let uid = UserId::new(user_id);
+                        let ver = VersionId::try_from_i64(version)
+                            .map_err(|e| StreamLogError::Serialization(e.to_string()))?;
+                        let row = kalamdb_serialization::decode_stream_row(
+                            row_payload,
+                            &self.schema,
+                            uid.clone(),
+                            ver,
+                            timestamp,
+                        )
+                        .map_err(|e| StreamLogError::Serialization(e.to_string()))?;
+                        results.push((StreamTableRowId::new(uid, ver), row));
                         if results.len() >= limit {
                             return Ok(results);
                         }
                     },
-                    StreamLogRecord::Delete { row_id, timestamp: _ } => {
-                        deleted.insert(row_id.version().as_i64());
+                    kalamdb_serialization::RawStreamRecord::Delete { version, .. } => {
+                        deleted.insert(version);
                     },
                 }
             }
@@ -839,7 +898,7 @@ mod tests {
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
         ids::{StreamTableRowId, VersionId},
-        models::{rows::Row, NamespaceId, StreamTableRow, TableId, TableName, UserId},
+        models::{rows::Row, SchemaId, StreamTableRow, TableId, TableName, UserId},
     };
     use kalamdb_serialization::StorageSchema;
     use kalamdb_sharding::ShardRouter;
@@ -906,10 +965,10 @@ mod tests {
     fn build_row(user_id: &UserId, version: VersionId, timestamp: i64) -> StreamTableRow {
         let values: BTreeMap<String, ScalarValue> = BTreeMap::new();
         StreamTableRow {
-            user_id:    user_id.clone(),
-            _version:   version,
+            user_id: user_id.clone(),
+            _version: version,
             _timestamp: timestamp,
-            fields:     Row::new(values),
+            fields: Row::new(values),
         }
     }
 
@@ -933,7 +992,7 @@ mod tests {
     #[test]
     fn test_delete_old_logs_cleans_files_and_folders() {
         let base_dir = temp_base_dir("kalamdb_streams_delete_old");
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("events"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("events"));
         let shard_router = ShardRouter::new(4, 1);
         let bucket = StreamTimeBucket::Hour;
 
@@ -1002,7 +1061,7 @@ mod tests {
     #[test]
     fn test_concurrent_writes_from_multiple_users() {
         let base_dir = temp_base_dir("kalamdb_streams_concurrent");
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("events"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("events"));
         let store = std::sync::Arc::new(create_store(
             base_dir.clone(),
             table_id.clone(),
@@ -1056,7 +1115,7 @@ mod tests {
     #[test]
     fn test_open_segment_cache_is_bounded() {
         let base_dir = temp_base_dir("kalamdb_streams_segment_cap");
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("events"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("events"));
         let store = create_store(
             base_dir.clone(),
             table_id.clone(),
@@ -1091,7 +1150,7 @@ mod tests {
     #[test]
     fn test_flush_all_and_close_idle() {
         let base_dir = temp_base_dir("kalamdb_streams_flush");
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("events"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("events"));
         let store = create_store(
             base_dir.clone(),
             table_id.clone(),
@@ -1125,7 +1184,7 @@ mod tests {
     #[test]
     fn test_append_puts_roundtrips_in_seq_order() {
         let base_dir = temp_base_dir("kalamdb_streams_append_puts");
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("events"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("events"));
         let store = create_store(
             base_dir.clone(),
             table_id.clone(),

@@ -1,12 +1,8 @@
-use std::future::Future;
-use std::pin::Pin;
-use std::time::Duration;
+use std::{future::Future, pin::Pin, time::Duration};
 
 use kalam_client::{ChangeEvent, SubscriptionConfig};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 /// Measures the actual latency from INSERT commit to subscriber receiving the change notification.
 /// Performs a single subscribe, then times individual writes to measure delivery latency.
@@ -55,7 +51,8 @@ impl Benchmark for SubscribeChangeLatencyBench {
             let ns = config.namespace.clone();
             client
                 .sql_ok(&format!(
-                    "CREATE USER TABLE IF NOT EXISTS {}.change_latency (id INT PRIMARY KEY, ts TEXT)",
+                    "CREATE USER TABLE IF NOT EXISTS {}.change_latency (id INT PRIMARY KEY, ts \
+                     TEXT)",
                     ns
                 ))
                 .await?;
@@ -115,7 +112,9 @@ impl Benchmark for SubscribeChangeLatencyBench {
                             break Err(format!("Subscription stream error: {}", error));
                         },
                         None => {
-                            break Err("Subscription ended before change notification arrived".to_string());
+                            break Err(
+                                "Subscription ended before change notification arrived".to_string()
+                            );
                         },
                     }
                 }

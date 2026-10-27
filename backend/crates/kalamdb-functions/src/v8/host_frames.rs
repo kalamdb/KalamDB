@@ -19,14 +19,14 @@ const FRAME_KEY: &str = "kalamdb#HostFrame";
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct HostFrames {
-    hosts:      Vec<Arc<dyn FunctionHost>>,
+    hosts: Vec<Arc<dyn FunctionHost>>,
     generation: u64,
 }
 
 impl Default for HostFrames {
     fn default() -> Self {
         Self {
-            hosts:      Vec::new(),
+            hosts: Vec::new(),
             generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
         }
     }
@@ -34,6 +34,9 @@ impl Default for HostFrames {
 
 impl HostFrames {
     pub(crate) fn bind(scope: &mut v8::PinScope, host: Arc<dyn FunctionHost>) {
+        // Drop a stale private before the slot generation changes. A GC checkpoint
+        // in that window would otherwise see the old realm and reject the call.
+        clear_frame(scope);
         if scope.get_slot::<Self>().is_none() {
             scope.set_slot(Self::default());
         }
@@ -71,6 +74,14 @@ impl HostFrames {
 fn frame_key<'s>(scope: &v8::PinScope<'s, '_>) -> Option<v8::Local<'s, v8::Private>> {
     let name = crate::convert::string_to_v8(scope, FRAME_KEY).ok()?;
     Some(v8::Private::for_api(scope, Some(name)))
+}
+
+fn clear_frame(scope: &mut v8::PinScope) {
+    let Some(key) = frame_key(scope) else {
+        return;
+    };
+    let global = scope.get_current_context().global(scope);
+    global.delete_private(scope, key);
 }
 
 fn write_frame(scope: &mut v8::PinScope, frame: HostFrame) {

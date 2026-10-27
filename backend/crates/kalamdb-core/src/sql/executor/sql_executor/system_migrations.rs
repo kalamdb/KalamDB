@@ -178,7 +178,7 @@ fn expect_system_migrations_object(name: &ObjectName) -> Result<(), KalamDbError
         KalamDbError::InvalidSql("Invalid system.migrations table name".to_string())
     })?;
     if parts.len() == 2
-        && parts[0].eq_ignore_ascii_case("system")
+        && kalamdb_commons::SchemaId::is_system_schema_name(parts[0])
         && parts[1].eq_ignore_ascii_case("migrations")
     {
         return Ok(());
@@ -281,16 +281,16 @@ fn migration_from_insert_values(
 
     Ok(Migration {
         migration_key: MigrationId::new(expr_string(required("migration_key")?, "migration_key")?),
-        migration_id:  expr_string(required("migration_id")?, "migration_id")?,
-        namespace:     expr_string(required("namespace")?, "namespace")?,
-        name:          expr_string(required("name")?, "name")?,
-        checksum:      expr_string(required("checksum")?, "checksum")?,
-        status:        expr_string(required("status")?, "status")?,
-        started_at:    optional("started_at")
+        migration_id: expr_string(required("migration_id")?, "migration_id")?,
+        namespace: expr_string(required("namespace")?, "namespace")?,
+        name: expr_string(required("name")?, "name")?,
+        checksum: expr_string(required("checksum")?, "checksum")?,
+        status: expr_string(required("status")?, "status")?,
+        started_at: optional("started_at")
             .map(|expr| expr_optional_i64(expr, "started_at"))
             .transpose()?
             .flatten(),
-        finished_at:   optional("finished_at")
+        finished_at: optional("finished_at")
             .map(|expr| expr_optional_i64(expr, "finished_at"))
             .transpose()?
             .flatten(),
@@ -298,7 +298,7 @@ fn migration_from_insert_values(
             .map(|expr| expr_optional_string(expr, "error_message"))
             .transpose()?
             .flatten(),
-        source:        optional("source")
+        source: optional("source")
             .map(|expr| expr_optional_string(expr, "source"))
             .transpose()?
             .flatten(),

@@ -101,7 +101,7 @@ fn build_payload(row_id: usize, payload_bytes: usize) -> String {
 
 fn create_memory_test_table(namespace: &str, table: &str) -> String {
     let full_table = format!("{}.{}", namespace, table);
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("create namespace should succeed");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, tenant TEXT NOT NULL, payload TEXT NOT NULL, seq \
@@ -121,8 +121,8 @@ fn flush_and_drop_namespace(namespace: &str, full_table: &str) {
         .expect("flush response should contain a job id");
     verify_job_completed(&job_id, Duration::from_secs(45)).expect("flush job should complete");
 
-    execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace))
-        .expect("drop namespace should succeed");
+    execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace))
+        .expect("drop schema should succeed");
 }
 
 fn run_memory_workload(

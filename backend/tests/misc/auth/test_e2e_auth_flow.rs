@@ -42,7 +42,7 @@ async fn test_e2e_auth_flow() {
     println!("🔐 Phase 2: Testing authentication and SQL execution");
 
     // Create namespace (as DBA user)
-    let create_ns_sql = format!("CREATE NAMESPACE {}", namespace);
+    let create_ns_sql = format!("CREATE SCHEMA {}", namespace);
     let response = server.execute_sql_as_user(&create_ns_sql, user.user_id.as_str()).await;
     assert_eq!(
         response.status,
@@ -156,7 +156,7 @@ async fn test_role_based_auth_e2e() {
 
     // Create user namespaces (system user creates these for them)
     for user in [&user_user, &service_user] {
-        let create_ns_sql = format!("CREATE NAMESPACE {}", user.user_id.as_str());
+        let create_ns_sql = format!("CREATE SCHEMA {}", user.user_id.as_str());
         server.execute_sql(&create_ns_sql).await;
     }
     println!("✅ Created user namespaces");
@@ -164,7 +164,7 @@ async fn test_role_based_auth_e2e() {
     // Test namespace operations (admin only)
 
     // Create namespace as DBA
-    let create_ns_sql = format!("CREATE NAMESPACE {}", namespace);
+    let create_ns_sql = format!("CREATE SCHEMA {}", namespace);
     let response = server.execute_sql_as_user(&create_ns_sql, dba_user.user_id.as_str()).await;
     assert_eq!(
         response.status,
@@ -235,7 +235,7 @@ async fn test_role_based_auth_e2e() {
     // Cleanup
     server
         .execute_sql_as_user(
-            &format!("DROP NAMESPACE {} CASCADE", namespace),
+            &format!("DROP SCHEMA {} CASCADE", namespace),
             dba_user.user_id.as_str(),
         )
         .await;

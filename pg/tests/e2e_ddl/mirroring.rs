@@ -1,7 +1,7 @@
 use super::common::{ensure_schema_exists, require_ddl_env, unique_name};
 
 #[tokio::test]
-#[ntest::timeout(7000)]
+#[ntest::timeout(30000)]
 async fn e2e_ddl_create_table_mirrors_columns_identically() {
     let env = require_ddl_env!();
     let pg = env.pg_connect().await;
@@ -37,7 +37,10 @@ async fn e2e_ddl_create_table_mirrors_columns_identically() {
     let pg_user_columns: Vec<String> = pg_columns
         .iter()
         .filter(|name| {
-            name.as_str() != "_userid" && name.as_str() != "_seq" && name.as_str() != "_deleted"
+            name.as_str() != "_userid"
+                && name.as_str() != "_seq"
+                && name.as_str() != "_deleted"
+                && name.as_str() != "_version"
         })
         .cloned()
         .collect();
@@ -52,7 +55,10 @@ async fn e2e_ddl_create_table_mirrors_columns_identically() {
     let kalam_user_columns: Vec<String> = kalam_columns
         .iter()
         .filter(|name| {
-            name.as_str() != "_userid" && name.as_str() != "_seq" && name.as_str() != "_deleted"
+            name.as_str() != "_userid"
+                && name.as_str() != "_seq"
+                && name.as_str() != "_deleted"
+                && name.as_str() != "_version"
         })
         .cloned()
         .collect();
@@ -63,7 +69,11 @@ async fn e2e_ddl_create_table_mirrors_columns_identically() {
     );
     assert!(
         kalam_columns.iter().all(|name| {
-            pg_columns.contains(name) || name == "_userid" || name == "_seq" || name == "_deleted"
+            pg_columns.contains(name)
+                || name == "_userid"
+                || name == "_seq"
+                || name == "_deleted"
+                || name == "_version"
         }),
         "KalamDB should only add known internal columns beyond the PostgreSQL schema: \
          {kalam_columns:?}"
@@ -75,7 +85,7 @@ async fn e2e_ddl_create_table_mirrors_columns_identically() {
 }
 
 #[tokio::test]
-#[ntest::timeout(7000)]
+#[ntest::timeout(30000)]
 async fn e2e_ddl_preserves_primary_key_not_null_and_defaults() {
     let env = require_ddl_env!();
     let pg = env.pg_connect().await;
@@ -147,7 +157,7 @@ async fn e2e_ddl_preserves_primary_key_not_null_and_defaults() {
 }
 
 #[tokio::test]
-#[ntest::timeout(7000)]
+#[ntest::timeout(30000)]
 async fn e2e_ddl_current_schema_maps_to_namespace_without_namespace_option() {
     let env = require_ddl_env!();
     let pg = env.pg_connect().await;

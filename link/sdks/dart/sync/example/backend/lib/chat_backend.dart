@@ -321,7 +321,7 @@ final class ChatBackend {
 
 List<String> chatSchemaStatements(String namespace) {
   return [
-    'CREATE NAMESPACE IF NOT EXISTS $namespace',
+    'CREATE SCHEMA IF NOT EXISTS $namespace',
     'CREATE TABLE IF NOT EXISTS $namespace.conversations ('
         'id TEXT PRIMARY KEY, '
         'title TEXT NOT NULL, '

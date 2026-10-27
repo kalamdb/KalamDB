@@ -27,14 +27,14 @@ const TERMINAL_SERVICE_VIEW_LINES: usize = 5;
 
 #[derive(Debug)]
 struct TerminalLogBuffer {
-    cli_lines:     VecDeque<String>,
+    cli_lines: VecDeque<String>,
     service_lines: VecDeque<String>,
 }
 
 impl TerminalLogBuffer {
     fn new() -> Self {
         Self {
-            cli_lines:     VecDeque::with_capacity(TERMINAL_LOG_BUFFER_CAPACITY),
+            cli_lines: VecDeque::with_capacity(TERMINAL_LOG_BUFFER_CAPACITY),
             service_lines: VecDeque::with_capacity(TERMINAL_LOG_BUFFER_CAPACITY),
         }
     }
@@ -88,13 +88,13 @@ pub enum WorkflowDisplayMode {
 
 #[derive(Debug, Clone)]
 pub struct WorkflowOutput {
-    pub use_color:       bool,
-    pub logging:         WorkflowLoggingPolicy,
-    pub display_mode:    WorkflowDisplayMode,
-    pub animations:      bool,
-    pub json:            bool,
-    progress_tasks:      Option<ProgressTasks>,
-    terminal_paused:     Arc<AtomicBool>,
+    pub use_color: bool,
+    pub logging: WorkflowLoggingPolicy,
+    pub display_mode: WorkflowDisplayMode,
+    pub animations: bool,
+    pub json: bool,
+    progress_tasks: Option<ProgressTasks>,
+    terminal_paused: Arc<AtomicBool>,
     terminal_log_buffer: Arc<Mutex<TerminalLogBuffer>>,
 }
 

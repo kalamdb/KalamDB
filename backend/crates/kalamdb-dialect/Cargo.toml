@@ -9,15 +9,14 @@ repository.workspace = true
 description = "KalamDB SQL dialect, parser, and statement classification"
 
 [dependencies]
-kalamdb-commons = { path = "../kalamdb-commons", features = ["serde", "rows"] }
+kalamdb-commons = { path = "../kalamdb-commons", features = ["serde", "rows", "scheduling"] }
 datafusion-common = { workspace = true, default-features = false }
 kalamdb-session = { path = "../kalamdb-session" }
-kalamdb-system = { path = "../kalamdb-system" }
 
 arrow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sqlparser = { workspace = true, features = ["visitor"] }
+sqlparser = { workspace = true, features = ["visitor", "derive-dialect"] }
 regex = { workspace = true }
 once_cell = { workspace = true }
 anyhow = { workspace = true }

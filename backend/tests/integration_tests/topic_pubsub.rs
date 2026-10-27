@@ -36,25 +36,25 @@ use crate::test_support::*;
 
 #[derive(Debug, Clone, Deserialize)]
 struct HttpConsumeMessage {
-    offset:       u64,
+    offset: u64,
     partition_id: u32,
-    key:          Option<String>,
+    key: Option<String>,
     #[serde(default)]
-    user:         Option<String>,
+    user: Option<String>,
     #[serde(default)]
-    op:           Option<String>,
+    op: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct HttpConsumeResponse {
-    messages:    Vec<HttpConsumeMessage>,
+    messages: Vec<HttpConsumeMessage>,
     next_offset: u64,
-    has_more:    bool,
+    has_more: bool,
 }
 
 #[derive(Debug, Deserialize)]
 struct HttpAckResponse {
-    success:             bool,
+    success: bool,
     acknowledged_offset: u64,
 }
 
@@ -154,9 +154,9 @@ async fn wait_until_group_reads_at_least(
 
         if aggregated_messages.len() >= min_messages {
             return HttpConsumeResponse {
-                messages:    aggregated_messages,
+                messages: aggregated_messages,
                 next_offset: response_next_offset,
-                has_more:    response_has_more,
+                has_more: response_has_more,
             };
         }
 
@@ -196,11 +196,11 @@ async fn setup_topic_source_fixture(server: &TestServer, fixture_name: &str) -> 
     let topic = format!("{}.{}", namespace, topic_table);
     let source_table = format!("{}.{}", namespace, table);
 
-    let create_namespace = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    let create_namespace = server.execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
     assert_eq!(
         create_namespace.status,
         ResponseStatus::Success,
-        "CREATE NAMESPACE failed: {:?}",
+        "CREATE SCHEMA failed: {:?}",
         create_namespace.error
     );
 
@@ -545,7 +545,7 @@ async fn test_http_consume_returns_stored_user_id_without_lookup() {
     let topic_table = consolidated_helpers::unique_table("topic");
     let topic = format!("{}.{}", namespace, topic_table);
 
-    let create_namespace = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    let create_namespace = server.execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
     assert_eq!(create_namespace.status, ResponseStatus::Success);
 
     let create_topic = server.execute_sql(&format!("CREATE TOPIC {} PARTITIONS 1", topic)).await;
@@ -605,7 +605,7 @@ async fn test_topic_source_where_filters_insert_messages() {
     let source_table = format!("{}.{}", namespace, table);
     let topic = format!("{}.{}", namespace, topic_table);
 
-    let create_namespace = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    let create_namespace = server.execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
     assert_eq!(create_namespace.status, ResponseStatus::Success);
 
     let create_table = server
@@ -693,7 +693,7 @@ async fn test_topic_source_where_filters_update_messages() {
     let source_table = format!("{}.{}", namespace, table);
     let topic = format!("{}.{}", namespace, topic_table);
 
-    let create_namespace = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    let create_namespace = server.execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
     assert_eq!(create_namespace.status, ResponseStatus::Success);
 
     let create_table = server
@@ -789,7 +789,7 @@ async fn test_topic_source_where_filters_complex_insert_messages() {
     let source_table = format!("{}.{}", namespace, table);
     let topic = format!("{}.{}", namespace, topic_table);
 
-    let create_namespace = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    let create_namespace = server.execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
     assert_eq!(create_namespace.status, ResponseStatus::Success);
 
     let create_table = server
@@ -912,9 +912,9 @@ async fn test_http_consume_shared_table_cdc_includes_actor_user_for_insert_updat
     let source_table = format!("{}.{}", namespace, table);
 
     let create_namespace = server
-        .execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+        .execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
-        .expect("CREATE NAMESPACE request failed");
+        .expect("CREATE SCHEMA request failed");
     assert_eq!(create_namespace.status, ResponseStatus::Success);
 
     let create_table = server
@@ -1034,7 +1034,7 @@ async fn test_alter_topic_add_source() {
     let server = TestServer::new_shared().await;
 
     // Setup
-    server.execute_sql("CREATE NAMESPACE test_alter_ns").await;
+    server.execute_sql("CREATE SCHEMA test_alter_ns").await;
     server
         .execute_sql("CREATE TABLE test_alter_ns.data (id TEXT PRIMARY KEY, value TEXT)")
         .await;
@@ -1085,7 +1085,7 @@ async fn test_ack_offset() {
     let topic = format!("{}.{}", namespace, topic_table);
     let group = format!("ack-{}", consolidated_helpers::unique_table("group"));
 
-    let create_namespace = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    let create_namespace = server.execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
     assert_eq!(create_namespace.status, ResponseStatus::Success);
 
     let create_topic = server.execute_sql(&format!("CREATE TOPIC {} PARTITIONS 1", topic)).await;
@@ -1272,7 +1272,7 @@ async fn test_cdc_insert_to_consume_workflow() {
     let server = TestServer::new_shared().await;
 
     // 1. Setup namespace and table
-    server.execute_sql("CREATE NAMESPACE test_cdc_ns").await;
+    server.execute_sql("CREATE SCHEMA test_cdc_ns").await;
     let create_table = "CREATE TABLE test_cdc_ns.events (
         id TEXT PRIMARY KEY,
         event_type TEXT,
@@ -1896,13 +1896,13 @@ async fn test_http_api_consume_ack_option_combinations() {
     let auth_header = server.bearer_auth_header("root").expect("Failed to create root auth header");
 
     let create_namespace = server
-        .execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+        .execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
-        .expect("CREATE NAMESPACE request failed");
+        .expect("CREATE SCHEMA request failed");
     assert_eq!(
         create_namespace.status,
         ResponseStatus::Success,
-        "CREATE NAMESPACE failed: {:?}",
+        "CREATE SCHEMA failed: {:?}",
         create_namespace.error
     );
 
@@ -2159,9 +2159,9 @@ async fn test_http_api_consume_without_group_is_stateless() {
     let auth_header = server.bearer_auth_header("root").expect("Failed to create root auth header");
 
     let create_namespace = server
-        .execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+        .execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
-        .expect("CREATE NAMESPACE request failed");
+        .expect("CREATE SCHEMA request failed");
     assert_eq!(create_namespace.status, ResponseStatus::Success);
 
     let create_table = server
@@ -2264,9 +2264,9 @@ async fn test_http_api_same_group_consumers_no_overlap() {
     .expect("Failed to create service auth header");
 
     let create_namespace = server
-        .execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+        .execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
-        .expect("CREATE NAMESPACE request failed");
+        .expect("CREATE SCHEMA request failed");
     assert_eq!(create_namespace.status, ResponseStatus::Success);
 
     let create_table = server
@@ -2387,7 +2387,7 @@ async fn test_clear_topic() {
     let server = TestServer::new_shared().await;
 
     // Setup: Create namespace, table, and topic
-    server.execute_sql("CREATE NAMESPACE test_clear_ns").await;
+    server.execute_sql("CREATE SCHEMA test_clear_ns").await;
     server
         .execute_sql("CREATE TABLE test_clear_ns.messages (id TEXT PRIMARY KEY, content TEXT)")
         .await;
@@ -2566,7 +2566,7 @@ async fn test_drop_topic_cleans_up_data_immediately() {
     let topic = format!("{}.{}", namespace, topic_table);
 
     // Setup: Create namespace, table, and topic
-    server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    server.execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
     server
         .execute_sql(&format!("CREATE TABLE {} (id TEXT PRIMARY KEY, data TEXT)", source_table))
         .await;

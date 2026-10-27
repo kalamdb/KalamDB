@@ -72,12 +72,12 @@ impl EncodedObject {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnvelopeHeader {
     pub protocol_version: u16,
-    pub object_kind:      ObjectKind,
-    pub schema_version:   u16,
-    pub flags:            u16,
+    pub object_kind: ObjectKind,
+    pub schema_version: u16,
+    pub flags: u16,
 }
 
-const HEADER_LEN: usize = 4 + 2 + 1 + 2 + 2 + 4;
+pub(crate) const HEADER_LEN: usize = 4 + 2 + 1 + 2 + 2 + 4;
 
 /// True when `bytes` starts with the Kalam object magic (`KOBJ`).
 pub fn has_object_magic(bytes: &[u8]) -> bool {
@@ -88,6 +88,54 @@ pub fn has_object_magic(bytes: &[u8]) -> bool {
 pub(crate) const FLAG_COLUMN_OFFSETS: u16 = 1 << 0;
 /// Row payload stores the tombstone flag only. `_version` lives on the storage key.
 pub(crate) const FLAG_VERSION_IN_KEY: u16 = 1 << 1;
+/// Row payload uses the packed v2 fixed/variable body layout (`RowView`).
+pub const FLAG_ROW_BODY_V2: u16 = 1 << 2;
+/// Row payload is a tombstone-only body with no column values.
+pub const FLAG_TOMBSTONE_ONLY: u16 = 1 << 3;
+
+/// Supported flag mask for `ObjectKind::Row` envelopes.
+pub const SUPPORTED_ROW_FLAGS: u16 =
+    FLAG_COLUMN_OFFSETS | FLAG_VERSION_IN_KEY | FLAG_ROW_BODY_V2 | FLAG_TOMBSTONE_ONLY;
+
+static ROW_V2_WRITERS_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Query whether row v2 writers are enabled past the durable format capability barrier (T097).
+/// Read-old/write-old deployment stage defaults to `false`.
+#[inline]
+pub fn is_row_v2_writer_enabled() -> bool {
+    ROW_V2_WRITERS_ENABLED.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// Enable or disable row v2 writers (T097 durable format activation gate).
+pub fn set_row_v2_writer_enabled(enabled: bool) {
+    ROW_V2_WRITERS_ENABLED.store(enabled, std::sync::atomic::Ordering::Release);
+}
+
+#[inline]
+pub(crate) fn begin_envelope(
+    object_kind: ObjectKind,
+    schema_version: u16,
+    flags: u16,
+    estimated_payload_len: usize,
+) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(HEADER_LEN + estimated_payload_len);
+    bytes.extend_from_slice(&MAGIC);
+    bytes.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
+    bytes.push(object_kind as u8);
+    bytes.extend_from_slice(&schema_version.to_le_bytes());
+    bytes.extend_from_slice(&flags.to_le_bytes());
+    bytes.extend_from_slice(&[0u8; 4]);
+    bytes
+}
+
+#[inline]
+pub(crate) fn finish_envelope(mut bytes: Vec<u8>) -> Result<EncodedObject> {
+    let payload_len = u32::try_from(bytes.len() - HEADER_LEN)
+        .map_err(|_| SerializationError::Encode("payload exceeds u32 length".to_string()))?;
+    bytes[HEADER_LEN - 4..HEADER_LEN].copy_from_slice(&payload_len.to_le_bytes());
+    Ok(EncodedObject::from_bytes(bytes))
+}
 
 pub(crate) fn encode_envelope(
     object_kind: ObjectKind,
@@ -103,17 +151,9 @@ pub(crate) fn encode_envelope_with_flags(
     flags: u16,
     payload: &[u8],
 ) -> Result<EncodedObject> {
-    let payload_len = u32::try_from(payload.len())
-        .map_err(|_| SerializationError::Encode("payload exceeds u32 length".to_string()))?;
-    let mut bytes = Vec::with_capacity(HEADER_LEN + payload.len());
-    bytes.extend_from_slice(&MAGIC);
-    bytes.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
-    bytes.push(object_kind as u8);
-    bytes.extend_from_slice(&schema_version.to_le_bytes());
-    bytes.extend_from_slice(&flags.to_le_bytes());
-    bytes.extend_from_slice(&payload_len.to_le_bytes());
+    let mut bytes = begin_envelope(object_kind, schema_version, flags, payload.len());
     bytes.extend_from_slice(payload);
-    Ok(EncodedObject::from_bytes(bytes))
+    finish_envelope(bytes)
 }
 
 pub(crate) fn decode_envelope(
@@ -129,7 +169,7 @@ pub(crate) fn decode_envelope(
     let protocol_version = u16::from_le_bytes([bytes[4], bytes[5]]);
     if protocol_version != PROTOCOL_VERSION {
         return Err(SerializationError::UnsupportedProtocolVersion {
-            found:     protocol_version,
+            found: protocol_version,
             supported: PROTOCOL_VERSION,
         });
     }
@@ -137,11 +177,21 @@ pub(crate) fn decode_envelope(
     if object_kind != expected_kind {
         return Err(SerializationError::WrongObjectKind {
             expected: expected_kind,
-            found:    object_kind,
+            found: object_kind,
         });
     }
     let schema_version = u16::from_le_bytes([bytes[7], bytes[8]]);
     let flags = u16::from_le_bytes([bytes[9], bytes[10]]);
+    let supported_mask = match object_kind {
+        ObjectKind::Row => SUPPORTED_ROW_FLAGS,
+        _ => 0,
+    };
+    if flags & !supported_mask != 0 {
+        return Err(SerializationError::Decode(format!(
+            "unsupported envelope flags 0x{flags:04x} for {object_kind:?} (supported mask \
+             0x{supported_mask:04x})"
+        )));
+    }
     let payload_len = u32::from_le_bytes([bytes[11], bytes[12], bytes[13], bytes[14]]) as usize;
     let payload_start = HEADER_LEN;
     let payload_end =
@@ -194,7 +244,7 @@ mod tests {
             err,
             SerializationError::WrongObjectKind {
                 expected: ObjectKind::Generic,
-                found:    ObjectKind::Row,
+                found: ObjectKind::Row,
             }
         ));
     }
@@ -207,7 +257,7 @@ mod tests {
         assert!(matches!(
             err,
             SerializationError::UnsupportedProtocolVersion {
-                found:     99,
+                found: 99,
                 supported: PROTOCOL_VERSION,
             }
         ));

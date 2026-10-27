@@ -20,8 +20,8 @@ use crate::{
 /// Sequence cursor plus the version domain required to resume a shared table.
 #[derive(Clone, Debug)]
 pub(crate) struct CachedResume {
-    pub seq:               Option<crate::VersionId>,
-    pub version_domain:    Option<kalamdb_commons::ids::VersionDomain>,
+    pub seq: Option<crate::VersionId>,
+    pub version_domain: Option<kalamdb_commons::ids::VersionDomain>,
     /// Cursor stored for this subscription id. A different id for the same SQL
     /// is a new snapshot unless the caller passes `from`.
     pub same_subscription: bool,
@@ -29,7 +29,7 @@ pub(crate) struct CachedResume {
 
 #[derive(Default)]
 struct ResumeMaps {
-    by_id:  HashMap<String, CachedResume>,
+    by_id: HashMap<String, CachedResume>,
     by_sql: HashMap<String, CachedResume>,
 }
 
@@ -158,24 +158,24 @@ pub(super) fn snapshot_subscriptions(
     let mut out: Vec<SubscriptionInfo> = subs
         .iter()
         .map(|(id, entry)| SubscriptionInfo {
-            id:                 id.clone(),
-            query:              entry.sql.clone(),
-            last_seq_id:        effective_entry_seq(entry),
+            id: id.clone(),
+            query: entry.sql.clone(),
+            last_seq_id: effective_entry_seq(entry),
             last_event_time_ms: entry.last_event_time_ms,
-            created_at_ms:      entry.created_at_ms,
-            closed:             false,
+            created_at_ms: entry.created_at_ms,
+            closed: false,
         })
         .collect();
 
     for (id, seq) in resume_cache.closed_cursors() {
         if !subs.contains_key(&id) {
             out.push(SubscriptionInfo {
-                id:                 id.clone(),
-                query:              String::new(),
-                last_seq_id:        Some(seq),
+                id: id.clone(),
+                query: String::new(),
+                last_seq_id: Some(seq),
                 last_event_time_ms: None,
-                created_at_ms:      0,
-                closed:             true,
+                created_at_ms: 0,
+                closed: true,
             });
         }
     }
@@ -198,6 +198,10 @@ pub(super) fn forget_resume_cursor(entry: &mut SubEntry, resume_cache: &ResumeCa
 pub(super) fn is_expired_resume(code: &str, message: &str) -> bool {
     code.eq_ignore_ascii_case("CURSOR_EXPIRED")
         || message.to_ascii_lowercase().contains("stale resume cursor")
+}
+
+pub(super) fn is_delivery_gap(code: &str) -> bool {
+    code.eq_ignore_ascii_case("DELIVERY_GAP")
 }
 
 pub(super) fn cache_entry_seq(resume_cache: &ResumeCache, id: &str, entry: &SubEntry) {
@@ -407,21 +411,21 @@ pub(super) fn resolve_subscription_key(
 
 pub(super) enum ConnCmd {
     Subscribe {
-        id:                   String,
-        sql:                  String,
-        options:              SubscriptionOptions,
+        id: String,
+        sql: String,
+        options: SubscriptionOptions,
         request_initial_data: bool,
-        event_tx:             mpsc::Sender<Result<ChangeEvent>>,
-        result_tx:            SubscriptionReadySender,
+        event_tx: mpsc::Sender<Result<ChangeEvent>>,
+        result_tx: SubscriptionReadySender,
     },
     Unsubscribe {
-        id:         String,
+        id: String,
         generation: Option<u64>,
     },
     Progress {
-        id:             String,
-        generation:     u64,
-        seq_id:         crate::VersionId,
+        id: String,
+        generation: u64,
+        seq_id: crate::VersionId,
         advance_resume: bool,
     },
     ListSubscriptions {

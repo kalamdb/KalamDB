@@ -60,12 +60,12 @@ async fn pg_transaction_aborts_when_bound_leader_changes_before_next_write() {
 
     let status = service
         .insert(request(InsertRpcRequest {
-            namespace:  table_id.namespace_id().to_string(),
+            namespace: table_id.namespace_id().to_string(),
             table_name: table_id.table_name().to_string(),
             table_type: "user".to_string(),
             session_id: session_id.to_string(),
-            user_id:    Some(USER_ID.to_string()),
-            rows_json:  vec![row_json],
+            user_id: Some(USER_ID.to_string()),
+            rows_json: vec![row_json],
         }))
         .await
         .expect_err("post-failover write should abort the transaction");
@@ -90,7 +90,7 @@ async fn pg_transaction_aborts_when_bound_leader_changes_before_next_write() {
 
     let rollback = service
         .rollback_transaction(request(RollbackTransactionRequest {
-            session_id:     session_id.to_string(),
+            session_id: session_id.to_string(),
             transaction_id: transaction_id.clone(),
         }))
         .await;

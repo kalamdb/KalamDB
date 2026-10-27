@@ -5,3 +5,20 @@ info:
   version: "1"
 components:
   schemas:
+    File:
+      type: object
+      properties:
+        id:
+          type: string
+        sub:
+          type: string
+        name:
+          type: string
+        size:
+          type: string
+        mime:
+          type: string
+        sha256:
+          type: string
+        shard:
+          type: string

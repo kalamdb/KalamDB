@@ -96,7 +96,7 @@ async fn setup_user_table() -> Result<String, Box<dyn std::error::Error + Send +
     let full_table = format!("sub_test.{}", table_name);
 
     // Create namespace if needed
-    execute_sql_checked("CREATE NAMESPACE IF NOT EXISTS sub_test").await?;
+    execute_sql_checked("CREATE SCHEMA IF NOT EXISTS sub_test").await?;
     sleep(Duration::from_millis(50)).await;
 
     // Create USER TABLE (not STREAM TABLE) - supports all DML operations

@@ -13,7 +13,7 @@ test.describe.configure({ timeout: 180_000 });
 
 function deploySql(ns: string): string {
   return `
-CREATE NAMESPACE ${ns};
+CREATE SCHEMA ${ns};
 
 CREATE TABLE ${ns}.schedule_hits (
   run_id TEXT PRIMARY KEY,
@@ -22,7 +22,6 @@ CREATE TABLE ${ns}.schedule_hits (
 
 CREATE OR REPLACE PROCEDURE ${ns}.tick()
 LANGUAGE JAVASCRIPT
-COMMENT 'Playwright scheduled tick'
 AS $$
   if (ctx.source.kind !== 'schedule' || !ctx.source.scheduleId || !ctx.source.runId
       || typeof ctx.source.scheduledAt !== 'number' || ctx.http !== null) {
@@ -32,6 +31,7 @@ AS $$
     "INSERT INTO ${ns}.schedule_hits (run_id, kind) VALUES ('" + ctx.source.runId + "', '" + ctx.source.kind + "')"
   );
 $$;
+COMMENT ON PROCEDURE ${ns}.tick IS 'Playwright scheduled tick';
 
 CREATE SCHEDULE ${ns}.clock INTERVAL '1 second' EXECUTE PROCEDURE ${ns}.tick();
 `.trim();
@@ -159,7 +159,7 @@ test("SQL Studio creates a schedule that runs a procedure and the Schedules UI t
   } finally {
     await openSqlStudio(page).catch(() => undefined);
     await openFreshSqlTab(page).catch(() => undefined);
-    await runSql(page, `DROP NAMESPACE IF EXISTS ${ns} CASCADE;`).catch(() => undefined);
+    await runSql(page, `DROP SCHEMA IF EXISTS ${ns} CASCADE;`).catch(() => undefined);
   }
 });
 

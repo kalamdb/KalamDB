@@ -41,9 +41,9 @@ use super::{
 
 #[derive(Serialize)]
 struct BorrowedQueryRequest<'a> {
-    sql:          &'a str,
+    sql: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    params:       Option<&'a [serde_json::Value]>,
+    params: Option<&'a [serde_json::Value]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     namespace_id: Option<&'a str>,
 }
@@ -102,12 +102,12 @@ struct BorrowedQueryRequest<'a> {
 /// ```
 #[wasm_bindgen]
 pub struct KalamClient {
-    url:                String,
+    url: String,
     /// Authentication provider (Basic, JWT, or None).
     /// Wrapped in Rc<RefCell<>> for interior mutability so that auto-refresh
     /// on TOKEN_EXPIRED can update credentials from `&self` methods.
-    auth:               Rc<RefCell<WasmAuthProvider>>,
-    ws:                 Rc<RefCell<Option<WebSocket>>>,
+    auth: Rc<RefCell<WasmAuthProvider>>,
+    ws: Rc<RefCell<Option<WebSocket>>>,
     /// Subscription state including callbacks and last seq_id for resumption
     subscription_state: Rc<RefCell<HashMap<String, SubscriptionState>>>,
     /// Connection options for auto-reconnect
@@ -115,26 +115,26 @@ pub struct KalamClient {
     /// Current reconnection attempt count
     reconnect_attempts: Rc<RefCell<u32>>,
     /// Flag indicating if we're currently reconnecting
-    is_reconnecting:    Rc<RefCell<bool>>,
+    is_reconnecting: Rc<RefCell<bool>>,
     /// Active keepalive ping interval ID (from `setInterval`), or -1 if none.
-    ping_interval_id:   Rc<RefCell<i32>>,
+    ping_interval_id: Rc<RefCell<i32>>,
     /// Connection lifecycle event handlers
-    on_connect_cb:      Rc<RefCell<Option<js_sys::Function>>>,
-    on_disconnect_cb:   Rc<RefCell<Option<js_sys::Function>>>,
-    on_error_cb:        Rc<RefCell<Option<js_sys::Function>>>,
-    on_receive_cb:      Rc<RefCell<Option<js_sys::Function>>>,
-    on_send_cb:         Rc<RefCell<Option<js_sys::Function>>>,
+    on_connect_cb: Rc<RefCell<Option<js_sys::Function>>>,
+    on_disconnect_cb: Rc<RefCell<Option<js_sys::Function>>>,
+    on_error_cb: Rc<RefCell<Option<js_sys::Function>>>,
+    on_receive_cb: Rc<RefCell<Option<js_sys::Function>>>,
+    on_send_cb: Rc<RefCell<Option<js_sys::Function>>>,
     /// Optional async auth provider callback.
     /// Called before each (re-)connection to obtain a fresh JWT token.
     /// The callback must return a Promise that resolves to an object of the
     /// shape `{ jwt: { token: string } }` or `{ none: null }`.
-    auth_provider_cb:   Rc<RefCell<Option<js_sys::Function>>>,
+    auth_provider_cb: Rc<RefCell<Option<js_sys::Function>>>,
     /// Default namespace applied to unqualified SQL requests and live queries.
-    default_namespace:  Rc<RefCell<Option<String>>>,
+    default_namespace: Rc<RefCell<Option<String>>>,
     /// Negotiated serialization format for this WebSocket connection.
-    negotiated_ser:     Rc<Cell<SerializationType>>,
+    negotiated_ser: Rc<Cell<SerializationType>>,
     /// Version domains learned from subscription acks, keyed by SQL.
-    learned_domains:    Rc<RefCell<HashMap<String, VersionDomain>>>,
+    learned_domains: Rc<RefCell<HashMap<String, VersionDomain>>>,
 }
 
 impl KalamClient {
@@ -180,8 +180,8 @@ impl KalamClient {
         if let Some(ws) = self.ws.borrow().as_ref() {
             let subscribe_msg = ClientMessage::Subscribe {
                 subscription: SubscriptionRequest {
-                    id:      subscription_id.clone(),
-                    sql:     sql.clone(),
+                    id: subscription_id.clone(),
+                    sql: sql.clone(),
                     options: Some(subscription_options),
                 },
             };
@@ -437,11 +437,11 @@ fn reject_pending_subscriptions(
 }
 
 struct SubscriptionDispatch {
-    callback:          Option<js_sys::Function>,
-    payload:           Option<String>,
+    callback: Option<js_sys::Function>,
+    payload: Option<String>,
     resolve_subscribe: Option<js_sys::Function>,
-    reject_subscribe:  Option<(js_sys::Function, String)>,
-    next_batch:        Option<(String, Option<link_common::VersionId>)>,
+    reject_subscribe: Option<(js_sys::Function, String)>,
+    next_batch: Option<(String, Option<link_common::VersionId>)>,
 }
 
 impl SubscriptionDispatch {
@@ -1110,9 +1110,9 @@ fn install_runtime_message_handler(
                     let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&text));
                 }
                 serde_json::from_str::<ServerMessage>(&text).ok()
-            } else if negotiated_ser.get() == SerializationType::MessagePack {
+            } else if negotiated_ser.get() == SerializationType::Domain {
                 let raw = decode_ws_binary_payload(&e)?;
-                rmp_serde::from_slice::<ServerMessage>(&raw).ok()
+                link_common::ws_domain::decode_server_message(&raw).ok()
             } else {
                 let message = decode_ws_message(&e)?;
                 if let Some(cb) = on_receive_cb.borrow().as_ref() {
@@ -1737,10 +1737,9 @@ impl KalamClient {
                         let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&text));
                     }
                     serde_json::from_str::<ServerMessage>(&text).ok()
-                } else if negotiated_ser_for_msg.get() == SerializationType::MessagePack {
-                    // Binary frame with msgpack negotiated
+                } else if negotiated_ser_for_msg.get() == SerializationType::Domain {
                     let raw = decode_ws_binary_payload(&e)?;
-                    rmp_serde::from_slice::<ServerMessage>(&raw).ok()
+                    link_common::ws_domain::decode_server_message(&raw).ok()
                 } else {
                     // Binary frame with JSON (gzip-compressed JSON)
                     let message = decode_ws_message(&e)?;
@@ -2236,7 +2235,7 @@ impl KalamClient {
             parsed_options.subscription_options.unwrap_or_default(),
             callback,
             SubscriptionCallbackMode::live_rows(link_common::subscription::LiveRowsConfig {
-                limit:       parsed_options.limit,
+                limit: parsed_options.limit,
                 key_columns: parsed_options.key_columns,
             }),
         )
@@ -2327,7 +2326,7 @@ impl KalamClient {
                 return Err(JsValue::from_str(
                     "login() requires user/password credentials. Create client with new \
                      KalamClient(url, user, password)",
-                ))
+                ));
             },
         };
 

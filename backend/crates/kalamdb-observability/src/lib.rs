@@ -12,13 +12,16 @@
 
 pub mod activity;
 pub mod allocator_metrics;
+pub mod coarse_clock;
 pub mod cpu;
 pub mod function_metrics;
 pub mod health_monitor;
 pub mod process_memory;
 pub mod pubsub_metrics;
 pub mod query_metrics;
+pub mod rate_window;
 pub mod runtime_metrics;
+pub mod stage_trace;
 pub mod storage_metrics;
 pub mod system_stats;
 pub mod trace;
@@ -27,6 +30,7 @@ pub use activity::{idle_duration, initialize_activity_now, last_activity_ms, rec
 pub use allocator_metrics::{
     collect_allocator_metrics, force_allocator_collection, AllocatorMetrics,
 };
+pub use coarse_clock::{coarse_unix_millis, coarse_unix_secs, start_coarse_clock};
 pub use cpu::{get_cpu_count, get_physical_cpu_count};
 pub use function_metrics::{
     begin_function_run, finish_function_run, function_metrics_snapshot, record_function_oom,
@@ -47,6 +51,7 @@ pub use query_metrics::{
     observe_query, query_metrics_snapshot, should_observe_query_namespace, QueryMetricKind,
     QueryMetricsSnapshot,
 };
+pub use rate_window::AtomicRateWindow;
 pub use runtime_metrics::{
     collect_runtime_metrics, RuntimeMetrics, BUILD_DATE, GIT_BRANCH, GIT_COMMIT_HASH,
     SERVER_VERSION,

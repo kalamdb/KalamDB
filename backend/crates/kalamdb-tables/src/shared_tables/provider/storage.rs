@@ -401,6 +401,109 @@ impl SharedTableProvider {
         }
     }
 
+    async fn hot_pk_lookup(
+        &self,
+        pk_value: &ScalarValue,
+    ) -> Result<crate::versioned::HotPkLookup<SharedTableRowId, SharedTableRow>, KalamDbError>
+    {
+        Ok(crate::versioned::classify_hot_pk(
+            self.latest_hot_pk_entry(pk_value).await?,
+            |row| row._deleted,
+        ))
+    }
+
+    /// One hot lookup, then cold only when hot storage has no row for this key.
+    pub(crate) async fn load_mutation_target(
+        &self,
+        pk_value: &str,
+    ) -> Result<crate::versioned::MutationTarget<SharedTableRowId, SharedTableRow>, KalamDbError>
+    {
+        let pk_name = self.primary_key_field_name();
+        let schema = self.schema_ref();
+        let pk_field = schema.field_with_name(pk_name).map_err(|e| {
+            KalamDbError::InvalidOperation(format!(
+                "PK column '{}' not found in schema: {}",
+                pk_name, e
+            ))
+        })?;
+        let pk_scalar =
+            kalamdb_commons::conversions::parse_string_as_scalar(pk_value, pk_field.data_type())
+                .map_err(KalamDbError::InvalidOperation)?;
+
+        match self.hot_pk_lookup(&pk_scalar).await? {
+            crate::versioned::HotPkLookup::Live(key, row) => {
+                Ok(crate::versioned::MutationTarget::Hot(key, row))
+            },
+            crate::versioned::HotPkLookup::Tombstoned(_, _) => {
+                Ok(crate::versioned::MutationTarget::Tombstoned)
+            },
+            crate::versioned::HotPkLookup::Missing => {
+                match base::find_row_by_pk(self, None, pk_value).await? {
+                    Some((_, row)) => Ok(crate::versioned::MutationTarget::Cold(row)),
+                    None => Ok(crate::versioned::MutationTarget::Missing),
+                }
+            },
+        }
+    }
+
+    /// Hot tombstone to delete when re-inserting a primary key, if one exists.
+    ///
+    /// A live hot or cold row is a uniqueness error. A miss returns `None`.
+    async fn insert_predecessor(
+        &self,
+        row_data: &Row,
+    ) -> Result<Option<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
+        if self.core.is_auto_increment_pk() {
+            return Ok(None);
+        }
+        let pk_name = self.primary_key_field_name();
+        let Some(pk_value) = row_data.get(pk_name) else {
+            return Ok(None);
+        };
+        if matches!(pk_value, ScalarValue::Null) {
+            return Ok(None);
+        }
+        let pk_str = crate::utils::unified_dml::extract_user_pk_value(row_data, pk_name)?;
+        let prefix = self.pk_index.build_prefix_for_pk(pk_value);
+        match self
+            .store
+            .get_latest_deleted_flag_by_index_prefix(0, &prefix)
+            .into_kalamdb_error("PK index scan failed")?
+        {
+            Some((_, false)) => Err(KalamDbError::AlreadyExists(format!(
+                "Primary key violation: value '{}' already exists in column '{}' (hot storage)",
+                pk_str, pk_name
+            ))),
+            Some((key, true)) => {
+                let row = self.store.get(&key).into_kalamdb_error("PK tombstone load failed")?.ok_or_else(|| {
+                    KalamDbError::NotFound(format!(
+                        "tombstone for primary key '{pk_str}' disappeared before replacement"
+                    ))
+                })?;
+                Ok(Some((key, row)))
+            },
+            None => {
+                base::ensure_pk_absent_in_cold(self, None, &pk_str).await?;
+                Ok(None)
+            },
+        }
+    }
+
+    async fn write_replaced_row(
+        &self,
+        previous: Option<(SharedTableRowId, SharedTableRow)>,
+        row_key: SharedTableRowId,
+        entity: SharedTableRow,
+        error_context: &str,
+    ) -> Result<(), KalamDbError> {
+        let written = if previous.is_some() {
+            self.store.replace_async(previous, row_key, entity).await
+        } else {
+            self.store.insert_async(row_key, entity).await
+        };
+        written.map_err(|e| KalamDbError::InvalidOperation(format!("{}: {}", error_context, e)))
+    }
+
     pub async fn find_by_pk(
         &self,
         pk_value: &ScalarValue,
@@ -426,11 +529,10 @@ impl SharedTableProvider {
             kalamdb_commons::conversions::parse_string_as_scalar(pk_value, pk_field.data_type())
                 .map_err(KalamDbError::InvalidOperation)?;
 
-        if let Some((_, row)) = self.find_by_pk(&pk_scalar).await? {
-            return Ok(Some(row.fields));
-        }
-        if self.pk_tombstoned_in_hot(&pk_scalar).await? {
-            return Ok(None);
+        match self.hot_pk_lookup(&pk_scalar).await? {
+            crate::versioned::HotPkLookup::Live(_, row) => return Ok(Some(row.fields)),
+            crate::versioned::HotPkLookup::Tombstoned(_, _) => return Ok(None),
+            crate::versioned::HotPkLookup::Missing => {},
         }
         Ok(base::find_row_by_pk(self, None, pk_value).await?.map(|(_, row)| row.fields))
     }
@@ -440,7 +542,7 @@ impl SharedTableProvider {
         row_key: &SharedTableRowId,
         version: VersionId,
     ) -> Result<(), KalamDbError> {
-        let mut row = self
+        let row = self
             .store
             .get(row_key)
             .into_kalamdb_error("Failed to load row for commit_seq patch")?
@@ -477,17 +579,155 @@ impl SharedTableProvider {
         Ok(true)
     }
 
-    /// Returns true if the latest hot-storage version of this PK is a tombstone
-    /// (`_deleted = true`).  Returns false if the PK is absent from hot storage
-    /// or if the latest version is active.
-    ///
-    /// Used in the PK fast-path of `scan_rows` to prevent cold storage (Parquet)
-    /// from surfacing a row that has already been deleted in hot storage.
-    async fn pk_tombstoned_in_hot(&self, pk_value: &ScalarValue) -> Result<bool, KalamDbError> {
-        Ok(self
-            .latest_hot_pk_entry(pk_value)
-            .await?
-            .map(|(_, row)| row._deleted)
-            .unwrap_or(false))
+    /// Apply Raft ordinal field payloads without a second name-map encode.
+    pub async fn insert_encoded_fields_with_versions(
+        &self,
+        actor_user_id: Option<&UserId>,
+        payloads: &[Vec<u8>],
+        versions: &[VersionId],
+    ) -> Result<usize, KalamDbError> {
+        if payloads.is_empty() {
+            return Ok(0);
+        }
+        if self.core.table_def().columns.iter().any(|column| {
+            matches!(
+                column.data_type(),
+                kalamdb_commons::models::datatypes::KalamDataType::File
+            )
+        }) {
+            let rows = shared_rows_from_field_payloads(payloads, self.core.storage_schema().as_ref())?;
+            return Ok(self.insert_batch_with_versions(actor_user_id, rows, versions).await?.len());
+        }
+        let entries = self.persist_encoded_field_rows(payloads, versions).await?;
+        let row_count = entries.len();
+        let notification_service = self.core.services.notification_service.clone();
+        let table_id = self.core.table_id().clone();
+        let has_topics = self.core.has_topic_routes(&table_id);
+        let has_live_subs = notification_service.has_subscribers(None, &table_id);
+        if has_topics || has_live_subs {
+            let rows: Vec<_> = entries
+                .iter()
+                .map(|(_, entity)| Self::build_notification_row(entity))
+                .collect();
+            if has_topics {
+                self.core
+                    .publish_batch_to_topics(
+                        &table_id,
+                        kalamdb_commons::models::TopicOp::Insert,
+                        &rows,
+                        actor_user_id,
+                    )
+                    .await;
+            }
+            if has_live_subs {
+                for row in rows {
+                    notification_service.notify_table_change(
+                        None,
+                        table_id.clone(),
+                        ChangeNotification::insert(table_id.clone(), row),
+                    );
+                }
+            }
+        }
+        Ok(row_count)
     }
+
+    async fn persist_encoded_field_rows(
+        &self,
+        payloads: &[Vec<u8>],
+        versions: &[VersionId],
+    ) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
+        ensure_manifest_ready(&self.core, self.core.table_type(), None, "SharedTableProvider")?;
+        let storage = Arc::clone(self.core.storage_schema());
+        let arrow = self.schema_ref();
+        let mut decoded = Vec::with_capacity(payloads.len());
+        for payload in payloads {
+            let mut columns =
+                kalamdb_serialization::decode_row_fields_columns(payload, storage.as_ref())
+                    .map_err(|error| {
+                        KalamDbError::InvalidOperation(format!(
+                            "ordinal insert decode failed: {error}"
+                        ))
+                    })?;
+            shared_coerce_storage_columns(&mut columns, storage.as_ref(), &arrow)?;
+            decoded.push(columns);
+        }
+        shared_validate_encoded_not_null(&decoded, storage.as_ref(), self.core.non_null_columns())?;
+        if versions.len() != decoded.len() {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "version count {} does not match row count {}",
+                versions.len(),
+                decoded.len()
+            )));
+        }
+        let names: Vec<String> = storage.fields.iter().map(|field| field.name.clone()).collect();
+        let rows = decoded
+            .into_iter()
+            .map(|columns| Row::from_aligned(&names, columns))
+            .collect();
+        self.persist_insert_batch_rows(rows, versions, true).await
+    }
+
+}
+
+fn shared_rows_from_field_payloads(
+    payloads: &[Vec<u8>],
+    storage: &kalamdb_serialization::StorageSchema,
+) -> Result<Vec<Row>, KalamDbError> {
+    let names: Vec<String> = storage.fields.iter().map(|field| field.name.clone()).collect();
+    payloads
+        .iter()
+        .map(|payload| {
+            let columns = kalamdb_serialization::decode_row_fields_columns(payload, storage)
+                .map_err(|error| {
+                    KalamDbError::InvalidOperation(format!("ordinal insert decode failed: {error}"))
+                })?;
+            Ok(Row::from_aligned(&names, columns))
+        })
+        .collect()
+}
+
+fn shared_coerce_storage_columns(
+    columns: &mut [ScalarValue],
+    storage: &kalamdb_serialization::StorageSchema,
+    arrow: &SchemaRef,
+) -> Result<(), KalamDbError> {
+    for (value, field) in columns.iter_mut().zip(storage.fields.iter()) {
+        if field.dropped {
+            continue;
+        }
+        let Ok(arrow_field) = arrow.field_with_name(&field.name) else {
+            continue;
+        };
+        let owned = std::mem::replace(value, ScalarValue::Null);
+        *value = kalamdb_commons::conversions::coerce_scalar_to_field(owned, arrow_field)
+            .map_err(|error| {
+                KalamDbError::InvalidOperation(format!("Schema coercion failed: {error}"))
+            })?;
+    }
+    Ok(())
+}
+
+fn shared_validate_encoded_not_null(
+    rows: &[Vec<ScalarValue>],
+    storage: &kalamdb_serialization::StorageSchema,
+    required: &HashSet<String>,
+) -> Result<(), KalamDbError> {
+    if required.is_empty() {
+        return Ok(());
+    }
+    for (row_index, row) in rows.iter().enumerate() {
+        for name in required {
+            let Some(ordinal) = storage.fields.iter().position(|field| &field.name == name) else {
+                continue;
+            };
+            if row.get(ordinal).is_none_or(ScalarValue::is_null) {
+                return Err(KalamDbError::Coded(kalamdb_commons::CodedError::not_null(
+                    name.clone(),
+                    (row_index + 1) as i64,
+                )));
+            }
+        }
+    }
+    Ok(())
 }

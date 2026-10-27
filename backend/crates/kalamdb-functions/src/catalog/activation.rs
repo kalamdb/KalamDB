@@ -68,7 +68,7 @@ impl FunctionActivation {
         if artifact_abi != ABI_VERSION {
             return Err(FunctionsError::AbiMismatch {
                 artifact: artifact_abi,
-                runtime:  ABI_VERSION,
+                runtime: ABI_VERSION,
             });
         }
         if artifact_contract_hash != catalog_contract_hash {
@@ -113,13 +113,13 @@ impl FunctionActivation {
         let revision_id =
             FunctionRevisionId::from_module_artifact(&module_id, &artifact.artifact_id);
         let revision = CatalogFunctionRevision {
-            revision_id:            revision_id.clone(),
-            module_id:              module_id.clone(),
-            artifact_id:            artifact.artifact_id.clone(),
-            contract_hash:          contract_hash.into(),
-            abi_version:            ABI_VERSION as i32,
-            runtime:                artifact.runtime,
-            created_at:             now_ms(),
+            revision_id: revision_id.clone(),
+            module_id: module_id.clone(),
+            artifact_id: artifact.artifact_id.clone(),
+            contract_hash: contract_hash.into(),
+            abi_version: ABI_VERSION as i32,
+            runtime: artifact.runtime,
+            created_at: now_ms(),
             exported_procedure_ids: normalize_exported_procedure_ids(exported_procedure_ids),
         };
         let module = CatalogFunctionModule {
@@ -159,13 +159,13 @@ impl FunctionActivation {
         let source = String::from_utf8(source.data.to_vec())
             .map_err(|error| FunctionsError::Invalid(format!("artifact is not utf8: {error}")))?;
         Ok(ModuleRevision {
-            module_id:     revision.module_id,
-            revision_id:   revision.revision_id,
-            artifact_id:   revision.artifact_id,
-            runtime:       revision.runtime,
-            abi_version:   revision.abi_version as u32,
+            module_id: revision.module_id,
+            revision_id: revision.revision_id,
+            artifact_id: revision.artifact_id,
+            runtime: revision.runtime,
+            abi_version: revision.abi_version as u32,
             contract_hash: revision.contract_hash,
-            source:        source.into(),
+            source: source.into(),
         })
     }
 
@@ -288,17 +288,17 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).ok();
         let now = now_ms();
         Storage {
-            storage_id:             StorageId::from("functions"),
-            storage_name:           "functions".to_string(),
-            description:            None,
-            storage_type:           StorageType::Filesystem,
-            base_directory:         temp_dir.to_string_lossy().to_string(),
-            credentials:            None,
-            config_json:            None,
+            storage_id: StorageId::from("functions"),
+            storage_name: "functions".to_string(),
+            description: None,
+            storage_type: StorageType::Filesystem,
+            base_directory: temp_dir.to_string_lossy().to_string(),
+            credentials: None,
+            config_json: None,
             shared_tables_template: "{namespace}/{tableName}".to_string(),
-            user_tables_template:   "{namespace}/{tableName}/{userId}".to_string(),
-            created_at:             now,
-            updated_at:             now,
+            user_tables_template: "{namespace}/{tableName}/{userId}".to_string(),
+            created_at: now,
+            updated_at: now,
         }
     }
 
@@ -415,7 +415,7 @@ mod tests {
             err,
             FunctionsError::AbiMismatch {
                 artifact: 1,
-                runtime:  2,
+                runtime: 2,
             }
         ));
         let err = FunctionActivation::validate_activation(ABI_VERSION, "a", "b", true).unwrap_err();

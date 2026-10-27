@@ -32,7 +32,7 @@ async fn test_scenario_13_mixed_workload_soak() -> anyhow::Result<()> {
     // =========================================================
     // Setup: Create namespace and tables
     // =========================================================
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
     assert_success(&resp, "CREATE namespace");
 
     let resp = server
@@ -345,7 +345,7 @@ async fn test_scenario_13_mixed_workload_soak() -> anyhow::Result<()> {
     assert!(final_count > 0, "User should have orders in table");
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -356,7 +356,7 @@ async fn test_scenario_13_schema_evolution_under_load() -> anyhow::Result<()> {
     let ns = unique_ns("schema_evolution");
 
     // Setup
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
     assert_success(&resp, "CREATE namespace");
 
     let resp = server
@@ -464,7 +464,7 @@ async fn test_scenario_13_schema_evolution_under_load() -> anyhow::Result<()> {
     assert!((price_51.unwrap() - (51.0 * 9.99)).abs() < 0.01);
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -475,7 +475,7 @@ async fn test_scenario_13_concurrent_read_write() -> anyhow::Result<()> {
     let ns = unique_ns("concurrent_rw");
 
     // Setup
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
     assert_success(&resp, "CREATE namespace");
 
     let resp = server
@@ -586,6 +586,6 @@ async fn test_scenario_13_concurrent_read_write() -> anyhow::Result<()> {
     assert!(total_reads > 50, "Should have > 50 successful reads");
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }

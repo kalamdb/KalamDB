@@ -1,3 +1,4 @@
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
 use datafusion_common::ScalarValue;
 use serde_json::{Number, Value};
 
@@ -35,32 +36,44 @@ pub fn json_value_to_scalar_for_column(
             ScalarValue::Int64(Some(num))
         },
         KalamDataType::Timestamp => {
-            let num = value
-                .as_i64()
-                .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
-                .unwrap_or(0);
+            let num = match value {
+                Value::String(text) => parse_timestamp_micros(text)?,
+                _ => value
+                    .as_i64()
+                    .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
+                    .unwrap_or(0),
+            };
             ScalarValue::TimestampMicrosecond(Some(num), None)
         },
         KalamDataType::DateTime => {
-            let num = value
-                .as_i64()
-                .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
-                .unwrap_or(0);
+            let num = match value {
+                Value::String(text) => parse_timestamp_micros(text)?,
+                _ => value
+                    .as_i64()
+                    .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
+                    .unwrap_or(0),
+            };
             ScalarValue::TimestampMicrosecond(Some(num), Some("UTC".into()))
         },
         KalamDataType::Time => {
-            let num = value
-                .as_i64()
-                .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
-                .unwrap_or(0);
+            let num = match value {
+                Value::String(text) => parse_time_micros(text)?,
+                _ => value
+                    .as_i64()
+                    .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
+                    .unwrap_or(0),
+            };
             ScalarValue::Time64Microsecond(Some(num))
         },
         KalamDataType::Date => {
-            let num = value
-                .as_i64()
-                .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
-                .unwrap_or(0);
-            ScalarValue::Date32(Some(num as i32))
+            let num = match value {
+                Value::String(text) => parse_date_days(text)?,
+                _ => value
+                    .as_i64()
+                    .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
+                    .unwrap_or(0) as i32,
+            };
+            ScalarValue::Date32(Some(num))
         },
         KalamDataType::Double => ScalarValue::Float64(Some(value.as_f64().unwrap_or(0.0))),
         KalamDataType::Float => ScalarValue::Float32(Some(value.as_f64().unwrap_or(0.0) as f32)),
@@ -93,8 +106,10 @@ pub fn json_value_to_scalar_for_column(
         },
         KalamDataType::Decimal { precision, scale } => {
             let parsed = match value {
-                Value::String(s) => parse_decimal_value(s, *scale)?,
-                Value::Number(n) => parse_decimal_value(&n.to_string(), *scale)?,
+                Value::String(s) => parse_decimal_value_bounded(s, *precision, *scale as i8)?,
+                Value::Number(n) => {
+                    parse_decimal_value_bounded(&n.to_string(), *precision, *scale as i8)?
+                },
                 _ => 0,
             };
             ScalarValue::Decimal128(Some(parsed), *precision, *scale as i8)
@@ -103,6 +118,34 @@ pub fn json_value_to_scalar_for_column(
     };
 
     Ok(scalar)
+}
+
+fn parse_date_days(text: &str) -> Result<i32, String> {
+    let date = NaiveDate::parse_from_str(text, "%Y-%m-%d")
+        .map_err(|error| format!("invalid DATE argument '{text}': {error}"))?;
+    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).expect("unix epoch");
+    Ok((date - epoch).num_days() as i32)
+}
+
+fn parse_time_micros(text: &str) -> Result<i64, String> {
+    let time = NaiveTime::parse_from_str(text, "%H:%M:%S")
+        .or_else(|_| NaiveTime::parse_from_str(text, "%H:%M:%S%.f"))
+        .map_err(|error| format!("invalid TIME argument '{text}': {error}"))?;
+    Ok(i64::from(time.num_seconds_from_midnight()) * 1_000_000
+        + i64::from(time.nanosecond() / 1000))
+}
+
+fn parse_timestamp_micros(text: &str) -> Result<i64, String> {
+    if let Ok(parsed) = DateTime::parse_from_rfc3339(text) {
+        return Ok(parsed.timestamp_micros());
+    }
+    if let Ok(parsed) = text.parse::<DateTime<Utc>>() {
+        return Ok(parsed.timestamp_micros());
+    }
+    let naive = NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S")
+        .or_else(|_| NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S"))
+        .map_err(|error| format!("invalid TIMESTAMP argument '{text}': {error}"))?;
+    Ok(naive.and_utc().timestamp_micros())
 }
 
 pub fn scalar_to_json_for_column(
@@ -171,45 +214,105 @@ pub fn scalar_to_json_for_column(
     Ok(json)
 }
 
-fn parse_decimal_value(value: &str, scale: u8) -> Result<i128, String> {
+/// Parse a decimal string into an unscaled `i128` for `NUMERIC(precision, scale)`.
+///
+/// Rounds fractional digits half-away-from-zero, rejects `NaN` / `Infinity`,
+/// and checks that the rounded magnitude fits within `precision` digits.
+pub fn parse_decimal_value_bounded(value: &str, precision: u8, scale: i8) -> Result<i128, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Ok(0);
+        return Err("cannot parse empty string as numeric".to_string());
+    }
+    if trimmed.eq_ignore_ascii_case("nan")
+        || trimmed.eq_ignore_ascii_case("infinity")
+        || trimmed.eq_ignore_ascii_case("-infinity")
+        || trimmed.eq_ignore_ascii_case("+infinity")
+        || trimmed.eq_ignore_ascii_case("inf")
+        || trimmed.eq_ignore_ascii_case("-inf")
+        || trimmed.eq_ignore_ascii_case("+inf")
+    {
+        return Err(format!(
+            "numeric value '{value}' is not supported by bounded NUMERIC({precision}, {scale})"
+        ));
+    }
+    if precision == 0 || precision > 38 || scale < 0 || (scale as u8) > precision {
+        return Err(format!("invalid NUMERIC({precision}, {scale}) bounds"));
     }
 
     let negative = trimmed.starts_with('-');
-    let unsigned = trimmed.strip_prefix('-').unwrap_or(trimmed);
-    let mut parts = unsigned.splitn(2, '.');
-    let integer_part = parts.next().unwrap_or("0");
-    let fractional_part = parts.next().unwrap_or("");
-
-    let mut normalized_fraction = fractional_part.to_string();
-    while normalized_fraction.len() < scale as usize {
-        normalized_fraction.push('0');
+    let unsigned = trimmed
+        .strip_prefix('-')
+        .or_else(|| trimmed.strip_prefix('+'))
+        .unwrap_or(trimmed);
+    let mut parts = unsigned.split('.');
+    let integer_raw = parts.next().unwrap_or("");
+    let fractional_raw = parts.next().unwrap_or("");
+    if parts.next().is_some()
+        || (integer_raw.is_empty() && fractional_raw.is_empty())
+        || !integer_raw.bytes().all(|b| b.is_ascii_digit())
+        || !fractional_raw.bytes().all(|b| b.is_ascii_digit())
+    {
+        return Err(format!("invalid numeric literal '{value}'"));
     }
-    if normalized_fraction.len() > scale as usize {
-        normalized_fraction.truncate(scale as usize);
+
+    let integer_part = if integer_raw.is_empty() {
+        "0"
+    } else {
+        integer_raw
+    };
+    let scale_usize = scale as usize;
+    let round_up = fractional_raw.as_bytes().get(scale_usize).is_some_and(|&digit| digit >= b'5');
+
+    let mut normalized_fraction = String::with_capacity(scale_usize);
+    if fractional_raw.len() >= scale_usize {
+        normalized_fraction.push_str(&fractional_raw[..scale_usize]);
+    } else {
+        normalized_fraction.push_str(fractional_raw);
+        while normalized_fraction.len() < scale_usize {
+            normalized_fraction.push('0');
+        }
     }
 
     let joined = format!("{integer_part}{normalized_fraction}");
-    let mut parsed = joined
-        .parse::<i128>()
-        .map_err(|e| format!("decimal parse failed for '{value}': {e}"))?;
-    if negative {
-        parsed = -parsed;
+    let mut magnitude = joined.parse::<i128>().map_err(|_| {
+        format!("numeric field overflow: '{value}' exceeds NUMERIC({precision}, {scale})")
+    })?;
+    if round_up {
+        magnitude = magnitude.checked_add(1).ok_or_else(|| {
+            format!("numeric field overflow: '{value}' exceeds NUMERIC({precision}, {scale})")
+        })?;
     }
-    Ok(parsed)
+
+    let limit = if precision == 38 {
+        10_i128.pow(38)
+    } else {
+        10_i128.pow(u32::from(precision))
+    };
+    if magnitude >= limit {
+        return Err(format!(
+            "numeric field overflow: '{value}' exceeds NUMERIC({precision}, {scale})"
+        ));
+    }
+
+    if negative && magnitude != 0 {
+        Ok(-magnitude)
+    } else {
+        Ok(magnitude)
+    }
 }
 
-fn format_decimal_value(value: i128, scale: u8) -> String {
+/// Format an unscaled `i128` decimal value with `scale` fractional digits.
+pub fn format_decimal_value(value: i128, scale: u8) -> String {
     if scale == 0 {
         return value.to_string();
     }
 
-    let divisor = 10_i128.pow(scale as u32);
-    let integer = value / divisor;
-    let fraction = (value % divisor).abs();
-    format!("{integer}.{fraction:0width$}", width = scale as usize)
+    let sign = if value < 0 { "-" } else { "" };
+    let abs = value.unsigned_abs();
+    let divisor = 10_u128.pow(u32::from(scale));
+    let integer = abs / divisor;
+    let fraction = abs % divisor;
+    format!("{sign}{integer}.{fraction:0width$}", width = scale as usize)
 }
 
 pub(crate) fn extract_bool(scalar: &ScalarValue) -> Option<bool> {
@@ -299,6 +402,9 @@ pub(crate) fn extract_string(scalar: &ScalarValue) -> Option<String> {
         ScalarValue::Binary(Some(bytes)) | ScalarValue::LargeBinary(Some(bytes)) => {
             Some(String::from_utf8_lossy(bytes).to_string())
         },
+        ScalarValue::Decimal128(Some(val), _precision, scale) => {
+            Some(format_decimal_value(*val, (*scale).max(0) as u8))
+        },
         _ => Some(format!("{scalar:?}")),
     }
 }
@@ -362,7 +468,7 @@ mod tests {
         let value = json!("200.75");
         let dtype = KalamDataType::Decimal {
             precision: 10,
-            scale:     2,
+            scale: 2,
         };
 
         let scalar = json_value_to_scalar_for_column(&value, &dtype).expect("decimal to scalar");

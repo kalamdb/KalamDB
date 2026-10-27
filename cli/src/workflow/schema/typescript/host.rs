@@ -36,70 +36,70 @@ const IMPLEMENTED_TEMPLATE: &str = "functions/src/procedure.implemented.ts";
 
 #[derive(Serialize)]
 struct HostNamespacesContext {
-    header:           &'static str,
-    has_host:         bool,
+    header: &'static str,
+    has_host: bool,
     has_type_imports: bool,
-    has_namespaces:   bool,
-    type_imports:     String,
-    schema_import:    String,
-    namespaces:       Vec<HostNamespace>,
+    has_namespaces: bool,
+    type_imports: String,
+    schema_import: String,
+    namespaces: Vec<HostNamespace>,
 }
 
 #[derive(Serialize)]
 struct HostNamespace {
     object_ident: String,
-    procedures:   Vec<HostProcedure>,
+    procedures: Vec<HostProcedure>,
 }
 
 #[derive(Serialize)]
 struct HostProcedure {
     method_ident: String,
-    type_ident:   String,
-    has_params:   bool,
+    type_ident: String,
+    has_params: bool,
 }
 
 #[derive(Serialize)]
 struct ContractsContext<'a> {
     #[serde(flatten)]
-    file:          GeneratedHeader,
+    file: GeneratedHeader,
     schema_import: &'a str,
 }
 
 #[derive(Serialize)]
 struct RegistryContext {
     #[serde(flatten)]
-    file:       GeneratedHeader,
-    imports:    Vec<RegistryImport>,
+    file: GeneratedHeader,
+    imports: Vec<RegistryImport>,
     procedures: Vec<RegistryProcedure>,
 }
 
 #[derive(Serialize)]
 struct RegistryImport {
     names: String,
-    from:  String,
+    from: String,
 }
 
 #[derive(Serialize)]
 struct RegistryProcedure {
     routine_id: String,
-    ident:      String,
+    ident: String,
 }
 
 #[derive(Serialize)]
 struct ProcedureScaffoldContext<'a> {
-    ns:       String,
-    method:   String,
+    ns: String,
+    method: String,
     has_body: bool,
-    body:     &'a str,
+    body: &'a str,
 }
 
 #[derive(Serialize)]
 struct InlineContext<'a> {
-    header:        &'static str,
-    ident:         String,
-    body:          &'a str,
+    header: &'static str,
+    ident: String,
+    body: &'a str,
     request_ident: String,
-    result_ident:  String,
+    result_ident: String,
 }
 
 pub fn write_procedure_artifacts(
@@ -112,7 +112,7 @@ pub fn write_procedure_artifacts(
 ) -> Result<()> {
     let generated_dir = project_root.join(FUNCTIONS_DIR).join("src").join("generated");
     remove_stale_inline_shims(&generated_dir, procedures)?;
-    if procedures.is_empty() {
+    if !procedures.procedures().iter().any(|spec| is_typescript_routine(spec.routine)) {
         return Ok(());
     }
     let tsconfig = project_root.join(FUNCTIONS_DIR).join("tsconfig.json");
@@ -199,7 +199,7 @@ pub fn generate_contracts_source(hash: &str, schema_import: &str) -> Result<Stri
         "typescript",
         CONTRACTS_TEMPLATE,
         &ContractsContext {
-            file:          GeneratedHeader::from_hash(hash),
+            file: GeneratedHeader::from_hash(hash),
             schema_import: &escape_double_quoted_string(schema_import),
         },
     )
@@ -252,7 +252,19 @@ fn host_context(
     include_empty_request: bool,
 ) -> HostNamespacesContext {
     let namespaces = host_namespaces(procedures);
-    let type_imports = procedures.schema_type_imports(include_empty_request);
+    let mut type_imports_vec = Vec::new();
+    for spec in procedures.procedures() {
+        if !is_typescript_routine(spec.routine) {
+            continue;
+        }
+        if include_empty_request || spec.has_params() {
+            type_imports_vec.push(spec.request_ident());
+        }
+        type_imports_vec.push(spec.result_ident());
+    }
+    type_imports_vec.sort();
+    type_imports_vec.dedup();
+    let type_imports = type_imports_vec.join(", ");
     HostNamespacesContext {
         header: GENERATED_HEADER,
         has_host: !namespaces.is_empty(),
@@ -268,17 +280,21 @@ fn host_namespaces(procedures: &ProcedureCatalog<'_>) -> Vec<HostNamespace> {
     procedures
         .namespaces()
         .iter()
-        .map(|namespace| HostNamespace {
-            object_ident: namespace.object_ident.clone(),
-            procedures:   namespace
+        .filter_map(|namespace| {
+            let procedures: Vec<HostProcedure> = namespace
                 .procedures
                 .iter()
+                .filter(|spec| is_typescript_routine(spec.routine))
                 .map(|spec| HostProcedure {
                     method_ident: spec.method_ident.clone(),
-                    type_ident:   spec.type_ident.to_string(),
-                    has_params:   spec.has_params(),
+                    type_ident: spec.type_ident.to_string(),
+                    has_params: spec.has_params(),
                 })
-                .collect(),
+                .collect();
+            (!procedures.is_empty()).then(|| HostNamespace {
+                object_ident: namespace.object_ident.clone(),
+                procedures,
+            })
         })
         .collect()
 }
@@ -313,14 +329,14 @@ pub fn generate_registry_source(
                 })
                 .collect::<Vec<_>>()
                 .join(", "),
-            from:  escape_double_quoted_string(&ts_relative_module(generated_dir, path)),
+            from: escape_double_quoted_string(&ts_relative_module(generated_dir, path)),
         })
         .collect();
     let procedures = implemented
         .iter()
         .map(|binding| RegistryProcedure {
             routine_id: escape_double_quoted_string(&binding.routine_id),
-            ident:      value_ident(
+            ident: value_ident(
                 &binding.schema,
                 &binding.name,
                 names.is_some_and(|assigned| assigned.uses_local_name(&binding.schema)),
@@ -372,10 +388,10 @@ fn unimplemented_procedure_source(schema: &str, name: &str) -> Result<String> {
         "typescript",
         UNIMPLEMENTED_TEMPLATE,
         &ProcedureScaffoldContext {
-            ns:       namespace_object_ident(schema),
-            method:   method_ident(name),
+            ns: namespace_object_ident(schema),
+            method: method_ident(name),
             has_body: false,
-            body:     "",
+            body: "",
         },
     )
 }

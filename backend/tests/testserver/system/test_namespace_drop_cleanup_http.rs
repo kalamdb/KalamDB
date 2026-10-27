@@ -54,8 +54,8 @@ async fn test_drop_namespace_cascade_removes_all_table_state_over_http() -> Resu
     let user = unique_table("ns_drop_user");
     let user_auth = create_user_auth_header_default(server, &user).await?;
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE NAMESPACE failed");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE SCHEMA failed");
 
     let resp = server
         .execute_sql(&format!(
@@ -113,8 +113,8 @@ async fn test_drop_namespace_cascade_removes_all_table_state_over_http() -> Resu
 
     let namespace_storage_dir = server.storage_root().join(&ns);
 
-    let drop_resp = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await?;
-    anyhow::ensure!(drop_resp.status == ResponseStatus::Success, "DROP NAMESPACE failed");
+    let drop_resp = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await?;
+    anyhow::ensure!(drop_resp.status == ResponseStatus::Success, "DROP SCHEMA failed");
 
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
@@ -163,7 +163,7 @@ async fn test_drop_namespace_cascade_removes_all_table_state_over_http() -> Resu
     let leftover_state = find_table_state_files(&server.storage_root(), &ns);
     anyhow::ensure!(
         leftover_state.is_empty(),
-        "namespace table-state files still exist after DROP NAMESPACE: {:?}",
+        "namespace table-state files still exist after DROP SCHEMA: {:?}",
         leftover_state
     );
 
