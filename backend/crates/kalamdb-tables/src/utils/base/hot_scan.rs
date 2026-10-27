@@ -181,12 +181,43 @@ pub fn apply_limit<T>(result: &mut Vec<T>, limit: Option<usize>) {
     }
 }
 
+/// Hot rows read for one unbounded COUNT before the scan must fail closed.
+pub const UNBOUNDED_COUNT_SCAN_LIMIT: usize = 1_000_000;
+
 /// Calculate scan limit for RocksDB based on user-provided limit.
 ///
 /// We scan more than the limit to account for version resolution and tombstones.
-/// Default is 100,000 if no limit is provided.
+/// An unbounded caller still stops at 100,000 raw hot rows; [`reject_truncated_unbounded_scan`]
+/// turns that stop into an error instead of a short result.
 pub fn calculate_scan_limit(limit: Option<usize>) -> usize {
     limit.map(|l| l.saturating_mul(2).max(1000)).unwrap_or(100_000)
+}
+
+/// Fail when an unbounded hot scan filled the hidden bound.
+///
+/// The iterator stops at [`calculate_scan_limit`], so a full bound means later
+/// rows were not read. A requested SQL limit keeps the overscan heuristic.
+pub fn reject_truncated_unbounded_scan(
+    requested_limit: Option<usize>,
+    scanned_rows: usize,
+) -> Result<(), KalamDbError> {
+    let bound = calculate_scan_limit(None);
+    if requested_limit.is_none() && scanned_rows >= bound {
+        return Err(KalamDbError::InvalidOperation(format!(
+            "hot scan stopped at {bound} rows before the partition ended"
+        )));
+    }
+    Ok(())
+}
+
+/// Fail when a COUNT scan filled [`UNBOUNDED_COUNT_SCAN_LIMIT`].
+pub fn reject_truncated_count_scan(scanned_rows: usize) -> Result<(), KalamDbError> {
+    if scanned_rows >= UNBOUNDED_COUNT_SCAN_LIMIT {
+        return Err(KalamDbError::InvalidOperation(format!(
+            "count scan stopped at {UNBOUNDED_COUNT_SCAN_LIMIT} hot rows before the partition ended"
+        )));
+    }
+    Ok(())
 }
 
 /// Build a count-only RecordBatch with no columns but the given row count.
@@ -217,6 +248,16 @@ mod tests {
     fn scan_limit_saturates_without_overflow() {
         assert_eq!(super::calculate_scan_limit(Some(usize::MAX)), usize::MAX);
         assert_eq!(super::calculate_scan_limit(Some(1)), 1000);
+        assert_eq!(super::calculate_scan_limit(None), 100_000);
+    }
+
+    #[test]
+    fn unbounded_scan_that_fills_the_bound_is_an_error() {
+        assert!(super::reject_truncated_unbounded_scan(None, 100_000).is_err());
+        assert!(super::reject_truncated_unbounded_scan(None, 99_999).is_ok());
+        assert!(super::reject_truncated_unbounded_scan(Some(10), 100_000).is_ok());
+        assert!(super::reject_truncated_count_scan(super::UNBOUNDED_COUNT_SCAN_LIMIT).is_err());
+        assert!(super::reject_truncated_count_scan(super::UNBOUNDED_COUNT_SCAN_LIMIT - 1).is_ok());
     }
 
     #[test]

@@ -7,7 +7,11 @@
 
 use std::{collections::{HashMap, HashSet}, sync::Arc};
 
-use kalamdb_commons::{models::schemas::TableDefinition, schemas::TableType, TableId};
+use kalamdb_commons::{
+    models::schemas::{ScalarIndexDefinition, TableDefinition},
+    schemas::TableType,
+    TableId,
+};
 use kalamdb_store::StorageBackend;
 
 use crate::{
@@ -20,7 +24,8 @@ use crate::{
 /// # Errors
 ///
 /// Returns an error when the table has no primary key, the storage schema
-/// cannot be built, or a backfill write fails.
+/// cannot be built, an index column cannot be resolved, an index is wider
+/// than four columns, or a backfill write fails.
 pub fn sync_scalar_indexes(
     backend: Arc<dyn StorageBackend>,
     table_id: &TableId,
@@ -43,7 +48,11 @@ pub fn sync_scalar_indexes_with_arrow(
         return Ok(());
     }
 
-    let previous_indexes: HashMap<&str, &kalamdb_commons::models::schemas::ScalarIndexDefinition> =
+    for definition in &table_def.scalar_indexes {
+        validate_scalar_index(table_id, table_def, definition)?;
+    }
+
+    let previous_indexes: HashMap<&str, &ScalarIndexDefinition> =
         previous.map(|table| table.scalar_indexes.iter().map(|index| (index.name.as_str(), index)).collect())
             .unwrap_or_default();
     let user_scoped = matches!(table_def.table_type, TableType::User);
@@ -80,10 +89,13 @@ pub fn sync_scalar_indexes_with_arrow(
     let mut slot = 1usize;
     for definition in &table_def.scalar_indexes {
         let Some(names) = definition.resolved_column_names(&table_def.columns) else {
-            continue;
+            return Err(format!(
+                "scalar index {} on {table_id} references a column that does not exist",
+                definition.name
+            ));
         };
         if names.is_empty() {
-            continue;
+            return Err(format!("scalar index {} on {table_id} has no columns", definition.name));
         }
         if added_set.contains(definition.name.as_str()) {
             let count = match table_def.table_type {
@@ -123,6 +135,32 @@ pub fn sync_scalar_indexes_with_arrow(
     Ok(())
 }
 
+const MAX_SCALAR_INDEX_COLUMNS: usize = 4;
+
+fn validate_scalar_index(
+    table_id: &TableId,
+    table_def: &TableDefinition,
+    definition: &ScalarIndexDefinition,
+) -> Result<(), String> {
+    let Some(names) = definition.resolved_column_names(&table_def.columns) else {
+        return Err(format!(
+            "scalar index {} on {table_id} references a column that does not exist",
+            definition.name
+        ));
+    };
+    if names.is_empty() {
+        return Err(format!("scalar index {} on {table_id} has no columns", definition.name));
+    }
+    if names.len() > MAX_SCALAR_INDEX_COLUMNS {
+        return Err(format!(
+            "scalar index {} on {table_id} has {} columns; at most {MAX_SCALAR_INDEX_COLUMNS} are supported",
+            definition.name,
+            names.len()
+        ));
+    }
+    Ok(())
+}
+
 fn drop_index_partition(
     backend: &Arc<dyn StorageBackend>,
     table_id: &TableId,
@@ -138,6 +176,127 @@ fn drop_index_partition(
         Ok(()) => Ok(()),
         Err(err) if err.to_string().to_lowercase().contains("not found") => Ok(()),
         Err(err) => Err(format!("Failed to drop scalar index partition {}: {}", partition.name(), err)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use kalamdb_commons::{
+        datatypes::KalamDataType,
+        models::schemas::{ColumnDefinition, ScalarIndexDefinition, TableDefinition, TableOptions},
+        schemas::ColumnDefault,
+        ColumnId, SchemaId, TableName,
+    };
+    use kalamdb_store::StorageBackend;
+
+    use super::*;
+    use crate::utils::test_backend::RecordingBackend;
+
+    fn shared_table(extra_columns: usize) -> TableDefinition {
+        let mut columns = vec![ColumnDefinition::new(
+            1,
+            "id",
+            1,
+            KalamDataType::BigInt,
+            false,
+            true,
+            false,
+            ColumnDefault::None,
+            None,
+        )];
+        for offset in 0..extra_columns {
+            let id = 2 + offset as u64;
+            columns.push(ColumnDefinition::new(
+                id,
+                format!("c{id}"),
+                id as u32,
+                KalamDataType::Int,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                None,
+            ));
+        }
+        TableDefinition::new(
+            SchemaId::new("app"),
+            TableName::new("items"),
+            TableType::Shared,
+            columns,
+            TableOptions::shared(),
+            None,
+        )
+        .expect("table definition")
+    }
+
+    #[test]
+    fn same_name_definition_change_backfills_again() {
+        let backend = Arc::new(RecordingBackend::new());
+        let mut previous = shared_table(1);
+        previous.scalar_indexes =
+            vec![ScalarIndexDefinition::new("i2a", vec![ColumnId::new(2)], false)];
+        let mut next = previous.clone();
+        next.scalar_indexes[0].unique = true;
+
+        sync_scalar_indexes(
+            Arc::clone(&backend) as Arc<dyn StorageBackend>,
+            &next.table_id(),
+            Some(&previous),
+            &next,
+        )
+        .expect("changed index rebuilds");
+        assert!(backend.scan_calls() > 0);
+    }
+
+    #[test]
+    fn identical_index_does_not_scan() {
+        let backend = Arc::new(RecordingBackend::new());
+        let mut table = shared_table(1);
+        table.scalar_indexes =
+            vec![ScalarIndexDefinition::new("i2a", vec![ColumnId::new(2)], false)];
+
+        sync_scalar_indexes(
+            Arc::clone(&backend) as Arc<dyn StorageBackend>,
+            &table.table_id(),
+            Some(&table),
+            &table,
+        )
+        .expect("identical index is a no-op");
+        assert_eq!(backend.scan_calls(), 0);
+    }
+
+    #[test]
+    fn unresolved_or_wide_index_fails_before_backfill() {
+        let backend = Arc::new(RecordingBackend::new());
+        let mut missing = shared_table(1);
+        missing.scalar_indexes =
+            vec![ScalarIndexDefinition::new("i2a", vec![ColumnId::new(99)], false)];
+        let missing_error = sync_scalar_indexes(
+            Arc::clone(&backend) as Arc<dyn StorageBackend>,
+            &missing.table_id(),
+            None,
+            &missing,
+        )
+        .expect_err("missing column");
+        assert!(missing_error.contains("does not exist"));
+
+        let mut wide = shared_table(5);
+        wide.scalar_indexes = vec![ScalarIndexDefinition::new(
+            "wide",
+            (2..7).map(ColumnId::new).collect(),
+            false,
+        )];
+        let wide_error = sync_scalar_indexes(
+            Arc::clone(&backend) as Arc<dyn StorageBackend>,
+            &wide.table_id(),
+            None,
+            &wide,
+        )
+        .expect_err("five columns");
+        assert!(wide_error.contains("at most 4"));
+        assert_eq!(backend.scan_calls(), 0);
     }
 }
 

@@ -895,6 +895,7 @@ dependencies = [
 name = "kalamdb-serialization"
 version = "0.8.0"
 dependencies = [
+ "base64 0.23.1",
  "flexbuffers",
  "kalamdb-commons",
  "rmp-serde",
@@ -928,7 +929,6 @@ dependencies = [
  "log",
  "miniz_oxide",
  "reqwest",
- "rmp-serde",
  "rustls",
  "rustls-native-certs",
  "serde",

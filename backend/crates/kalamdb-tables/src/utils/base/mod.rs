@@ -83,7 +83,8 @@ pub use deferred::{
 };
 pub use hot_scan::{
     apply_limit, build_count_only_batch, calculate_scan_limit, compute_cold_columns,
-    compute_metadata_only_cold_columns,
+    compute_metadata_only_cold_columns, reject_truncated_count_scan,
+    reject_truncated_unbounded_scan, UNBOUNDED_COUNT_SCAN_LIMIT,
 };
 pub(crate) use hot_scan::{
     count_resolved_rows_from_futures, hot_index_seek, resolve_latest_scan_from_futures,

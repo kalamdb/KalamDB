@@ -293,6 +293,45 @@ impl SqlExecutor {
             .map_err(Self::datafusion_to_execution_error)
     }
 
+    async fn execute_cached_dml_dataframe(
+        &self,
+        cache_sql: &str,
+        pre_parsed: Option<&Statement>,
+        params: &[ScalarValue],
+        exec_ctx: &ExecutionContext,
+    ) -> Result<DataFrame, KalamDbError> {
+        let cache_key = self.logical_plan_cache_key(exec_ctx, cache_sql);
+        let session = self.create_session_with_transaction_context(exec_ctx)?;
+
+        if let Some(template_plan) = self.sql_cache_registry.plan_cache().get(&cache_key) {
+            let bound_plan = replace_placeholders_in_plan((*template_plan).clone(), params)?;
+            match session.execute_logical_plan(bound_plan).await {
+                Ok(df) => Ok(df),
+                Err(error) => {
+                    self.sql_cache_registry.plan_cache().bump_dependency_epoch();
+                    if let Some(not_leader_err) = Self::try_not_leader_error(&error) {
+                        return Err(not_leader_err);
+                    }
+                    if !Self::is_table_not_found_error(&error) {
+                        return Err(Self::datafusion_to_execution_error(error));
+                    }
+
+                    log::warn!(
+                        target: "sql::dml",
+                        "Failed to execute cached DML plan due to missing table, reparsing SQL: {}",
+                        error
+                    );
+
+                    self.execute_replanned_dml_erased(cache_key, pre_parsed, cache_sql, exec_ctx, params)
+                        .await
+                },
+            }
+        } else {
+            self.execute_replanned_dml_erased(cache_key, pre_parsed, cache_sql, exec_ctx, params)
+                .await
+        }
+    }
+
     pub(super) fn cache_and_bind_dml_plan(
         &self,
         cache_key: PlanCacheKey,
@@ -344,47 +383,22 @@ impl SqlExecutor {
             validate_params(&params)?;
         }
 
-        // Parameterized DML: reuse cached template plans and only bind placeholders per request.
-        // This avoids reparsing/replanning the same INSERT/UPDATE/DELETE shape repeatedly.
-        let df = if params.is_empty() {
+        // Literal DML shares one placeholder plan. Explicit parameters already do.
+        let literal_shape = if params.is_empty() {
+            pre_parsed
+                .cloned()
+                .or_else(|| Self::parse_statement_for_datafusion_exec(sql).ok())
+                .and_then(|statement| self.literal_plan_shape(statement))
+        } else {
+            None
+        };
+        let df = if let Some((template_sql, bound, statement)) = literal_shape.as_ref() {
+            self.execute_cached_dml_dataframe(template_sql, Some(statement), bound, exec_ctx)
+                .await?
+        } else if params.is_empty() {
             self.plan_dml_with_provider_reload(pre_parsed, sql, exec_ctx, &params).await?.1
         } else {
-            let cache_key = self.sql_cache_registry.plan_cache().current_key(
-                exec_ctx.default_namespace(),
-                exec_ctx.user_role(),
-                sql,
-            );
-            let session = self.create_session_with_transaction_context(exec_ctx)?;
-
-            if let Some(template_plan) = self.sql_cache_registry.plan_cache().get(&cache_key) {
-                let bound_plan = replace_placeholders_in_plan((*template_plan).clone(), &params)?;
-                match session.execute_logical_plan(bound_plan).await {
-                    Ok(df) => df,
-                    Err(error) => {
-                        self.sql_cache_registry.plan_cache().bump_dependency_epoch();
-                        if let Some(not_leader_err) = Self::try_not_leader_error(&error) {
-                            return Err(not_leader_err);
-                        }
-                        if !Self::is_table_not_found_error(&error) {
-                            return Err(Self::datafusion_to_execution_error(error));
-                        }
-
-                        log::warn!(
-                            target: "sql::dml",
-                            "Failed to execute cached DML plan due to missing table, reparsing SQL: {}",
-                            error
-                        );
-
-                        self.execute_replanned_dml_erased(
-                            cache_key, pre_parsed, sql, exec_ctx, &params,
-                        )
-                        .await?
-                    },
-                }
-            } else {
-                self.execute_replanned_dml_erased(cache_key, pre_parsed, sql, exec_ctx, &params)
-                    .await?
-            }
+            self.execute_cached_dml_dataframe(sql, pre_parsed, &params, exec_ctx).await?
         };
 
         #[cfg(feature = "traceability")]

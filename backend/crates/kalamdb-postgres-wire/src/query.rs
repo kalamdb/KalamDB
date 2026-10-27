@@ -53,7 +53,10 @@ impl KalamQueryHandler {
         state: &WireConnectionState,
         sql: &str,
     ) -> PgWireResult<Vec<Response>> {
-        state.ensure_statement_sql_bytes(sql).map_err(limit_error_to_pg)?;
+        // The per-statement cap is 1 MiB. A simple-query script is many
+        // statements in one message, so the cap applies after the split.
+        // PostgreSQL accepts the PGlite speed scripts (~2 MiB) this way.
+        state.ensure_simple_query_message_bytes(sql).map_err(limit_error_to_pg)?;
 
         let statements = match kalamdb_sql::split_statements(sql) {
             Ok(statements) => statements,
@@ -62,6 +65,10 @@ impl KalamQueryHandler {
 
         if statements.is_empty() {
             return Ok(vec![Response::EmptyQuery]);
+        }
+
+        for statement in &statements {
+            state.ensure_statement_sql_bytes(statement).map_err(limit_error_to_pg)?;
         }
 
         if statements.len() == 1 {

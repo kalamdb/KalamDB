@@ -263,6 +263,17 @@ where
     _marker: std::marker::PhantomData<(K, V)>,
 }
 
+/// Visible rows in one integer index range.
+#[cfg(feature = "datafusion")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IndexRangeSum {
+    pub count: u64,
+    pub sum: i128,
+}
+
+#[cfg(feature = "datafusion")]
+const INDEX_SUM_BATCH: usize = 64;
+
 impl<K, V> IndexedEntityStore<K, V>
 where
     K: StorageKey,
@@ -1177,6 +1188,106 @@ where
         });
 
         Ok(Box::new(mapped))
+    }
+
+    /// Count and sum of one integer index column, skipping tombstones.
+    ///
+    /// `Ok(None)` means the keys are not integers, the sum overflowed, or the
+    /// row codec cannot report a tombstone. Callers must fall back. A missing
+    /// index partition is an empty sum. Deleted rows stay in the secondary
+    /// index, so each hit still reads the row header and skips `_deleted`.
+    #[cfg(feature = "datafusion")]
+    pub fn sum_visible_index_integers(
+        &self,
+        plan: &crate::index::seek::IndexScanPlan,
+    ) -> Result<Option<IndexRangeSum>> {
+        if plan.value_column_index().is_none() {
+            return Ok(None);
+        }
+        let Some(index_partition) = self.index_partitions.get(plan.index_idx).cloned() else {
+            return Ok(None);
+        };
+        let mut iter = match self.backend.scan(
+            &index_partition,
+            Some(plan.prefix.as_slice()),
+            plan.start_key.as_deref(),
+            None,
+        ) {
+            Ok(iter) => iter,
+            Err(StorageError::PartitionNotFound(_)) => {
+                return Ok(Some(IndexRangeSum { count: 0, sum: 0 }));
+            },
+            Err(error) => return Err(error),
+        };
+
+        let mut count = 0u64;
+        let mut sum = 0i128;
+        let mut keys = Vec::new();
+        let mut values = Vec::new();
+        while let Some((index_key, primary_key_bytes)) = iter.next() {
+            if plan.is_past_end(&index_key) {
+                break;
+            }
+            if !plan.matches_key_predicates(&index_key) {
+                continue;
+            }
+            let Some(value) = plan.range_column_integer(&index_key) else {
+                return Ok(None);
+            };
+            let key = K::from_storage_key(&primary_key_bytes)
+                .map_err(StorageError::SerializationError)?;
+            keys.push(key);
+            values.push(value);
+            if keys.len() == INDEX_SUM_BATCH {
+                if self.accumulate_visible_integers(&mut keys, &mut values, &mut count, &mut sum)?
+                    .is_none()
+                {
+                    return Ok(None);
+                }
+            }
+        }
+        if self.accumulate_visible_integers(&mut keys, &mut values, &mut count, &mut sum)?.is_none()
+        {
+            return Ok(None);
+        }
+        Ok(Some(IndexRangeSum { count, sum }))
+    }
+
+    #[cfg(feature = "datafusion")]
+    fn accumulate_visible_integers(
+        &self,
+        keys: &mut Vec<K>,
+        values: &mut Vec<i128>,
+        count: &mut u64,
+        sum: &mut i128,
+    ) -> Result<Option<()>> {
+        if keys.is_empty() {
+            return Ok(Some(()));
+        }
+        let storage_keys: Vec<Vec<u8>> = keys.iter().map(K::storage_key).collect();
+        let loaded = self.backend.get_many(&self.main_partition, &storage_keys)?;
+        if loaded.len() != values.len() {
+            return Ok(None);
+        }
+        for (bytes, value) in loaded.into_iter().zip(values.iter()) {
+            let Some(bytes) = bytes else {
+                continue;
+            };
+            match self.codec.row_deleted_flag(&bytes)? {
+                Some(true) => {},
+                Some(false) => {
+                    let Some(next) = sum.checked_add(*value) else {
+                        return Ok(None);
+                    };
+                    *sum = next;
+                    *count += 1;
+                },
+                None => return Ok(None),
+            }
+        }
+        keys.clear();
+        values.clear();
+        Ok(Some(()))
     }
 
     /// Returns the newest entity matching an index prefix.

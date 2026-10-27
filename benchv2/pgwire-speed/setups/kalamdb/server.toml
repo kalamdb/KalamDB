@@ -1,58 +1,63 @@
-# Release server for benchv2/sqlite-speed/run.sh. Loopback only.
-# The runner wipes ./data/kalam and sets KALAMDB_ROOT_PASSWORD before start.
+# PGlite speed scripts over KalamDB pgwire. Hot storage only.
+# HTTP is for /health and the one-time admin setup. Timed SQL is pgwire.
+# Ports stay off the kalam-vs-pg suite (2901 / 25432 / 25433).
 
 [server]
 host = "127.0.0.1"
-port = 2920
+port = 2921
 workers = 0
 enable_http2 = true
 
 [storage]
-data_path = "./data/kalam"
+data_path = "./data"
 shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 
 [storage.rocksdb]
-# auto caps the shared block cache at 256MB and the hot memtable at 64MB on this
-# host, so process memory does not grow with RAM. Three memtables leave one free
-# to flush without stacking a large write buffer.
-memory_mode = "auto"
-max_background_jobs = 6
+memory_mode = "server"
+block_cache_size = 1073741824
+max_background_jobs = 8
+max_open_files = 8192
+sync_writes = false
+disable_wal = false
+compact_on_startup = false
 
-[storage.rocksdb.cf_profiles.hot_data]
-write_buffer_size = 67108864
+[storage.rocksdb.cf_profiles.system_meta]
+write_buffer_size = 8388608
 max_write_buffers = 3
 
+[storage.rocksdb.cf_profiles.system_index]
+write_buffer_size = 8388608
+max_write_buffers = 3
+
+[storage.rocksdb.cf_profiles.hot_data]
+write_buffer_size = 134217728
+max_write_buffers = 4
+
 [storage.rocksdb.cf_profiles.hot_index]
+write_buffer_size = 67108864
+max_write_buffers = 4
+
+[storage.rocksdb.cf_profiles.raft]
 write_buffer_size = 33554432
 max_write_buffers = 3
 
 [datafusion]
-memory_limit = 268435456
-query_parallelism = 4
-max_partitions = 4
-batch_size = 1024
+memory_limit = 536870912
+query_parallelism = 2
+max_partitions = 1
+batch_size = 128
 
 [flush]
 flush_batch_size = 10000
-check_interval_seconds = 30
-retain_latest_hot = true
-
-[flush.compaction]
-enabled = true
-
-[topics]
-default_retention_seconds = 60
-default_retention_max_bytes = 33554432
-retention_check_interval_seconds = 5
-retention_batch_size = 20000
+check_interval_seconds = 0
 
 [stream]
 eviction_interval_seconds = 60
 
 [manifest_cache]
 eviction_interval_seconds = 300
-max_entries = 500
+max_entries = 2000
 eviction_ttl_days = 7
 
 [limits]
@@ -60,11 +65,11 @@ max_query_limit = 1000
 default_query_limit = 50
 
 [logging]
-level = "info"
+level = "warn"
 logs_path = "./logs"
 log_to_console = false
 format = "json"
-slow_query_threshold_ms = 1000
+slow_query_threshold_ms = 5000
 
 [logging.otlp]
 enabled = false
@@ -78,7 +83,7 @@ keepalive_timeout = 75
 max_connections = 20000000
 backlog = 4096
 worker_max_blocking_threads = 4000
-client_request_timeout = 10
+client_request_timeout = 120
 client_disconnect_timeout = 5
 
 [rate_limit]
@@ -91,7 +96,7 @@ max_requests_per_ip_per_sec = 200000
 request_body_limit_bytes = 104857600
 ban_duration_seconds = 300
 enable_connection_protection = false
-cache_max_entries = 1000
+cache_max_entries = 10000
 cache_ttl_seconds = 600
 
 [security]
@@ -135,18 +140,22 @@ wal_cleanup_interval_seconds = 300
 history_cleanup_interval_seconds = 3600
 history_retention_days = 7
 
-[functions.runtime]
-workers = 8
-max_active = 16
-max_queued = 256
-max_memory_mb = 768
-heap_soft_mb = 8
-heap_hard_mb = 32
+[execution]
+sql_plan_cache_max_entries = 4000
+sql_plan_cache_ttl_seconds = 7200
+
+[postgres_wire]
+enabled = true
+host = "127.0.0.1"
+port = 25436
+tls_enabled = false
+prepared_statement_limit = 1024
+portal_limit = 1024
 
 [cluster]
 node_id = 1
-rpc_addr = "127.0.0.1:3930"
-api_addr = "127.0.0.1:2920"
+rpc_addr = "127.0.0.1:2931"
+api_addr = "127.0.0.1:2921"
 user_shards = 8
 shared_shards = 1
 max_snapshots_to_keep = 1

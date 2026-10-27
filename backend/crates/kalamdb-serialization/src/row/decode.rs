@@ -28,6 +28,60 @@ use crate::{
     },
 };
 
+/// Open a v2 row. `Ok(None)` means the payload is an older row body and the
+/// caller should use the full decoder.
+pub fn open_v2_row<'a>(bytes: &'a [u8], schema: &StorageSchema) -> Result<Option<RowView<'a>>> {
+    let (header, payload) = decode_envelope(bytes, ObjectKind::Row)?;
+    if header.flags & FLAG_ROW_BODY_V2 == 0 {
+        return Ok(None);
+    }
+    RowView::parse(payload, schema, header.flags).map(Some)
+}
+
+/// Project storage ordinals into `push` without building a row map.
+///
+/// The bool is the tombstone flag. Works for v2 bodies and for v1 bodies that
+/// carry a column offset table, so a scan can skip columns the plan does not
+/// read.
+pub fn project_row_fields(
+    bytes: &[u8],
+    schema: &StorageSchema,
+    ordinals: &[usize],
+    mut push: impl FnMut(usize, ScalarValue) -> Result<()>,
+) -> Result<bool> {
+    let (header, payload) = decode_envelope(bytes, ObjectKind::Row)?;
+    if header.flags & FLAG_ROW_BODY_V2 != 0 {
+        let view = RowView::parse(payload, schema, header.flags)?;
+        let tombstone_only = view.is_deleted() && (header.flags & FLAG_TOMBSTONE_ONLY) != 0;
+        for (index, &ordinal) in ordinals.iter().enumerate() {
+            let value = if tombstone_only {
+                let field = schema.fields.get(ordinal).ok_or_else(|| {
+                    SerializationError::Decode(format!(
+                        "column ordinal {ordinal} is out of schema range"
+                    ))
+                })?;
+                null_for_type(&field.data_type)
+            } else {
+                view.decode_field(ordinal, schema)?
+            };
+            push(index, value)?;
+        }
+        return Ok(view.is_deleted());
+    }
+
+    let mut reader = Reader::new(payload);
+    let deleted = read_row_header(&mut reader, schema, header.flags)?;
+    let stored_field_count = reader.u16()? as usize;
+    let table_bytes = stored_field_count.checked_mul(4).ok_or(SerializationError::Truncated)?;
+    let offset_table = reader.take(table_bytes)?;
+    for (index, &ordinal) in ordinals.iter().enumerate() {
+        let value =
+            read_indexed_value(&mut reader, schema, stored_field_count, offset_table, ordinal)?;
+        push(index, value)?;
+    }
+    Ok(deleted)
+}
+
 /// Validated zero-copy view over a v2 row payload (`FLAG_ROW_BODY_V2`).
 #[derive(Debug, Clone, Copy)]
 pub struct RowView<'a> {
@@ -708,22 +762,39 @@ fn decode_selected_indexed(
             );
             continue;
         }
-        let slot = ordinal.checked_mul(4).ok_or(SerializationError::Truncated)?;
-        let slot_end = slot.checked_add(4).ok_or(SerializationError::Truncated)?;
-        if slot_end > offset_table.len() {
-            return Err(SerializationError::Truncated);
-        }
-        let offset = u32::from_le_bytes([
-            offset_table[slot],
-            offset_table[slot + 1],
-            offset_table[slot + 2],
-            offset_table[slot + 3],
-        ]) as usize;
-        reader.seek(offset)?;
-        let value = decode_value(reader, &field.data_type)?;
+        let value =
+            read_indexed_value(reader, schema, stored_field_count, offset_table, ordinal)?;
         values.insert(field.name.clone(), value);
     }
     Ok(Row { values })
+}
+
+fn read_indexed_value(
+    reader: &mut Reader<'_>,
+    schema: &StorageSchema,
+    stored_field_count: usize,
+    offset_table: &[u8],
+    ordinal: usize,
+) -> Result<ScalarValue> {
+    let field = schema.fields.get(ordinal).ok_or_else(|| {
+        SerializationError::Decode(format!("column ordinal {ordinal} is out of schema range"))
+    })?;
+    if ordinal >= stored_field_count {
+        return Ok(field.missing_default.clone().unwrap_or_else(|| null_for_type(&field.data_type)));
+    }
+    let slot = ordinal.checked_mul(4).ok_or(SerializationError::Truncated)?;
+    let slot_end = slot.checked_add(4).ok_or(SerializationError::Truncated)?;
+    if slot_end > offset_table.len() {
+        return Err(SerializationError::Truncated);
+    }
+    let offset = u32::from_le_bytes([
+        offset_table[slot],
+        offset_table[slot + 1],
+        offset_table[slot + 2],
+        offset_table[slot + 3],
+    ]) as usize;
+    reader.seek(offset)?;
+    decode_value(reader, &field.data_type)
 }
 
 #[inline]

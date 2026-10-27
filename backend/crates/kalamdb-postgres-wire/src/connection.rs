@@ -9,6 +9,10 @@ pub const DEFAULT_PREPARED_STATEMENT_LIMIT: usize = 1_024;
 pub const DEFAULT_PORTAL_LIMIT: usize = 1_024;
 pub const DEFAULT_STATEMENT_SQL_BYTES_LIMIT: usize = 1_048_576; // 1 MiB per statement
 pub const DEFAULT_PREPARED_STATEMENT_TOTAL_BYTES_LIMIT: usize = 8 * 1_048_576; // 8 MiB per session
+/// A simple-query message may carry many statements. The message cap is this
+/// multiple of the per-statement cap: large enough for a multi-megabyte script
+/// of small statements, still bounded.
+pub const SIMPLE_QUERY_MESSAGE_LIMIT_FACTOR: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WirePreparedStatement {
@@ -27,6 +31,7 @@ pub enum WireConnectionStateError {
     PreparedStatementLimitExceeded { limit: usize },
     PreparedStatementBytesExceeded { limit: usize, requested: usize },
     StatementSqlBytesExceeded { limit: usize, actual: usize },
+    SimpleQueryMessageBytesExceeded { limit: usize, actual: usize },
     PortalLimitExceeded { limit: usize },
 }
 
@@ -47,6 +52,12 @@ impl std::fmt::Display for WireConnectionStateError {
                 write!(
                     f,
                     "statement SQL length ({actual} bytes) exceeds maximum allowed ({limit} bytes)"
+                )
+            },
+            Self::SimpleQueryMessageBytesExceeded { limit, actual } => {
+                write!(
+                    f,
+                    "simple query message ({actual} bytes) exceeds maximum allowed ({limit} bytes)"
                 )
             },
             Self::PortalLimitExceeded { limit } => write!(f, "portal limit exceeded ({limit})"),
@@ -184,6 +195,24 @@ impl WireConnectionState {
         Ok(())
     }
 
+    /// Bound a whole simple-query message. Callers still apply
+    /// [`Self::ensure_statement_sql_bytes`] to each statement after splitting.
+    pub fn ensure_simple_query_message_bytes(
+        &self,
+        sql: &str,
+    ) -> Result<(), WireConnectionStateError> {
+        let limit = self
+            .statement_sql_bytes_limit
+            .saturating_mul(SIMPLE_QUERY_MESSAGE_LIMIT_FACTOR);
+        if sql.len() > limit {
+            return Err(WireConnectionStateError::SimpleQueryMessageBytesExceeded {
+                limit,
+                actual: sql.len(),
+            });
+        }
+        Ok(())
+    }
+
     pub fn ensure_prepared_statement_capacity(
         &self,
         name: &str,
@@ -292,6 +321,32 @@ mod tests {
             .expect_err("second statement exceeds cap");
 
         assert_eq!(error, WireConnectionStateError::PreparedStatementLimitExceeded { limit: 1 });
+    }
+
+    #[test]
+    fn simple_query_message_allows_many_small_statements() {
+        let state = WireConnectionState::with_resource_limits(
+            "session",
+            auth(),
+            SchemaId::default(),
+            4,
+            4,
+            10,
+            40,
+        );
+        let statement = "0123456789";
+        state
+            .ensure_simple_query_message_bytes(&statement.repeat(8))
+            .expect("eight statement-sized chunks fit in one message");
+        let error = state
+            .ensure_simple_query_message_bytes(&statement.repeat(9))
+            .expect_err("the ninth chunk exceeds the message cap");
+        assert_eq!(
+            error,
+            WireConnectionStateError::SimpleQueryMessageBytesExceeded { limit: 80, actual: 90 }
+        );
+        assert!(state.ensure_statement_sql_bytes(statement).is_ok());
+        assert!(state.ensure_statement_sql_bytes(&statement.repeat(2)).is_err());
     }
 
     #[test]

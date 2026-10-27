@@ -117,9 +117,13 @@ ui/package-lock.json
 /link/sdks/typescript/.wasm-cargo-home-test2
 ts-sdk-repro/server.toml
 /benchv2/logs
-/benchv2/sqlite-speed/sql/
-/benchv2/sqlite-speed/results/
-/benchv2/sqlite-speed/logs/
+/benchv2/pgwire-speed/sql/
+/benchv2/pgwire-speed/results/
+/benchv2/pgwire-speed/logs/
+/benchv2/pgwire-speed/target/
+/benchv2/pgwire-speed/setups/kalamdb/data/
+/benchv2/pgwire-speed/setups/kalamdb/logs/
+/benchv2/pgwire-speed/setups/postgres/
 /link/kalam-client/sdks/typescript/.wasm-cargo-home
 /link/kalam-client/sdks/typescript/.wasm-target
 /link/kalam-client/sdks/typescript/client/.wasm-cargo-home

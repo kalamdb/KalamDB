@@ -52,16 +52,19 @@ fn prefix_scan_readopts(prefix: Vec<u8>) -> rocksdb::ReadOptions {
     readopts
 }
 
+unsafe extern "C" {
+    fn rocksdb_flushoptions_set_allow_write_stall(opt: *mut std::ffi::c_void, value: u8);
+}
+
 /// Flush options that wait for completion but do not block forever on write-stall.
 ///
-/// rust-rocksdb only exposes `set_wait`. With RocksDB's default
+/// rust-rocksdb 0.25 only exposes `set_wait`. With RocksDB's default
 /// `allow_write_stall=false`, `FlushMemTable` calls
 /// `WaitUntilFlushWouldNotStallWrites`, which can wait indefinitely on `bg_cv_`
-/// when L0 / compaction pressure never clears. That left timed-out Tokio
-/// `spawn_blocking` WAL cleanup threads alive and blocked process exit.
+/// when L0 / compaction pressure never clears.
 ///
-/// RocksDB C++ `FlushOptions` layout is `{ bool wait; bool allow_write_stall; }`
-/// inside `rocksdb_flushoptions_t`. Set the second field via the inner pointer.
+/// The supported setter is the C API `rocksdb_flushoptions_set_allow_write_stall`.
+/// The Rust wrapper is a single raw pointer to that C options object.
 fn flush_options_allow_write_stall() -> rocksdb::FlushOptions {
     let mut flush_opts = rocksdb::FlushOptions::default();
     flush_opts.set_wait(true);
@@ -69,17 +72,34 @@ fn flush_options_allow_write_stall() -> rocksdb::FlushOptions {
     debug_assert_eq!(
         std::mem::size_of::<rocksdb::FlushOptions>(),
         std::mem::size_of::<*mut ()>(),
-        "FlushOptions must be a single raw pointer for allow_write_stall poke"
+        "FlushOptions must stay a single raw pointer so the C setter can be called"
     );
-    // SAFETY: FlushOptions is `{ inner: *mut rocksdb_flushoptions_t }`; the C++
-    // wrapper stores `FlushOptions { wait, allow_write_stall }` at offset 0.
+    // SAFETY: rocksdb 0.25 `FlushOptions` is `{ inner: *mut rocksdb_flushoptions_t }`.
+    // The pointer is passed to the official C setter; the C++ field layout is not poked.
     unsafe {
-        let inner = *(std::ptr::from_ref(&flush_opts) as *const *mut u8);
+        let inner = *(std::ptr::from_ref(&flush_opts) as *const *mut std::ffi::c_void);
         assert!(!inner.is_null(), "FlushOptions inner pointer is null");
-        *inner.add(std::mem::size_of::<bool>()) = 1;
+        rocksdb_flushoptions_set_allow_write_stall(inner, 1);
     }
 
     flush_opts
+}
+
+/// Memtable flush is not WAL durability. Callers that shut down or take a backup
+/// need the column-family flush error instead of a logged success.
+fn memtable_flush_error(failures: &[(String, String)]) -> Result<()> {
+    if failures.is_empty() {
+        return Ok(());
+    }
+    let detail = failures
+        .iter()
+        .map(|(column_family, error)| format!("{column_family}: {error}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+    Err(StorageError::IoError(format!(
+        "memtable flush failed for {} column family(s): {detail}",
+        failures.len()
+    )))
 }
 
 /// RocksDB implementation of the StorageBackend trait.
@@ -746,6 +766,7 @@ impl StorageBackend for RocksDBBackend {
 
         let flush_opts = flush_options_allow_write_stall();
         let mut saw_default = false;
+        let mut failures = Vec::new();
 
         for cf_name in &names {
             if cf_name == "default" {
@@ -755,24 +776,27 @@ impl StorageBackend for RocksDBBackend {
                 if !self.cf_has_unflushed_entries(&cf) {
                     continue;
                 }
-                if let Err(e) = self.db.flush_cf_opt(&cf, &flush_opts) {
-                    log::warn!("flush_all_memtables: failed to flush CF '{}': {}", cf_name, e);
+                if let Err(error) = self.db.flush_cf_opt(&cf, &flush_opts) {
+                    log::error!("flush_all_memtables: failed to flush CF '{cf_name}': {error}");
+                    failures.push((cf_name.clone(), error.to_string()));
                 }
             }
         }
         if !saw_default {
             if let Some(default_cf) = self.db.cf_handle("default") {
                 if self.cf_has_unflushed_entries(&default_cf) {
-                    if let Err(e) = self.db.flush_cf_opt(&default_cf, &flush_opts) {
-                        log::warn!("flush_all_memtables: failed to flush default CF: {}", e);
+                    if let Err(error) = self.db.flush_cf_opt(&default_cf, &flush_opts) {
+                        log::error!("flush_all_memtables: failed to flush default CF: {error}");
+                        failures.push(("default".to_string(), error.to_string()));
                     }
                 }
-            } else if let Err(e) = self.db.flush_opt(&flush_opts) {
-                log::warn!("flush_all_memtables: failed to flush default CF: {}", e);
+            } else if let Err(error) = self.db.flush_opt(&flush_opts) {
+                log::error!("flush_all_memtables: failed to flush default CF: {error}");
+                failures.push(("default".to_string(), error.to_string()));
             }
         }
 
-        Ok(())
+        memtable_flush_error(&failures)
     }
 
     fn backup_to(&self, backup_dir: &std::path::Path) -> crate::storage_trait::Result<()> {
@@ -1193,6 +1217,26 @@ mod tests {
 
         backend.drop_partition(&partition).unwrap();
         assert!(!backend.partition_exists(&partition));
+    }
+
+    #[test]
+    fn memtable_flush_error_reports_column_family_failures() {
+        assert!(memtable_flush_error(&[]).is_ok());
+        let error = memtable_flush_error(&[
+            ("raft_data".to_string(), "io error".to_string()),
+            ("default".to_string(), "shutdown".to_string()),
+        ])
+        .expect_err("flush failures must reach shutdown and backup callers");
+        let message = error.to_string();
+        assert!(message.contains("raft_data"));
+        assert!(message.contains("default"));
+        assert!(message.contains("memtable flush"));
+    }
+
+    #[test]
+    fn flush_options_allow_write_stall_uses_the_c_setter() {
+        let options = flush_options_allow_write_stall();
+        assert_eq!(std::mem::size_of_val(&options), std::mem::size_of::<*mut ()>());
     }
 
     #[test]

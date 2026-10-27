@@ -6,6 +6,7 @@
 use std::{sync::Arc, time::Duration};
 
 mod catalog_routines;
+mod covering_aggregate;
 mod datafusion_error;
 mod equality_update;
 mod execute;

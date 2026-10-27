@@ -987,6 +987,77 @@ async fn shared_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
 }
 
 #[tokio::test]
+async fn shared_provider_unindexed_scan_keeps_latest_and_hides_tombstones() {
+    let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new("shared_exec_latest"));
+    let table_def = build_shared_table_definition(&table_id);
+    let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
+    let store = Arc::new(new_indexed_shared_table_store(
+        Arc::clone(&backend),
+        &table_id,
+        "id",
+        storage_schema_for_table(&table_def).expect("shared storage schema"),
+        &table_def.scalar_indexes,
+        &table_def.columns,
+    ));
+    let provider = Arc::new(SharedTableProvider::new(
+        Arc::new(TableProviderCore::new(
+            table_def,
+            Arc::clone(&services.services),
+            "id".to_string(),
+            Arc::clone(&services.schema),
+            HashMap::new(),
+        )),
+        Arc::clone(&store),
+    ));
+
+    let versions = [
+        (1_i64, 1_i64, "old", false),
+        (2, 1, "new", false),
+        (3, 2, "gone", true),
+        (4, 3, "kept", false),
+        (5, 3, "kept", true),
+    ];
+    for (version, id, name, deleted) in versions {
+        let seq = kalamdb_commons::ids::VersionId::from(version);
+        store
+            .insert(
+                &seq,
+                &SharedTableRow {
+                    _version: seq,
+                    _deleted: deleted,
+                    fields: row(vec![
+                        ("id", ScalarValue::Int64(Some(id))),
+                        ("name", ScalarValue::Utf8(Some(name.to_string()))),
+                    ]),
+                },
+            )
+            .expect("seed shared row");
+    }
+
+    let ctx = session_with_scan_diagnostics(&UserId::new("shared-reader"));
+    let state = ctx.state();
+    let plan = provider.scan(&state, None, &[], None).await.expect("build shared plan");
+    let batches = collect(Arc::clone(&plan), state.task_ctx()).await.expect("collect shared plan");
+    assert_eq!(total_rows(&batches), 1);
+    let names = batches[0]
+        .column_by_name("name")
+        .expect("name column")
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .expect("name strings");
+    assert_eq!(names.value(0), "new");
+
+    let filtered = provider
+        .scan(&state, None, &[col("name").eq(lit("old"))], None)
+        .await
+        .expect("build filtered plan");
+    let filtered_batches =
+        collect(filtered, state.task_ctx()).await.expect("collect filtered plan");
+    assert_eq!(total_rows(&filtered_batches), 0);
+}
+
+#[tokio::test]
 async fn shared_provider_scan_with_overlay_uses_transaction_overlay_exec() {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
     let table_id = TableId::new(SchemaId::new("app"), TableName::new("shared_exec"));

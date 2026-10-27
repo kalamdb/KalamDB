@@ -101,10 +101,12 @@ impl UserTableProvider {
                         storage_ordinals.clone(),
                     )
                     .await
-                    .map(|rows| {
-                        rows.into_iter()
+                    .and_then(|rows| {
+                        base::reject_truncated_unbounded_scan(limit, rows.len())?;
+                        Ok(rows
+                            .into_iter()
                             .map(|(row_id, row)| (row_id, UserMvccRow(row)))
-                            .collect::<Vec<_>>()
+                            .collect::<Vec<_>>())
                     });
                 }
             }
@@ -129,10 +131,12 @@ impl UserTableProvider {
                         e
                     ))
                 })
-                .map(|rows| {
-                    rows.into_iter()
+                .and_then(|rows| {
+                    base::reject_truncated_unbounded_scan(limit, rows.len())?;
+                    Ok(rows
+                        .into_iter()
                         .map(|(row_id, row)| (row_id, UserMvccRow(row)))
-                        .collect::<Vec<_>>()
+                        .collect::<Vec<_>>())
                 })
         };
         let cold_future = async {
@@ -202,7 +206,11 @@ impl UserTableProvider {
         // Hot storage: use the same typed user-prefix scan as the normal read path.
         let hot_future = async move {
             let hot_rows = store
-                .scan_with_raw_prefix_async(&user_prefix, None, 1_000_000)
+                .scan_with_raw_prefix_async(
+                    &user_prefix,
+                    None,
+                    crate::utils::base::UNBOUNDED_COUNT_SCAN_LIMIT,
+                )
                 .await
                 .map_err(|e| {
                     KalamDbError::InvalidOperation(format!(
@@ -210,6 +218,7 @@ impl UserTableProvider {
                         e
                     ))
                 })?;
+            crate::utils::base::reject_truncated_count_scan(hot_rows.len())?;
 
             let hot_metadata = hot_rows
                 .into_iter()

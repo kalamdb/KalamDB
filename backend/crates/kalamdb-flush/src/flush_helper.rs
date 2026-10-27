@@ -255,6 +255,71 @@ impl FlushManifestHelper {
 
         Ok(updated_manifest)
     }
+
+    /// Reserve a batch filename by publishing an unreadable in-progress segment.
+    ///
+    /// Caller holds the flush scope lock. The Parquet upload happens after the lock
+    /// is released; `update_manifest_after_flush_with_stats_in_locked_scope` replaces
+    /// this segment by id once the file is durable.
+    pub fn reserve_flush_batch(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        min_version: VersionId,
+        max_version: VersionId,
+        schema_version: u32,
+    ) -> Result<(String, String), FlushError> {
+        let batch_number = self.get_next_batch_number(table_id, user_id)?;
+        let batch_filename = Self::generate_batch_filename(batch_number);
+        let temp_filename = Self::generate_temp_filename(batch_number);
+        let segment = SegmentMetadata::in_progress(
+            batch_filename.clone(),
+            batch_filename.clone(),
+            SeqId::from(min_version.as_i64()),
+            SeqId::from(max_version.as_i64()),
+            schema_version,
+        );
+        self.manifest_service
+            .persist_flushed_segment_in_locked_scope(table_id, user_id, segment)
+            .map_err(|error| {
+                FlushError::Other(format!(
+                    "Failed to reserve flush segment for {table_id} (user_id={:?}): {error}",
+                    user_id.map(UserId::as_str)
+                ))
+            })?;
+        Ok((batch_filename, temp_filename))
+    }
+
+    /// Mark a reserved segment unreadable after the upload fails.
+    ///
+    /// Caller holds the flush scope lock.
+    pub fn abandon_reserved_batch(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        batch_filename: &str,
+        min_version: VersionId,
+        max_version: VersionId,
+        schema_version: u32,
+    ) {
+        let mut segment = SegmentMetadata::in_progress(
+            batch_filename.to_string(),
+            batch_filename.to_string(),
+            SeqId::from(min_version.as_i64()),
+            SeqId::from(max_version.as_i64()),
+            schema_version,
+        );
+        segment.mark_tombstone();
+        if let Err(error) = self.manifest_service.persist_flushed_segment_in_locked_scope(
+            table_id,
+            user_id,
+            segment,
+        ) {
+            log::warn!(
+                "failed to tombstone reserved flush segment {batch_filename} for {table_id}: {error}"
+            );
+        }
+    }
 }
 
 /// Hot tombstones kept only while a cold segment can still contain the primary key.

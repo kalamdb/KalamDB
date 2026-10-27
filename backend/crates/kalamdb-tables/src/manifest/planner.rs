@@ -3,10 +3,15 @@
 //! Provides utilities to translate `Manifest` metadata into
 //! concrete file/row-group selections for efficient reads.
 
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
-use datafusion::arrow::{compute::cast, datatypes::SchemaRef, record_batch::RecordBatch};
-use futures_util::{future::join_all, TryStreamExt};
+use datafusion::arrow::{
+    compute::cast,
+    datatypes::{DataType, Schema, SchemaRef},
+    record_batch::RecordBatch,
+};
+use datafusion::common::ScalarValue;
+use futures_util::{StreamExt, TryStreamExt};
 use kalamdb_commons::{
     constants::SystemColumnNames, ids::SeqId, models::UserId, schemas::TableType, TableId,
 };
@@ -16,6 +21,7 @@ use kalamdb_system::{Manifest, SchemaRegistry as SchemaRegistryTrait, SegmentMet
 use crate::{error::KalamDbError, error_extensions::KalamDbResultExt};
 
 const MAX_RECORDED_COLD_FILES: usize = 16;
+const MAX_COLD_FILE_OPENS: usize = 8;
 
 /// Planned selection for a single Parquet file
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +64,102 @@ impl ColdScanPruning {
             seq_range: Some((min_seq, max_seq)),
             ..Self::default()
         }
+    }
+}
+
+enum AdaptedColumn {
+    Copy(usize),
+    Cast(usize, DataType),
+    Default(ScalarValue),
+    Null(DataType),
+    Filled(DataType),
+}
+
+struct SchemaAdaptPlan {
+    columns: Vec<AdaptedColumn>,
+}
+
+impl SchemaAdaptPlan {
+    fn prepare(
+        batch_schema: &Schema,
+        target: &SchemaRef,
+        table_id: &TableId,
+    ) -> Result<Self, KalamDbError> {
+        let mut columns = Vec::with_capacity(target.fields().len());
+        for field in target.fields() {
+            if let Ok(index) = batch_schema.index_of(field.name()) {
+                let source = batch_schema.field(index);
+                if source.data_type() == field.data_type() {
+                    columns.push(AdaptedColumn::Copy(index));
+                } else {
+                    columns.push(AdaptedColumn::Cast(index, field.data_type().clone()));
+                }
+                continue;
+            }
+            if field.name() == SystemColumnNames::VERSION {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "parquet batch for {table_id} is missing {}",
+                    field.name()
+                )));
+            }
+            if let Some(default_json) =
+                kalamdb_commons::conversions::read_kalam_missing_default(field.as_ref())
+            {
+                let scalar = kalamdb_commons::conversions::json_value_to_scalar(&default_json);
+                let coerced = kalamdb_commons::conversions::coerce_scalar_to_field(
+                    scalar,
+                    field.as_ref(),
+                )
+                .map_err(KalamDbError::InvalidOperation)?;
+                columns.push(AdaptedColumn::Default(coerced));
+            } else if field.is_nullable() {
+                columns.push(AdaptedColumn::Null(field.data_type().clone()));
+            } else {
+                columns.push(AdaptedColumn::Filled(field.data_type().clone()));
+            }
+        }
+        Ok(Self { columns })
+    }
+
+    fn apply(&self, batch: RecordBatch, target: &SchemaRef) -> Result<RecordBatch, KalamDbError> {
+        if batch.num_rows() == 0 {
+            return Ok(RecordBatch::new_empty(target.clone()));
+        }
+        let mut projected = Vec::with_capacity(self.columns.len());
+        for column in &self.columns {
+            let array = match column {
+                AdaptedColumn::Copy(index) => Arc::clone(batch.column(*index)),
+                AdaptedColumn::Cast(index, data_type) => {
+                    cast(batch.column(*index).as_ref(), data_type).into_arrow_error_ctx(
+                        &format!("Failed to cast column to {data_type:?}"),
+                    )?
+                },
+                AdaptedColumn::Default(scalar) => scalar.to_array_of_size(batch.num_rows()).into_arrow_error_ctx(
+                    "Failed to materialize missing column default array",
+                )?,
+                AdaptedColumn::Null(data_type) => {
+                    datafusion::arrow::array::new_null_array(data_type, batch.num_rows())
+                },
+                AdaptedColumn::Filled(data_type) => {
+                    non_null_missing_column(data_type, batch.num_rows())
+                },
+            };
+            projected.push(array);
+        }
+        RecordBatch::try_new(target.clone(), projected)
+            .into_arrow_error_ctx("Failed to create projected RecordBatch")
+    }
+}
+
+fn append_record_batch(
+    combined: Option<RecordBatch>,
+    next: RecordBatch,
+    schema: &SchemaRef,
+) -> Result<RecordBatch, KalamDbError> {
+    match combined {
+        None => Ok(next),
+        Some(existing) => datafusion::arrow::compute::concat_batches(schema, &[existing, next])
+            .into_arrow_error_ctx("Failed to concatenate Parquet batches"),
     }
 }
 
@@ -145,6 +247,35 @@ impl ManifestAccessPlanner {
         selections
     }
 
+    /// One pass over segment descriptors. Missing column stats stay selected.
+    pub fn select_cold_files(
+        &self,
+        manifest: &Manifest,
+        pruning: &ColdScanPruning,
+    ) -> Vec<(String, u32)> {
+        let mut selected = Vec::new();
+        for segment in &manifest.segments {
+            if !segment.is_readable() {
+                continue;
+            }
+            if let Some((min_seq, max_seq)) = pruning.seq_range {
+                if segment.max_seq < min_seq || segment.min_seq > max_seq {
+                    continue;
+                }
+            }
+            let matches_stats = pruning.indexed_equalities.iter().all(|(column_id, value)| {
+                segment
+                    .column_stats
+                    .get(column_id)
+                    .is_none_or(|stats| Self::pk_value_in_range(value, stats))
+            });
+            if matches_stats {
+                selected.push((segment.path.clone(), segment.schema_version));
+            }
+        }
+        selected
+    }
+
     /// Scan Parquet files using async file I/O.
     ///
     /// Uses async file I/O to avoid blocking the tokio runtime.
@@ -180,60 +311,34 @@ impl ManifestAccessPlanner {
         } else {
             schema.clone()
         };
-        let mut parquet_files: Vec<String> = Vec::new();
-        let mut file_schema_versions: std::collections::HashMap<String, u32> =
-            std::collections::HashMap::new();
+        let mut cold_files: Vec<(String, u32)> = Vec::new();
         let (mut total_batches, mut skipped, mut scanned) = (0usize, 0usize, 0usize);
 
         if !use_degraded_mode {
             if let Some(manifest) = manifest_opt {
                 total_batches = manifest.segments.len();
-
-                let selected_files: Vec<String> = {
-                    let mut files = if let Some((min_seq, max_seq)) = pruning.seq_range {
-                        self.plan_by_seq_range(manifest, min_seq, max_seq)
-                            .into_iter()
-                            .map(|s| s.file_path)
-                            .collect()
-                    } else {
-                        self.plan_all_files(manifest)
-                    };
-                    for (column_id, value) in &pruning.indexed_equalities {
-                        let keep = self.plan_by_indexed_column_value(manifest, *column_id, value);
-                        let keep_set: HashSet<&str> = keep.iter().map(String::as_str).collect();
-                        files.retain(|path| keep_set.contains(path.as_str()));
-                    }
-                    files
-                };
-
-                scanned = selected_files.len();
+                cold_files = self.select_cold_files(manifest, &pruning);
+                scanned = cold_files.len();
                 skipped = total_batches.saturating_sub(scanned);
-
-                for file_path in selected_files {
-                    if let Some(segment) = manifest.segments.iter().find(|s| s.path == file_path) {
-                        file_schema_versions.insert(file_path.clone(), segment.schema_version);
-                    }
-                    parquet_files.push(file_path);
-                }
             }
         }
 
         // Fallback: only when no manifest (or degraded mode)
-        if parquet_files.is_empty() && (manifest_opt.is_none() || use_degraded_mode) {
+        if cold_files.is_empty() && (manifest_opt.is_none() || use_degraded_mode) {
             let files = storage_cached
                 .list_parquet_files(table_type, table_id, user_id)
                 .await
                 .into_kalamdb_error("Failed to list files")?;
 
-            parquet_files.extend(files);
+            cold_files.extend(files.into_iter().map(|path| (path, 1)));
 
-            total_batches = parquet_files.len();
+            total_batches = cold_files.len();
             scanned = total_batches;
             skipped = 0;
         }
 
         // Return empty batch if no files found
-        if parquet_files.is_empty() {
+        if cold_files.is_empty() {
             return Ok((
                 RecordBatch::new_empty(effective_schema),
                 ParquetScanStats {
@@ -245,22 +350,18 @@ impl ManifestAccessPlanner {
             ));
         }
 
-        let mut all_batches = Vec::new();
-
-        // Clone column names for use inside async closures
         let col_names: Option<Vec<String>> = columns.map(|c| c.to_vec());
         let seq_range_for_read = pruning.seq_range.map(|(min, max)| (min.as_i64(), max.as_i64()));
         let bloom_for_read = pruning.bloom.clone();
-
-        // Open all file streams concurrently — only metadata footers are read here.
-        // Actual column data is fetched on demand as each stream is polled.
-        let stream_futures: Vec<_> = parquet_files
-            .iter()
-            .map(|parquet_file| {
+        let table_id_owned = table_id.clone();
+        let user_id_owned = user_id.cloned();
+        let mut opens = futures_util::stream::iter(cold_files.into_iter().map(
+            |(parquet_file, schema_version)| {
                 let sc = storage_cached.clone();
-                let file = parquet_file.clone();
                 let cols = col_names.clone();
                 let bloom = bloom_for_read.clone();
+                let table_id = table_id_owned.clone();
+                let user_id = user_id_owned.clone();
                 async move {
                     let mut read_options = ParquetReadOptions::new();
                     if let Some(cols) = cols {
@@ -277,102 +378,77 @@ impl ManifestAccessPlanner {
                         read_options = read_options.with_column_bloom_values(column, [value]);
                     }
 
-                    sc.read_parquet_file_stream_with_options(
-                        table_type,
-                        table_id,
-                        user_id,
-                        &file,
-                        &read_options,
-                    )
-                    .await
-                    .into_kalamdb_error("Failed to open Parquet stream")
+                    let opened = sc
+                        .read_parquet_file_stream_with_options(
+                            table_type,
+                            &table_id,
+                            user_id.as_ref(),
+                            &parquet_file,
+                            &read_options,
+                        )
+                        .await
+                        .into_kalamdb_error("Failed to open Parquet stream");
+                    (parquet_file, schema_version, opened)
                 }
-            })
-            .collect();
-        let stream_results = join_all(stream_futures).await;
-        let mut opened_files = Vec::new();
-        let mut visited_files = Vec::new();
-        let mut streams = Vec::new();
-        for (parquet_file, result) in parquet_files.iter().zip(stream_results) {
-            match result {
-                Ok(stream) => {
-                    if record_visited_files && visited_files.len() < MAX_RECORDED_COLD_FILES {
-                        visited_files.push(parquet_file.clone());
-                    }
-                    opened_files.push(parquet_file.clone());
-                    streams.push(stream);
-                },
-                Err(err) => {
-                    if is_missing_parquet_file_error(&err) {
-                        log::warn!(
-                            "[PARQUET_SCAN_ASYNC] skipping missing parquet file '{}' for table \
-                             {}: {}",
-                            parquet_file,
-                            table_id,
-                            err
-                        );
-                        skipped = skipped.saturating_add(1);
-                        scanned = scanned.saturating_sub(1);
-                        continue;
-                    }
-                    return Err(err);
-                },
-            }
-        }
+            },
+        ))
+        .buffered(MAX_COLD_FILE_OPENS);
 
-        // Look up current schema version once for all files
         let current_version = schema_registry
             .get_table_if_exists(table_id)?
             .map(|table_def| table_def.schema_version)
             .unwrap_or(1);
 
-        // Consume each stream batch-by-batch — peak memory per file is one row group.
-        for (parquet_file, mut stream) in opened_files.iter().zip(streams) {
-            let file_schema_version = file_schema_versions.get(parquet_file).copied().unwrap_or(1);
+        let mut combined = None;
+        let mut visited_files = Vec::new();
+        while let Some((parquet_file, file_schema_version, opened)) = opens.next().await {
+            let mut stream = match opened {
+                Ok(stream) => stream,
+                Err(err) if is_missing_parquet_file_error(&err) => {
+                    log::warn!(
+                        "[PARQUET_SCAN_ASYNC] skipping missing parquet file '{}' for table {}: {}",
+                        parquet_file,
+                        table_id,
+                        err
+                    );
+                    skipped = skipped.saturating_add(1);
+                    scanned = scanned.saturating_sub(1);
+                    continue;
+                },
+                Err(err) => return Err(err),
+            };
+            if record_visited_files && visited_files.len() < MAX_RECORDED_COLD_FILES {
+                visited_files.push(parquet_file);
+            }
 
+            let mut adapt_plan = None;
             while let Some(batch) =
                 stream.try_next().await.into_kalamdb_error("Failed to read Parquet batch")?
             {
-                // When column projection is active or schema version differs,
-                // run schema evolution to normalize all batches to the effective schema.
                 let needs_evolution = file_schema_version != current_version
                     || (columns.is_some() && batch.schema().fields() != effective_schema.fields());
-
                 let projected_batch = if needs_evolution {
-                    self.project_batch_to_current_schema(
-                        batch,
-                        file_schema_version,
-                        &effective_schema,
-                        table_id,
-                        schema_registry,
-                    )?
+                    if adapt_plan.is_none() {
+                        adapt_plan = Some(SchemaAdaptPlan::prepare(
+                            batch.schema().as_ref(),
+                            &effective_schema,
+                            table_id,
+                        )?);
+                    }
+                    adapt_plan
+                        .as_ref()
+                        .expect("schema adapt plan")
+                        .apply(batch, &effective_schema)?
                 } else {
                     batch
                 };
-
-                all_batches.push(projected_batch);
+                combined =
+                    Some(append_record_batch(combined, projected_batch, &effective_schema)?);
             }
         }
 
-        // Return empty batch if all files were empty
-        if all_batches.is_empty() {
-            return Ok((
-                RecordBatch::new_empty(effective_schema),
-                ParquetScanStats {
-                    total_files: total_batches,
-                    skipped_files: skipped,
-                    scanned_files: scanned,
-                    visited_files,
-                },
-            ));
-        }
-
-        // Concatenate all batches
-        let combined = datafusion::arrow::compute::concat_batches(&effective_schema, &all_batches)
-            .into_arrow_error_ctx("Failed to concatenate Parquet batches")?;
-
         Ok((
-            combined,
+            combined.unwrap_or_else(|| RecordBatch::new_empty(effective_schema)),
             ParquetScanStats {
                 total_files: total_batches,
                 skipped_files: skipped,
@@ -380,113 +456,6 @@ impl ManifestAccessPlanner {
                 visited_files,
             },
         ))
-    }
-
-    /// Project a RecordBatch from an old schema version to the current schema
-    ///
-    /// Handles:
-    /// - New columns added after flush (filled with NULLs)
-    /// - Dropped columns (removed from projection)
-    /// - Column reordering
-    ///
-    /// # Arguments
-    /// * `batch` - RecordBatch with old schema
-    /// * `old_schema_version` - Schema version used when data was flushed
-    /// * `current_schema` - Target Arrow schema (current version)
-    /// * `table_id` - Table identifier
-    /// * `schema_registry` - Schema registry for accessing historical schemas
-    fn project_batch_to_current_schema(
-        &self,
-        batch: RecordBatch,
-        _old_schema_version: u32,
-        current_schema: &SchemaRef,
-        _table_id: &TableId,
-        _schema_registry: &dyn SchemaRegistryTrait<Error = KalamDbError>,
-    ) -> Result<RecordBatch, KalamDbError> {
-        if batch.num_rows() == 0 {
-            return Ok(RecordBatch::new_empty(current_schema.clone()));
-        }
-
-        let batch_schema = batch.schema();
-
-        // If schemas are identical, no projection needed
-        if batch_schema.fields() == current_schema.fields() {
-            return Ok(batch);
-        }
-
-        // log::debug!(
-        //     "[Schema Evolution] Projecting batch from schema v{} to current schema for table {}",
-        //     old_schema_version,
-        //     table_id
-        // );
-
-        // Build projection: for each field in current_schema, find it in old_schema or create NULL
-        // array
-        let mut projected_columns: Vec<Arc<dyn datafusion::arrow::array::Array>> = Vec::new();
-
-        for current_field in current_schema.fields() {
-            // Check if field exists in old schema
-            if let Ok(old_col_index) = batch_schema.index_of(current_field.name()) {
-                // Column existed in old schema - extract it
-                let old_column = batch.column(old_col_index).clone();
-
-                // Check if data types match
-                let old_field = batch_schema.field(old_col_index);
-                if old_field.data_type() == current_field.data_type() {
-                    // Types match - use as-is
-                    projected_columns.push(old_column);
-                } else {
-                    // Type changed - attempt cast
-                    let casted = cast(&old_column, current_field.data_type())
-                        .into_arrow_error_ctx(&format!(
-                            "Failed to cast column '{}' from {:?} to {:?}",
-                            current_field.name(),
-                            old_field.data_type(),
-                            current_field.data_type()
-                        ))?;
-                    projected_columns.push(casted);
-                }
-            } else if current_field.name() == SystemColumnNames::VERSION {
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "parquet batch for {} is missing {}",
-                    _table_id,
-                    current_field.name()
-                )));
-            } else if let Some(default_json) =
-                kalamdb_commons::conversions::read_kalam_missing_default(current_field.as_ref())
-            {
-                let scalar = kalamdb_commons::conversions::json_value_to_scalar(&default_json);
-                let coerced = kalamdb_commons::conversions::coerce_scalar_to_field(
-                    scalar,
-                    current_field.as_ref(),
-                )
-                .map_err(KalamDbError::InvalidOperation)?;
-                let default_array = coerced
-                    .to_array_of_size(batch.num_rows())
-                    .into_arrow_error_ctx("Failed to materialize missing column default array")?;
-                projected_columns.push(default_array);
-            } else if current_field.is_nullable() {
-                use datafusion::arrow::array::{new_null_array, ArrayRef};
-                let null_array: ArrayRef =
-                    new_null_array(current_field.data_type(), batch.num_rows());
-                projected_columns.push(null_array);
-            } else {
-                projected_columns
-                    .push(non_null_missing_column(current_field.data_type(), batch.num_rows()));
-
-                // log::trace!(
-                //     "[Schema Evolution] Column '{}' not in old schema v{}, filled with NULLs",
-                //     current_field.name(),
-                //     old_schema_version
-                // );
-            }
-        }
-
-        // Create new RecordBatch with projected columns
-        let projected_batch = RecordBatch::try_new(current_schema.clone(), projected_columns)
-            .into_arrow_error_ctx("Failed to create projected RecordBatch")?;
-
-        Ok(projected_batch)
     }
 
     /// Plan files that may contain an indexed-column equality (PK or scalar index).
@@ -756,6 +725,106 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
+    }
+
+    #[test]
+    fn select_cold_files_prunes_seq_and_stats_in_one_pass() {
+        let table_id = TableId::from_strings("test", "cold");
+        let mut manifest = Manifest::new(table_id, None);
+
+        let mut in_range = HashMap::new();
+        in_range.insert(1, numeric_stats(1, 5));
+        manifest.add_segment(SegmentMetadata::with_schema_version(
+            "keep-stats.parquet".to_string(),
+            "keep-stats.parquet".to_string(),
+            in_range,
+            SeqId::from(1),
+            SeqId::from(10),
+            2,
+            10,
+            1,
+        ));
+        manifest.add_segment(SegmentMetadata::with_schema_version(
+            "keep-missing-stats.parquet".to_string(),
+            "keep-missing-stats.parquet".to_string(),
+            HashMap::new(),
+            SeqId::from(1),
+            SeqId::from(10),
+            2,
+            10,
+            2,
+        ));
+        let mut far_stats = HashMap::new();
+        far_stats.insert(1, numeric_stats(100, 200));
+        manifest.add_segment(SegmentMetadata::with_schema_version(
+            "drop-stats.parquet".to_string(),
+            "drop-stats.parquet".to_string(),
+            far_stats,
+            SeqId::from(1),
+            SeqId::from(10),
+            2,
+            10,
+            1,
+        ));
+        manifest.add_segment(SegmentMetadata::with_schema_version(
+            "drop-seq.parquet".to_string(),
+            "drop-seq.parquet".to_string(),
+            HashMap::new(),
+            SeqId::from(100),
+            SeqId::from(200),
+            2,
+            10,
+            1,
+        ));
+        manifest.add_segment(SegmentMetadata::in_progress(
+            "batch-writing.parquet".to_string(),
+            "batch-writing.parquet".to_string(),
+            SeqId::from(1),
+            SeqId::from(10),
+            1,
+        ));
+
+        let pruning = ColdScanPruning {
+            seq_range: Some((SeqId::from(1), SeqId::from(20))),
+            indexed_equalities: vec![(1, "3".to_string())],
+            bloom: None,
+        };
+        let selected = ManifestAccessPlanner::new().select_cold_files(&manifest, &pruning);
+        let paths: Vec<&str> = selected.iter().map(|(path, _)| path.as_str()).collect();
+        assert_eq!(paths, ["keep-stats.parquet", "keep-missing-stats.parquet"]);
+        assert_eq!(selected[1].1, 2);
+    }
+
+    #[test]
+    fn schema_adapt_plan_casts_reorders_and_fills_a_missing_column() {
+        use datafusion::arrow::array::Int32Array;
+
+        let source = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("_version", DataType::Int64, false),
+        ]));
+        let target = Arc::new(Schema::new(vec![
+            Field::new("_version", DataType::Int64, false),
+            Field::new("id", DataType::Int64, false),
+            Field::new("note", DataType::Utf8, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            source,
+            vec![
+                Arc::new(Int32Array::from(vec![1_i32, 2])),
+                Arc::new(Int64Array::from(vec![10_i64, 20])),
+            ],
+        )
+        .unwrap();
+        let table_id = TableId::from_strings("test", "adapt");
+        let plan = SchemaAdaptPlan::prepare(batch.schema().as_ref(), &target, &table_id).unwrap();
+        let first = plan.apply(batch.clone(), &target).unwrap();
+        let second = plan.apply(batch, &target).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.num_rows(), 2);
+        assert_eq!(first.schema().field(0).name(), "_version");
+        assert_eq!(first.schema().field(1).data_type(), &DataType::Int64);
+        assert_eq!(first.column(2).null_count(), 2);
     }
 
     #[test]

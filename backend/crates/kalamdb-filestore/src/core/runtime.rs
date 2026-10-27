@@ -1,6 +1,48 @@
-use std::{future::Future, sync::OnceLock};
+use std::{
+    future::Future,
+    sync::{Condvar, Mutex, OnceLock},
+};
 
 use crate::error::{FilestoreError, Result};
+
+const BLOCKING_SLOTS: usize = 8;
+
+struct BlockingSlots {
+    available: Mutex<usize>,
+    ready: Condvar,
+}
+
+struct BlockingSlotGuard;
+
+impl Drop for BlockingSlotGuard {
+    fn drop(&mut self) {
+        let slots = blocking_slots();
+        let mut available = slots.available.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        *available = available.saturating_add(1);
+        slots.ready.notify_one();
+    }
+}
+
+fn blocking_slots() -> &'static BlockingSlots {
+    static SLOTS: OnceLock<BlockingSlots> = OnceLock::new();
+    SLOTS.get_or_init(|| BlockingSlots {
+        available: Mutex::new(BLOCKING_SLOTS),
+        ready: Condvar::new(),
+    })
+}
+
+fn acquire_blocking_slot() -> BlockingSlotGuard {
+    let slots = blocking_slots();
+    let mut available = slots.available.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    while *available == 0 {
+        available = slots
+            .ready
+            .wait(available)
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+    }
+    *available -= 1;
+    BlockingSlotGuard
+}
 
 /// Run an async operation in a synchronous context.
 ///
@@ -44,27 +86,25 @@ where
                     // continues to service I/O on other threads
                     tokio::task::block_in_place(|| handle.block_on(make_future()))
                 },
-                tokio::runtime::RuntimeFlavor::CurrentThread => {
-                    // Current-thread runtime (e.g., actix-rt): we cannot call block_on
-                    // because we're already inside a block_on. Spawn a background thread
-                    // that uses the shared multi-thread runtime.
-                    std::thread::scope(|s| {
-                        s.spawn(|| shared_blocking_runtime().block_on(make_future()))
-                            .join()
-                            .map_err(|_| {
-                                FilestoreError::Other("Thread panicked in run_blocking".to_string())
-                            })?
-                    })
-                },
                 _ => {
-                    // Unknown runtime flavor - use thread-based approach for safety
-                    std::thread::scope(|s| {
-                        s.spawn(|| shared_blocking_runtime().block_on(make_future()))
-                            .join()
-                            .map_err(|_| {
-                                FilestoreError::Other("Thread panicked in run_blocking".to_string())
-                            })?
-                    })
+                    // A current-thread runtime cannot block_on its own I/O. The future borrows
+                    // the caller, so it cannot move onto a 'static task. One scoped thread
+                    // drives the shared multi-thread runtime, and the slot cap bounds how many
+                    // of those bridges exist at once.
+                    let _slot = acquire_blocking_slot();
+                    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+                    std::thread::scope(|scope| {
+                        scope.spawn(|| {
+                            let result = shared_blocking_runtime().block_on(make_future());
+                            let _ = sender.send(result);
+                        });
+                        receiver.recv().map_err(|_| {
+                            FilestoreError::Other(
+                                "filestore runtime dropped a blocking task before it returned"
+                                    .to_string(),
+                            )
+                        })
+                    })?
                 },
             }
         },

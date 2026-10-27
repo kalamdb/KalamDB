@@ -16,7 +16,8 @@ pub use batch::{
 };
 pub use decode::{
     decode_row_fields, decode_row_fields_columns, decode_shared_row, decode_shared_row_selected,
-    decode_stream_row, decode_user_row, decode_user_row_selected, RowView,
+    decode_stream_row, decode_user_row, decode_user_row_selected, open_v2_row, project_row_fields,
+    RowView,
 };
 pub use encode::{
     encode_row_envelope, encode_row_fields, encode_row_fields_from_columns, encode_shared_row,
@@ -713,5 +714,49 @@ mod tests {
         };
         let encoded = encode_shared_row_v2(&row, &old).unwrap();
         assert!(decode_shared_row(encoded.as_slice(), &current, row._version).is_err());
+    }
+
+    #[test]
+    fn project_row_fields_reads_one_column_from_v1_and_v2() {
+        let schema = StorageSchema::new(
+            1,
+            vec![
+                StorageField::new("id", StorageDataType::Int64),
+                StorageField::new("note", StorageDataType::Utf8),
+            ],
+        );
+        let row = SharedTableRow {
+            _version: VersionId::try_from_i64(1).unwrap(),
+            _deleted: false,
+            fields: Row {
+                values: [
+                    ("id".to_string(), ScalarValue::Int64(Some(7))),
+                    ("note".to_string(), ScalarValue::Utf8(Some("skip me".to_string()))),
+                ]
+                .into_iter()
+                .collect(),
+            },
+        };
+        let encoded_v1 = encode_shared_row(&row, &schema).unwrap();
+        let mut projected = Vec::new();
+        let deleted =
+            project_row_fields(encoded_v1.as_slice(), &schema, &[0], |_, value| {
+                projected.push(value);
+                Ok(())
+            })
+            .unwrap();
+        assert!(!deleted);
+        assert_eq!(projected, vec![ScalarValue::Int64(Some(7))]);
+
+        let encoded_v2 = encode_shared_row_v2(&row, &schema).unwrap();
+        projected.clear();
+        let deleted =
+            project_row_fields(encoded_v2.as_slice(), &schema, &[0], |_, value| {
+                projected.push(value);
+                Ok(())
+            })
+            .unwrap();
+        assert!(!deleted);
+        assert_eq!(projected, vec![ScalarValue::Int64(Some(7))]);
     }
 }

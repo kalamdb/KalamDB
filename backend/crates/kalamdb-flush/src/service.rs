@@ -33,6 +33,39 @@ use log::{debug, info, warn};
 
 const MAX_MANIFEST_SCAN_LIMIT: usize = 100000;
 
+fn recoverable_parquet_name(name: &str) -> bool {
+    let file = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    if file.starts_with('.') || !file.ends_with(".parquet") {
+        return false;
+    }
+    if file.ends_with(".tmp") || file.contains(".tmp.") || file.contains("inprogress") {
+        return false;
+    }
+    file.contains("batch-") || file.contains("compact-")
+}
+
+fn validate_manifest_structure(manifest: &Manifest) -> Result<(), StorageError> {
+    let mut seen = HashSet::new();
+    for segment in &manifest.segments {
+        if segment.path.is_empty() {
+            return Err(StorageError::Other("manifest segment has an empty path".to_string()));
+        }
+        if !seen.insert(segment.path.clone()) {
+            return Err(StorageError::Other(format!(
+                "manifest contains duplicate segment path {}",
+                segment.path
+            )));
+        }
+        if segment.min_seq > segment.max_seq {
+            return Err(StorageError::Other(format!(
+                "manifest segment {} has min_seq {} above max_seq {}",
+                segment.path, segment.min_seq, segment.max_seq
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Unified ManifestService with memory + RocksDB persistence + cold storage.
 ///
 /// Architecture:
@@ -840,44 +873,45 @@ impl ManifestService {
             .list_parquet_files_sync(table_type, table_id, user_id)
             .map_err(|e| StorageError::IoError(e.to_string()))?;
 
-        // Filter only batch files (exclude compaction temp files etc)
-        batch_files.retain(|f| f.contains("batch-"));
+        batch_files.retain(|file| recoverable_parquet_name(file));
         batch_files.sort();
 
-        // Batch fetch metadata if possible (TODO: Add bulk head to filestore)
-        // For now, sequential head
         for file_name in &batch_files {
-            let id = file_name.clone();
-
-            // Get file size via head operation
             let file_info = storage_cached
                 .head_sync(table_type, table_id, user_id, file_name)
                 .map_err(|e| StorageError::IoError(e.to_string()))?;
-
-            let size_bytes = file_info.size as u64;
-
-            // Create segment metadata (we don't parse full footer for rebuild, just size)
+            let footer = storage_cached
+                .parquet_footer_stats_sync(table_type, table_id, user_id, file_name)
+                .map_err(|error| {
+                    StorageError::IoError(format!("parquet footer for {file_name}: {error}"))
+                })?;
+            let (min_seq, max_seq) = match (footer.min_version, footer.max_version) {
+                (Some(min_version), Some(max_version)) if min_version <= max_version => {
+                    (min_version, max_version)
+                },
+                _ => (i64::MIN, i64::MAX),
+            };
             let segment = SegmentMetadata::new(
-                id,
+                file_name.clone(),
                 file_name.clone(),
                 HashMap::new(),
-                SeqId::from(0i64),
-                SeqId::from(0i64),
-                0,
-                size_bytes,
+                SeqId::from(min_seq),
+                SeqId::from(max_seq),
+                footer.row_count,
+                file_info.size as u64,
             );
             manifest.add_segment(segment);
         }
 
+        self.validate_manifest(&manifest)?;
         self.persist_manifest(table_id, user_id, &manifest)?;
 
         Ok(manifest)
     }
 
-    /// Validate manifest consistency.
-    pub fn validate_manifest(&self, _manifest: &Manifest) -> Result<(), StorageError> {
-        // Basic validation - can be expanded
-        Ok(())
+    /// Validate manifest structure. File existence is checked while rebuilding.
+    pub fn validate_manifest(&self, manifest: &Manifest) -> Result<(), StorageError> {
+        validate_manifest_structure(manifest)
     }
 
     /// Public helper for consumers that need the resolved manifest.json path.
@@ -2107,6 +2141,103 @@ mod tests {
 
         // Total should be 3
         assert_eq!(service.pending_count().unwrap(), 3);
+    }
+
+    #[test]
+    fn recoverable_parquet_names_keep_batch_and_compact_files() {
+        assert!(recoverable_parquet_name("batch-1.parquet"));
+        assert!(recoverable_parquet_name("shared/ns/t/compact-abc.parquet"));
+        assert!(!recoverable_parquet_name("batch-1.parquet.tmp"));
+        assert!(!recoverable_parquet_name("notes.txt"));
+        assert!(!recoverable_parquet_name(".batch-1.parquet"));
+    }
+
+    #[test]
+    fn validate_manifest_rejects_empty_duplicate_and_inverted_segments() {
+        let service = create_test_service();
+        let table_id = build_table_id("ns1", "manifest");
+        let mut manifest = create_test_manifest(&table_id, None);
+        manifest.add_segment(test_segment("batch-1.parquet", 1, 10, 2));
+        service.validate_manifest(&manifest).unwrap();
+
+        manifest.add_segment(test_segment("", 1, 2, 1));
+        let error = service.validate_manifest(&manifest).unwrap_err();
+        assert!(error.to_string().contains("empty path"), "{error}");
+
+        let mut duplicate = create_test_manifest(&table_id, None);
+        duplicate.add_segment(test_segment("batch-1.parquet", 1, 2, 1));
+        duplicate.segments.push(test_segment("batch-1.parquet", 3, 4, 1));
+        let error = service.validate_manifest(&duplicate).unwrap_err();
+        assert!(error.to_string().contains("duplicate"), "{error}");
+
+        let mut inverted = create_test_manifest(&table_id, None);
+        inverted.add_segment(test_segment("batch-2.parquet", 9, 2, 1));
+        let error = service.validate_manifest(&inverted).unwrap_err();
+        assert!(error.to_string().contains("min_seq"), "{error}");
+    }
+
+    #[test]
+    fn rebuild_manifest_keeps_compact_files_and_reads_version_bounds() {
+        use datafusion::arrow::{
+            array::Int64Array,
+            datatypes::{DataType, Field},
+            record_batch::RecordBatch,
+        };
+
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+        let temp_dir = TempDir::new().unwrap();
+        let table_id = build_table_id("ns1", "cold_rebuild");
+        let (service, registry) = create_test_service_with_storage(
+            backend,
+            &table_id,
+            TableType::Shared,
+            &temp_dir,
+        );
+        let storage = registry.get_cached(&StorageId::local()).unwrap().unwrap();
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("_version", DataType::Int64, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Int64Array::from(vec![1_i64, 2])),
+                Arc::new(Int64Array::from(vec![10_i64, 40])),
+            ],
+        )
+        .unwrap();
+        storage
+            .write_parquet_sync(
+                TableType::Shared,
+                &table_id,
+                None,
+                "compact-recovered.parquet",
+                schema.clone(),
+                vec![batch],
+                None,
+            )
+            .unwrap();
+        let temp_path = storage
+            .get_file_path(TableType::Shared, &table_id, None, "batch-9.parquet.tmp")
+            .full_path;
+        if let Some(parent) = std::path::Path::new(&temp_path).parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&temp_path, b"temp").unwrap();
+
+        let manifest = service.rebuild_manifest(&table_id, None).unwrap();
+        assert_eq!(manifest.segments.len(), 1);
+        assert_eq!(manifest.segments[0].path, "compact-recovered.parquet");
+        assert_eq!(manifest.segments[0].row_count, 2);
+        assert_eq!(manifest.segments[0].min_seq.as_i64(), 10);
+        assert_eq!(manifest.segments[0].max_seq.as_i64(), 40);
+
+        let corrupt_path = storage
+            .get_file_path(TableType::Shared, &table_id, None, "compact-corrupt.parquet")
+            .full_path;
+        std::fs::write(&corrupt_path, b"not parquet").unwrap();
+        let error = service.rebuild_manifest(&table_id, None).unwrap_err();
+        assert!(error.to_string().contains("footer") || error.to_string().contains("parquet"), "{error}");
     }
 
     // #[test]

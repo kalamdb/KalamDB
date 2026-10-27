@@ -36,7 +36,66 @@ fn query_metric_kind(kind: &SqlStatementKind) -> kalamdb_observability::QueryMet
     }
 }
 
+fn scalar_cache_tag(value: &ScalarValue) -> &'static str {
+    match value {
+        ScalarValue::Int64(_) => "i64",
+        ScalarValue::Float64(_) => "f64",
+        ScalarValue::Utf8(_) | ScalarValue::LargeUtf8(_) => "utf8",
+        ScalarValue::Boolean(_) => "bool",
+        _ => "other",
+    }
+}
+
 impl SqlExecutor {
+    /// Plan identity for one statement: namespace, role, SQL, search_path, epochs.
+    pub(super) fn logical_plan_cache_key(
+        &self,
+        exec_ctx: &ExecutionContext,
+        sql: &str,
+    ) -> PlanCacheKey {
+        let search_path = exec_ctx.session_config().0.get("search_path").unwrap_or_default();
+        self.sql_cache_registry
+            .plan_cache()
+            .current_key(exec_ctx.default_namespace(), exec_ctx.user_role(), sql)
+            .search_path(search_path)
+    }
+
+    /// Placeholder form of a statement whose only differences are scalar literals.
+    ///
+    /// `None` leaves the original statement on the exact-SQL plan path. User-defined
+    /// routines stay there so their rewrite still sees the original literals.
+    pub(super) fn literal_plan_shape(
+        &self,
+        mut statement: Statement,
+    ) -> Option<(String, Vec<ScalarValue>, Statement)> {
+        if self.app_context.system_tables().catalog_stores().has_user_routines() {
+            return None;
+        }
+        let values = kalamdb_sql::parameterize_literals(&mut statement)?;
+        let mut cache_sql = statement.to_string();
+        cache_sql.push('\u{1}');
+        for (index, value) in values.iter().enumerate() {
+            if index > 0 {
+                cache_sql.push(',');
+            }
+            cache_sql.push_str(scalar_cache_tag(value));
+        }
+        Some((cache_sql, values, statement))
+    }
+
+    fn select_literal_shape(
+        &self,
+        sql: &str,
+        metadata: Option<&PreparedExecutionStatement>,
+        params: &[ScalarValue],
+    ) -> Option<(String, Vec<ScalarValue>, Statement)> {
+        if !params.is_empty() {
+            return None;
+        }
+        let statement = Self::statement_for_datafusion(sql, metadata).ok()?;
+        self.literal_plan_shape(statement)
+    }
+
     pub(super) fn map_classification_error(
         err: kalamdb_sql::classifier::StatementClassificationError,
     ) -> KalamDbError {
@@ -241,7 +300,7 @@ impl SqlExecutor {
                     | SqlStatementKind::DropType(_)
                     | SqlStatementKind::CreateDomain(_)
                     | SqlStatementKind::AlterDomain(_)
-                    | SqlStatementKind::DropDomain(_) => {
+                    |                     SqlStatementKind::DropDomain(_) => {
                         let result = self
                             .handler_registry
                             .handle(classified.clone(), params, exec_ctx)
@@ -251,6 +310,21 @@ impl SqlExecutor {
                         if result.is_ok() {
                             self.sql_cache_registry.clear();
                             log::debug!("SQL caches cleared after DDL operation");
+                        }
+                        result
+                    },
+
+                    SqlStatementKind::GrantExecute(_)
+                    | SqlStatementKind::RevokeExecute(_)
+                    | SqlStatementKind::CreateUser(_)
+                    | SqlStatementKind::AlterUser(_)
+                    | SqlStatementKind::DropUser(_) => {
+                        let result = self
+                            .handler_registry
+                            .handle(classified.clone(), params, exec_ctx)
+                            .await;
+                        if result.is_ok() {
+                            self.sql_cache_registry.plan_cache().bump_permission_epoch();
                         }
                         result
                     },
@@ -421,20 +495,22 @@ impl SqlExecutor {
             validate_params(&params)?;
         }
 
-        // Try cached template plan first (works for both plain and parameterized SQL).
-        // Key excludes user_id because LogicalPlan is user-agnostic - filtering happens at scan
-        // time. Key uses `sql` directly so warm plan-cache hits skip SQL rewriting and parsing.
-        let cache_key = self.sql_cache_registry.plan_cache().current_key(
-            default_namespace.clone(),
-            exec_ctx.user_role(),
-            sql,
-        );
+        // Exact SQL hits skip parsing. A miss with only literal differences reuses the
+        // placeholder shape. The key includes search_path and the current epochs.
+        // It excludes user_id because filtering happens at scan time.
+        let cache_key = self.logical_plan_cache_key(exec_ctx, sql);
 
         let df = if let Some(template_plan) = self.sql_cache_registry.plan_cache().get(&cache_key) {
             if let Some(result) = kalamdb_observability::kdb_await_in_info_span!(
                 self.try_execute_cached_point_get(template_plan.as_ref(), &params, exec_ctx),
                 "sql.point_get"
             )? {
+                return Ok(result);
+            }
+            if let Some(result) = self
+                .try_execute_cached_covering_aggregate(template_plan.as_ref(), &params, exec_ctx)
+                .await?
+            {
                 return Ok(result);
             }
 
@@ -459,6 +535,75 @@ impl SqlExecutor {
                     )
                     .await?
                 },
+            }
+        } else if let Some((template_sql, bound, mut statement)) =
+            self.select_literal_shape(sql, metadata, &params)
+        {
+            let shape_key = self.logical_plan_cache_key(exec_ctx, &template_sql);
+            if let Some(template_plan) = self.sql_cache_registry.plan_cache().get(&shape_key) {
+                if let Some(result) = kalamdb_observability::kdb_await_in_info_span!(
+                    self.try_execute_cached_point_get(template_plan.as_ref(), &bound, exec_ctx),
+                    "sql.point_get"
+                )? {
+                    return Ok(result);
+                }
+                if let Some(result) = self
+                    .try_execute_cached_covering_aggregate(
+                        template_plan.as_ref(),
+                        &bound,
+                        exec_ctx,
+                    )
+                    .await?
+                {
+                    return Ok(result);
+                }
+                let executable_plan =
+                    replace_placeholders_in_plan((*template_plan).clone(), &bound)?;
+                let session = self.create_session_with_transaction_context(exec_ctx)?;
+                match session.execute_logical_plan(executable_plan).await {
+                    Ok(df) => df,
+                    Err(error) => {
+                        log::warn!("Failed to execute cached literal plan, replanning: {}", error);
+                        self.plan_bind_and_execute_select_erased(
+                            session,
+                            statement,
+                            sql,
+                            &bound,
+                            exec_ctx,
+                            &default_namespace,
+                            shape_key,
+                            false,
+                            SelectExecFailure::AfterReplan,
+                        )
+                        .await?
+                    },
+                }
+            } else {
+                let session = self.create_session_with_transaction_context(exec_ctx)?;
+                let mut had_catalog_func = false;
+                if let Some(direct_result) = self
+                    .try_execute_standalone_catalog_function_select(
+                        &mut statement,
+                        exec_ctx,
+                        &bound,
+                        &mut had_catalog_func,
+                    )
+                    .await?
+                {
+                    return Ok(direct_result);
+                }
+                self.plan_bind_and_execute_select_erased(
+                    session,
+                    statement,
+                    sql,
+                    &bound,
+                    exec_ctx,
+                    &default_namespace,
+                    shape_key,
+                    had_catalog_func,
+                    SelectExecFailure::Initial,
+                )
+                .await?
             }
         } else {
             let session = self.create_session_with_transaction_context(exec_ctx)?;

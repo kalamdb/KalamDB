@@ -17,8 +17,8 @@ pub use insert_shape::{
 };
 pub use insert_values::values_to_rows;
 pub use literals::{
-    expr_to_scalar, expr_to_scalar_with_params, is_default_expr, sql_value_to_scalar,
-    strip_nested_expr,
+    expr_to_scalar, expr_to_scalar_with_params, is_default_expr, parameterize_literals,
+    sql_value_to_scalar, strip_nested_expr,
 };
 pub use on_conflict::{
     build_on_conflict_update_assignments, build_on_conflict_update_assignments_with_params,

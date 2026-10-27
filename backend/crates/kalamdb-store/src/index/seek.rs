@@ -79,6 +79,32 @@ impl IndexScanPlan {
         self.has_range
     }
 
+    /// Column whose integer is stored in this plan's equality or range key.
+    ///
+    /// A range sits on the first column after the equality prefix. An equality-only
+    /// plan covers its last equality column.
+    pub fn value_column_index(&self) -> Option<usize> {
+        let index = if self.has_range {
+            usize::from(self.equality_columns)
+        } else if self.equality_columns > 0 {
+            usize::from(self.equality_columns - 1)
+        } else {
+            return None;
+        };
+        if index >= usize::from(self.column_count) {
+            return None;
+        }
+        Some(index)
+    }
+
+    /// Decoded integer for [`Self::value_column_index`] inside one index key.
+    pub fn range_column_integer(&self, index_key: &[u8]) -> Option<i128> {
+        let index = self.value_column_index()?;
+        let columns =
+            decode_prefix_index_columns(index_key, self.user_scoped, self.column_count as usize)?;
+        stored_i128(columns.get(index)?)
+    }
+
     pub fn covers_all_equality_columns(&self) -> bool {
         !self.has_range && self.equality_columns > 0 && self.equality_columns == self.column_count
     }
@@ -743,5 +769,15 @@ mod tests {
         assert_eq!(plan.equality_columns(), 1);
         assert!(plan.has_range());
         assert!(index.plan_scan(None, std::slice::from_ref(&expr)).is_none());
+    }
+
+    #[test]
+    fn range_on_first_column_is_the_covered_value() {
+        let index = PrefixIndex::<SeqId, TestRow>::new("idx_b", vec!["b".to_string()], false);
+        let expr = col("b").gt_eq(lit(0_i32)).and(col("b").lt(lit(100_i32)));
+        let plan = plan_for(&index, &expr);
+        assert_eq!(plan.value_column_index(), Some(0));
+        assert!(plan.has_range());
+        assert_eq!(plan.equality_columns(), 0);
     }
 }

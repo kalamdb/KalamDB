@@ -631,7 +631,7 @@ async fn write_compacted_winners(
     let writer_compression = schema_context.compression;
     let writer_options = storage_cached.parquet_writer_options(writer_compression);
     let writer_handle = tokio::task::spawn_blocking(move || {
-        kalamdb_filestore::parquet::writer::serialize_record_batch_receiver_to_parquet_with_options(
+        kalamdb_filestore::parquet::writer::serialize_record_batch_receiver_to_temp_parquet(
             writer_schema,
             receiver,
             writer_bloom_columns,
@@ -710,7 +710,7 @@ async fn write_compacted_winners(
 
     drop(sender);
 
-    let parquet_bytes = writer_handle
+    let temp_file = writer_handle
         .await
         .map_err(|error| FlushError::Other(format!("Compacted writer join failed: {error}")))?
         .into_flush_error("Failed to serialize compacted Parquet batches")?;
@@ -719,8 +719,19 @@ async fn write_compacted_winners(
         return Ok(None);
     }
 
-    let put_result = storage_cached
-        .put(table_type, table_id, user_id, &compact_temp_filename, parquet_bytes)
+    let size_bytes = temp_file
+        .as_file()
+        .metadata()
+        .map_err(|error| FlushError::Other(format!("compacted parquet metadata: {error}")))?
+        .len();
+    storage_cached
+        .upload_file(
+            table_type,
+            table_id,
+            user_id,
+            &compact_temp_filename,
+            temp_file.as_file(),
+        )
         .await
         .into_flush_error("Failed to write compacted Parquet temp file")?;
 
@@ -728,7 +739,7 @@ async fn write_compacted_winners(
     Ok(Some(CompactedWriteResult {
         filename: compact_filename,
         row_count: accumulator.row_count,
-        size_bytes: put_result.size as u64,
+        size_bytes,
         min_version,
         max_version,
         column_stats: accumulator.column_stats,

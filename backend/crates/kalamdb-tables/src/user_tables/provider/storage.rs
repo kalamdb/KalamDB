@@ -802,6 +802,7 @@ impl UserTableProvider {
                     e
                 ))
             })?;
+        base::reject_truncated_unbounded_scan(limit, hot_rows.len())?;
 
         let hot_rows_scanned = hot_rows.len();
         let mut hot_rows_by_user: HashMap<UserId, Vec<(UserTableRowId, UserTableRow)>> =

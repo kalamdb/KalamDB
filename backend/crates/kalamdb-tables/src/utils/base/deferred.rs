@@ -101,6 +101,20 @@ where
         true
     }
 
+    /// Hot-only projected scan. `Ok(None)` keeps the row-map scan.
+    ///
+    /// The pair is the Arrow batch and the number of hot keys visited.
+    async fn try_columnar_hot_scan(
+        &self,
+        _scan_context: &Self::ScanContext,
+        _projection: Option<&Vec<usize>>,
+        _filter: Option<&Expr>,
+        _limit: Option<usize>,
+        _keep_deleted: bool,
+    ) -> Result<Option<(RecordBatch, usize)>, KalamDbError> {
+        Ok(None)
+    }
+
     /// Payload columns required to authorize a row, in addition to the projection.
     ///
     /// An empty list while [`Self::requires_row_authorization`] is true keeps a
@@ -299,6 +313,23 @@ where
 
         let keep_deleted =
             since_seq.is_some() || filter.map(filter_uses_deleted_column).unwrap_or(false);
+        if since_seq.is_none() && !self.requires_row_authorization(scan_context) {
+            if let Some((batch, hot_rows_scanned)) = self
+                .try_columnar_hot_scan(scan_context, projection, filter, limit, keep_deleted)
+                .await?
+            {
+                return Ok(DeferredBatchOutput::new(batch).with_diagnostics(
+                    DeferredScanDiagnostics {
+                        hot_rows_scanned: Some(hot_rows_scanned),
+                        cold_rows_scanned: Some(0),
+                        cold_files_total: Some(0),
+                        cold_files_skipped: Some(0),
+                        cold_files_scanned: Some(0),
+                        cold_files: Vec::new(),
+                    },
+                ));
+            }
+        }
         let cold_columns = compute_cold_columns(projection, &schema, pk_name);
         let storage_ordinals = storage_ordinals_for_scan(self, scan_context, projection, filter);
         let scan_result = if include_diagnostics {

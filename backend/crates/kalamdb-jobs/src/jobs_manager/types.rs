@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Weak,
@@ -50,6 +50,8 @@ pub struct JobsManager {
     /// Job IDs currently executing on this process. Used to fail zombies whose
     /// executor task dropped while `system.jobs.status` stayed Running.
     pub(crate) executing_jobs: parking_lot::Mutex<HashSet<JobId>>,
+    /// Waiters blocked on a job reaching a terminal status.
+    job_finished: parking_lot::Mutex<HashMap<JobId, Arc<Notify>>>,
 }
 
 impl JobsManager {
@@ -78,6 +80,22 @@ impl JobsManager {
             awake_sender,
             awake_receiver: parking_lot::Mutex::new(Some(awake_receiver)),
             executing_jobs: parking_lot::Mutex::new(HashSet::new()),
+            job_finished: parking_lot::Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Subscribe before reading job status so a completion cannot be missed.
+    pub fn job_finished_subscription(&self, job_id: &JobId) -> Arc<Notify> {
+        self.job_finished
+            .lock()
+            .entry(job_id.clone())
+            .or_insert_with(|| Arc::new(Notify::new()))
+            .clone()
+    }
+
+    pub(crate) fn notify_job_finished(&self, job_id: &JobId) {
+        if let Some(notify) = self.job_finished.lock().remove(job_id) {
+            notify.notify_waiters();
         }
     }
 

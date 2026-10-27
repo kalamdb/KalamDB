@@ -39,7 +39,7 @@ pub struct DropTableHandler {
     app_context: Arc<AppContext>,
 }
 
-const CLEANUP_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const CLEANUP_WAIT_FALLBACK: Duration = Duration::from_millis(20);
 const CLEANUP_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub(crate) fn storage_id_for_cleanup(table: &TableDefinition) -> StorageId {
@@ -122,6 +122,7 @@ pub(crate) async fn wait_for_cleanup_job(
             )));
         }
 
+        let notify = job_manager.job_finished_subscription(&job_id);
         let Some(job) = job_manager.get_job(&job_id).await? else {
             return Err(KalamDbError::ExecutionError(format!(
                 "Cleanup job {} for {} was not found",
@@ -138,7 +139,12 @@ pub(crate) async fn wait_for_cleanup_job(
                 )));
             },
             JobStatus::New | JobStatus::Queued | JobStatus::Running | JobStatus::Retrying => {
-                sleep(CLEANUP_WAIT_POLL_INTERVAL).await;
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                let slice = CLEANUP_WAIT_FALLBACK.min(remaining);
+                tokio::select! {
+                    _ = notify.notified() => {},
+                    _ = sleep(slice) => {},
+                }
             },
         }
     }

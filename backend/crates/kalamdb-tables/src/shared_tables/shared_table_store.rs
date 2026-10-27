@@ -594,4 +594,82 @@ mod tests {
         assert!(store.get(&next_first_key).unwrap().is_some());
         assert!(store.get(&next_second_key).unwrap().is_some());
     }
+
+    #[test]
+    fn sum_visible_index_integers_skips_tombstones() {
+        use kalamdb_commons::models::{
+            datatypes::KalamDataType,
+            schemas::{ColumnDefinition, ScalarIndexDefinition},
+            ColumnId,
+        };
+
+        let backend = Arc::new(RecordingBackend::new());
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("t2"));
+        let schema = crate::row_codec::storage_schema_from_named_fields([
+            ("a", kalamdb_serialization::StorageDataType::Int64),
+            ("b", kalamdb_serialization::StorageDataType::Int32),
+        ]);
+        let columns = [
+            ColumnDefinition::primary_key(1, "a", 1, KalamDataType::BigInt),
+            ColumnDefinition::simple(2, "b", 2, KalamDataType::Int),
+        ];
+        let indexes = [ScalarIndexDefinition::new("i2b", vec![ColumnId::new(2)], false)];
+        let store = new_indexed_shared_table_store(
+            backend,
+            &table_id,
+            "a",
+            schema,
+            &indexes,
+            &columns,
+        );
+
+        let insert = |seq: i64, b: i32, deleted: bool| {
+            let version = VersionId::try_from_i64(seq).unwrap();
+            let mut values = BTreeMap::new();
+            values.insert("a".to_string(), ScalarValue::Int64(Some(seq)));
+            values.insert("b".to_string(), ScalarValue::Int32(Some(b)));
+            let row = SharedTableRow {
+                _version: version,
+                _deleted: deleted,
+                fields: Row::new(values),
+            };
+            (version, row)
+        };
+
+        let (low_key, low_row) = insert(1, 10, false);
+        let (mid_key, mid_row) = insert(2, 15, false);
+        let (high_key, high_row) = insert(3, 20, false);
+        let (outside_key, outside_row) = insert(4, 500, false);
+        store.insert(&low_key, &low_row).unwrap();
+        store.insert(&mid_key, &mid_row).unwrap();
+        store.insert(&high_key, &high_row).unwrap();
+        store.insert(&outside_key, &outside_row).unwrap();
+
+        let (tombstone_key, tombstone) = insert(5, 15, true);
+        store
+            .replace(Some((&mid_key, &mid_row)), &tombstone_key, &tombstone)
+            .unwrap();
+        assert!(store.get(&tombstone_key).unwrap().unwrap()._deleted);
+
+        let wide = datafusion::logical_expr::col("b")
+            .gt_eq(datafusion::logical_expr::lit(0_i32))
+            .and(datafusion::logical_expr::col("b").lt(datafusion::logical_expr::lit(100_i32)));
+        let plan = store.plan_index_scan(None, &wide).expect("b range uses i2b");
+        assert_eq!(plan.index_idx, 1);
+        let indexed = store.scan_by_index(plan.index_idx, Some(plan.prefix.as_slice()), None).unwrap();
+        assert_eq!(indexed.len(), 4, "tombstone stays in the secondary index");
+
+        let stats = store.sum_visible_index_integers(&plan).unwrap().expect("integer sum");
+        assert_eq!(stats.count, 2);
+        assert_eq!(stats.sum, 30);
+
+        let narrow = datafusion::logical_expr::col("b")
+            .gt_eq(datafusion::logical_expr::lit(10_i32))
+            .and(datafusion::logical_expr::col("b").lt(datafusion::logical_expr::lit(20_i32)));
+        let narrow_plan = store.plan_index_scan(None, &narrow).unwrap();
+        let narrow_stats =
+            store.sum_visible_index_integers(&narrow_plan).unwrap().expect("narrow sum");
+        assert_eq!(narrow_stats.count, 1);
+        assert_eq!(narrow_stats.sum, 10);
+    }
 }

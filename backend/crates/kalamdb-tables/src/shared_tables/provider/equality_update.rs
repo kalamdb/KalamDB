@@ -199,7 +199,7 @@ impl SharedTableProvider {
         Ok(Some(mutations))
     }
 
-    async fn hot_storage_holds_every_row(&self) -> Result<bool, KalamDbError> {
+    pub(crate) async fn hot_storage_holds_every_row(&self) -> Result<bool, KalamDbError> {
         match self.core.manifest_service().get_or_load_async(self.core.table_id(), None).await {
             Ok(None) => Ok(true),
             Ok(Some(entry)) => Ok(entry.manifest.segments.is_empty()),

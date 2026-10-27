@@ -16,13 +16,16 @@ impl SharedTableProvider {
         // Hot storage: typed scan so KOBJ values reconstruct seq/deleted/PK from the
         // store codec instead of the retired FlatBuffers metadata decoder.
         let hot_future = async move {
-            let hot_rows =
-                store.scan_all_async(Some(1_000_000), None, None).await.map_err(|e| {
+            let hot_rows = store
+                .scan_all_async(Some(crate::utils::base::UNBOUNDED_COUNT_SCAN_LIMIT), None, None)
+                .await
+                .map_err(|e| {
                     KalamDbError::InvalidOperation(format!(
                         "Failed to scan shared table hot storage for count: {}",
                         e
                     ))
                 })?;
+            crate::utils::base::reject_truncated_count_scan(hot_rows.len())?;
 
             let hot_metadata = hot_rows
                 .into_iter()

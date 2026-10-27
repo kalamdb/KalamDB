@@ -42,6 +42,24 @@ impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableP
         !scan_context.policies.bypasses_rls()
     }
 
+    async fn try_columnar_hot_scan(
+        &self,
+        scan_context: &Self::ScanContext,
+        projection: Option<&Vec<usize>>,
+        filter: Option<&Expr>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+    ) -> Result<Option<(RecordBatch, usize)>, KalamDbError> {
+        self.columnar_hot_scan(
+            scan_context.snapshot_commit_seq,
+            projection,
+            filter,
+            limit,
+            keep_deleted,
+        )
+        .await
+    }
+
     fn authorization_plan_details(
         &self,
         scan_context: &Self::ScanContext,
@@ -657,7 +675,7 @@ impl SharedTableProvider {
         let hot_future = async {
             if since_seq.is_none() {
                 if let Some(plan) = base::hot_index_seek(self.store.as_ref(), filter, None) {
-                    return base::scan_hot_index_resolved(
+                    let rows = base::scan_hot_index_resolved(
                         &self.store,
                         plan,
                         scan_limit,
@@ -665,7 +683,9 @@ impl SharedTableProvider {
                         None,
                         storage_ordinals.clone(),
                     )
-                    .await;
+                    .await?;
+                    base::reject_truncated_unbounded_scan(limit, rows.len())?;
+                    return Ok(rows);
                 }
             }
             let scanned = if let Some(ordinals) = storage_ordinals.clone() {
@@ -688,6 +708,10 @@ impl SharedTableProvider {
                         "Failed to scan shared table hot storage: {}",
                         e
                     ))
+                })
+                .and_then(|rows| {
+                    base::reject_truncated_unbounded_scan(limit, rows.len())?;
+                    Ok(rows)
                 })
         };
         let cold_future = async {

@@ -408,7 +408,7 @@ pub mod helpers {
         row: R,
         pk_field: &str,
         stats: &mut FlushDedupStats,
-    ) {
+    ) -> Option<Vec<u8>> {
         let version = row.version_i64();
         let version_id = VersionId::try_from_i64(version).expect("flushed row version is non-zero");
         let pk_key = pk_bucket_key_from_row(row.fields(), pk_field, version_id);
@@ -420,11 +420,15 @@ pub mod helpers {
         match latest_versions.entry(pk_key) {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
                 if version > entry.get().2 {
-                    entry.insert((key_bytes, row, version));
+                    let (displaced, _, _) = entry.insert((key_bytes, row, version));
+                    Some(displaced)
+                } else {
+                    Some(key_bytes)
                 }
             },
             std::collections::hash_map::Entry::Vacant(entry) => {
                 entry.insert((key_bytes, row, version));
+                None
             },
         }
     }

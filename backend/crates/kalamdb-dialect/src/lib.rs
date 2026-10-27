@@ -45,6 +45,7 @@ pub use parser::{
     build_on_conflict_update_assignments_with_params, conflict_target_is_primary_key,
     expand_stars_without_row_id, expand_stars_without_storage_columns, expr_to_scalar,
     expr_to_scalar_with_params, extract_dml_table_id, extract_dml_table_id_fast,
+    parameterize_literals,
     extract_dml_table_id_from_statement, insert_column_names_from_statement, insert_columns_match,
     insert_from_statement, insert_has_on_conflict, insert_returning_items, is_default_expr,
     needs_ast_operator_rewrite, object_name_to_string, on_conflict_update_should_apply,

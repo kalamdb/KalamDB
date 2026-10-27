@@ -14,7 +14,9 @@ use datafusion::{
     common::DFSchema,
     datasource::{source::DataSourceExec, TableProvider},
     error::{DataFusionError, Result as DataFusionResult},
-    logical_expr::{utils::expr_to_columns, Expr, ExprSchemable, Operator},
+    logical_expr::{
+        utils::expr_to_columns, Expr, ExprSchemable, Operator, TableProviderFilterPushDown,
+    },
     physical_plan::{collect, filter::FilterExec, projection::ProjectionExec, ExecutionPlan},
     scalar::ScalarValue,
 };
@@ -250,6 +252,18 @@ fn try_read_memory_source_batches(
     Ok(Some(batches))
 }
 
+fn residual_filter_required(provider: &dyn TableProvider, filters: &[Expr]) -> bool {
+    if filters.is_empty() {
+        return false;
+    }
+    let references: Vec<&Expr> = filters.iter().collect();
+    !provider.supports_filters_pushdown(&references).is_ok_and(|capabilities| {
+        capabilities
+            .iter()
+            .all(|capability| matches!(capability, TableProviderFilterPushDown::Exact))
+    })
+}
+
 pub async fn collect_matching_rows_with_projection(
     provider: &dyn TableProvider,
     state: &dyn Session,
@@ -257,13 +271,11 @@ pub async fn collect_matching_rows_with_projection(
     projection: Option<&Vec<usize>>,
 ) -> DataFusionResult<Vec<Row>> {
     // Pass filters to scan() which may apply partial or full filtering.
-    // However, when called directly (not through the SQL planner), DataFusion does NOT
-    // automatically add a FilterExec for Inexact pushdown — the planner does that.
-    // We explicitly wrap with FilterExec to guarantee correct row-level filtering
-    // regardless of whether the underlying scan implementation applied the filter.
+    // MVCC providers report Exact and apply the predicate on resolved rows.
+    // A second FilterExec is only required when pushdown is not Exact.
     let scan_plan = provider.scan(state, projection, filters, None).await?;
 
-    let plan: Arc<dyn ExecutionPlan> = if !filters.is_empty() {
+    let plan: Arc<dyn ExecutionPlan> = if residual_filter_required(provider, filters) {
         let schema = scan_plan.schema();
         let df_schema = DFSchema::try_from(Arc::clone(&schema))?;
         let predicate = filters[1..].iter().cloned().fold(filters[0].clone(), |acc, f| acc.and(f));
