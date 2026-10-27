@@ -2,11 +2,11 @@
 
 Product notes for [GitHub Releases](https://github.com/kalamdb/KalamDB/releases). One file per version. Newest first.
 
-When cutting a release, copy the version file into the GitHub release body (from the first heading through the Full Changelog link). Mark prereleases as prereleases on GitHub.
+When cutting a release, paste the version file into the Release workflow's `release_description` input. That box is one line, so replace each line break with the two characters `\n` before pasting. The workflow turns those into real lines, then GitHub renders the markdown. Leave the input empty to use auto-generated notes. Mark prereleases as prereleases on GitHub.
 
 ## Versions
 
-- [0.8.0](0.8.0.md) — PostgreSQL session settings and one SQL path for HTTP and pgwire
+- [0.8.0](0.8.0.md) — one PostgreSQL grammar for HTTP SQL and pgwire
 - [0.7.1](0.7.1.md) — Raft-derived row versions and one persisted owner per shared table
 - [0.7.0-beta.0](0.7.0-beta.0.md) — typed nested data, scalar indexes, server functions, everyday CLI
 

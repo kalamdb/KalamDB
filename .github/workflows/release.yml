@@ -40,7 +40,7 @@ on:
         default: true
 
       release_description:
-        description: "GitHub release notes (markdown). If set, used as the release body instead of auto-generated notes."
+        description: "GitHub release notes. This box is one line, so paste markdown with \\n between lines. Empty uses auto-generated notes."
         type: string
         required: false
         default: ""
@@ -1939,20 +1939,34 @@ jobs:
 
       - name: Prepare release notes
         id: release_notes
-        env:
-          RELEASE_DESCRIPTION: ${{ github.event.inputs.release_description }}
         shell: bash
         run: |
           set -euo pipefail
           NOTES_PATH="$RUNNER_TEMP/release-notes.md"
-          if [[ -n "${RELEASE_DESCRIPTION//[$' \t\r\n']}" ]]; then
-            printf '%s\n' "$RELEASE_DESCRIPTION" > "$NOTES_PATH"
-            echo "body_path=$NOTES_PATH" >> "$GITHUB_OUTPUT"
-            echo "generate=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "body_path=" >> "$GITHUB_OUTPUT"
-            echo "generate=true" >> "$GITHUB_OUTPUT"
-          fi
+          # Read the dispatch payload instead of interpolating the input into
+          # this script. The Run workflow box is a single-line field, so a
+          # pasted note uses the two characters \n for each line break.
+          python3 - "$GITHUB_EVENT_PATH" "$NOTES_PATH" "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          event_path, notes_path, output_path = sys.argv[1:]
+          event = json.loads(Path(event_path).read_text(encoding="utf-8"))
+          raw = str((event.get("inputs") or {}).get("release_description") or "")
+          if "\n" not in raw and "\\n" in raw:
+              raw = raw.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
+          text = raw.strip()
+          with Path(output_path).open("a", encoding="utf-8") as output:
+              if not text:
+                  output.write("body_path=\n")
+                  output.write("generate=true\n")
+              else:
+                  body = text if text.endswith("\n") else text + "\n"
+                  Path(notes_path).write_text(body, encoding="utf-8")
+                  output.write(f"body_path={notes_path}\n")
+                  output.write("generate=false\n")
+          PY
 
       - name: Create GitHub Release
         id: create_github_release
