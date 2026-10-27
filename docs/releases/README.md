@@ -6,7 +6,7 @@ When cutting a release, paste the version file into the Release workflow's `rele
 
 ## Versions
 
-- [0.8.0](0.8.0.md) — one PostgreSQL grammar for HTTP SQL and pgwire
+- [0.8.0](0.8.0.md) — PostgreSQL grammar and wire clients, one binary frame, index seeks
 - [0.7.1](0.7.1.md) — Raft-derived row versions and one persisted owner per shared table
 - [0.7.0-beta.0](0.7.0-beta.0.md) — typed nested data, scalar indexes, server functions, everyday CLI
 
