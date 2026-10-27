@@ -6,7 +6,7 @@
 3. Assert correctness, error messages, and performance invariants.
 
 ## Tests
-- test_create_table_without_pk_rejected — [backend/tests/misc/production/test_mvcc_phase2.rs](backend/tests/misc/production/test_mvcc_phase2.rs#L21)
+- test_create_table_without_pk_uses_stable_row_id — [backend/tests/misc/production/test_mvcc_phase2.rs](backend/tests/misc/production/test_mvcc_phase2.rs#L19)
 - test_create_table_auto_adds_system_columns — [backend/tests/misc/production/test_mvcc_phase2.rs](backend/tests/misc/production/test_mvcc_phase2.rs#L72)
 - test_insert_storage_key_format — [backend/tests/misc/production/test_mvcc_phase2.rs](backend/tests/misc/production/test_mvcc_phase2.rs#L148)
 - test_user_table_row_structure — [backend/tests/misc/production/test_mvcc_phase2.rs](backend/tests/misc/production/test_mvcc_phase2.rs#L254)
