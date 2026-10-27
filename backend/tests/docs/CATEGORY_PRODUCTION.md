@@ -6,7 +6,7 @@
 3. Assert correctness, error messages, and performance invariants.
 
 ## Tests
-- test_create_table_without_pk_rejected — [backend/tests/misc/production/test_mvcc_phase2.rs](backend/tests/misc/production/test_mvcc_phase2.rs#L21)
+- test_create_table_without_pk_uses_stable_row_id — [backend/tests/misc/production/test_mvcc_phase2.rs](backend/tests/misc/production/test_mvcc_phase2.rs#L19)
 - test_create_table_auto_adds_system_columns — [backend/tests/misc/production/test_mvcc_phase2.rs](backend/tests/misc/production/test_mvcc_phase2.rs#L72)
 - test_insert_storage_key_format — [backend/tests/misc/production/test_mvcc_phase2.rs](backend/tests/misc/production/test_mvcc_phase2.rs#L148)
 - test_user_table_row_structure — [backend/tests/misc/production/test_mvcc_phase2.rs](backend/tests/misc/production/test_mvcc_phase2.rs#L254)
@@ -23,7 +23,7 @@
 - syntax_error_messages_are_clear — [backend/tests/misc/production/test_production_validation.rs](backend/tests/misc/production/test_production_validation.rs#L12)
 - table_not_found_error_is_clear — [backend/tests/misc/production/test_production_validation.rs](backend/tests/misc/production/test_production_validation.rs#L36)
 - invalid_namespace_name_rejected — [backend/tests/misc/production/test_production_validation.rs](backend/tests/misc/production/test_production_validation.rs#L58)
-- table_without_primary_key_rejected — [backend/tests/misc/production/test_production_validation.rs](backend/tests/misc/production/test_production_validation.rs#L90)
+- table_without_primary_key_uses_stable_row_id — [backend/tests/misc/production/test_production_validation.rs](backend/tests/misc/production/test_production_validation.rs#L89)
 - null_constraint_violation_detected — [backend/tests/misc/production/test_production_validation.rs](backend/tests/misc/production/test_production_validation.rs#L122)
 - flush_on_stream_table_rejected — [backend/tests/misc/production/test_production_validation.rs](backend/tests/misc/production/test_production_validation.rs#L167)
 - user_isolation_in_user_tables — [backend/tests/misc/production/test_production_validation.rs](backend/tests/misc/production/test_production_validation.rs#L202)

@@ -86,34 +86,46 @@ async fn invalid_namespace_name_rejected() {
     }
 }
 
-/// Verify table creation without PRIMARY KEY is rejected
+/// A table without a primary key is stored under a hidden `_row_id`.
 #[tokio::test]
-async fn table_without_primary_key_rejected() {
+async fn table_without_primary_key_uses_stable_row_id() {
     let server = TestServer::new_shared().await;
+    let ns = consolidated_helpers::unique_namespace("app_nopk");
 
-    let resp = server.execute_sql_as_user("CREATE SCHEMA IF NOT EXISTS app_nopk", "root").await;
-    assert_eq!(resp.status, ResponseStatus::Success);
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {ns}")).await;
+    assert_eq!(resp.status, ResponseStatus::Success, "{:?}", resp.error);
 
-    // Try to create table without PRIMARY KEY
-    let create_table = r#"
-        CREATE TABLE app_nopk.invalid (
+    let create_table = format!(
+        r#"
+        CREATE TABLE {ns}.notes (
             id INT,
             name VARCHAR
         )
         WITH (TYPE = 'USER')
-    "#;
-
-    let resp = server.execute_sql(create_table).await;
-    assert_eq!(resp.status, ResponseStatus::Error);
-    assert!(resp.error.is_some());
-
-    let error = resp.error.unwrap();
-    let error_msg = error.message.to_lowercase();
-    assert!(
-        error_msg.contains("primary key") || error_msg.contains("primary_key"),
-        "Error should mention PRIMARY KEY requirement, got: {}",
-        error.message
+    "#
     );
+
+    let resp = server.execute_sql(&create_table).await;
+    assert_eq!(
+        resp.status,
+        ResponseStatus::Success,
+        "CREATE TABLE without a primary key should succeed: {:?}",
+        resp.error
+    );
+
+    let inserted = server
+        .execute_sql_as_user(
+            &format!("INSERT INTO {ns}.notes (id, name) VALUES (1, 'note')"),
+            "user1",
+        )
+        .await;
+    assert_eq!(inserted.status, ResponseStatus::Success, "{:?}", inserted.error);
+
+    let selected = server.execute_sql_as_user(&format!("SELECT * FROM {ns}.notes"), "user1").await;
+    assert_eq!(selected.status, ResponseStatus::Success, "{:?}", selected.error);
+    let rows = selected.rows_as_maps();
+    assert_eq!(rows.len(), 1);
+    assert!(!rows[0].contains_key("_row_id"), "hidden row id must stay out of SELECT *");
 }
 
 /// Verify NULL constraint violations are caught

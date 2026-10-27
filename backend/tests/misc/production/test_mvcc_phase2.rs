@@ -2,7 +2,7 @@
 //!
 //! Tests:
 //! - T050: SeqId creation, timestamp extraction, ordering, serialization (unit tests in seq_id.rs)
-//! - T051: CREATE TABLE without PK → rejected with error
+//! - T051: CREATE TABLE without PK → succeeds; storage uses a hidden `_row_id`
 //! - T052: CREATE TABLE with user PK → `_version: SeqId` and `_deleted: bool` auto-added to schema
 //! - T053: INSERT → verify storage key format
 //! - T054: INSERT → verify UserTableRow structure (user_id, _version, _deleted, fields)
@@ -16,13 +16,12 @@ use kalam_client::{models::ResponseStatus, parse_i64};
 
 use super::test_support::{consolidated_helpers, fixtures, TestServer};
 
-/// T051: CREATE TABLE without PK should be rejected
+/// T051: CREATE TABLE without a primary key stores rows under a hidden `_row_id`.
 #[actix_web::test]
-async fn test_create_table_without_pk_rejected() {
+async fn test_create_table_without_pk_uses_stable_row_id() {
     let server = TestServer::new_shared().await;
     let ns = consolidated_helpers::unique_namespace("test_ns_t051");
 
-    // Setup
     let ns_response = fixtures::create_namespace(&server, &ns).await;
     assert_eq!(
         ns_response.status,
@@ -31,10 +30,9 @@ async fn test_create_table_without_pk_rejected() {
         ns_response.error
     );
 
-    // Try to create table without PRIMARY KEY specification
     let response = server
         .execute_sql(&format!(
-            r#"CREATE TABLE {}.invalid_table (
+            r#"CREATE TABLE {}.no_pk_table (
                 id TEXT,
                 name TEXT,
                 value INT
@@ -45,27 +43,46 @@ async fn test_create_table_without_pk_rejected() {
             ns
         ))
         .await;
-
-    // Should fail with error about missing primary key
     assert_eq!(
         response.status,
-        ResponseStatus::Error,
-        "CREATE TABLE without PK should fail, got: {:?}",
-        response
+        ResponseStatus::Success,
+        "CREATE TABLE without a primary key should succeed: {:?}",
+        response.error
     );
 
-    if let Some(error) = &response.error {
-        let msg_lower = error.message.to_lowercase();
-        assert!(
-            msg_lower.contains("primary") || msg_lower.contains("pk") || msg_lower.contains("key"),
-            "Error message should mention primary key, got: {}",
-            error.message
-        );
-    } else {
-        panic!("Expected error message about primary key");
-    }
+    let inserted = server
+        .execute_sql_as_user(
+            &format!(
+                "INSERT INTO {}.no_pk_table (id, name, value) VALUES ('row-1', 'Widget', 7)",
+                ns
+            ),
+            "user1",
+        )
+        .await;
+    assert_eq!(
+        inserted.status,
+        ResponseStatus::Success,
+        "INSERT into a table without a primary key should succeed: {:?}",
+        inserted.error
+    );
 
-    println!("✅ T051: CREATE TABLE without PK correctly rejected");
+    let selected = server
+        .execute_sql_as_user(
+            &format!("SELECT * FROM {}.no_pk_table", ns),
+            "user1",
+        )
+        .await;
+    assert_eq!(selected.status, ResponseStatus::Success, "{:?}", selected.error);
+    let rows = selected.rows_as_maps();
+    assert_eq!(rows.len(), 1, "Should return the inserted row");
+    let row = &rows[0];
+    assert_eq!(row.get("id").and_then(|value| value.as_str()), Some("row-1"));
+    assert_eq!(row.get("name").and_then(|value| value.as_str()), Some("Widget"));
+    assert_eq!(parse_i64(row.get("value").expect("value column")), 7);
+    assert!(
+        !row.contains_key("_row_id"),
+        "hidden row id must stay out of SELECT *"
+    );
 }
 
 /// T052: CREATE TABLE with user PK → verify `_version` and `_deleted` auto-added to schema
