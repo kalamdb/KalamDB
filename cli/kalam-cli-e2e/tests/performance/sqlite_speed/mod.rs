@@ -28,11 +28,11 @@ use crate::common::{
 /// A fresh dev-profile server on 2026-10-26 measured, in order:
 /// 0.161, 2.467, 2.521, 8.478, 11.134, 0.650, 12.990, 6.045, 29.079, 29.878,
 /// 2.970, 1.416, 4.107, 1.478, 3.334, 0.896.
-/// Ceilings are about twice that, and at least 2s. A full scan per indexed
-/// SELECT put test 7 above 840s; copying the overlay per staged row put tests 9
-/// and 10 above 200s.
+/// Ceilings are about four times that, and at least 2s, so a 4-vCPU runner
+/// still passes. A full scan per indexed SELECT put test 7 above 840s;
+/// copying the overlay per staged row put tests 9 and 10 above 200s.
 const CEILING_SECS: [f64; 16] = [
-    2.0, 5.0, 5.0, 17.0, 23.0, 2.0, 26.0, 12.0, 60.0, 60.0, 6.0, 3.0, 8.0, 3.0, 7.0, 2.0,
+    2.0, 10.0, 11.0, 34.0, 45.0, 3.0, 52.0, 25.0, 60.0, 60.0, 12.0, 6.0, 17.0, 6.0, 14.0, 4.0,
 ];
 
 struct Timed {

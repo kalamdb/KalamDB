@@ -15,7 +15,8 @@ use datafusion::{
     scalar::ScalarValue,
 };
 use kalamdb_commons::{
-    constants::SystemColumnNames, ids::VersionId, models::rows::Row, StorageKey, UserId,
+    constants::SystemColumnNames, ids::VersionId, models::rows::Row, try_pk_bucket_key, StorageKey,
+    UserId,
 };
 use kalamdb_datafusion_sources::exec::{
     finalize_deferred_batch, prefers_version, DeferredBatchOutput, DeferredBatchSource,
@@ -274,6 +275,7 @@ where
             return Ok(DeferredBatchOutput::new(batch));
         }
 
+        let mut unanswered_pk = None;
         if self.can_try_pk_fast_path(scan_context) {
             if let Some(pk_scalar) = typed_pk_literal_from_filter(&schema, filter, pk_name) {
                 let storage_ordinals =
@@ -295,6 +297,11 @@ where
                     let batch = rows_to_arrow_batch(&schema, resolved, projection, |_, _| {})?;
                     return Ok(DeferredBatchOutput::new(batch));
                 }
+                // Point lookup could not answer. The MVCC scan below does not
+                // row-filter, and a simple PK equality skips the physical
+                // filter. Keep only this key or a post-flush update rewrites
+                // every row in the segment.
+                unanswered_pk = Some(pk_scalar);
             }
         }
 
@@ -313,7 +320,10 @@ where
 
         let keep_deleted =
             since_seq.is_some() || filter.map(filter_uses_deleted_column).unwrap_or(false);
-        if since_seq.is_none() && !self.requires_row_authorization(scan_context) {
+        if unanswered_pk.is_none()
+            && since_seq.is_none()
+            && !self.requires_row_authorization(scan_context)
+        {
             if let Some((batch, hot_rows_scanned)) = self
                 .try_columnar_hot_scan(scan_context, projection, filter, limit, keep_deleted)
                 .await?
@@ -368,11 +378,14 @@ where
         //     subject_user
         // );
 
-        let authorized_rows = if self.requires_row_authorization(scan_context) {
+        let mut authorized_rows = if self.requires_row_authorization(scan_context) {
             self.authorize_resolved_rows(scan_context, scan_result.rows).await?
         } else {
             scan_result.rows
         };
+        if let Some(pk_scalar) = unanswered_pk.as_ref() {
+            retain_rows_for_unanswered_pk(&mut authorized_rows, pk_name, pk_scalar);
+        }
         let batch = rows_to_arrow_batch(&schema, authorized_rows, projection, |_, _| {})?;
         Ok(DeferredBatchOutput::new(batch).with_diagnostics(scan_result.diagnostics))
     }
@@ -409,6 +422,7 @@ where
             return Ok(Some((target, rows)));
         }
 
+        let mut unanswered_pk = None;
         if self.can_try_pk_fast_path(scan_context) {
             if let Some(pk_scalar) = typed_pk_literal_from_filter(&schema, filter, pk_name) {
                 let storage_ordinals =
@@ -441,6 +455,7 @@ where
                         materialize_scan_rows(&schema, resolved, projection, |_, _| {})?;
                     return Ok(Some((target, rows)));
                 }
+                unanswered_pk = Some(pk_scalar);
             }
         }
 
@@ -486,11 +501,14 @@ where
                 diagnostics: DeferredScanDiagnostics::default(),
             }
         };
-        let authorized_rows = if self.requires_row_authorization(scan_context) {
+        let mut authorized_rows = if self.requires_row_authorization(scan_context) {
             self.authorize_resolved_rows(scan_context, scan_result.rows).await?
         } else {
             scan_result.rows
         };
+        if let Some(pk_scalar) = unanswered_pk.as_ref() {
+            retain_rows_for_unanswered_pk(&mut authorized_rows, pk_name, pk_scalar);
+        }
         let (target, rows) =
             materialize_scan_rows(&schema, authorized_rows, projection, |_, _| {})?;
         Ok(Some((target, rows)))
@@ -911,8 +929,8 @@ pub(crate) fn hot_point_lookup_answers_without_cold(
 ///
 /// Returns `Ok(Some(resolved))` when the fast path can definitively answer the point
 /// lookup, or `Ok(None)` when the caller must fall back to the full MVCC scan (for
-/// example, when a snapshot transaction sees a newer hot version than its snapshot
-/// bound or when cold segments exist under a snapshot transaction).
+/// example, when a snapshot transaction sees a newer hot or cold version than its
+/// snapshot bound). A snapshot whose latest cold row is visible is answered here.
 async fn resolve_pk_point_lookup<P, K, V>(
     provider: &P,
     scan_context: &P::ScanContext,
@@ -975,15 +993,24 @@ where
     if skip_cold {
         return Ok(Some(hot));
     }
-    if snapshot_bound.is_some() {
-        return Ok(None);
-    }
 
     // Merge cold when the manifest has segments, is missing, or failed to load.
     // Manual `STORAGE FLUSH` can materialize Parquet even without FLUSH_POLICY.
     let cold =
         find_row_by_pk(provider, provider.scan_cold_scope(scan_context), &pk_scalar.to_string())
             .await?;
+    if let Some(snapshot) = snapshot_bound {
+        if let Some((key, row)) = cold {
+            if !cold_row_needs_version_scan(&row, snapshot)
+                && cold_row_visible_at_snapshot(&row, snapshot)
+            {
+                return Ok(Some(Some((key, row))));
+            }
+        }
+        // The latest cold row is newer than this snapshot, or the point lookup
+        // missed it. Fall back; the caller keeps only this primary key.
+        return Ok(None);
+    }
 
     Ok(Some(match (hot, cold) {
         (Some(candidate), Some(current)) if prefers_scan_row_pair(&current, &candidate) => {
@@ -995,10 +1022,47 @@ where
     }))
 }
 
+/// Latest archived row is past the snapshot, so an older visible version may exist.
+fn cold_row_needs_version_scan<V: ScanRow>(row: &V, snapshot: VersionId) -> bool {
+    VersionId::try_from_i64(row.version_value()).is_ok_and(|version| version > snapshot)
+}
+
+fn cold_row_visible_at_snapshot<V: ScanRow>(row: &V, snapshot: VersionId) -> bool {
+    !row.deleted_flag()
+        && VersionId::try_from_i64(row.version_value()).is_ok_and(|version| version <= snapshot)
+}
+
+/// Drop every row that is not the unanswered primary-key lookup.
+///
+/// Rows that do not carry the key are left in place. A projected scan that
+/// never decoded the primary key cannot be filtered here.
+fn retain_rows_for_unanswered_pk<K, V: ScanRow>(
+    rows: &mut Vec<(K, V)>,
+    pk_name: &str,
+    expected: &ScalarValue,
+) {
+    let saw_pk = rows.iter().any(|(_, row)| row.row().values.contains_key(pk_name));
+    if !saw_pk {
+        return;
+    }
+    rows.retain(|(_, row)| row_matches_pk_scalar(row.row(), pk_name, expected));
+}
+
+fn row_matches_pk_scalar(row: &Row, pk_name: &str, expected: &ScalarValue) -> bool {
+    let Some(value) = row.values.get(pk_name) else {
+        return false;
+    };
+    match (try_pk_bucket_key(value), try_pk_bucket_key(expected)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => value == expected,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use kalamdb_commons::{
+        ids::VersionId,
         models::{SchemaId, TableName},
         TableId,
     };
@@ -1010,6 +1074,7 @@ mod tests {
     struct TestScanRow {
         row: Row,
         deleted: bool,
+        version: i64,
     }
 
     impl ScanRow for TestScanRow {
@@ -1022,7 +1087,7 @@ mod tests {
         }
 
         fn version_value(&self) -> i64 {
-            1
+            self.version
         }
 
         fn deleted_flag(&self) -> bool {
@@ -1059,6 +1124,7 @@ mod tests {
         let tombstone = TestScanRow {
             row: Row::from_vec(vec![]),
             deleted: true,
+            version: 1,
         };
 
         assert!(visible_hot_entry(Some((1_u64, tombstone))).is_none());
@@ -1069,9 +1135,54 @@ mod tests {
         let live = TestScanRow {
             row: Row::from_vec(vec![]),
             deleted: false,
+            version: 1,
         };
 
         assert!(visible_hot_entry(Some((1_u64, live))).is_some());
+    }
+
+    #[test]
+    fn snapshot_cold_lookup_keeps_visible_row_and_defers_a_newer_one() {
+        let snapshot = VersionId::try_from_i64(10).expect("snapshot");
+        let visible = TestScanRow {
+            row: Row::from_vec(vec![]),
+            deleted: false,
+            version: 5,
+        };
+        let newer = TestScanRow {
+            row: Row::from_vec(vec![]),
+            deleted: false,
+            version: 15,
+        };
+        let deleted = TestScanRow {
+            row: Row::from_vec(vec![]),
+            deleted: true,
+            version: 5,
+        };
+
+        assert!(cold_row_visible_at_snapshot(&visible, snapshot));
+        assert!(!cold_row_needs_version_scan(&visible, snapshot));
+        assert!(cold_row_needs_version_scan(&newer, snapshot));
+        assert!(!cold_row_visible_at_snapshot(&newer, snapshot));
+        assert!(!cold_row_visible_at_snapshot(&deleted, snapshot));
+    }
+
+    #[test]
+    fn unanswered_pk_fallback_keeps_only_the_requested_key() {
+        let keep = TestScanRow {
+            row: Row::from_vec(vec![("id".to_string(), ScalarValue::Int32(Some(2)))]),
+            deleted: false,
+            version: 1,
+        };
+        let drop = TestScanRow {
+            row: Row::from_vec(vec![("id".to_string(), ScalarValue::Int64(Some(5)))]),
+            deleted: false,
+            version: 1,
+        };
+        let mut rows = vec![(1_u64, keep), (2_u64, drop)];
+        retain_rows_for_unanswered_pk(&mut rows, "id", &ScalarValue::Int64(Some(2)));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, 1);
     }
 
     #[test]

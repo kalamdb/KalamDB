@@ -62,15 +62,13 @@ impl SqlExecutor {
 
     /// Placeholder form of a statement whose only differences are scalar literals.
     ///
-    /// `None` leaves the original statement on the exact-SQL plan path. User-defined
-    /// routines stay there so their rewrite still sees the original literals.
+    /// `None` leaves the original statement on the exact-SQL plan path. Comparison
+    /// bounds share one plan. Function arguments stay literals, so a user routine
+    /// rewrite still sees the values it was called with.
     pub(super) fn literal_plan_shape(
         &self,
         mut statement: Statement,
     ) -> Option<(String, Vec<ScalarValue>, Statement)> {
-        if self.app_context.system_tables().catalog_stores().has_user_routines() {
-            return None;
-        }
         let values = kalamdb_sql::parameterize_literals(&mut statement)?;
         let mut cache_sql = statement.to_string();
         cache_sql.push('\u{1}');

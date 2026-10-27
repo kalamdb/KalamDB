@@ -95,6 +95,12 @@ test-group = "cli-auth-running"
 # test-group = "stateful-heavy"
 
 [[profile.default.overrides]]
+filter = 'test(sqlite_speed_suite)'
+# Sixteen timed phases against the shared server. Suite contention on a 4-vCPU
+# runner pushed the indexed range aggregate well past its quiet-machine time.
+threads-required = 15
+
+[[profile.default.overrides]]
 filter = 'test(autocommit_read_write_latency_regression_stays_within_five_percent)'
 # This perf regression compares two nearly identical code paths and needs full
 # scheduler isolation from unrelated tests to avoid runner-noise false positives.
@@ -330,3 +336,9 @@ fail-fast = true
 
 # Retry flaky tests once
 retries = 1
+
+[[profile.ci.overrides]]
+filter = 'test(sqlite_speed_suite)'
+# Reserve every CI test thread so the timed phases are not sharing the runner
+# with the rest of the workspace suite.
+threads-required = 4
