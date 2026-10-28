@@ -1,17 +1,16 @@
 use std::collections::HashMap;
 
+use crate::support::{
+    create_cluster_app_context, create_context_files_table, create_executor, create_user_table,
+    execute_ok, execute_ok_with_params, request_exec_ctx, result_rows, select_names,
+    unique_namespace,
+};
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
     models::{KalamCellValue, UserId},
     Role,
 };
 use kalamdb_core::sql::context::{ExecutionContext, ExecutionResult};
-use kalamdb_tables::UserTableProvider;
-use crate::support::{
-    create_cluster_app_context, create_context_files_table, create_executor, create_user_table,
-    execute_ok, execute_ok_with_params, request_exec_ctx, result_rows, select_names,
-    unique_namespace,
-};
 
 fn row_i64(row: &HashMap<String, KalamCellValue>, column_name: &str) -> i64 {
     row.get(column_name)
@@ -40,11 +39,9 @@ async fn load_user_rows(
 ) -> (kalamdb_tables::UserTableRow, kalamdb_tables::UserTableRow) {
     let provider_arc = app_ctx
         .schema_registry()
-        .get_provider(table_id)
+        .get_kalam_provider(table_id)
         .expect("user provider should be registered");
-    let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<UserTableProvider>()
-        .expect("provider should downcast to UserTableProvider");
+    let provider = provider_arc.as_user().expect("provider should downcast to UserTableProvider");
 
     let (_, first_row) = provider
         .find_by_pk(user_id, &ScalarValue::Int64(Some(first_id)))

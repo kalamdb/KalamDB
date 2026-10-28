@@ -3,12 +3,12 @@ use std::{
     path::Path,
 };
 
+use crate::error::TransferError;
 use kalamdb_commons::{
     models::UserId,
     schemas::{TableDefinition, TableType},
     TableId,
 };
-use kalamdb_core::error::KalamDbError;
 use kalamdb_system::Manifest;
 use serde::{Deserialize, Serialize};
 use zip::{write::SimpleFileOptions, ZipWriter};
@@ -72,7 +72,7 @@ pub struct TableExportZip {
 pub fn write_table_export_zip(
     mut metadata: TableExportArchiveMetadata,
     segment_data: Vec<TableExportSegmentData>,
-) -> Result<TableExportZip, KalamDbError> {
+) -> Result<TableExportZip, TransferError> {
     let zip_buffer = Cursor::new(Vec::new());
     let mut zip_writer = ZipWriter::new(zip_buffer);
     let zip_options = SimpleFileOptions::default()
@@ -85,13 +85,13 @@ pub fn write_table_export_zip(
     for (index, segment) in segment_data.into_iter().enumerate() {
         let entry_path = format!("data/{:05}-{}", index, sanitize_filename(&segment.source_path));
         zip_writer.start_file(&entry_path, zip_options).map_err(|error| {
-            KalamDbError::InvalidOperation(format!(
+            TransferError::InvalidOperation(format!(
                 "Failed to add '{}' to ZIP: {}",
                 entry_path, error
             ))
         })?;
         zip_writer.write_all(&segment.data).map_err(|error| {
-            KalamDbError::InvalidOperation(format!(
+            TransferError::InvalidOperation(format!(
                 "Failed to write '{}' to ZIP: {}",
                 entry_path, error
             ))
@@ -108,20 +108,20 @@ pub fn write_table_export_zip(
     metadata.files = archive_files;
     let file_count = metadata.files.len();
     let metadata_bytes = serde_json::to_vec_pretty(&metadata).map_err(|error| {
-        KalamDbError::InvalidOperation(format!("Failed to serialize export metadata: {}", error))
+        TransferError::InvalidOperation(format!("Failed to serialize export metadata: {}", error))
     })?;
 
     zip_writer
         .start_file(TABLE_EXPORT_METADATA_ENTRY, zip_options)
         .map_err(|error| {
-            KalamDbError::InvalidOperation(format!("Failed to add export metadata: {}", error))
+            TransferError::InvalidOperation(format!("Failed to add export metadata: {}", error))
         })?;
     zip_writer.write_all(&metadata_bytes).map_err(|error| {
-        KalamDbError::InvalidOperation(format!("Failed to write export metadata: {}", error))
+        TransferError::InvalidOperation(format!("Failed to write export metadata: {}", error))
     })?;
 
     let finished = zip_writer.finish().map_err(|error| {
-        KalamDbError::InvalidOperation(format!("Failed to finalize ZIP archive: {}", error))
+        TransferError::InvalidOperation(format!("Failed to finalize ZIP archive: {}", error))
     })?;
 
     Ok(TableExportZip {
@@ -134,28 +134,28 @@ pub fn write_table_export_zip(
 pub fn parse_transfer_user_id(
     table_type: TableType,
     user_id: Option<&str>,
-) -> Result<Option<UserId>, KalamDbError> {
+) -> Result<Option<UserId>, TransferError> {
     match table_type {
         TableType::User => {
             let raw =
                 user_id.map(str::trim).filter(|value| !value.is_empty()).ok_or_else(|| {
-                    KalamDbError::InvalidOperation(
+                    TransferError::InvalidOperation(
                         "user_id is required for user table transfer".to_string(),
                     )
                 })?;
             UserId::try_new(raw).map(Some).map_err(|error| {
-                KalamDbError::InvalidOperation(format!("Invalid user_id '{}': {}", raw, error))
+                TransferError::InvalidOperation(format!("Invalid user_id '{}': {}", raw, error))
             })
         },
         TableType::Shared => {
             if user_id.map(str::trim).filter(|value| !value.is_empty()).is_some() {
-                return Err(KalamDbError::InvalidOperation(
+                return Err(TransferError::InvalidOperation(
                     "user_id must be omitted for shared table transfer".to_string(),
                 ));
             }
             Ok(None)
         },
-        TableType::Stream | TableType::System => Err(KalamDbError::InvalidOperation(
+        TableType::Stream | TableType::System => Err(TransferError::InvalidOperation(
             "Only user and shared tables can be exported or imported".to_string(),
         )),
     }
@@ -164,7 +164,7 @@ pub fn parse_transfer_user_id(
 pub fn validate_table_transfer_scope(
     table_type: TableType,
     user_id: Option<&str>,
-) -> Result<(), KalamDbError> {
+) -> Result<(), TransferError> {
     parse_transfer_user_id(table_type, user_id).map(|_| ())
 }
 

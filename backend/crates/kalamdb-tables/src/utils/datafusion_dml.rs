@@ -1,26 +1,18 @@
-use std::{
-    collections::{BTreeMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 
-use async_trait::async_trait;
 use datafusion::{
     arrow::{
-        array::{ArrayRef, UInt64Array},
-        datatypes::{DataType, Field, Schema, SchemaRef},
+        datatypes::{Field, SchemaRef},
         record_batch::RecordBatch,
     },
     catalog::Session,
     common::DFSchema,
-    datasource::{source::DataSourceExec, TableProvider},
+    datasource::TableProvider,
     error::{DataFusionError, Result as DataFusionResult},
-    logical_expr::{
-        utils::expr_to_columns, Expr, ExprSchemable, Operator, TableProviderFilterPushDown,
-    },
-    physical_plan::{collect, filter::FilterExec, projection::ProjectionExec, ExecutionPlan},
+    logical_expr::{Expr, ExprSchemable, Operator, TableProviderFilterPushDown},
+    physical_plan::{collect, filter::FilterExec, ExecutionPlan},
     scalar::ScalarValue,
 };
-use datafusion_datasource::memory::MemorySourceConfig;
 use kalamdb_commons::{
     conversions::{
         arrow_json_conversion::{arrow_value_to_scalar, coerce_updates, json_rows_to_arrow_batch},
@@ -29,7 +21,6 @@ use kalamdb_commons::{
     models::{rows::Row, UserId},
     CodedError, NotLeaderError, TableId, TableType,
 };
-use kalamdb_datafusion_sources::exec::{DeferredBatchExec, DeferredBatchSource};
 use kalamdb_transactions::{
     build_insert_staged_mutations, StagedMutation, TransactionAccessError, TransactionQueryContext,
 };
@@ -37,44 +28,6 @@ use kalamdb_transactions::{
 pub struct OverlayScanProjection {
     pub effective_projection: Option<Vec<usize>>,
     pub final_projection: Option<Vec<usize>>,
-}
-
-#[derive(Debug)]
-struct RowsAffectedSource {
-    batch: RecordBatch,
-}
-
-#[async_trait]
-impl DeferredBatchSource for RowsAffectedSource {
-    fn source_name(&self) -> &'static str {
-        "dml_rows_affected"
-    }
-
-    fn schema(&self) -> SchemaRef {
-        self.batch.schema()
-    }
-
-    async fn produce_batch(&self) -> DataFusionResult<RecordBatch> {
-        Ok(self.batch.clone())
-    }
-}
-
-/// DataFusion requires DML providers to return an execution plan that yields one row
-/// with a single `count` column (`UInt64`) containing affected rows.
-///
-/// Use the shared deferred execution wrapper instead of building a temporary
-/// `MemTable` just to hand DataFusion one batch.
-pub async fn rows_affected_plan(
-    _state: &dyn Session,
-    rows_affected: u64,
-) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-    let schema = Arc::new(Schema::new(vec![Field::new("count", DataType::UInt64, false)]));
-    let batch = RecordBatch::try_new(
-        Arc::clone(&schema),
-        vec![Arc::new(UInt64Array::from(vec![rows_affected])) as ArrayRef],
-    )?;
-
-    Ok(Arc::new(DeferredBatchExec::new(Arc::new(RowsAffectedSource { batch }))))
 }
 
 pub fn prepare_overlay_scan_projection(
@@ -146,112 +99,6 @@ pub fn stage_insert_rows(
     Ok(inserted)
 }
 
-pub async fn collect_input_rows(
-    state: &dyn Session,
-    input: Arc<dyn ExecutionPlan>,
-) -> DataFusionResult<Vec<Row>> {
-    kalamdb_observability::kdb_debug!("dml.collect_input_rows");
-    if let Some(rows) = try_collect_memory_input_rows(input.as_ref())? {
-        return Ok(rows);
-    }
-
-    let task_ctx = state.task_ctx();
-
-    // Try executing the input plan directly.
-    // If it fails due to a type cast (e.g., Utf8 → FixedSizeBinary(16) for UUID columns),
-    // fall back to collecting from the child plan (before the CastExec) and let coerce_rows
-    // handle the conversion later.
-    match collect(input.clone(), task_ctx.clone()).await {
-        Ok(batches) => record_batches_to_rows(&batches),
-        Err(e) => {
-            let err_msg = e.to_string();
-            // Check if this is a type mismatch cast failure (e.g., UUID from string literal)
-            if err_msg.contains("type mismatch") || err_msg.contains("can't cast") {
-                // Try to collect from the child plan (e.g., values before CastExec)
-                if input.children().len() == 1 {
-                    let child = input.children()[0].clone();
-                    let child_batches = collect(child, task_ctx).await?;
-                    return record_batches_to_rows(&child_batches);
-                }
-            }
-            Err(e)
-        },
-    }
-}
-
-fn try_collect_memory_input_rows(input: &dyn ExecutionPlan) -> DataFusionResult<Option<Vec<Row>>> {
-    if let Some(data_source_exec) = input.downcast_ref::<DataSourceExec>() {
-        return try_collect_rows_from_data_source_exec(data_source_exec);
-    }
-
-    if let Some(projection_exec) = input.downcast_ref::<ProjectionExec>() {
-        let Some(source_batches) =
-            try_read_memory_source_batches(projection_exec.input().as_ref())?
-        else {
-            return Ok(None);
-        };
-
-        let projection_schema = projection_exec.schema();
-        let projected_batches = source_batches
-            .into_iter()
-            .map(|batch| {
-                let arrays = projection_exec
-                    .expr()
-                    .iter()
-                    .map(|projection| {
-                        projection.expr.evaluate(&batch)?.into_array(batch.num_rows())
-                    })
-                    .collect::<DataFusionResult<Vec<_>>>()?;
-                RecordBatch::try_new(Arc::clone(&projection_schema), arrays)
-                    .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))
-            })
-            .collect::<DataFusionResult<Vec<_>>>()?;
-
-        return record_batches_to_rows(&projected_batches).map(Some);
-    }
-
-    Ok(None)
-}
-
-fn try_collect_rows_from_data_source_exec(
-    data_source_exec: &DataSourceExec,
-) -> DataFusionResult<Option<Vec<Row>>> {
-    let Some(batches) = try_read_memory_source_batches(data_source_exec)? else {
-        return Ok(None);
-    };
-
-    record_batches_to_rows(&batches).map(Some)
-}
-
-fn try_read_memory_source_batches(
-    input: &dyn ExecutionPlan,
-) -> DataFusionResult<Option<Vec<RecordBatch>>> {
-    let Some(data_source_exec) = input.downcast_ref::<DataSourceExec>() else {
-        return Ok(None);
-    };
-
-    let Some(memory_source) = data_source_exec.data_source().downcast_ref::<MemorySourceConfig>()
-    else {
-        return Ok(None);
-    };
-
-    let mut batches = Vec::new();
-    for partition in memory_source.partitions() {
-        for batch in partition {
-            let projected = if let Some(projection) = memory_source.projection() {
-                batch
-                    .project(projection)
-                    .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?
-            } else {
-                batch.clone()
-            };
-            batches.push(projected);
-        }
-    }
-
-    Ok(Some(batches))
-}
-
 fn residual_filter_required(provider: &dyn TableProvider, filters: &[Expr]) -> bool {
     if filters.is_empty() {
         return false;
@@ -287,54 +134,7 @@ pub async fn collect_matching_rows_with_projection(
 
     let task_ctx = state.task_ctx();
     let batches = collect(plan, task_ctx).await?;
-    record_batches_to_rows(&batches)
-}
-
-pub fn dml_scan_projection(
-    schema: &SchemaRef,
-    filters: &[Expr],
-    assignments: &[(String, Expr)],
-    required_columns: &[&str],
-) -> DataFusionResult<Option<Vec<usize>>> {
-    let mut referenced_columns = HashSet::new();
-
-    for filter in filters {
-        collect_expr_columns(filter, &mut referenced_columns)?;
-    }
-    for (_, expr) in assignments {
-        collect_expr_columns(expr, &mut referenced_columns)?;
-    }
-    referenced_columns.extend(assignments.iter().map(|(column, _)| column.clone()));
-    referenced_columns.extend(required_columns.iter().copied().map(str::to_owned));
-
-    let projection: Vec<usize> = schema
-        .fields()
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, field)| referenced_columns.contains(field.name()).then_some(idx))
-        .collect();
-
-    if projection.is_empty() || projection.len() == schema.fields().len() {
-        Ok(None)
-    } else {
-        Ok(Some(projection))
-    }
-}
-
-/// Schema of a DML scan. Assignment evaluation has to use this schema:
-/// a projected row is missing columns, and the full table schema rejects
-/// those gaps on non-nullable fields.
-pub fn projected_schema(
-    schema: &SchemaRef,
-    projection: Option<&[usize]>,
-) -> DataFusionResult<SchemaRef> {
-    let Some(indices) = projection else {
-        return Ok(Arc::clone(schema));
-    };
-    schema
-        .project(indices)
-        .map(Arc::new)
-        .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))
+    kalamdb_datafusion_sources::dml::record_batches_to_rows(&batches)
 }
 
 pub fn row_matches_filters(
@@ -676,14 +476,6 @@ fn build_row_batch(schema: &SchemaRef, row: &Row) -> DataFusionResult<RecordBatc
     json_rows_to_arrow_batch(schema, vec![row.clone()]).map_err(DataFusionError::Execution)
 }
 
-fn collect_expr_columns(expr: &Expr, columns: &mut HashSet<String>) -> DataFusionResult<()> {
-    let mut referenced = HashSet::new();
-    expr_to_columns(expr, &mut referenced)
-        .map_err(|e| DataFusionError::Execution(format!("Failed to inspect expression: {}", e)))?;
-    columns.extend(referenced.into_iter().map(|column| column.name));
-    Ok(())
-}
-
 fn evaluate_expr_against_batch(
     state: &dyn Session,
     df_schema: &DFSchema,
@@ -699,34 +491,6 @@ fn evaluate_expr_against_batch(
             arrow_value_to_scalar(array.as_ref(), 0)
         },
     }
-}
-
-fn record_batches_to_rows(batches: &[RecordBatch]) -> DataFusionResult<Vec<Row>> {
-    let total_rows: usize = batches.iter().map(RecordBatch::num_rows).sum();
-    let _span = kalamdb_observability::kdb_debug_span_entered!(
-        "record_batches_to_rows",
-        total_rows,
-        batch_count = batches.len()
-    );
-    let mut rows = Vec::with_capacity(total_rows);
-
-    for batch in batches {
-        let schema = batch.schema();
-        let field_names: Vec<String> =
-            schema.fields().iter().map(|field| field.name().to_string()).collect();
-        let columns: Vec<&dyn arrow::array::Array> =
-            batch.columns().iter().map(|column| column.as_ref()).collect();
-        for row_idx in 0..batch.num_rows() {
-            let mut values = BTreeMap::new();
-            for (col_idx, field_name) in field_names.iter().enumerate() {
-                let scalar = arrow_value_to_scalar(columns[col_idx], row_idx)?;
-                values.insert(field_name.clone(), scalar);
-            }
-            rows.push(Row::new(values));
-        }
-    }
-
-    Ok(rows)
 }
 
 fn predicate_to_bool(value: ScalarValue) -> DataFusionResult<bool> {
@@ -852,10 +616,11 @@ mod tests {
         SchemaId,
     };
 
+    use kalamdb_datafusion_sources::dml::{dml_scan_projection, PreparedUpdateAssignments};
+
     use super::{
-        dml_scan_projection, evaluate_assignment_values, foreign_key_violation_message,
-        pk_membership_literals, relocated_primary_key, row_for_primary_key_move,
-        row_matches_filters,
+        evaluate_assignment_values, foreign_key_violation_message, pk_membership_literals,
+        relocated_primary_key, row_for_primary_key_move, row_matches_filters,
     };
 
     fn test_schema() -> SchemaRef {
@@ -899,12 +664,7 @@ mod tests {
             ("value".to_string(), col("value") + lit(5_i64)),
             ("name".to_string(), lit("updated")),
         ];
-        let evaluator = crate::utils::prepared_update_assignments::PreparedUpdateAssignments::new(
-            &state,
-            &schema,
-            &assignments,
-        )
-        .unwrap();
+        let evaluator = PreparedUpdateAssignments::new(&state, &schema, &assignments).unwrap();
         let mut second = test_row();
         second.values.insert("value".to_string(), ScalarValue::Int64(Some(20)));
         let rows = vec![test_row(), second];
@@ -929,12 +689,8 @@ mod tests {
             ("used_at".into(), ScalarValue::Utf8(None)),
         ])];
         let assignments = vec![("used_at".to_string(), lit("2026-10-22"))];
-        let evaluator = crate::utils::prepared_update_assignments::PreparedUpdateAssignments::new(
-            &ctx.state(),
-            &projected,
-            &assignments,
-        )
-        .unwrap();
+        let evaluator =
+            PreparedUpdateAssignments::new(&ctx.state(), &projected, &assignments).unwrap();
 
         let updates = evaluator.evaluate(&rows).unwrap();
 
@@ -961,7 +717,7 @@ mod tests {
                 ("b".into(), ScalarValue::Int64(Some(3))),
             ]),
         ];
-        let evaluator = crate::utils::prepared_update_assignments::PreparedUpdateAssignments::new(
+        let evaluator = PreparedUpdateAssignments::new(
             &ctx.state(),
             &schema,
             &[("a".into(), col("b")), ("b".into(), col("a"))],
@@ -991,12 +747,7 @@ mod tests {
             .collect::<Vec<_>>();
         let baseline_seconds = start.elapsed().as_secs_f64();
         let start = std::time::Instant::now();
-        let evaluator = crate::utils::prepared_update_assignments::PreparedUpdateAssignments::new(
-            &state,
-            &schema,
-            &assignments,
-        )
-        .unwrap();
+        let evaluator = PreparedUpdateAssignments::new(&state, &schema, &assignments).unwrap();
         let mut batched = Vec::new();
         for chunk in rows.chunks(1024) {
             batched.extend(evaluator.evaluate(chunk).unwrap());

@@ -546,11 +546,7 @@ impl SqlExecutor {
                     return Ok(result);
                 }
                 if let Some(result) = self
-                    .try_execute_cached_covering_aggregate(
-                        template_plan.as_ref(),
-                        &bound,
-                        exec_ctx,
-                    )
+                    .try_execute_cached_covering_aggregate(template_plan.as_ref(), &bound, exec_ctx)
                     .await?
                 {
                     return Ok(result);

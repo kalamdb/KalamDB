@@ -44,7 +44,7 @@ async fn show_resolved_status(
                 "No local server is configured in this folder"
             };
             output.status(message);
-            output.fields(&[("Folder", layout.working_dir.display().to_string())]);
+            output.fields(&[("Folder", crate::workflow::io::display_path(&layout.working_dir))]);
             output.detail(if selector.global {
                 "Run `kalam up -g` to start the global server."
             } else {
@@ -82,25 +82,17 @@ async fn show_resolved_status(
         let mut data_path = None;
         if let Some(layout) = &target.layout {
             let details = super::server_details::ServerDetails::read(layout)?;
-            config_path = Some(layout.config_path.display().to_string());
-            data_path = Some(
-                record
-                    .as_ref()
-                    .map(|item| &item.data_dir)
-                    .unwrap_or(&details.data_path)
-                    .display()
-                    .to_string(),
-            );
+            config_path = Some(crate::workflow::io::display_path(&layout.config_path));
+            data_path = Some(crate::workflow::io::display_path(
+                record.as_ref().map(|item| &item.data_dir).unwrap_or(&details.data_path),
+            ));
             fields.push(("Config", config_path.clone().unwrap()));
             fields.push(("Data", data_path.clone().unwrap()));
             fields.push((
                 "Logs",
-                record
-                    .as_ref()
-                    .map(|item| &item.log_path)
-                    .unwrap_or(&layout.log_file)
-                    .display()
-                    .to_string(),
+                crate::workflow::io::display_path(
+                    record.as_ref().map(|item| &item.log_path).unwrap_or(&layout.log_file),
+                ),
             ));
         }
         output.fields(&fields);
@@ -153,8 +145,8 @@ async fn show_resolved_status(
     if let Some(layout) = &target.layout {
         let details = super::server_details::ServerDetails::read(layout)?;
         output.fields(&[
-            ("Config", layout.config_path.display().to_string()),
-            ("Data", details.data_path.display().to_string()),
+            ("Config", crate::workflow::io::display_path(&layout.config_path)),
+            ("Data", crate::workflow::io::display_path(&details.data_path)),
         ]);
     }
     output.detail(format!("development session: {dev_session}"));
@@ -285,7 +277,7 @@ fn redact_url(url: &str) -> String {
     {
         return "[REDACTED URL]".to_string();
     }
-    url.to_string()
+    crate::workflow::instance::browser_http_url(url)
 }
 
 fn human_server_state(state: &str) -> &str {
@@ -344,6 +336,6 @@ mod tests {
     #[test]
     fn redact_url_masks_password_query() {
         assert_eq!(redact_url("http://localhost:2900?password=secret"), "[REDACTED URL]");
-        assert_eq!(redact_url("http://127.0.0.1:2900"), "http://127.0.0.1:2900");
+        assert_eq!(redact_url("http://127.0.0.1:2900"), "http://localhost:2900");
     }
 }

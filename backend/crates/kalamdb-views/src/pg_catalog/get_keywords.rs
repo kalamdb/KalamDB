@@ -1,11 +1,12 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, StringBuilder},
-    datatypes::{DataType, Field, Schema, SchemaRef},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use kalamdb_commons::Role;
+use kalamdb_macros::table;
 
 use crate::{error::RegistryError, pg_catalog::PgCatalogView};
 
@@ -34,17 +35,24 @@ const PG_EXTRA_KEYWORDS: &[&str] = &[
     "verbose",
 ];
 
+#[table(
+    name = "pg_get_keywords",
+    namespace = SchemaId::pg_catalog(),
+    view = true,
+    comment = "SQL keywords"
+)]
+#[derive(Debug)]
+struct PgGetKeywordsRow {
+    /// Keyword
+    word: String,
+    /// Category code
+    catcode: String,
+    /// Category description
+    catdesc: String,
+}
+
 fn schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("word", DataType::Utf8, false),
-                Field::new("catcode", DataType::Utf8, false),
-                Field::new("catdesc", DataType::Utf8, false),
-            ]))
-        })
-        .clone()
+    PgGetKeywordsRow::arrow_schema()
 }
 
 #[derive(Debug, Default)]

@@ -725,7 +725,7 @@ impl SchemaRegistry {
                 Ok(kalam_provider) => {
                     let table_provider =
                         Arc::clone(&kalam_provider) as Arc<dyn TableProvider + Send + Sync>;
-                    cached_data.set_provider(Arc::clone(&table_provider));
+                    cached_data.set_kalam_provider(Arc::clone(&kalam_provider));
 
                     // 3. Register with DataFusion immediately
                     if let Err(error) = self.register_with_datafusion(&table_id, table_provider) {
@@ -815,7 +815,7 @@ impl SchemaRegistry {
         let arrow_schema = cached.arrow_schema()?;
         let kalam_provider = self.create_table_provider(cached.table.as_ref(), arrow_schema)?;
         let table_provider = Arc::clone(&kalam_provider) as Arc<dyn TableProvider + Send + Sync>;
-        cached.set_provider(Arc::clone(&table_provider));
+        cached.set_kalam_provider(Arc::clone(&kalam_provider));
         self.register_with_datafusion(table_id, table_provider)
     }
 
@@ -830,12 +830,12 @@ impl SchemaRegistry {
         &self,
         table_def: &TableDefinition,
         arrow_schema: SchemaRef,
-    ) -> Result<Arc<dyn kalamdb_tables::KalamTableProvider>, KalamDbError> {
+    ) -> Result<Arc<kalamdb_tables::KalamTableProvider>, KalamDbError> {
         use kalamdb_commons::schemas::TableOptions;
         use kalamdb_sharding::ShardRouter;
         use kalamdb_tables::{
             new_indexed_shared_table_store, new_indexed_user_table_store, new_stream_table_store,
-            StreamTableStoreConfig,
+            KalamTableProvider, StreamTableStoreConfig,
         };
 
         use crate::{
@@ -919,8 +919,11 @@ impl SchemaRegistry {
                     &table_def.columns,
                 ));
 
-                let provider = Arc::new(UserTableProvider::new(core, user_table_store));
-                Ok(provider as Arc<dyn kalamdb_tables::KalamTableProvider>)
+                let provider = Arc::new(KalamTableProvider::from_user(UserTableProvider::new(
+                    core,
+                    user_table_store,
+                )));
+                Ok(provider)
             },
             TableType::Shared => {
                 let shared_store = Arc::new(new_indexed_shared_table_store(
@@ -932,8 +935,11 @@ impl SchemaRegistry {
                     &table_def.columns,
                 ));
 
-                let provider = Arc::new(SharedTableProvider::new(core, shared_store));
-                Ok(provider as Arc<dyn kalamdb_tables::KalamTableProvider>)
+                let provider = Arc::new(KalamTableProvider::from_shared(SharedTableProvider::new(
+                    core,
+                    shared_store,
+                )));
+                Ok(provider)
             },
             TableType::Stream => {
                 let ttl_seconds = if let TableOptions::Stream(opts) = &table_def.table_options {
@@ -959,9 +965,12 @@ impl SchemaRegistry {
                     storage_schema,
                 ));
 
-                let provider =
-                    Arc::new(StreamTableProvider::new(core, stream_store, Some(ttl_seconds)));
-                Ok(provider as Arc<dyn kalamdb_tables::KalamTableProvider>)
+                let provider = Arc::new(KalamTableProvider::from_stream(StreamTableProvider::new(
+                    core,
+                    stream_store,
+                    Some(ttl_seconds),
+                )));
+                Ok(provider)
             },
             TableType::System => Err(KalamDbError::InvalidOperation(format!(
                 "Cannot create provider for system table {}",
@@ -1160,6 +1169,29 @@ impl SchemaRegistry {
                 log::warn!("[SchemaRegistry] Provider NOT FOUND for table {}", table_id);
                 None
             }),
+            Err(error) => {
+                log::error!("Failed to create provider for table {}: {}", table_id, error);
+                None
+            },
+        }
+    }
+
+    /// User, shared, or stream provider. System tables return `None`.
+    pub fn get_kalam_provider(
+        &self,
+        table_id: &TableId,
+    ) -> Option<Arc<kalamdb_tables::KalamTableProvider>> {
+        let Some(cached) = self.get(table_id) else {
+            return None;
+        };
+        if let Some(provider) = cached.get_kalam_provider() {
+            return Some(provider);
+        }
+        if cached.table.table_type == TableType::System || cached.get_provider().is_some() {
+            return None;
+        }
+        match self.bind_dml_provider(table_id, &cached) {
+            Ok(()) => cached.get_kalam_provider(),
             Err(error) => {
                 log::error!("Failed to create provider for table {}: {}", table_id, error);
                 None

@@ -470,3 +470,41 @@ async fn query_rows(ctx: &SessionContext, sql: &str) -> Vec<Vec<String>> {
     }
     rows
 }
+
+#[tokio::test]
+async fn pg_catalog_and_columns_extension_follow_table_macro_order() {
+    let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+    let registry = Arc::new(SystemTablesRegistry::new(backend));
+    let pg_catalog = PgCatalogSchemaProvider::new(Arc::clone(&registry), Arc::new(Vec::new));
+    for name in ["pg_class", "pg_attribute", "pg_namespace"] {
+        let provider = pg_catalog.table(name).await.expect("lookup").expect(name);
+        let schema = provider.schema();
+        let actual: Vec<_> = schema.fields().iter().map(|field| field.name().to_string()).collect();
+        let expected: Vec<_> = kalamdb_views::pg_catalog::relation_column_order(name)
+            .expect(name)
+            .iter()
+            .map(|field| (*field).to_string())
+            .collect();
+        assert_eq!(actual, expected, "{name}");
+    }
+
+    let ctx = SessionContext::new();
+    let info = kalamdb_views::information_schema::KalamInformationSchemaProvider::new(
+        Arc::clone(ctx.state().catalog_list()),
+        registry,
+    );
+    let columns = SchemaProvider::table(&info, "columns")
+        .await
+        .expect("columns")
+        .expect("columns");
+    let schema = columns.schema();
+    let names: Vec<_> = schema.fields().iter().map(|field| field.name().to_string()).collect();
+    let extension: Vec<_> = kalamdb_views::information_schema::columns_extension_order()
+        .iter()
+        .map(|field| (*field).to_string())
+        .collect();
+    assert!(
+        names.ends_with(extension.as_slice()),
+        "information_schema.columns extension order {names:?} does not end with {extension:?}"
+    );
+}

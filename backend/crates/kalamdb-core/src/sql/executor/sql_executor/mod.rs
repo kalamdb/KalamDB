@@ -135,7 +135,7 @@ mod tests {
         BoundExprShape, PolicyCommand, PolicyId, PolicyProgram, PolicyTarget, PrincipalExpr, Role,
         TableName, TablePolicy,
     };
-    use kalamdb_tables::{utils::KalamTableProvider, SharedTableProvider};
+    use kalamdb_tables::utils::TableRowDml;
 
     use super::{contains_internal_namespace_hint, HandlerRegistry, SqlExecutor};
     use crate::sql::{ExecutionContext, ExecutionResult};
@@ -396,10 +396,8 @@ mod tests {
         app_context.system_columns_service().add_system_columns(&mut table).unwrap();
         app_context.schema_registry().register_table(table).unwrap();
         let table_id = TableId::from_strings("security", "cached_documents");
-        let provider = app_context.schema_registry().get_provider(&table_id).unwrap();
-        let provider = (provider.as_ref() as &dyn std::any::Any)
-            .downcast_ref::<SharedTableProvider>()
-            .unwrap();
+        let provider = app_context.schema_registry().get_kalam_provider(&table_id).unwrap();
+        let provider = provider.as_shared().unwrap();
         provider
             .insert_rows(
                 &UserId::new("system"),

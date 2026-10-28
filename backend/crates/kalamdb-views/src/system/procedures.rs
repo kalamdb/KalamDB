@@ -11,17 +11,53 @@ use kalamdb_commons::{
     models::{FunctionModuleId, FunctionRevisionId},
     SystemTable,
 };
+use kalamdb_macros::table;
 use kalamdb_system::{
     CatalogFunctionRevision, CatalogRoutine, CatalogRoutineGrant, CatalogRoutineParameter,
     CatalogStores, SystemTablesRegistry,
 };
 
-use super::common::{
-    nullable_text_col, registry_view_provider, system_view_definition, text_col, SystemViewProvider,
-};
+use super::common::{registry_view_provider, SystemViewProvider};
 use crate::{error::RegistryError, view_base::VirtualView};
 
 crate::memoized_view_schema!(procedures_schema, ProceduresView);
+
+#[table(
+    name = "procedures",
+    view = true,
+    comment = "CALL-able procedures with signature, implementation kind, grants, comments, and inline source"
+)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcedureRow {
+    /// Schema-qualified procedure name
+    pub procedure_id: String,
+    /// Owning schema
+    pub schema: String,
+    /// Unqualified procedure name
+    pub name: String,
+    /// Declared arguments
+    pub signature: String,
+    /// Resolved return type or VOID
+    pub return_type: String,
+    /// inline, module, or missing
+    pub implementation: String,
+    /// Current module when implementation is module
+    pub module_id: Option<String>,
+    /// Pinned module revision, or inline isolate revision
+    pub revision_id: Option<String>,
+    /// INVOKER or DEFINER
+    pub security: String,
+    /// Routine owner
+    pub owner: String,
+    /// EXECUTE grantees
+    pub grants: String,
+    /// Optional procedure comment
+    pub comment: Option<String>,
+    /// Declared LANGUAGE, when set
+    pub language: Option<String>,
+    /// Inline SQL/JS body when implementation is inline
+    pub source: Option<String>,
+}
 
 /// Virtual view joining routines, parameters, grants, and current module exports.
 pub struct ProceduresView {
@@ -40,31 +76,7 @@ impl ProceduresView {
     }
 
     pub fn definition() -> kalamdb_commons::schemas::TableDefinition {
-        system_view_definition(
-            SystemTable::Procedures,
-            vec![
-                text_col(1, "procedure_id", "Schema-qualified procedure name"),
-                text_col(2, "schema", "Owning schema"),
-                text_col(3, "name", "Unqualified procedure name"),
-                text_col(4, "signature", "Declared arguments"),
-                text_col(5, "return_type", "Resolved return type or VOID"),
-                text_col(6, "implementation", "inline, module, or missing"),
-                nullable_text_col(7, "module_id", "Current module when implementation is module"),
-                nullable_text_col(
-                    8,
-                    "revision_id",
-                    "Pinned module revision, or inline isolate revision",
-                ),
-                text_col(9, "security", "INVOKER or DEFINER"),
-                text_col(10, "owner", "Routine owner"),
-                text_col(11, "grants", "EXECUTE grantees"),
-                nullable_text_col(12, "comment", "Optional procedure comment"),
-                nullable_text_col(13, "language", "Declared LANGUAGE, when set"),
-                nullable_text_col(14, "source", "Inline SQL/JS body when implementation is inline"),
-            ],
-            "CALL-able procedures with signature, implementation kind, grants, comments, and \
-             inline source",
-        )
+        ProcedureRow::definition()
     }
 }
 

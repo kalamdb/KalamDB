@@ -1,3 +1,8 @@
+use crate::support::{
+    create_cluster_app_context, create_cluster_app_context_with_config, create_executor,
+    create_shared_table, execute_err, execute_ok, execute_ok_with_params, observer_exec_ctx,
+    result_rows, unique_namespace,
+};
 use datafusion_common::ScalarValue;
 use kalamdb_backend::session::BackendAuth;
 use kalamdb_commons::{
@@ -13,11 +18,6 @@ use kalamdb_core::{
     sql::{context::ExecutionContext, ExecutionResult},
 };
 use kalamdb_system::{CatalogRoutine, CatalogRoutineParameter};
-use crate::support::{
-    create_cluster_app_context, create_cluster_app_context_with_config, create_executor,
-    create_shared_table, execute_err, execute_ok, execute_ok_with_params, observer_exec_ctx,
-    result_rows, unique_namespace,
-};
 
 fn string_values(
     rows: &[std::collections::HashMap<String, KalamCellValue>],
@@ -1378,4 +1378,54 @@ fn insert_catalog_procedure(
             default_expr: None,
         })
         .expect("upsert catalog routine parameter");
+}
+
+fn result_column_names(result: ExecutionResult) -> Vec<String> {
+    let ExecutionResult::Rows {
+        batches, schema, ..
+    } = result
+        .into_arrow_rows()
+        .unwrap_or_else(|error| panic!("scalar rows to arrow: {error}"))
+    else {
+        panic!("expected rows");
+    };
+    let schema = batches.first().map(|batch| batch.schema()).or(schema).expect("result schema");
+    schema.fields().iter().map(|field| field.name().clone()).collect()
+}
+
+#[tokio::test]
+#[ntest::timeout(10_000)]
+async fn pg_catalog_and_information_schema_column_order_follows_table_macro() {
+    let mut config = ServerConfig::default();
+    config.postgres_wire.enabled = true;
+    let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
+    let executor = create_executor(app_ctx.clone());
+    let observer_ctx = observer_exec_ctx(&app_ctx);
+
+    for (sql, relation) in [
+        ("SELECT * FROM pg_catalog.pg_class WHERE false", "pg_class"),
+        ("SELECT * FROM pg_catalog.pg_attribute WHERE false", "pg_attribute"),
+        ("SELECT * FROM pg_catalog.pg_namespace WHERE false", "pg_namespace"),
+    ] {
+        let names = result_column_names(execute_ok(&executor, &observer_ctx, sql).await);
+        let expected = kalamdb_views::pg_catalog::relation_column_order(relation).expect(relation);
+        assert_eq!(names, expected.iter().map(|name| (*name).to_string()).collect::<Vec<_>>());
+    }
+
+    let names = result_column_names(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            "SELECT * FROM information_schema.columns WHERE false",
+        )
+        .await,
+    );
+    let extension: Vec<_> = kalamdb_views::information_schema::columns_extension_order()
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect();
+    assert!(
+        names.ends_with(extension.as_slice()),
+        "information_schema.columns {names:?} does not end with {extension:?}"
+    );
 }

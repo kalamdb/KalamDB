@@ -1,0 +1,492 @@
+//! Topic message store implementation using EntityStore pattern
+//!
+//! This module provides EntityStore-based storage for pub/sub topic messages.
+//! Messages are stored with composite keys for efficient range queries.
+//!
+//! **Storage Architecture**:
+//! - TopicMessageId: Composite key (topic_id, partition_id, offset)
+//! - TopicMessage: Message envelope with payload, key, timestamp
+//! - Storage key format: composite encoding for efficient filtering
+//! - Efficient range scans for message fetching
+
+use std::sync::Arc;
+
+use kalamdb_commons::{models::TopicId, storage::Partition, StorageKey};
+use kalamdb_store::{decode_entity, encode_entity, EntityStore, Operation, StorageBackend};
+
+use super::topic_message_models::{
+    TopicMessage, TopicMessageId, TopicRetentionDeletionStats, TopicRetentionIndexEntry,
+    TopicRetentionIndexKey,
+};
+
+pub const TOPIC_RETENTION_INDEX_PARTITION_NAME: &str = "topic_retention_index";
+
+/// Store for topic messages (append-only message log)
+///
+/// Uses composite TopicMessageId keys for efficient range queries.
+/// Messages are immutable once written.
+#[derive(Clone)]
+pub struct TopicMessageStore {
+    backend: Arc<dyn StorageBackend>,
+    partition: Partition,
+    retention_partition: Partition,
+}
+
+impl TopicMessageStore {
+    /// Create a new topic message store
+    ///
+    /// # Arguments
+    /// * `backend` - Storage backend (RocksDB or mock)
+    /// * `partition` - Partition name (e.g., "topic_messages")
+    pub fn new(backend: Arc<dyn StorageBackend>, partition: impl Into<Partition>) -> Self {
+        Self {
+            backend,
+            partition: partition.into(),
+            retention_partition: Partition::new(TOPIC_RETENTION_INDEX_PARTITION_NAME),
+        }
+    }
+
+    /// Retention index partition used for timestamp-ordered cleanup scans.
+    pub fn retention_partition(&self) -> Partition {
+        self.retention_partition.clone()
+    }
+
+    /// Store a message and its retention index entry in one atomic backend batch.
+    pub fn put_message_with_retention_index(
+        &self,
+        message: &TopicMessage,
+    ) -> kalamdb_store::storage_trait::Result<u64> {
+        let msg_id = message.id();
+        let key_encoded = msg_id.storage_key();
+        let value_encoded = encode_entity(message)?;
+        let message_bytes = value_encoded.len() as u64;
+        let retention_entry = TopicRetentionIndexEntry::new(message, message_bytes);
+        let retention_key = retention_entry.retention_key().storage_key();
+        let retention_value = encode_entity(&retention_entry)?;
+
+        self.backend().batch(vec![
+            Operation::Put {
+                partition: self.partition(),
+                key: key_encoded,
+                value: value_encoded,
+            },
+            Operation::Put {
+                partition: self.retention_partition(),
+                key: retention_key,
+                value: retention_value,
+            },
+        ])?;
+
+        Ok(message_bytes)
+    }
+
+    /// Fetch messages from a partition starting at `offset`, up to `limit` messages
+    ///
+    /// Returns messages in order: [offset, offset+1, offset+2, ...]
+    pub fn fetch_messages(
+        &self,
+        topic_id: &TopicId,
+        partition_id: u32,
+        offset: u64,
+        limit: usize,
+    ) -> kalamdb_store::storage_trait::Result<Vec<TopicMessage>> {
+        let prefix = TopicMessageId::prefix_for_partition(topic_id, partition_id);
+        let start_key = TopicMessageId::start_key_for_partition(topic_id, partition_id, offset);
+        let results = self.scan_with_raw_prefix(&prefix, Some(&start_key), limit)?;
+        Ok(results.into_iter().map(|(_, msg)| msg).collect())
+    }
+
+    /// Get the latest offset for a topic partition.
+    ///
+    /// Returns `None` when the partition has no messages.
+    pub fn latest_offset(
+        &self,
+        topic_id: &TopicId,
+        partition_id: u32,
+    ) -> kalamdb_store::storage_trait::Result<Option<u64>> {
+        let prefix = TopicMessageId::prefix_for_partition(topic_id, partition_id);
+        let partition = self.partition();
+        let mut iter = self.backend().scan_reverse(&partition, Some(&prefix), None, Some(1))?;
+        iter.next()
+            .map(|(key, _)| TopicMessageId::from_storage_key(&key).map(|msg_id| msg_id.offset))
+            .transpose()
+            .map_err(kalamdb_store::StorageError::SerializationError)
+    }
+
+    /// Get the earliest retained offset for a topic partition.
+    pub fn earliest_offset(
+        &self,
+        topic_id: &TopicId,
+        partition_id: u32,
+    ) -> kalamdb_store::storage_trait::Result<Option<u64>> {
+        let messages = self.fetch_messages(topic_id, partition_id, 0, 1)?;
+        Ok(messages.first().map(|message| message.offset))
+    }
+
+    /// Delete all messages for a specific topic
+    ///
+    /// This method scans all messages for the topic and deletes them.
+    /// Returns the count of deleted messages.
+    pub fn delete_topic_messages(
+        &self,
+        topic_id: &TopicId,
+    ) -> kalamdb_store::storage_trait::Result<usize> {
+        // Use topic_id as prefix to scan all partitions.
+        // Delete using raw keys to avoid deserializing large/corrupt values.
+        let prefix = kalamdb_commons::encode_prefix(&(topic_id.as_str(),));
+        let partition = self.partition();
+        let retention_partition = self.retention_partition();
+        let primary_keys: Vec<Vec<u8>> = self
+            .backend()
+            .scan(&partition, Some(&prefix), None, None)?
+            .map(|(key, _)| key)
+            .collect();
+        let retention_keys: Vec<Vec<u8>> = self
+            .backend()
+            .scan(&retention_partition, Some(&prefix), None, None)?
+            .map(|(key, _)| key)
+            .collect();
+
+        let count = primary_keys.len();
+        let mut operations = Vec::with_capacity(primary_keys.len() + retention_keys.len());
+        operations.extend(primary_keys.into_iter().map(|key| Operation::Delete {
+            partition: partition.clone(),
+            key,
+        }));
+        operations.extend(retention_keys.into_iter().map(|key| Operation::Delete {
+            partition: retention_partition.clone(),
+            key,
+        }));
+        self.backend().batch(operations)?;
+
+        Ok(count)
+    }
+
+    /// Batch-write pre-encoded messages and their retention index entries.
+    pub fn batch_put_raw_with_retention(
+        &self,
+        entries: Vec<(TopicRetentionIndexEntry, Vec<u8>, Vec<u8>)>,
+    ) -> kalamdb_store::storage_trait::Result<u64> {
+        let partition = self.partition();
+        let retention_partition = self.retention_partition();
+        let mut message_bytes_total = 0u64;
+        let mut operations = Vec::with_capacity(entries.len() * 2);
+
+        for (retention_entry, key, value) in entries {
+            message_bytes_total += retention_entry.message_bytes;
+
+            operations.push(Operation::Put {
+                partition: partition.clone(),
+                key,
+                value,
+            });
+            operations.push(Operation::Put {
+                partition: retention_partition.clone(),
+                key: retention_entry.retention_key().storage_key(),
+                value: encode_entity(&retention_entry)?,
+            });
+        }
+
+        self.backend().batch(operations)?;
+        Ok(message_bytes_total)
+    }
+
+    /// Return retention index entries ordered by timestamp, then offset.
+    pub fn retention_entries_for_partition(
+        &self,
+        topic_id: &TopicId,
+        partition_id: u32,
+        limit: usize,
+    ) -> kalamdb_store::storage_trait::Result<Vec<(TopicRetentionIndexKey, TopicRetentionIndexEntry)>>
+    {
+        let prefix = TopicRetentionIndexKey::prefix_for_partition(topic_id, partition_id);
+        self.scan_retention_entries(&prefix, None, Some(limit))
+    }
+
+    /// Return retention index entries older than `cutoff_timestamp_ms`.
+    pub fn retention_entries_before(
+        &self,
+        topic_id: &TopicId,
+        partition_id: u32,
+        cutoff_timestamp_ms: i64,
+        limit: usize,
+    ) -> kalamdb_store::storage_trait::Result<Vec<(TopicRetentionIndexKey, TopicRetentionIndexEntry)>>
+    {
+        let prefix = TopicRetentionIndexKey::prefix_for_partition(topic_id, partition_id);
+        let entries = self.scan_retention_entries(&prefix, None, Some(limit))?;
+        Ok(entries
+            .into_iter()
+            .take_while(|(_, entry)| entry.timestamp_ms < cutoff_timestamp_ms)
+            .collect())
+    }
+
+    /// Delete primary messages and retention entries atomically.
+    pub fn delete_retention_entries(
+        &self,
+        entries: Vec<(TopicRetentionIndexKey, TopicRetentionIndexEntry)>,
+    ) -> kalamdb_store::storage_trait::Result<TopicRetentionDeletionStats> {
+        let partition = self.partition();
+        let retention_partition = self.retention_partition();
+        let mut bytes_freed = 0u64;
+        let mut operations = Vec::with_capacity(entries.len() * 2);
+
+        for (retention_key, entry) in entries {
+            bytes_freed += entry.message_bytes;
+            operations.push(Operation::Delete {
+                partition: partition.clone(),
+                key: entry.primary_message_id().storage_key(),
+            });
+            operations.push(Operation::Delete {
+                partition: retention_partition.clone(),
+                key: retention_key.storage_key(),
+            });
+        }
+
+        let messages_deleted = operations.len() / 2;
+        self.backend().batch(operations)?;
+
+        Ok(TopicRetentionDeletionStats {
+            messages_deleted,
+            bytes_freed,
+        })
+    }
+
+    /// Sum retained bytes from retention index entries for one topic partition.
+    pub fn retained_bytes_for_partition(
+        &self,
+        topic_id: &TopicId,
+        partition_id: u32,
+    ) -> kalamdb_store::storage_trait::Result<u64> {
+        let prefix = TopicRetentionIndexKey::prefix_for_partition(topic_id, partition_id);
+        let entries = self.scan_retention_entries(&prefix, None, None)?;
+        Ok(entries.into_iter().map(|(_, entry)| entry.message_bytes).sum())
+    }
+
+    fn scan_retention_entries(
+        &self,
+        prefix: &[u8],
+        start_key: Option<&[u8]>,
+        limit: Option<usize>,
+    ) -> kalamdb_store::storage_trait::Result<Vec<(TopicRetentionIndexKey, TopicRetentionIndexEntry)>>
+    {
+        let retention_partition = self.retention_partition();
+        let iter = self.backend().scan(&retention_partition, Some(prefix), start_key, limit)?;
+
+        iter.map(|(key_bytes, value_bytes)| {
+            let key = TopicRetentionIndexKey::from_storage_key(&key_bytes)
+                .map_err(kalamdb_store::StorageError::SerializationError)?;
+            let entry = decode_entity(&value_bytes)?;
+            Ok((key, entry))
+        })
+        .collect()
+    }
+}
+
+/// Implement EntityStore trait for typed CRUD operations
+impl EntityStore<TopicMessageId, TopicMessage> for TopicMessageStore {
+    fn backend(&self) -> &Arc<dyn StorageBackend> {
+        &self.backend
+    }
+
+    fn partition(&self) -> Partition {
+        self.partition.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use kalamdb_commons::StorageKey;
+
+    use super::super::test_backend::RecordingBackend;
+    use super::*;
+
+    fn setup_test_store() -> TopicMessageStore {
+        let backend = Arc::new(RecordingBackend::new());
+        let partition = Partition::new("test_topic_messages");
+        TopicMessageStore::new(backend, partition)
+    }
+
+    fn put_test_message(
+        store: &TopicMessageStore,
+        topic_id: &TopicId,
+        partition_id: u32,
+        offset: u64,
+        payload: Vec<u8>,
+        key: Option<String>,
+        timestamp_ms: i64,
+    ) {
+        let message = TopicMessage::new(
+            topic_id.clone(),
+            partition_id,
+            offset,
+            payload,
+            key,
+            timestamp_ms,
+            Default::default(),
+        );
+        store.put_message_with_retention_index(&message).unwrap();
+    }
+
+    #[test]
+    fn test_publish_and_fetch() {
+        let store = setup_test_store();
+        let topic_id = TopicId::from("test_topic");
+        let partition_id = 0;
+
+        // Publish messages
+        put_test_message(&store, &topic_id, partition_id, 0, b"message1".to_vec(), None, 1000);
+        put_test_message(
+            &store,
+            &topic_id,
+            partition_id,
+            1,
+            b"message2".to_vec(),
+            Some("key1".to_string()),
+            2000,
+        );
+
+        // Fetch messages
+        let messages = store.fetch_messages(&topic_id, partition_id, 0, 10).unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].payload, b"message1");
+        assert_eq!(messages[1].payload, b"message2");
+        assert_eq!(messages[1].key, Some("key1".to_string()));
+    }
+
+    #[test]
+    fn test_get_message() {
+        let store = setup_test_store();
+        let topic_id = TopicId::from("test_topic");
+        let partition_id = 0;
+
+        put_test_message(&store, &topic_id, partition_id, 0, b"test".to_vec(), None, 1000);
+
+        let msg_id = TopicMessageId::new(topic_id.clone(), partition_id, 0);
+        let message = store.get(&msg_id).unwrap();
+        assert!(message.is_some());
+        assert_eq!(message.unwrap().payload, b"test");
+
+        // Non-existent message
+        let missing_id = TopicMessageId::new(topic_id, partition_id, 999);
+        let missing = store.get(&missing_id).unwrap();
+        assert!(missing.is_none());
+    }
+
+    #[test]
+    fn test_multiple_partitions() {
+        let store = setup_test_store();
+        let topic_id = TopicId::from("test_topic");
+
+        // Publish to partition 0
+        put_test_message(&store, &topic_id, 0, 0, b"p0_msg1".to_vec(), None, 1000);
+
+        // Publish to partition 1
+        put_test_message(&store, &topic_id, 1, 0, b"p1_msg1".to_vec(), None, 2000);
+
+        // Each partition has independent messages
+        let messages0 = store.fetch_messages(&topic_id, 0, 0, 10).unwrap();
+        let messages1 = store.fetch_messages(&topic_id, 1, 0, 10).unwrap();
+
+        assert_eq!(messages0.len(), 1);
+        assert_eq!(messages1.len(), 1);
+        assert_eq!(messages0[0].payload, b"p0_msg1");
+        assert_eq!(messages1[0].payload, b"p1_msg1");
+    }
+
+    #[test]
+    fn test_fetch_with_limit() {
+        let store = setup_test_store();
+        let topic_id = TopicId::from("test_topic");
+        let partition_id = 0;
+
+        // Publish 5 messages
+        for i in 0..5 {
+            put_test_message(
+                &store,
+                &topic_id,
+                partition_id,
+                i,
+                format!("message{}", i).into_bytes(),
+                None,
+                (1000 + i * 100) as i64,
+            );
+        }
+
+        // Fetch with limit
+        let messages = store.fetch_messages(&topic_id, partition_id, 0, 3).unwrap();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].payload, b"message0");
+        assert_eq!(messages[2].payload, b"message2");
+
+        // Fetch from middle
+        let messages = store.fetch_messages(&topic_id, partition_id, 2, 10).unwrap();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].payload, b"message2");
+        assert_eq!(messages[2].payload, b"message4");
+    }
+
+    #[test]
+    fn test_storage_key_roundtrip() {
+        let msg_id = TopicMessageId::new(TopicId::from("my_topic"), 3, 42);
+        let key = msg_id.storage_key();
+        let decoded = TopicMessageId::from_storage_key(&key).unwrap();
+        assert_eq!(decoded, msg_id);
+    }
+
+    #[test]
+    fn test_fetch_messages_uses_prefix_scan() {
+        let backend = Arc::new(RecordingBackend::new());
+        let partition = Partition::new("test_topic_messages_scan");
+        let store = TopicMessageStore::new(backend.clone(), partition);
+
+        let topic_id = TopicId::from("scan_topic");
+        for i in 0..5 {
+            put_test_message(&store, &topic_id, 0, i, vec![i as u8], None, 1000 + i as i64);
+        }
+
+        let _ = store.fetch_messages(&topic_id, 0, 2, 3).unwrap();
+
+        assert_eq!(backend.scan_calls(), 1);
+        let last = backend.last_scan().expect("scan call missing");
+        assert_eq!(last.prefix, Some(TopicMessageId::prefix_for_partition(&topic_id, 0)));
+        assert_eq!(last.start_key, Some(TopicMessageId::start_key_for_partition(&topic_id, 0, 2)));
+        assert_eq!(last.limit, Some(3));
+    }
+
+    #[test]
+    fn test_retention_index_orders_by_timestamp_then_offset() {
+        let store = setup_test_store();
+        let topic_id = TopicId::from("retention_topic");
+
+        put_test_message(&store, &topic_id, 0, 0, b"newer".to_vec(), None, 3000);
+        put_test_message(&store, &topic_id, 0, 1, b"older".to_vec(), None, 1000);
+        put_test_message(&store, &topic_id, 0, 2, b"middle".to_vec(), None, 2000);
+
+        let retention_entries = store.retention_entries_for_partition(&topic_id, 0, 10).unwrap();
+        let offsets: Vec<u64> = retention_entries.iter().map(|(_, entry)| entry.offset).collect();
+
+        assert_eq!(offsets, vec![1, 2, 0]);
+    }
+
+    #[test]
+    fn test_retention_delete_removes_primary_and_index_entries() {
+        let store = setup_test_store();
+        let topic_id = TopicId::from("delete_topic");
+
+        put_test_message(&store, &topic_id, 0, 0, b"old".to_vec(), None, 1000);
+        put_test_message(&store, &topic_id, 0, 1, b"new".to_vec(), None, 2000);
+
+        let old_entries = store.retention_entries_before(&topic_id, 0, 1500, 10).unwrap();
+        let stats = store.delete_retention_entries(old_entries).unwrap();
+
+        assert_eq!(stats.messages_deleted, 1);
+        assert!(stats.bytes_freed > 0);
+
+        let messages = store.fetch_messages(&topic_id, 0, 0, 10).unwrap();
+        assert_eq!(messages.iter().map(|message| message.offset).collect::<Vec<_>>(), vec![1]);
+
+        let retention_entries = store.retention_entries_for_partition(&topic_id, 0, 10).unwrap();
+        assert_eq!(retention_entries.len(), 1);
+        assert_eq!(retention_entries[0].1.offset, 1);
+    }
+}

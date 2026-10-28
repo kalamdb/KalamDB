@@ -22,7 +22,6 @@ use kalamdb_core::{
 };
 use kalamdb_pg::OperationExecutor;
 use kalamdb_session_datafusion::{install_extension, SessionUserContext};
-use kalamdb_tables::SharedTableProvider;
 use kalamdb_transactions::{
     build_insert_staged_mutations, primary_key_claims, TransactionQueryContext,
     TransactionQueryExtension,
@@ -140,10 +139,9 @@ impl OperationService {
         let provider = self
             .app_context
             .schema_registry()
-            .get_provider(table_id)
+            .get_kalam_provider(table_id)
             .ok_or_else(|| Status::not_found(format!("shared table {table_id} not found")))?;
-        let shared = (provider.as_ref() as &dyn std::any::Any)
-            .downcast_ref::<SharedTableProvider>()
+        let shared = provider.as_shared()
             .ok_or_else(|| {
                 Status::failed_precondition(format!("{table_id} is not a shared table"))
             })?;
@@ -172,10 +170,9 @@ impl OperationService {
         let provider = self
             .app_context
             .schema_registry()
-            .get_provider(table_id)
+            .get_kalam_provider(table_id)
             .ok_or_else(|| Status::not_found(format!("shared table {table_id} not found")))?;
-        let shared = (provider.as_ref() as &dyn std::any::Any)
-            .downcast_ref::<SharedTableProvider>()
+        let shared = provider.as_shared()
             .ok_or_else(|| {
                 Status::failed_precondition(format!("{table_id} is not a shared table"))
             })?;

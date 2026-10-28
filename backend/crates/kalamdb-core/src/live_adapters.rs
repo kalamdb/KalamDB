@@ -24,7 +24,7 @@ use kalamdb_live::{
 use kalamdb_raft::{GroupId, RaftExecutor};
 use kalamdb_rls::LiveAuthorizationRoute;
 use kalamdb_sharding::ShardRouter;
-use kalamdb_tables::{BoundLiveAuthorization, SharedTableProvider, TableError};
+use kalamdb_tables::{BoundLiveAuthorization, TableError};
 
 use crate::{
     app_context::AppContext,
@@ -108,15 +108,13 @@ impl LiveAuthorizationBinder for LiveAuthorizationBinderAdapter {
         let provider = self
             .app_context
             .schema_registry()
-            .get_provider(table_id)
+            .get_kalam_provider(table_id)
             .ok_or_else(|| LiveError::TableNotFound(table_id.to_string()))?;
-        let provider = (provider.as_ref() as &dyn std::any::Any)
-            .downcast_ref::<SharedTableProvider>()
-            .ok_or_else(|| {
-                LiveError::InvalidOperation(format!(
-                    "Shared-table RLS provider unavailable for {table_id}"
-                ))
-            })?;
+        let provider = provider.as_shared().ok_or_else(|| {
+            LiveError::InvalidOperation(format!(
+                "Shared-table RLS provider unavailable for {table_id}"
+            ))
+        })?;
         let bound = provider
             .bind_live_authorization(user_id, role)
             .await

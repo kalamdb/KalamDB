@@ -12,7 +12,8 @@ use std::marker::PhantomData;
 
 use kalamdb_commons::{
     conversions::scalar_value_to_bytes,
-    models::{SharedTableRow, UserId, UserTableRow},
+    ids::ScopedRowKey,
+    models::{rows::VersionedTableRow, SharedTableRow, UserId, UserTableRow},
     storage::Partition,
     storage_key::{encode_key, encode_prefix},
     KSerializable, StorageKey,
@@ -259,6 +260,22 @@ impl PrefixIndexedKey for kalamdb_commons::ids::VersionId {
     }
 }
 
+impl PrefixIndexedKey for ScopedRowKey {
+    fn prefix_index_user_id(&self) -> Option<&UserId> {
+        match self {
+            Self::User(id) => Some(id.user_id()),
+            Self::Shared(_) => None,
+        }
+    }
+
+    fn prefix_index_seq(&self) -> i64 {
+        match self {
+            Self::User(id) => id.version().as_i64(),
+            Self::Shared(id) => id.as_i64(),
+        }
+    }
+}
+
 impl PrefixIndexedValue for SharedTableRow {
     fn prefix_index_field_bytes(&self, column: &str) -> Option<Vec<u8>> {
         self.fields.get(column).map(scalar_value_to_bytes)
@@ -268,6 +285,15 @@ impl PrefixIndexedValue for SharedTableRow {
 impl PrefixIndexedValue for UserTableRow {
     fn prefix_index_field_bytes(&self, column: &str) -> Option<Vec<u8>> {
         self.fields.get(column).map(scalar_value_to_bytes)
+    }
+}
+
+impl PrefixIndexedValue for VersionedTableRow {
+    fn prefix_index_field_bytes(&self, column: &str) -> Option<Vec<u8>> {
+        match self {
+            Self::User(row) => row.prefix_index_field_bytes(column),
+            Self::Shared(row) => row.prefix_index_field_bytes(column),
+        }
     }
 }
 

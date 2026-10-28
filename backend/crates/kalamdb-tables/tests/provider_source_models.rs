@@ -40,7 +40,7 @@ use kalamdb_tables::{
     new_indexed_shared_table_store, new_indexed_user_table_store, new_stream_table_store,
     storage_schema_for_table, utils::TableServices, BaseTableProvider, SharedTableProvider,
     SharedTableRow, StreamTableProvider, StreamTableStorageMode, StreamTableStoreConfig,
-    TableProviderCore, UserTableProvider, UserTableRow,
+    TableProviderCore, UserTableProvider, UserTableRow, VersionedTableEngine,
 };
 use kalamdb_transactions::{
     CommitSequenceSource, TransactionAccessError, TransactionAccessValidator,
@@ -1357,7 +1357,10 @@ async fn literal_equality_update_seeks_the_leading_index_column() {
         .expect("plan with delete overlay")
         .expect("seek still applies");
     assert_eq!(
-        remaining.iter().map(|mutation| mutation.primary_key.as_str()).collect::<Vec<_>>(),
+        remaining
+            .iter()
+            .map(|mutation| mutation.primary_key.as_str())
+            .collect::<Vec<_>>(),
         ["2"]
     );
 
@@ -1922,4 +1925,157 @@ async fn shared_sql_dml_writes_each_version_once_with_statement_commit_seq() {
             "rows in one statement share a log index and take distinct ordinals"
         );
     }
+}
+
+#[tokio::test]
+#[ntest::timeout(3000)]
+async fn user_and_shared_tables_execute_the_same_hot_paths() {
+    let user_id = UserId::new("hot-path-user");
+    let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25fa0");
+    let filters = vec![
+        col("conversation_id").eq(lit(1_i64)),
+        col("created_at_ms").gt_eq(lit(0_i64)),
+    ];
+    let assignments = [("created_at_ms".to_string(), ScalarValue::Int64(Some(5)))];
+
+    let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+    let user_table_id = TableId::new(SchemaId::new("app"), TableName::new("user_hot_paths"));
+    let user_def = build_indexed_user_messages_definition(&user_table_id);
+    let user_services = build_services(Arc::clone(&user_def), Arc::clone(&backend));
+    let user_store = Arc::new(new_indexed_user_table_store(
+        Arc::clone(&backend),
+        &user_table_id,
+        "id",
+        storage_schema_for_table(&user_def).expect("user storage schema"),
+        &user_def.scalar_indexes,
+        &user_def.columns,
+    ));
+    for (seq, conversation_id, created_at) in [(1_i64, 1_i64, 10_i64), (2, 1, 20), (3, 2, 30)] {
+        user_store
+            .insert(
+                &kalamdb_commons::ids::UserTableRowId::new(user_id.clone(), seq.into()),
+                &UserTableRow {
+                    user_id: user_id.clone(),
+                    _version: seq.into(),
+                    _deleted: false,
+                    fields: row(vec![
+                        ("id", ScalarValue::Int64(Some(seq))),
+                        ("conversation_id", ScalarValue::Int64(Some(conversation_id))),
+                        ("created_at_ms", ScalarValue::Int64(Some(created_at))),
+                    ]),
+                },
+            )
+            .expect("seed user hot path");
+    }
+    let user_engine = VersionedTableEngine::User(UserTableProvider::new(
+        Arc::new(TableProviderCore::new(
+            user_def,
+            Arc::clone(&user_services.services),
+            "id".to_string(),
+            Arc::clone(&user_services.schema),
+            HashMap::new(),
+        )),
+        Arc::clone(&user_store),
+    ));
+
+    let shared_backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+    let shared_table_id = TableId::new(SchemaId::new("app"), TableName::new("shared_hot_paths"));
+    let shared_def = build_indexed_shared_messages_definition(&shared_table_id);
+    let shared_services = build_services(Arc::clone(&shared_def), Arc::clone(&shared_backend));
+    let shared_store = Arc::new(new_indexed_shared_table_store(
+        shared_backend,
+        &shared_table_id,
+        "id",
+        storage_schema_for_table(&shared_def).expect("shared storage schema"),
+        &shared_def.scalar_indexes,
+        &shared_def.columns,
+    ));
+    for (seq, conversation_id, created_at) in [(1_i64, 1_i64, 10_i64), (2, 1, 20), (3, 2, 30)] {
+        shared_store
+            .insert(
+                &kalamdb_commons::ids::VersionId::from(seq),
+                &SharedTableRow {
+                    _version: kalamdb_commons::ids::VersionId::from(seq),
+                    _deleted: false,
+                    fields: row(vec![
+                        ("id", ScalarValue::Int64(Some(seq))),
+                        ("conversation_id", ScalarValue::Int64(Some(conversation_id))),
+                        ("created_at_ms", ScalarValue::Int64(Some(created_at))),
+                    ]),
+                },
+            )
+            .expect("seed shared hot path");
+    }
+    let shared_engine = VersionedTableEngine::Shared(SharedTableProvider::new(
+        Arc::new(TableProviderCore::new(
+            shared_def,
+            Arc::clone(&shared_services.services),
+            "id".to_string(),
+            Arc::clone(&shared_services.schema),
+            HashMap::new(),
+        )),
+        Arc::clone(&shared_store),
+    ));
+
+    let user_scan = user_engine
+        .columnar_hot_scan(Some(&user_id), None, None, None, None, false)
+        .await
+        .expect("user columnar scan")
+        .expect("user table executes columnar_hot_scan");
+    let shared_scan = shared_engine
+        .columnar_hot_scan(None, None, None, None, None, false)
+        .await
+        .expect("shared columnar scan")
+        .expect("shared table executes columnar_hot_scan");
+    assert_eq!(user_scan.0.num_rows(), 3);
+    assert_eq!(shared_scan.0.num_rows(), 3);
+
+    let user_sum = user_engine
+        .sum_hot_covering_integers(Some(&user_id), &filters, "created_at_ms")
+        .await
+        .expect("user covering sum")
+        .expect("user table executes sum_hot_covering_integers");
+    let shared_sum = shared_engine
+        .sum_hot_covering_integers(None, &filters, "created_at_ms")
+        .await
+        .expect("shared covering sum")
+        .expect("shared table executes sum_hot_covering_integers");
+    assert_eq!(user_sum, (2, 30));
+    assert_eq!(shared_sum, user_sum);
+
+    let seek = ScalarValue::Int64(Some(1));
+    let user_updates = user_engine
+        .plan_literal_equality_updates(
+            &transaction_id,
+            &user_id,
+            None,
+            None,
+            "conversation_id",
+            &seek,
+            &assignments,
+        )
+        .await
+        .expect("user equality plan")
+        .expect("user table executes plan_literal_equality_updates");
+    let shared_updates = shared_engine
+        .plan_literal_equality_updates(
+            &transaction_id,
+            &user_id,
+            None,
+            None,
+            "conversation_id",
+            &seek,
+            &assignments,
+        )
+        .await
+        .expect("shared equality plan")
+        .expect("shared table executes plan_literal_equality_updates");
+    let mut user_keys: Vec<_> =
+        user_updates.iter().map(|mutation| mutation.primary_key.clone()).collect();
+    let mut shared_keys: Vec<_> =
+        shared_updates.iter().map(|mutation| mutation.primary_key.clone()).collect();
+    user_keys.sort();
+    shared_keys.sort();
+    assert_eq!(user_keys, ["1", "2"]);
+    assert_eq!(shared_keys, user_keys);
 }

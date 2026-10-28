@@ -613,6 +613,17 @@ mod tests {
     }
 
     #[test]
+    fn write_managed_server_config_enables_postgres_wire() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let layout = crate::workflow::instance::project_layout(temp.path());
+        write_managed_server_config(&layout, 2900, Some(5432)).unwrap();
+        let contents = std::fs::read_to_string(&layout.config_path).unwrap();
+        assert!(contents.contains("enabled = true"));
+        assert!(contents.contains("port = 5432"));
+        assert!(contents.contains("host = \"127.0.0.1\""));
+    }
+
+    #[test]
     fn resolve_kalamdb_server_bin_prefers_managed_install_path() {
         let temp = tempfile::TempDir::new().unwrap();
         let home = temp.path().join("home");

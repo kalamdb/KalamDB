@@ -34,7 +34,6 @@ use kalamdb_commons::{schemas::TableType, TableId};
 use kalamdb_core::schema_registry::TablesSchemaRegistryAdapter;
 use kalamdb_core::{
     app_context::AppContext, error::KalamDbError, error_extensions::KalamDbResultExt,
-    providers::StreamTableProvider,
 };
 #[cfg(test)]
 use kalamdb_sharding::ShardRouter;
@@ -124,12 +123,11 @@ impl JobExecutor for StreamEvictionExecutor {
         params.validate()?;
 
         let schema_registry = app_ctx.schema_registry();
-        let provider_arc = match schema_registry.get_provider(&params.table_id) {
+        let provider_arc = match schema_registry.get_kalam_provider(&params.table_id) {
             Some(p) => p,
             None => return Ok(false),
         };
-        let stream_provider = (provider_arc.as_ref() as &dyn std::any::Any)
-            .downcast_ref::<StreamTableProvider>()
+        let stream_provider = provider_arc.as_stream()
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Cached provider for {} is not a StreamTableProvider",
@@ -180,7 +178,7 @@ impl JobExecutor for StreamEvictionExecutor {
         // Get table's StreamTableStore
         // Use the registered StreamTableProvider so we access the live in-memory store
         let schema_registry = ctx.app_ctx.schema_registry();
-        let provider_arc = match schema_registry.get_provider(&table_id) {
+        let provider_arc = match schema_registry.get_kalam_provider(&table_id) {
             Some(p) => p,
             None => {
                 ctx.log_warn(&format!(
@@ -195,8 +193,7 @@ impl JobExecutor for StreamEvictionExecutor {
                 });
             },
         };
-        let stream_provider = (provider_arc.as_ref() as &dyn std::any::Any)
-            .downcast_ref::<StreamTableProvider>()
+        let stream_provider = provider_arc.as_stream()
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Cached provider for {} is not a StreamTableProvider",

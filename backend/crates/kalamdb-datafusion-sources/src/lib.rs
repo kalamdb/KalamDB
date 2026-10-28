@@ -23,6 +23,7 @@
 //! reintroduce custom row-buffer, pruning, or plan-metadata frameworks when
 //! the upstream engine APIs already solve the problem.
 
+pub mod dml;
 pub mod exec;
 pub mod provider;
 pub mod pruning;

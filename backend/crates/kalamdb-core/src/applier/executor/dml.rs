@@ -52,10 +52,7 @@ use crate::{
 fn table_has_file_column(app_context: &AppContext, table_id: &TableId) -> bool {
     app_context.schema_registry().get(table_id).is_some_and(|cached| {
         cached.table.columns.iter().any(|column| {
-            matches!(
-                column.data_type(),
-                kalamdb_commons::models::datatypes::KalamDataType::File
-            )
+            matches!(column.data_type(), kalamdb_commons::models::datatypes::KalamDataType::File)
         })
     })
 }
@@ -233,10 +230,10 @@ impl DmlExecutor {
         &self,
         table_id: &TableId,
         provider_label: &'static str,
-    ) -> Result<Arc<dyn datafusion::datasource::TableProvider + Send + Sync>, ApplierError> {
+    ) -> Result<Arc<kalamdb_tables::KalamTableProvider>, ApplierError> {
         let schema_registry = self.app_context.schema_registry();
 
-        if let Some(provider) = schema_registry.get_provider(table_id) {
+        if let Some(provider) = schema_registry.get_kalam_provider(table_id) {
             return Ok(provider);
         }
 
@@ -248,7 +245,7 @@ impl DmlExecutor {
         })?;
 
         schema_registry
-            .get_provider(table_id)
+            .get_kalam_provider(table_id)
             .ok_or_else(|| ApplierError::not_found(provider_label, table_id))
     }
 
@@ -444,9 +441,7 @@ impl DmlExecutor {
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
 
         // Try UserTableProvider first, then StreamTableProvider
-        if let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
-        {
+        if let Some(provider) = provider_arc.as_user() {
             let row_ids = provider
                 .insert_batch_with_versions(user_id, rows, versions)
                 .await
@@ -454,9 +449,7 @@ impl DmlExecutor {
             self.defer_observe(table_id, TableType::User, Some(user_id), log_index);
             log::debug!("DmlExecutor: Inserted {} rows into {}", row_ids.len(), table_id);
             Ok(row_ids.len())
-        } else if let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<StreamTableProvider>()
-        {
+        } else if let Some(provider) = provider_arc.as_stream() {
             let row_ids = provider.insert_batch(user_id, rows, versions).await.map_err(|e| {
                 ApplierError::Execution(format!("Failed to insert stream batch: {}", e))
             })?;
@@ -487,9 +480,7 @@ impl DmlExecutor {
             return Ok(None);
         }
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
-        let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
-        else {
+        let Some(provider) = provider_arc.as_user() else {
             return Ok(None);
         };
         let log_index = Self::log_index_from_versions(versions)?;
@@ -535,9 +526,7 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
 
-        if let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
-        {
+        if let Some(provider) = provider_arc.as_user() {
             let applied = provider
                 .update_batch_by_pk_values_deferred(
                     user_id,
@@ -569,9 +558,7 @@ impl DmlExecutor {
             } else {
                 Ok(0)
             }
-        } else if let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<StreamTableProvider>()
-        {
+        } else if let Some(provider) = provider_arc.as_stream() {
             self.update_stream_provider(provider, user_id, pk_value, update_row.clone(), version)
                 .await
         } else {
@@ -613,9 +600,7 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
 
-        if let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
-        {
+        if let Some(provider) = provider_arc.as_user() {
             let applied = provider
                 .delete_batch_by_pk_values_deferred(user_id, pk_values, versions)
                 .await
@@ -645,9 +630,7 @@ impl DmlExecutor {
                 self.defer_observe(table_id, TableType::User, Some(user_id), log_index);
             }
             Ok(deleted_count)
-        } else if let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<StreamTableProvider>()
-        {
+        } else if let Some(provider) = provider_arc.as_stream() {
             let mut deleted_count = 0;
             for (pk_value, version) in pk_values.iter().zip(versions.iter().copied()) {
                 if provider
@@ -699,9 +682,7 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
 
-        if let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
-        {
+        if let Some(provider) = provider_arc.as_shared() {
             let row_ids = provider
                 .insert_batch_with_versions(actor_user_id, rows, versions)
                 .await
@@ -732,9 +713,7 @@ impl DmlExecutor {
             return Ok(None);
         }
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
-        let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
-        else {
+        let Some(provider) = provider_arc.as_shared() else {
             return Ok(None);
         };
         let log_index = Self::log_index_from_versions(versions)?;
@@ -784,9 +763,7 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
 
-        if let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
-        {
+        if let Some(provider) = provider_arc.as_shared() {
             let applied = provider
                 .update_batch_by_pk_values_deferred(&targets)
                 .await
@@ -863,9 +840,7 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
 
-        if let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
-        {
+        if let Some(provider) = provider_arc.as_shared() {
             let applied = provider
                 .delete_batch_by_pk_values_deferred(pk_values, versions)
                 .await
@@ -921,14 +896,12 @@ impl DmlExecutor {
                 if all_inserts_same_table_and_user {
                     let provider_arc =
                         self.load_provider(&first_mutation.table_id, "Table provider").await?;
-                    let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-                        .downcast_ref::<UserTableProvider>()
-                        .ok_or_else(|| {
-                            ApplierError::Execution(format!(
-                                "Provider type mismatch for user table {}",
-                                first_mutation.table_id
-                            ))
-                        })?;
+                    let provider = provider_arc.as_user().ok_or_else(|| {
+                        ApplierError::Execution(format!(
+                            "Provider type mismatch for user table {}",
+                            first_mutation.table_id
+                        ))
+                    })?;
 
                     let batch_rows: Vec<&Row> =
                         mutations.iter().map(|mutation| &mutation.payload).collect();
@@ -943,10 +916,7 @@ impl DmlExecutor {
         }
 
         let mut seen_insert_keys = HashSet::with_capacity(mutations.len());
-        let mut cached_provider: Option<(
-            TableId,
-            Arc<dyn datafusion::datasource::TableProvider + Send + Sync>,
-        )> = None;
+        let mut cached_provider: Option<(TableId, Arc<kalamdb_tables::KalamTableProvider>)> = None;
 
         for mutation in mutations {
             if mutation.operation_kind != OperationKind::Insert {
@@ -977,14 +947,12 @@ impl DmlExecutor {
                 cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
                 provider_arc
             };
-            let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-                .downcast_ref::<UserTableProvider>()
-                .ok_or_else(|| {
-                    ApplierError::Execution(format!(
-                        "Provider type mismatch for user table {}",
-                        mutation.table_id
-                    ))
-                })?;
+            let provider = provider_arc.as_user().ok_or_else(|| {
+                ApplierError::Execution(format!(
+                    "Provider type mismatch for user table {}",
+                    mutation.table_id
+                ))
+            })?;
 
             let batch_key =
                 format!("{}|{}|{}", mutation.table_id, user_id.as_str(), mutation.primary_key);
@@ -1011,10 +979,7 @@ impl DmlExecutor {
         mutations: &[StagedMutation],
     ) -> Result<(), ApplierError> {
         let mut seen_insert_keys = HashSet::with_capacity(mutations.len());
-        let mut cached_provider: Option<(
-            TableId,
-            Arc<dyn datafusion::datasource::TableProvider + Send + Sync>,
-        )> = None;
+        let mut cached_provider: Option<(TableId, Arc<kalamdb_tables::KalamTableProvider>)> = None;
 
         for mutation in mutations {
             if mutation.operation_kind != OperationKind::Insert {
@@ -1040,14 +1005,12 @@ impl DmlExecutor {
                 cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
                 provider_arc
             };
-            let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-                .downcast_ref::<SharedTableProvider>()
-                .ok_or_else(|| {
-                    ApplierError::Execution(format!(
-                        "Provider type mismatch for shared table {}",
-                        mutation.table_id
-                    ))
-                })?;
+            let provider = provider_arc.as_shared().ok_or_else(|| {
+                ApplierError::Execution(format!(
+                    "Provider type mismatch for shared table {}",
+                    mutation.table_id
+                ))
+            })?;
 
             let batch_key = format!("{}|{}", mutation.table_id, mutation.primary_key);
             if !seen_insert_keys.insert(batch_key) {
@@ -1101,14 +1064,12 @@ impl DmlExecutor {
                 if all_inserts_same_table_and_user {
                     let provider_arc =
                         self.load_provider(&first_mutation.table_id, "Table provider").await?;
-                    let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-                        .downcast_ref::<UserTableProvider>()
-                        .ok_or_else(|| {
-                            ApplierError::Execution(format!(
-                                "Provider type mismatch for user table {}",
-                                first_mutation.table_id
-                            ))
-                        })?;
+                    let provider = provider_arc.as_user().ok_or_else(|| {
+                        ApplierError::Execution(format!(
+                            "Provider type mismatch for user table {}",
+                            first_mutation.table_id
+                        ))
+                    })?;
 
                     let applied = provider
                         .insert_batch_deferred_prevalidated_with_versions(
@@ -1159,10 +1120,7 @@ impl DmlExecutor {
             }
         }
 
-        let mut cached_provider: Option<(
-            TableId,
-            Arc<dyn datafusion::datasource::TableProvider + Send + Sync>,
-        )> = None;
+        let mut cached_provider: Option<(TableId, Arc<kalamdb_tables::KalamTableProvider>)> = None;
         // Writes in this commit are buffered until the Raft entry finishes, so a
         // later statement cannot read them back from RocksDB.
         let mut written: HashMap<(TableId, UserId, String), (UserTableRowId, UserTableRow)> =
@@ -1193,14 +1151,12 @@ impl DmlExecutor {
                 cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
                 provider_arc
             };
-            let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-                .downcast_ref::<UserTableProvider>()
-                .ok_or_else(|| {
-                    ApplierError::Execution(format!(
-                        "Provider type mismatch for user table {}",
-                        mutation.table_id
-                    ))
-                })?;
+            let provider = provider_arc.as_user().ok_or_else(|| {
+                ApplierError::Execution(format!(
+                    "Provider type mismatch for user table {}",
+                    mutation.table_id
+                ))
+            })?;
 
             let written_key =
                 (mutation.table_id.clone(), user_id.clone(), mutation.primary_key.clone());
@@ -1385,14 +1341,12 @@ impl DmlExecutor {
             if all_inserts_same_table {
                 let provider_arc =
                     self.load_provider(&first_mutation.table_id, "Shared table provider").await?;
-                let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-                    .downcast_ref::<SharedTableProvider>()
-                    .ok_or_else(|| {
-                        ApplierError::Execution(format!(
-                            "Provider type mismatch for shared table {}",
-                            first_mutation.table_id
-                        ))
-                    })?;
+                let provider = provider_arc.as_shared().ok_or_else(|| {
+                    ApplierError::Execution(format!(
+                        "Provider type mismatch for shared table {}",
+                        first_mutation.table_id
+                    ))
+                })?;
 
                 let applied = provider
                     .insert_batch_deferred_prevalidated_with_versions(
@@ -1441,10 +1395,7 @@ impl DmlExecutor {
             }
         }
 
-        let mut cached_provider: Option<(
-            TableId,
-            Arc<dyn datafusion::datasource::TableProvider + Send + Sync>,
-        )> = None;
+        let mut cached_provider: Option<(TableId, Arc<kalamdb_tables::KalamTableProvider>)> = None;
         // Writes in this commit are buffered until the Raft entry finishes, so a
         // later statement cannot read them back from RocksDB.
         let mut written: HashMap<(TableId, String), (SharedTableRowId, SharedTableRow)> =
@@ -1470,14 +1421,12 @@ impl DmlExecutor {
                 cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
                 provider_arc
             };
-            let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-                .downcast_ref::<SharedTableProvider>()
-                .ok_or_else(|| {
-                    ApplierError::Execution(format!(
-                        "Provider type mismatch for shared table {}",
-                        mutation.table_id
-                    ))
-                })?;
+            let provider = provider_arc.as_shared().ok_or_else(|| {
+                ApplierError::Execution(format!(
+                    "Provider type mismatch for shared table {}",
+                    mutation.table_id
+                ))
+            })?;
 
             let written_key = (mutation.table_id.clone(), mutation.primary_key.clone());
             let known = written.get(&written_key).cloned();

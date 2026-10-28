@@ -19,20 +19,31 @@ use datafusion::arrow::{
     datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
-use kalamdb_commons::{
-    datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
-};
+use kalamdb_commons::schemas::TableDefinition;
+use kalamdb_macros::table;
 use kalamdb_system::SystemTable;
 use parking_lot::RwLock;
 
-use super::common::{system_view_definition, SystemViewProvider};
+use super::common::SystemViewProvider;
 use crate::view_base::VirtualView;
 
 crate::memoized_view_schema!(stats_schema, StatsView);
 
 /// Metrics provider callback type.
 pub type MetricsCallback = Arc<dyn Fn() -> Vec<(String, String)> + Send + Sync>;
+
+#[table(
+    name = "stats",
+    view = true,
+    comment = "Runtime metrics and statistics (computed on each query)"
+)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StatsRow {
+    /// Name of the runtime metric
+    pub metric_name: String,
+    /// Current value of the metric
+    pub metric_value: String,
+}
 
 /// Virtual view that emits key-value metrics computed at query time
 ///
@@ -65,36 +76,7 @@ impl StatsView {
     /// - metric_name TEXT NOT NULL
     /// - metric_value TEXT NOT NULL
     pub fn definition() -> TableDefinition {
-        let columns = vec![
-            ColumnDefinition::new(
-                1,
-                "metric_name",
-                1,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Name of the runtime metric".to_string()),
-            ),
-            ColumnDefinition::new(
-                2,
-                "metric_value",
-                2,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Current value of the metric".to_string()),
-            ),
-        ];
-
-        system_view_definition(
-            SystemTable::Stats,
-            columns,
-            "Runtime metrics and statistics (computed on each query)",
-        )
+        StatsRow::definition()
     }
 
     /// Create a new stats view without a callback (placeholder mode)

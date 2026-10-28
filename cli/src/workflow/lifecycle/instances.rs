@@ -41,8 +41,8 @@ pub fn instance_catalog(
             name,
             kind: InstanceKind::Local,
             state,
-            url: record.as_ref().map(|r| r.url.clone()),
-            folder: Some(entry.folder),
+            url: record.as_ref().map(|r| instance::browser_http_url(&r.url)),
+            folder: Some(crate::workflow::io::simplified_path(&entry.folder)),
             global,
             user: None,
             auth: None,
@@ -295,7 +295,7 @@ fn render_instances(rows: Vec<InstanceSummary>, output: &WorkflowOutput) -> Resu
             width,
         );
         if let Some(folder) = row.folder.as_ref() {
-            output.detail(format!("  Folder  {}", folder.display()));
+            output.detail(format!("  Folder  {}", crate::workflow::io::display_path(folder)));
             if row.global {
                 output.detail("  Scope   Global");
             }

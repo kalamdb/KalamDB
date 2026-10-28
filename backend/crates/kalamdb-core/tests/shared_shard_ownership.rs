@@ -1,5 +1,9 @@
 use std::{collections::HashSet, sync::Arc};
 
+use crate::support::{
+    create_cluster_app_context_with_shared_shards, execute_err, execute_ok, observer_exec_ctx,
+    request_exec_ctx, result_rows,
+};
 use kalamdb_commons::{
     ids::{same_domain_cmp, VersionError, VersionId},
     SchemaId, TableId,
@@ -10,10 +14,6 @@ use kalamdb_core::sql::{
     executor::{handler_registry::HandlerRegistry, SqlExecutor},
 };
 use kalamdb_sharding::{GroupId, ShardRouter};
-use crate::support::{
-    create_cluster_app_context_with_shared_shards, execute_err, execute_ok, observer_exec_ctx,
-    request_exec_ctx, result_rows,
-};
 
 #[tokio::test]
 #[ntest::timeout(20_000)]

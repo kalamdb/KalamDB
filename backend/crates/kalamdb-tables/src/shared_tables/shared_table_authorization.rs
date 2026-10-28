@@ -551,14 +551,11 @@ pub(crate) fn resolve_relation_provider(
                 "RLS relation provider {relation_table} is unavailable"
             ))
         })?;
-    (provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .cloned()
-        .ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!(
-                "RLS relation {relation_table} must be a shared table"
-            ))
-        })
+    crate::as_shared_table(provider.as_ref()).cloned().ok_or_else(|| {
+        KalamDbError::InvalidOperation(format!(
+            "RLS relation {relation_table} must be a shared table"
+        ))
+    })
 }
 
 fn append_policy_explain(details: &str, policies: &BoundTablePolicies) -> String {

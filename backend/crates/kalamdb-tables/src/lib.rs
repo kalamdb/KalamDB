@@ -43,12 +43,14 @@ pub mod common;
 pub mod error;
 pub mod error_extensions;
 pub mod manifest;
+pub mod provider;
 pub mod rls;
 pub mod row_codec;
 pub mod scalar_index_sync;
 pub mod shared_tables;
 pub mod stream_tables;
-pub mod topics;
+#[path = "versioned/table_engine.rs"]
+pub mod table_engine;
 pub mod user_tables;
 pub mod utils;
 pub(crate) mod versioned;
@@ -66,11 +68,10 @@ pub use kalamdb_vector::{
 };
 pub use row_codec::{
     empty_storage_schema, storage_schema_for_table, storage_schema_for_table_with_arrow,
-    SharedRowCodec, UserRowCodec,
 };
 pub use scalar_index_sync::{sync_scalar_indexes, sync_scalar_indexes_with_arrow};
 pub use shared_tables::{
-    pk_index::{create_shared_table_pk_index, SharedTablePkIndex},
+    pk_index::{create_shared_table_pk_index, new_shared_pk_index},
     shared_table_store::{
         new_indexed_shared_table_store, new_shared_table_store, SharedTableIndexedStore,
         SharedTableRow, SharedTableStore,
@@ -79,22 +80,19 @@ pub use shared_tables::{
 pub use stream_tables::stream_table_store::{
     new_stream_table_store, StreamTableStorageMode, StreamTableStore, StreamTableStoreConfig,
 };
-pub use topics::{
-    topic_message_models::{
-        TopicMessage, TopicMessageId, TopicRetentionDeletionStats, TopicRetentionIndexEntry,
-        TopicRetentionIndexKey,
-    },
-    topic_message_store::{TopicMessageStore, TOPIC_RETENTION_INDEX_PARTITION_NAME},
-};
 pub use user_tables::{
-    pk_index::{create_user_table_pk_index, UserTablePkIndex},
+    pk_index::{create_user_table_pk_index, new_user_pk_index, VersionedPkIndex},
     user_table_store::{
         new_indexed_user_table_store, new_user_table_store, UserTableIndexedStore, UserTableStore,
     },
 };
 // Re-export providers for core integration
+pub use provider::{
+    as_shared_table, as_stream_table, as_user_table, KalamTableProvider, TableCapabilityProfile,
+};
+pub use table_engine::VersionedTableEngine;
 pub use utils::{
-    BaseTableProvider, KalamTableProvider, SharedTableProvider, StreamTableProvider,
-    TableProviderCore, UserTableProvider,
+    BaseTableProvider, SharedTableProvider, StreamTableProvider, TableProviderCore, TableRowDml,
+    UserTableProvider,
 };
 pub use versioned::DeferredMutation;

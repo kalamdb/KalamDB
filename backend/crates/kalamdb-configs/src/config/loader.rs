@@ -74,6 +74,41 @@ fn browser_origin(value: &str) -> Option<String> {
     }
 }
 
+/// Other loopback origins for the same scheme and port.
+///
+/// A page opened at `http://127.0.0.1:2900` sends that `Origin`. When
+/// `public_origin` is `http://localhost:2900`, an exact allowlist rejects the
+/// Admin UI WebSocket. Local servers accept every loopback spelling.
+fn loopback_origin_aliases(origin: &str) -> Vec<String> {
+    let Some((scheme, authority)) = origin.split_once("://") else {
+        return Vec::new();
+    };
+    let (host, port_suffix) = split_origin_authority(authority);
+    let bare = host.trim_matches(|ch| ch == '[' || ch == ']');
+    if !matches!(bare, "localhost" | "127.0.0.1" | "::1") {
+        return Vec::new();
+    }
+    ["localhost", "127.0.0.1", "[::1]"]
+        .into_iter()
+        .filter(|alias| *alias != host)
+        .map(|alias| format!("{scheme}://{alias}{port_suffix}"))
+        .collect()
+}
+
+fn split_origin_authority(authority: &str) -> (String, String) {
+    if let Some(rest) = authority.strip_prefix('[') {
+        if let Some((host, rest)) = rest.split_once(']') {
+            return (format!("[{host}]"), rest.to_string());
+        }
+    }
+    if let Some((host, port)) = authority.rsplit_once(':') {
+        if !port.is_empty() && port.chars().all(|ch| ch.is_ascii_digit()) {
+            return (host.to_string(), format!(":{port}"));
+        }
+    }
+    (authority.to_string(), String::new())
+}
+
 fn has_configured_origin_policy(origins: &[String]) -> bool {
     origins.iter().any(|origin| !origin.trim().is_empty())
 }
@@ -359,10 +394,12 @@ impl ServerConfig {
         let Some(origin) = browser_origin(&public_origin) else {
             return;
         };
-        if self.security.cors.allowed_origins.iter().any(|allowed| allowed == &origin) {
-            return;
+        for candidate in std::iter::once(origin.clone()).chain(loopback_origin_aliases(&origin)) {
+            if self.security.cors.allowed_origins.iter().any(|allowed| allowed == &candidate) {
+                continue;
+            }
+            self.security.cors.allowed_origins.push(candidate);
         }
-        self.security.cors.allowed_origins.push(origin);
     }
 
     /// Returns true when startup should emit a security warning because the
@@ -617,7 +654,7 @@ mod tests {
         config.server.public_origin = Some("https://db.example.com/".to_string());
 
         assert_eq!(config.server.admin_ui_url(), "https://db.example.com/ui");
-        assert_eq!(config.server.local_admin_ui_url(), "http://127.0.0.1:2900/ui");
+        assert_eq!(config.server.local_admin_ui_url(), "http://localhost:2900/ui");
     }
 
     #[test]
@@ -665,6 +702,23 @@ mod tests {
             vec![
                 "http://localhost:2900".to_string(),
                 "https://db.example.com".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_finalize_allows_every_loopback_origin_for_local_admin_ui() {
+        let mut config = ServerConfig::default();
+        config.server.public_origin = Some("http://localhost:2900".to_string());
+
+        config.finalize().expect("local public origin should be allowed");
+
+        assert_eq!(
+            config.security.cors.allowed_origins,
+            vec![
+                "http://localhost:2900".to_string(),
+                "http://127.0.0.1:2900".to_string(),
+                "http://[::1]:2900".to_string(),
             ]
         );
     }

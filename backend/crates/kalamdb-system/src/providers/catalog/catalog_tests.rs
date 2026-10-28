@@ -18,7 +18,7 @@ use super::{
         CatalogRoutineGrant, CatalogRoutineParameter, CatalogSchedule, CatalogTriggerAttempt,
         CatalogType, CatalogTypeField,
     },
-    ActivateFunctionOutcome, CatalogStores, TypesTableProvider,
+    ActivateFunctionOutcome, CatalogStores,
 };
 use crate::system_row_mapper::{model_to_system_row, system_row_to_model};
 
@@ -453,7 +453,7 @@ fn drop_type_is_blocked_by_alias_nested_field_and_routine() {
 
 #[test]
 fn system_table_names_are_registered() {
-    let provider = TypesTableProvider::new(Arc::new(InMemoryBackend::new()));
+    let stores = CatalogStores::new(Arc::new(InMemoryBackend::new()));
     assert_eq!(SystemTable::Types.table_name(), "types");
     assert_eq!(SystemTable::TypeFields.table_name(), "type_fields");
     assert_eq!(SystemTable::Routines.table_name(), "routines");
@@ -464,8 +464,8 @@ fn system_table_names_are_registered() {
     assert_eq!(SystemTable::FunctionArtifacts.table_name(), "function_artifacts");
     assert_eq!(SystemTable::Schedules.table_name(), "schedules");
     assert!(SystemTable::Types.partition().is_some());
-    provider.upsert_type(address_type()).unwrap();
-    assert_eq!(provider.list_types().unwrap().len(), 1);
+    stores.upsert_type(address_type()).unwrap();
+    assert_eq!(stores.list_types().unwrap().len(), 1);
 }
 
 fn function_rows(
@@ -607,6 +607,29 @@ fn dropping_a_trigger_clears_its_delivery_attempts() {
 
     stores.drop_trigger_attempts_for_topic(&topic_id).unwrap();
     assert!(stores.list_trigger_attempts().unwrap().is_empty());
+}
+
+#[test]
+fn get_type_reads_the_entity_store_without_a_query_plan() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let stores = CatalogStores::new(backend.clone());
+    let catalog_type = implicit_row_type();
+    stores.upsert_type(catalog_type.clone()).unwrap();
+    backend.clear_recorded_ops();
+
+    let loaded = stores.get_type(&catalog_type.type_id).unwrap().unwrap();
+
+    assert_eq!(loaded, catalog_type);
+    let partition = SystemTable::Types
+        .column_family_name()
+        .expect("types is a table")
+        .to_string();
+    let ops = backend.recorded_ops();
+    assert!(!ops.is_empty());
+    assert!(
+        ops.iter().all(|(kind, name)| *kind == "get" && name == &partition),
+        "get_type must call IndexedEntityStore::get, recorded {ops:?}"
+    );
 }
 
 #[test]

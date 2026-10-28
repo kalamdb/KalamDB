@@ -38,8 +38,6 @@ use kalamdb_views::{
     transactions::{TransactionsTableProvider, TransactionsView},
     view_base::ViewTableProvider,
 };
-#[allow(deprecated)]
-use kalamdb_views::{create_columns_provider, create_tables_provider};
 use parking_lot::RwLock;
 
 use crate::schema_registry::SchemaRegistry;
@@ -241,16 +239,6 @@ impl SystemSchemaProvider {
             SystemTable::Datatypes => {
                 let datatypes_view = Arc::new(DatatypesView::new());
                 let provider = Arc::new(DatatypesTableProvider::new(datatypes_view));
-                provider as Arc<dyn TableProvider>
-            },
-            #[allow(deprecated)]
-            SystemTable::Tables => {
-                let provider = Arc::new(create_tables_provider(Arc::clone(&self.system_tables)));
-                provider as Arc<dyn TableProvider>
-            },
-            #[allow(deprecated)]
-            SystemTable::Columns => {
-                let provider = Arc::new(create_columns_provider(Arc::clone(&self.system_tables)));
                 provider as Arc<dyn TableProvider>
             },
             SystemTable::Describe => {

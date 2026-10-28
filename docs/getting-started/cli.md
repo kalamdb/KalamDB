@@ -444,7 +444,7 @@ Took: 245.123 ms
 Clear, actionable error messages:
 ```
 ERROR 1001: Table 'users' not found
-Details: Available tables: system.tables, system.users, events
+Details: Available tables: information_schema.tables, system.users, events
 ```
 
 ### 7. Batch Operations
@@ -488,10 +488,10 @@ kalam
 ### 10. System Introspection
 
 ```sql
--- Find large tables
-SELECT table_name, row_count 
-FROM system.tables 
-ORDER BY row_count DESC;
+-- List tables
+SELECT table_schema, table_name, kdb_table_type
+FROM information_schema.tables
+ORDER BY table_schema, table_name;
 
 -- Monitor active connections
 SELECT * FROM system.users WHERE last_seen > NOW() - INTERVAL 5 MINUTES;

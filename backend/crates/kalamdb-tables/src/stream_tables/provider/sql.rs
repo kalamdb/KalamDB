@@ -119,7 +119,7 @@ impl TableProvider for StreamTableProvider {
         let (user_id, _role) =
             extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
 
-        let rows = crate::utils::datafusion_dml::collect_input_rows(state, input).await?;
+        let rows = kalamdb_datafusion_sources::dml::collect_input_rows(state, input).await?;
         let mut versions = Vec::with_capacity(rows.len());
         for _ in 0..rows.len() {
             let sequence = self.core.services.commit_sequence_source.allocate_next();
@@ -131,7 +131,7 @@ impl TableProvider for StreamTableProvider {
             .insert_batch(&user_id, rows, &versions)
             .await
             .map_err(crate::error::into_datafusion)?;
-        crate::utils::datafusion_dml::rows_affected_plan(state, inserted.len() as u64).await
+        kalamdb_datafusion_sources::dml::rows_affected_plan(state, inserted.len() as u64).await
     }
 
     async fn delete_from(
@@ -147,7 +147,7 @@ impl TableProvider for StreamTableProvider {
 
         let pk_column = self.primary_key_field_name().to_string();
         let schema = self.schema_ref();
-        let projection = crate::utils::datafusion_dml::dml_scan_projection(
+        let projection = kalamdb_datafusion_sources::dml::dml_scan_projection(
             &schema,
             &filters,
             &[],
@@ -161,7 +161,7 @@ impl TableProvider for StreamTableProvider {
         )
         .await?;
         if rows.is_empty() {
-            return crate::utils::datafusion_dml::rows_affected_plan(state, 0).await;
+            return kalamdb_datafusion_sources::dml::rows_affected_plan(state, 0).await;
         }
 
         let mut seen = HashSet::new();
@@ -182,7 +182,7 @@ impl TableProvider for StreamTableProvider {
             }
         }
 
-        crate::utils::datafusion_dml::rows_affected_plan(state, deleted).await
+        kalamdb_datafusion_sources::dml::rows_affected_plan(state, deleted).await
     }
 
     async fn update(
@@ -197,7 +197,7 @@ impl TableProvider for StreamTableProvider {
 
 // KalamTableProvider: extends TableProvider with KalamDB-specific DML
 #[async_trait]
-impl crate::utils::dml_provider::KalamTableProvider for StreamTableProvider {
+impl crate::utils::dml_provider::TableRowDml for StreamTableProvider {
     async fn insert_rows(
         &self,
         user_id: &UserId,

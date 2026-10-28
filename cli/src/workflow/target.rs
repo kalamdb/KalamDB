@@ -7,7 +7,7 @@
 //! 1. Explicit CLI flags (`--global`, `--env`, `--url`, `--host`)
 //! 2. `KALAM_ENV` / `KALAM_URL` / `KALAM_NAMESPACE`
 //! 3. `kalam.toml`
-//! 4. Project-local runtime in the current directory, or `http://127.0.0.1:2900`
+//! 4. Project-local runtime in the current directory, or `http://localhost:2900`
 
 use std::path::{Path, PathBuf};
 
@@ -28,7 +28,7 @@ use crate::{
     },
 };
 
-pub const DEFAULT_LOCAL_URL: &str = "http://127.0.0.1:2900";
+pub const DEFAULT_LOCAL_URL: &str = "http://localhost:2900";
 pub const SHARED_CREDENTIAL_INSTANCE: &str = "kalam-global";
 pub const LOCAL_CREDENTIAL_INSTANCE: &str = "kalam-local";
 

@@ -13,20 +13,17 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use datafusion::{
     arrow::{datatypes::SchemaRef, record_batch::RecordBatch},
-    common::DFSchema,
     datasource::{TableProvider, TableType},
     error::{DataFusionError, Result as DataFusionResult},
     logical_expr::{Expr, TableProviderFilterPushDown},
-    physical_expr::PhysicalExpr,
     physical_plan::ExecutionPlan,
-};
-use kalamdb_datafusion_sources::{
-    exec::{finalize_deferred_batch, DeferredBatchExec, DeferredBatchSource},
-    provider::{combined_filter, pushdown_results_for_filters, FilterCapability},
 };
 use kalamdb_system::SystemTable;
 
-use crate::error::RegistryError;
+use crate::{
+    catalog_provider::{CatalogScanCtx, CatalogSource, CatalogTableProvider},
+    error::RegistryError,
+};
 
 /// VirtualView trait defines the core behavior for virtual tables (views)
 ///
@@ -66,83 +63,82 @@ pub trait VirtualView: Send + Sync + std::fmt::Debug {
     }
 }
 
-/// ViewTableProvider implements DataFusion's `TableProvider` for any
-/// `VirtualView`.
-///
-/// This generic provider eliminates repeated scan/pushdown boilerplate across
-/// views. Each view only needs to implement `VirtualView`.
-#[derive(Debug, Clone)]
-pub struct ViewTableProvider<V: VirtualView> {
+/// Adapts a [`VirtualView`] to the shared catalog scan shell.
+pub struct VirtualViewSource<V: VirtualView> {
     view: Arc<V>,
 }
 
-struct ViewScanSource<V: VirtualView> {
-    view: Arc<V>,
-    physical_filter: Option<Arc<dyn PhysicalExpr>>,
-    projection: Option<Vec<usize>>,
-    limit: Option<usize>,
-    output_schema: SchemaRef,
-}
-
-impl<V: VirtualView> std::fmt::Debug for ViewScanSource<V> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ViewScanSource")
-            .field("view_name", &self.view.view_name())
-            .field("projection", &self.projection)
-            .field("limit", &self.limit)
+impl<V: VirtualView> std::fmt::Debug for VirtualViewSource<V> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("VirtualViewSource")
+            .field("view", &self.view.view_name())
             .finish()
     }
 }
 
 #[async_trait]
-impl<V: VirtualView + 'static> DeferredBatchSource for ViewScanSource<V> {
-    fn source_name(&self) -> &'static str {
-        "view_scan"
-    }
-
+impl<V: VirtualView + 'static> CatalogSource for VirtualViewSource<V> {
     fn schema(&self) -> SchemaRef {
-        Arc::clone(&self.output_schema)
+        self.view.schema()
     }
 
-    async fn produce_batch(&self) -> DataFusionResult<RecordBatch> {
-        let batch = self.view.compute_batch().map_err(|error| {
+    async fn batch(&self, _ctx: &CatalogScanCtx<'_>) -> DataFusionResult<RecordBatch> {
+        self.view.compute_batch().map_err(|error| {
             DataFusionError::Execution(format!(
                 "Failed to compute batch for view {}: {}",
                 self.view.view_name(),
                 error
             ))
-        })?;
-
-        finalize_deferred_batch(
-            batch,
-            self.physical_filter.as_ref(),
-            self.projection.as_deref(),
-            self.limit,
-            self.source_name(),
-        )
+        })
     }
 }
 
-impl<V: VirtualView> ViewTableProvider<V> {
+/// ViewTableProvider implements DataFusion's `TableProvider` for any
+/// `VirtualView`.
+///
+/// This generic provider eliminates repeated scan/pushdown boilerplate across
+/// views. Each view only needs to implement `VirtualView`.
+pub struct ViewTableProvider<V: VirtualView + 'static> {
+    inner: CatalogTableProvider<VirtualViewSource<V>>,
+}
+
+impl<V: VirtualView + 'static> Clone for ViewTableProvider<V> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+impl<V: VirtualView + 'static> std::fmt::Debug for ViewTableProvider<V> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("ViewTableProvider").field("inner", &self.inner).finish()
+    }
+}
+
+impl<V: VirtualView + 'static> ViewTableProvider<V> {
     /// Create a new view table provider
     pub fn new(view: Arc<V>) -> Self {
-        Self { view }
+        Self {
+            inner: CatalogTableProvider::new(Arc::new(VirtualViewSource { view })),
+        }
     }
 
     /// Get reference to the underlying view
     pub fn view(&self) -> &Arc<V> {
-        &self.view
+        &self.inner.source().view
     }
 }
 
 #[async_trait]
 impl<V: VirtualView + 'static> TableProvider for ViewTableProvider<V> {
     fn schema(&self) -> SchemaRef {
-        self.view.schema()
+        self.inner.schema()
     }
 
     fn table_type(&self) -> TableType {
-        TableType::View
+        self.inner.table_type()
     }
 
     async fn scan(
@@ -152,34 +148,13 @@ impl<V: VirtualView + 'static> TableProvider for ViewTableProvider<V> {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        let base_schema = self.view.schema();
-        let output_schema = match projection {
-            Some(indices) => base_schema
-                .project(indices)
-                .map(Arc::new)
-                .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?,
-            None => Arc::clone(&base_schema),
-        };
-        let physical_filter = if let Some(filter) = combined_filter(filters) {
-            let df_schema = DFSchema::try_from(Arc::clone(&base_schema))?;
-            Some(state.create_physical_expr(filter, &df_schema)?)
-        } else {
-            None
-        };
-
-        Ok(Arc::new(DeferredBatchExec::new(Arc::new(ViewScanSource {
-            view: Arc::clone(&self.view),
-            physical_filter,
-            projection: projection.cloned(),
-            limit,
-            output_schema,
-        }))))
+        self.inner.scan(state, projection, filters, limit).await
     }
 
     fn supports_filters_pushdown(
         &self,
         filters: &[&Expr],
     ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
-        Ok(pushdown_results_for_filters(filters, |_| FilterCapability::Exact))
+        self.inner.supports_filters_pushdown(filters)
     }
 }

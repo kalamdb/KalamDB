@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use kalamdb_core::error::KalamDbError;
+use crate::error::TransferError;
 
 use crate::{create_archive_staging_dir, extract_tar_gz_archive, is_tar_gz_path};
 
@@ -34,7 +34,9 @@ impl DatabaseRestorePlan {
     }
 }
 
-pub fn prepare_database_restore(backup_source: &Path) -> Result<DatabaseRestorePlan, KalamDbError> {
+pub fn prepare_database_restore(
+    backup_source: &Path,
+) -> Result<DatabaseRestorePlan, TransferError> {
     let archive_input = is_tar_gz_path(backup_source);
     let restore_root = if archive_input {
         let staging_dir = create_archive_staging_dir(backup_source, "restore")?;

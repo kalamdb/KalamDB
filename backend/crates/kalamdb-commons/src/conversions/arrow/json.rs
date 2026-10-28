@@ -2815,7 +2815,11 @@ pub fn try_append_record_batch_json_rows(
     out: &mut Vec<u8>,
     row_separator_needed: &mut bool,
 ) -> Result<bool, CommonError> {
-    if !batch.columns().iter().all(|column| arrow_column_has_direct_json(column.as_ref())) {
+    if !batch
+        .columns()
+        .iter()
+        .all(|column| arrow_column_has_direct_json(column.as_ref()))
+    {
         return Ok(false);
     }
     for row_idx in 0..batch.num_rows() {
@@ -2929,9 +2933,7 @@ fn append_arrow_cell_json(
         },
         arrow::datatypes::DataType::Null => out.extend_from_slice(b"null"),
         _ => {
-            return Err(CommonError::invalid_input(
-                "column type has no direct JSON writer",
-            ));
+            return Err(CommonError::invalid_input("column type has no direct JSON writer"));
         },
     }
     Ok(())

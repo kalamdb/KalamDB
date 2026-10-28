@@ -11,13 +11,11 @@ use datafusion::arrow::{
     datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
-use kalamdb_commons::{
-    datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
-};
+use kalamdb_commons::schemas::TableDefinition;
+use kalamdb_macros::table;
 use kalamdb_system::SystemTable;
 
-use super::common::{system_view_definition, view_provider_with, SystemViewProvider};
+use super::common::{view_provider_with, SystemViewProvider};
 use crate::{
     error::RegistryError,
     jsonl_tail::{parse_json_log_line, read_jsonl_tail, JsonlTailLimits},
@@ -76,6 +74,31 @@ impl RawSlowQueryLogEntry {
     }
 }
 
+#[table(
+    name = "slow_queries",
+    view = true,
+    comment = "Recent slow queries from the bounded slow-query JSONL log view"
+)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct SlowQueryRow {
+    /// Slow query timestamp in RFC 3339 format
+    pub timestamp: String,
+    /// Slow query timestamp as epoch milliseconds
+    pub timestamp_ms: i64,
+    /// Query duration in milliseconds
+    pub duration_ms: f64,
+    /// User that executed the query
+    pub user_id: String,
+    /// Resolved table type for the query
+    pub table_type: String,
+    /// Resolved table name when available
+    pub table_name: Option<String>,
+    /// Rows returned or affected
+    pub row_count: i64,
+    /// Redacted SQL text
+    pub query: String,
+}
+
 #[derive(Debug)]
 pub struct SlowQueriesView {
     logs_path: PathBuf,
@@ -83,102 +106,7 @@ pub struct SlowQueriesView {
 
 impl SlowQueriesView {
     pub fn definition() -> TableDefinition {
-        let columns = vec![
-            ColumnDefinition::new(
-                1,
-                "timestamp",
-                1,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Slow query timestamp in RFC 3339 format".to_string()),
-            ),
-            ColumnDefinition::new(
-                2,
-                "timestamp_ms",
-                2,
-                KalamDataType::BigInt,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Slow query timestamp as epoch milliseconds".to_string()),
-            ),
-            ColumnDefinition::new(
-                3,
-                "duration_ms",
-                3,
-                KalamDataType::Double,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Query duration in milliseconds".to_string()),
-            ),
-            ColumnDefinition::new(
-                4,
-                "user_id",
-                4,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("User that executed the query".to_string()),
-            ),
-            ColumnDefinition::new(
-                5,
-                "table_type",
-                5,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Resolved table type for the query".to_string()),
-            ),
-            ColumnDefinition::new(
-                6,
-                "table_name",
-                6,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Resolved table name when available".to_string()),
-            ),
-            ColumnDefinition::new(
-                7,
-                "row_count",
-                7,
-                KalamDataType::BigInt,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Rows returned or affected".to_string()),
-            ),
-            ColumnDefinition::new(
-                8,
-                "query",
-                8,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Redacted SQL text".to_string()),
-            ),
-        ];
-
-        system_view_definition(
-            SystemTable::SlowQueries,
-            columns,
-            "Recent slow queries from the bounded slow-query JSONL log view",
-        )
+        SlowQueryRow::definition()
     }
 
     pub fn new(logs_path: impl Into<PathBuf>) -> Self {

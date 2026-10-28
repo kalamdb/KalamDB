@@ -11,7 +11,6 @@ use std::collections::HashSet;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::{ids::VersionId, models::TransactionId, schemas::TableType};
 use kalamdb_sql::{expr_to_scalar, strip_nested_expr};
-use kalamdb_tables::SharedTableProvider;
 use sqlparser::ast::{
     Assignment, AssignmentTarget, BinaryOperator, Expr, Ident, ObjectNamePart, Statement,
 };
@@ -26,7 +25,7 @@ use crate::{
 
 struct LiteralEqualityUpdate {
     seek_column: String,
-    seek_value:  ScalarValue,
+    seek_value: ScalarValue,
     assignments: Vec<(String, ScalarValue)>,
 }
 
@@ -40,7 +39,7 @@ impl SqlExecutor {
         if !params.is_empty() || !exec_ctx.is_admin() {
             return Ok(None);
         }
-        if metadata.table_type != Some(TableType::Shared) {
+        if !metadata.table_type.is_some_and(literal_equality_fast_path) {
             return Ok(None);
         }
         let Some(table_id) = metadata.table_id.as_ref() else {
@@ -56,13 +55,8 @@ impl SqlExecutor {
             return Ok(None);
         };
 
-        let provider = self.app_context.schema_registry().get_provider(table_id);
+        let provider = self.app_context.schema_registry().get_kalam_provider(table_id);
         let Some(provider) = provider else {
-            return Ok(None);
-        };
-        let Some(provider) =
-            (provider.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
-        else {
             return Ok(None);
         };
 
@@ -110,6 +104,10 @@ fn snapshot_commit_seq(
             .ok()
             .map(|packed| packed.version())
         })
+}
+
+fn literal_equality_fast_path(table_type: TableType) -> bool {
+    matches!(table_type, TableType::User | TableType::Shared)
 }
 
 fn literal_equality_update(statement: &Statement) -> Option<LiteralEqualityUpdate> {
@@ -232,5 +230,13 @@ mod tests {
         for sql in rejected {
             assert!(literal_equality_update(&parsed(sql)).is_none(), "{sql}");
         }
+    }
+
+    #[test]
+    fn user_and_shared_tables_use_the_equality_fast_path() {
+        assert!(literal_equality_fast_path(TableType::User));
+        assert!(literal_equality_fast_path(TableType::Shared));
+        assert!(!literal_equality_fast_path(TableType::Stream));
+        assert!(!literal_equality_fast_path(TableType::System));
     }
 }

@@ -12,7 +12,6 @@ use kalam_client::{
 };
 use kalamdb_commons::{Role, TableId};
 use kalamdb_rls::AuthorizationCacheMetrics;
-use kalamdb_tables::SharedTableProvider;
 use tokio::time::timeout;
 
 use super::test_support::{
@@ -88,11 +87,9 @@ fn authorization_cache_metrics(
     let provider = server
         .app_context()
         .schema_registry()
-        .get_provider(&table_id)
+        .get_kalam_provider(&table_id)
         .expect("shared table provider");
-    let provider = (provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .expect("shared table provider downcast");
+    let provider = provider.as_shared().expect("shared table provider downcast");
     provider.authorization_cache_metrics()
 }
 

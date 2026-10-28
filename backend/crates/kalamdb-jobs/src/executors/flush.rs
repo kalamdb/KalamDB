@@ -37,12 +37,10 @@ use kalamdb_core::{
     error::KalamDbError,
     error_extensions::KalamDbResultExt,
     manifest::{CoreFlushScopeHook, ManifestService},
-    providers::{SharedTableProvider, UserTableProvider},
     schema_registry::SchemaRegistry,
 };
 use kalamdb_flush::flush::{
-    FlushJobResult, FlushScopeHint, FlushTableMetadata, SharedTableFlushJob, TableFlush,
-    UserTableFlushJob,
+    FlushJobResult, FlushScopeHint, FlushTableMetadata, VersionedTableFlushJob,
 };
 use kalamdb_store::EntityStore;
 use kalamdb_system::JobType;
@@ -93,7 +91,7 @@ impl FlushTarget {
     ) -> Result<Option<Self>, KalamDbError> {
         let provider_arc = match table_type {
             TableType::User | TableType::Shared => {
-                schema_registry.get_provider(table_id).ok_or_else(|| {
+                schema_registry.get_kalam_provider(table_id).ok_or_else(|| {
                     KalamDbError::NotFound(format!(
                         "Table provider not registered for {} (id={})",
                         table_id, table_id
@@ -105,8 +103,7 @@ impl FlushTarget {
 
         match table_type {
             TableType::User => {
-                let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-                    .downcast_ref::<UserTableProvider>()
+                let provider = provider_arc.as_user()
                     .ok_or_else(|| {
                         KalamDbError::InvalidOperation(
                             "Cached provider type mismatch for user table".into(),
@@ -116,8 +113,7 @@ impl FlushTarget {
                 Ok(Some(Self::User(provider.store())))
             },
             TableType::Shared => {
-                let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-                    .downcast_ref::<SharedTableProvider>()
+                let provider = provider_arc.as_shared()
                     .ok_or_else(|| {
                         KalamDbError::InvalidOperation(
                             "Cached provider type mismatch for shared table".into(),
@@ -235,7 +231,7 @@ impl FlushExecutor {
 
         match target {
             FlushTarget::User(store) => {
-                let flush_job = UserTableFlushJob::new(
+                let flush_job = VersionedTableFlushJob::user(
                     table_id,
                     store,
                     schema,
@@ -251,7 +247,7 @@ impl FlushExecutor {
                     .await
             },
             FlushTarget::Shared(store) => {
-                let flush_job = SharedTableFlushJob::new(
+                let flush_job = VersionedTableFlushJob::shared(
                     table_id,
                     store,
                     schema,

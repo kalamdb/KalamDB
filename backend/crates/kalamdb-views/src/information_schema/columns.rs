@@ -4,181 +4,210 @@
 use std::sync::Arc;
 
 use arrow::array::Array;
-use async_trait::async_trait;
 use datafusion::{
     arrow::{
-        array::{
-            ArrayRef, BooleanBuilder, Int64Builder, StringArray, StringBuilder, UInt64Array,
-            UInt64Builder,
-        },
-        datatypes::{DataType, Field, SchemaRef},
+        array::{BooleanBuilder, StringArray, StringBuilder, UInt64Array, UInt64Builder},
         record_batch::RecordBatch,
     },
-    catalog::{information_schema::InformationSchemaProvider, SchemaProvider, Session},
-    datasource::{TableProvider, TableType},
+    catalog::CatalogProviderList,
     error::{DataFusionError, Result as DataFusionResult},
-    execution::context::SessionState,
-    logical_expr::{Expr, TableProviderFilterPushDown},
-    physical_plan::ExecutionPlan,
 };
-use futures_util::StreamExt;
-use kalamdb_commons::constants::SystemColumnNames;
-use kalamdb_datafusion_sources::{
-    exec::{finalize_deferred_batch, DeferredBatchExec, DeferredBatchSource},
-    provider::combined_filter,
-};
+use kalamdb_commons::constants::{SystemColumnNames, PG_CATALOG_NAMESPACE};
+use kalamdb_macros::table;
 use kalamdb_system::SystemTablesRegistry;
 
-use super::catalog_metadata::{normalize_column_types, CatalogMetadataIndex};
+use super::{
+    catalog_metadata::{normalize_column_types, CatalogMetadataIndex},
+    relation::{InformationSchemaRelation, StockRow},
+};
 use crate::pg_catalog::type_mapping::{
     arrow_info_type_to_kalam_sql_name, arrow_info_type_to_udt_name,
     udt_name_to_info_schema_data_type,
 };
 
-const IS_GENERATED: &str = "is_generated";
-const IS_IDENTITY: &str = "is_identity";
-const KDB_COLUMN_ID: &str = "kdb_column_id";
-const KDB_COMMENT: &str = "kdb_comment";
-const KDB_DATA_TYPE: &str = "kdb_data_type";
-const KDB_DEFAULT_VALUE: &str = "kdb_default_value";
-const KDB_NAMESPACE_ID: &str = "kdb_namespace_id";
-const KDB_PRIMARY_KEY: &str = "kdb_primary_key";
-const KDB_PRIMARY_KEY_POS: &str = "kdb_primary_key_pos";
-const KDB_VERSION: &str = "kdb_version";
-const UDT_NAME: &str = "udt_name";
-const UDT_SCHEMA: &str = "udt_schema";
-
-const COLUMN_EXTENSION_FIELDS: &[&str] = &[
-    UDT_NAME,
-    UDT_SCHEMA,
-    IS_GENERATED,
-    IS_IDENTITY,
-    KDB_DATA_TYPE,
-    KDB_NAMESPACE_ID,
-    KDB_VERSION,
-    KDB_COLUMN_ID,
-    KDB_COMMENT,
-    KDB_DEFAULT_VALUE,
-    KDB_PRIMARY_KEY,
-    KDB_PRIMARY_KEY_POS,
-];
-
-fn extended_schema(base: &SchemaRef) -> SchemaRef {
-    let mut fields = base.fields().to_vec();
-    for field_name in COLUMN_EXTENSION_FIELDS {
-        if fields.iter().any(|field| field.name() == *field_name) {
-            continue;
-        }
-        let data_type = match *field_name {
-            KDB_VERSION | KDB_COLUMN_ID | KDB_PRIMARY_KEY_POS => DataType::Int64,
-            KDB_PRIMARY_KEY => DataType::Boolean,
-            _ => DataType::Utf8,
-        };
-        fields.push(Arc::new(Field::new(*field_name, data_type, true)));
-    }
-    Arc::new(datafusion::arrow::datatypes::Schema::new(fields))
+#[table(
+    name = "columns_extension",
+    namespace = SchemaId::information_schema(),
+    view = true,
+    comment = "Kalam columns appended to information_schema.columns"
+)]
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ColumnsExtension {
+    /// PostgreSQL udt name
+    udt_name: Option<String>,
+    /// UDT schema
+    udt_schema: Option<String>,
+    /// ALWAYS, NEVER, or BY DEFAULT
+    is_generated: Option<String>,
+    /// YES or NO
+    is_identity: Option<String>,
+    /// Kalam type name
+    kdb_data_type: Option<String>,
+    /// Owning namespace
+    kdb_namespace_id: Option<String>,
+    /// Schema version
+    kdb_version: Option<i64>,
+    /// Column id
+    kdb_column_id: Option<i64>,
+    /// Column comment
+    kdb_comment: Option<String>,
+    /// Stored default expression
+    kdb_default_value: Option<String>,
+    /// Whether the column is part of the primary key
+    kdb_primary_key: Option<bool>,
+    /// Primary-key ordinal
+    kdb_primary_key_pos: Option<i64>,
 }
 
 /// Wraps DataFusion's `information_schema.columns` and normalizes type metadata.
 #[derive(Debug)]
-pub struct ExtendedInformationSchemaColumnsProvider {
-    inner: Arc<dyn TableProvider>,
-    schema: SchemaRef,
+pub(crate) struct ColumnsRelation {
+    catalog_list: Arc<dyn CatalogProviderList>,
     system_tables: Arc<SystemTablesRegistry>,
 }
 
-impl ExtendedInformationSchemaColumnsProvider {
+impl ColumnsRelation {
+    /// Relation backed by the process catalog list and system registry.
     pub fn new(
-        catalog_list: Arc<dyn datafusion::catalog::CatalogProviderList>,
+        catalog_list: Arc<dyn CatalogProviderList>,
         system_tables: Arc<SystemTablesRegistry>,
     ) -> Self {
-        let inner = {
-            let catalog_list = Arc::clone(&catalog_list);
-            std::thread::spawn(move || {
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("runtime");
-                runtime.block_on(async {
-                    let provider = InformationSchemaProvider::new(catalog_list);
-                    SchemaProvider::table(&provider, "columns")
-                        .await
-                        .expect("information_schema.columns must exist")
-                        .expect("information_schema.columns must exist")
-                })
-            })
-            .join()
-            .expect("information_schema.columns init thread")
-        };
-        let schema = extended_schema(&inner.schema());
         Self {
-            inner,
-            schema,
+            catalog_list,
             system_tables,
         }
     }
+}
 
-    async fn collect_extended_batch(
+impl InformationSchemaRelation for ColumnsRelation {
+    type Ext = ColumnsExtension;
+    type Extra = ();
+
+    const NAME: &'static str = "columns";
+    const STOCK: Option<&'static str> = Some("columns");
+
+    fn catalog_list(&self) -> Option<Arc<dyn CatalogProviderList>> {
+        Some(Arc::clone(&self.catalog_list))
+    }
+
+    fn system_tables(&self) -> Option<&SystemTablesRegistry> {
+        Some(&self.system_tables)
+    }
+
+    fn delegate_filter_pushdown(&self) -> bool {
+        true
+    }
+
+    fn prepare_stock(
         &self,
-        state: &SessionState,
-        filters: &[Expr],
-        limit: Option<usize>,
+        batch: RecordBatch,
+        index: &CatalogMetadataIndex,
     ) -> DataFusionResult<RecordBatch> {
-        let plan = self.inner.scan(state, None, filters, limit).await?;
-        let task_ctx = state.task_ctx();
-        let mut stream = plan.execute(0, task_ctx)?;
-        let mut batches = Vec::new();
-        while let Some(batch) = stream.next().await {
-            batches.push(batch?);
-        }
+        rewrite_stock_column_types(&batch, index)
+    }
 
-        if batches.is_empty() {
-            return Ok(RecordBatch::new_empty(Arc::clone(&self.schema)));
-        }
+    fn extend(
+        &self,
+        row: &StockRow<'_>,
+        index: &CatalogMetadataIndex,
+    ) -> DataFusionResult<Option<Self::Ext>> {
+        let schema = row.utf8("table_schema")?;
+        let table = row.utf8("table_name")?;
+        let column = row.utf8("column_name")?;
+        let arrow_type = row.utf8("data_type")?;
+        Ok(Some(columns_extension(index, schema, table, column, arrow_type)))
+    }
 
-        let batch = if batches.len() == 1 {
-            batches.remove(0)
-        } else {
-            datafusion::arrow::compute::concat_batches(&batches[0].schema(), &batches)?
+    fn finish(&self, batch: RecordBatch) -> DataFusionResult<RecordBatch> {
+        let defaults = match batch.schema().index_of("kdb_default_value") {
+            Ok(index) => string_column(&batch, index, "kdb_default_value")?.clone(),
+            Err(_) => StringArray::new_null(batch.num_rows()),
         };
-
-        normalize_columns_batch(&batch, &self.schema, &self.system_tables)
+        let overlaid = overlay_column_defaults(batch, &defaults)?;
+        without_system_columns(overlaid)
     }
 }
 
-fn normalize_columns_batch(
+pub(crate) fn extension_column_order() -> &'static [&'static str] {
+    ColumnsExtension::ordinal_column_order()
+}
+
+#[cfg(test)]
+mod schema_order {
+    use super::*;
+
+    #[test]
+    fn extension_schema_follows_table_macro() {
+        let schema = ColumnsExtension::arrow_schema();
+        let names: Vec<_> = schema.fields().iter().map(|field| field.name().as_str()).collect();
+        assert_eq!(names, ColumnsExtension::ordinal_column_order());
+    }
+}
+
+fn columns_extension(
+    index: &CatalogMetadataIndex,
+    schema: &str,
+    table: &str,
+    column: &str,
+    arrow_type: &str,
+) -> ColumnsExtension {
+    let constants = ColumnsExtension {
+        udt_schema: Some(PG_CATALOG_NAMESPACE.to_string()),
+        is_generated: Some("NEVER".to_string()),
+        is_identity: Some("NO".to_string()),
+        ..ColumnsExtension::default()
+    };
+    let Some(meta) = index.column(schema, table, column) else {
+        let udt = arrow_info_type_to_udt_name(arrow_type);
+        return ColumnsExtension {
+            udt_name: Some(udt.to_string()),
+            kdb_data_type: Some(arrow_info_type_to_kalam_sql_name(arrow_type).to_string()),
+            ..constants
+        };
+    };
+    let normalized = normalize_column_types(&meta.data_type);
+    let (info_udt_name, kdb_data_type) = if meta.logical_modifier.as_deref() == Some("geometry") {
+        ("geometry", normalized.kdb_data_type.as_str())
+    } else if meta.character_maximum_length.is_some() {
+        ("varchar", normalized.kdb_data_type.as_str())
+    } else {
+        (normalized.udt_name, normalized.kdb_data_type.as_str())
+    };
+    ColumnsExtension {
+        udt_name: Some(info_udt_name.to_string()),
+        kdb_data_type: Some(kdb_data_type.to_string()),
+        kdb_namespace_id: Some(meta.namespace_id.clone()),
+        kdb_version: Some(meta.version),
+        kdb_column_id: Some(meta.column_id),
+        kdb_comment: meta.comment.clone(),
+        kdb_default_value: meta.default_value.clone(),
+        kdb_primary_key: Some(meta.primary_key),
+        kdb_primary_key_pos: meta.primary_key_pos,
+        ..constants
+    }
+}
+
+fn rewrite_stock_column_types(
     batch: &RecordBatch,
-    output_schema: &SchemaRef,
-    system_tables: &SystemTablesRegistry,
+    index: &CatalogMetadataIndex,
 ) -> DataFusionResult<RecordBatch> {
+    if batch.num_rows() == 0 {
+        return Ok(batch.clone());
+    }
     let table_schema_idx = batch.schema().index_of("table_schema").map_err(plan_err)?;
     let table_name_idx = batch.schema().index_of("table_name").map_err(plan_err)?;
     let column_name_idx = batch.schema().index_of("column_name").map_err(plan_err)?;
     let data_type_idx = batch.schema().index_of("data_type").map_err(plan_err)?;
-
     let table_schemas = string_column(batch, table_schema_idx, "table_schema")?;
     let table_names = string_column(batch, table_name_idx, "table_name")?;
     let column_names = string_column(batch, column_name_idx, "column_name")?;
     let arrow_data_types = string_column(batch, data_type_idx, "data_type")?;
 
-    let metadata_index = CatalogMetadataIndex::build(system_tables);
-
     let mut data_types = StringBuilder::with_capacity(batch.num_rows(), 24);
-    let mut udt_names = StringBuilder::with_capacity(batch.num_rows(), 16);
-    let mut kdb_types = StringBuilder::with_capacity(batch.num_rows(), 24);
-    let mut kdb_namespace_ids = StringBuilder::with_capacity(batch.num_rows(), 16);
-    let mut kdb_versions = Int64Builder::new();
-    let mut kdb_column_ids = Int64Builder::new();
-    let mut kdb_comments = StringBuilder::with_capacity(batch.num_rows(), 24);
-    let mut kdb_default_values = StringBuilder::with_capacity(batch.num_rows(), 24);
-    let mut kdb_primary_keys = BooleanBuilder::new();
-    let mut kdb_primary_key_positions = Int64Builder::new();
-
     let numeric_precision_idx = batch.schema().index_of("numeric_precision").ok();
     let numeric_scale_idx = batch.schema().index_of("numeric_scale").ok();
     let datetime_precision_idx = batch.schema().index_of("datetime_precision").ok();
     let character_maximum_length_idx = batch.schema().index_of("character_maximum_length").ok();
-
     let mut numeric_precisions = numeric_precision_idx.map(|_| UInt64Builder::new());
     let mut numeric_scales = numeric_scale_idx.map(|_| UInt64Builder::new());
     let mut datetime_precisions = datetime_precision_idx.map(|_| UInt64Builder::new());
@@ -189,50 +218,19 @@ fn normalize_columns_batch(
         let table = table_names.value(row);
         let column = column_names.value(row);
         let arrow_type = arrow_data_types.value(row);
-
-        if let Some(meta) = metadata_index.column(schema, table, column) {
+        if let Some(meta) = index.column(schema, table, column) {
             let normalized = normalize_column_types(&meta.data_type);
-            let (info_data_type, info_udt_name) =
-                if meta.logical_modifier.as_deref() == Some("geometry") {
-                    ("geometry", "geometry")
-                } else {
-                    match meta.character_maximum_length {
-                        Some(_) => ("character varying", "varchar"),
-                        None => (normalized.data_type, normalized.udt_name),
-                    }
-                };
+            let info_data_type = if meta.logical_modifier.as_deref() == Some("geometry") {
+                "geometry"
+            } else if meta.character_maximum_length.is_some() {
+                "character varying"
+            } else {
+                normalized.data_type
+            };
             data_types.append_value(info_data_type);
-            udt_names.append_value(info_udt_name);
-            kdb_types.append_value(&normalized.kdb_data_type);
-            kdb_namespace_ids.append_value(&meta.namespace_id);
-            kdb_versions.append_value(meta.version);
-            kdb_column_ids.append_value(meta.column_id);
-            if let Some(comment) = &meta.comment {
-                kdb_comments.append_value(comment);
-            } else {
-                kdb_comments.append_null();
-            }
-            if let Some(default_value) = &meta.default_value {
-                kdb_default_values.append_value(default_value);
-            } else {
-                kdb_default_values.append_null();
-            }
-            kdb_primary_keys.append_value(meta.primary_key);
-            if let Some(position) = meta.primary_key_pos {
-                kdb_primary_key_positions.append_value(position);
-            } else {
-                kdb_primary_key_positions.append_null();
-            }
-
-            if let Some(builder) = numeric_precisions.as_mut() {
-                append_optional_u64(builder, normalized.numeric_precision);
-            }
-            if let Some(builder) = numeric_scales.as_mut() {
-                append_optional_u64(builder, normalized.numeric_scale);
-            }
-            if let Some(builder) = datetime_precisions.as_mut() {
-                append_optional_u64(builder, normalized.datetime_precision);
-            }
+            append_optional_u64(numeric_precisions.as_mut(), normalized.numeric_precision);
+            append_optional_u64(numeric_scales.as_mut(), normalized.numeric_scale);
+            append_optional_u64(datetime_precisions.as_mut(), normalized.datetime_precision);
             if let Some(builder) = character_maximum_lengths.as_mut() {
                 match meta.character_maximum_length {
                     Some(max_chars) => builder.append_value(u64::from(max_chars)),
@@ -241,96 +239,37 @@ fn normalize_columns_batch(
             }
         } else {
             let udt = arrow_info_type_to_udt_name(arrow_type);
-            let kalam = arrow_info_type_to_kalam_sql_name(arrow_type);
             data_types.append_value(udt_name_to_info_schema_data_type(udt));
-            udt_names.append_value(udt);
-            kdb_types.append_value(kalam);
-            kdb_namespace_ids.append_null();
-            kdb_versions.append_null();
-            kdb_column_ids.append_null();
-            kdb_comments.append_null();
-            kdb_default_values.append_null();
-            kdb_primary_keys.append_null();
-            kdb_primary_key_positions.append_null();
-
-            if numeric_precisions.is_some() {
-                copy_optional_u64(
-                    batch,
-                    row,
-                    numeric_precision_idx,
-                    numeric_precisions.as_mut().unwrap(),
-                );
-            }
-            if numeric_scales.is_some() {
-                copy_optional_u64(batch, row, numeric_scale_idx, numeric_scales.as_mut().unwrap());
-            }
-            if datetime_precisions.is_some() {
-                copy_optional_u64(
-                    batch,
-                    row,
-                    datetime_precision_idx,
-                    datetime_precisions.as_mut().unwrap(),
-                );
-            }
-            if let Some(builder) = character_maximum_lengths.as_mut() {
-                copy_optional_u64(batch, row, character_maximum_length_idx, builder);
-            }
+            copy_optional_u64(batch, row, numeric_precision_idx, numeric_precisions.as_mut());
+            copy_optional_u64(batch, row, numeric_scale_idx, numeric_scales.as_mut());
+            copy_optional_u64(batch, row, datetime_precision_idx, datetime_precisions.as_mut());
+            copy_optional_u64(
+                batch,
+                row,
+                character_maximum_length_idx,
+                character_maximum_lengths.as_mut(),
+            );
         }
     }
 
     let mut columns = batch.columns().to_vec();
-    columns[data_type_idx] = Arc::new(data_types.finish()) as ArrayRef;
-
+    columns[data_type_idx] = Arc::new(data_types.finish());
     if let (Some(idx), Some(mut builder)) = (numeric_precision_idx, numeric_precisions) {
-        columns[idx] = Arc::new(builder.finish()) as ArrayRef;
+        columns[idx] = Arc::new(builder.finish());
     }
     if let (Some(idx), Some(mut builder)) = (numeric_scale_idx, numeric_scales) {
-        columns[idx] = Arc::new(builder.finish()) as ArrayRef;
+        columns[idx] = Arc::new(builder.finish());
     }
     if let (Some(idx), Some(mut builder)) = (datetime_precision_idx, datetime_precisions) {
-        columns[idx] = Arc::new(builder.finish()) as ArrayRef;
+        columns[idx] = Arc::new(builder.finish());
     }
     if let (Some(idx), Some(mut builder)) =
         (character_maximum_length_idx, character_maximum_lengths)
     {
-        columns[idx] = Arc::new(builder.finish()) as ArrayRef;
+        columns[idx] = Arc::new(builder.finish());
     }
-
-    let normalized_batch = RecordBatch::try_new(batch.schema(), columns)
-        .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?;
-
-    let kdb_default_array = kdb_default_values.finish();
-    let mut extension_columns = normalized_batch.columns().to_vec();
-    for field in output_schema.fields().iter().skip(normalized_batch.num_columns()) {
-        let array: ArrayRef = match field.name().as_str() {
-            UDT_NAME => Arc::new(udt_names.finish()),
-            UDT_SCHEMA => Arc::new(constant_string_array(
-                normalized_batch.num_rows(),
-                kalamdb_commons::constants::PG_CATALOG_NAMESPACE,
-            )),
-            IS_GENERATED => Arc::new(constant_string_array(normalized_batch.num_rows(), "NEVER")),
-            IS_IDENTITY => Arc::new(constant_string_array(normalized_batch.num_rows(), "NO")),
-            KDB_DATA_TYPE => Arc::new(kdb_types.finish()),
-            KDB_NAMESPACE_ID => Arc::new(kdb_namespace_ids.finish()),
-            KDB_VERSION => Arc::new(kdb_versions.finish()),
-            KDB_COLUMN_ID => Arc::new(kdb_column_ids.finish()),
-            KDB_COMMENT => Arc::new(kdb_comments.finish()),
-            KDB_DEFAULT_VALUE => Arc::new(kdb_default_array.clone()),
-            KDB_PRIMARY_KEY => Arc::new(kdb_primary_keys.finish()),
-            KDB_PRIMARY_KEY_POS => Arc::new(kdb_primary_key_positions.finish()),
-            name => {
-                return Err(DataFusionError::Plan(format!(
-                    "unsupported information_schema.columns extension field {name}"
-                )));
-            },
-        };
-        extension_columns.push(array);
-    }
-
-    let extended = RecordBatch::try_new(Arc::clone(output_schema), extension_columns)
-        .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?;
-    let with_defaults = overlay_column_defaults(extended, &kdb_default_array)?;
-    without_system_columns(with_defaults)
+    RecordBatch::try_new(batch.schema(), columns)
+        .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))
 }
 
 /// PostgreSQL clients read `column_default`. Stored defaults live on the table
@@ -354,7 +293,7 @@ fn overlay_column_defaults(
         }
     }
     let mut columns = batch.columns().to_vec();
-    columns[index] = Arc::new(merged.finish()) as ArrayRef;
+    columns[index] = Arc::new(merged.finish());
     RecordBatch::try_new(batch.schema(), columns)
         .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))
 }
@@ -385,7 +324,10 @@ fn string_column<'a>(
         .ok_or_else(|| DataFusionError::Plan(format!("{name} column must be Utf8")))
 }
 
-fn append_optional_u64(builder: &mut UInt64Builder, value: Option<u64>) {
+fn append_optional_u64(builder: Option<&mut UInt64Builder>, value: Option<u64>) {
+    let Some(builder) = builder else {
+        return;
+    };
     if let Some(value) = value {
         builder.append_value(value);
     } else {
@@ -397,8 +339,11 @@ fn copy_optional_u64(
     batch: &RecordBatch,
     row: usize,
     index: Option<usize>,
-    builder: &mut UInt64Builder,
+    builder: Option<&mut UInt64Builder>,
 ) {
+    let Some(builder) = builder else {
+        return;
+    };
     let Some(index) = index else {
         builder.append_null();
         return;
@@ -411,112 +356,6 @@ fn copy_optional_u64(
     }
 }
 
-fn constant_string_array(row_count: usize, value: &str) -> StringArray {
-    let mut values = StringBuilder::with_capacity(row_count, value.len());
-    for _ in 0..row_count {
-        values.append_value(value);
-    }
-    values.finish()
-}
-
 fn plan_err(error: arrow::error::ArrowError) -> DataFusionError {
     DataFusionError::Plan(format!("information_schema.columns missing column: {error}"))
-}
-
-struct ExtendedColumnsScanSource {
-    provider: Arc<ExtendedInformationSchemaColumnsProvider>,
-    session_state: SessionState,
-    physical_filter: Option<Arc<dyn datafusion::physical_expr::PhysicalExpr>>,
-    projection: Option<Vec<usize>>,
-    limit: Option<usize>,
-    output_schema: SchemaRef,
-    filters: Vec<Expr>,
-}
-
-#[async_trait]
-impl DeferredBatchSource for ExtendedColumnsScanSource {
-    fn source_name(&self) -> &'static str {
-        "information_schema_columns_extended"
-    }
-
-    fn schema(&self) -> SchemaRef {
-        Arc::clone(&self.output_schema)
-    }
-
-    async fn produce_batch(&self) -> DataFusionResult<RecordBatch> {
-        let batch = self
-            .provider
-            .collect_extended_batch(&self.session_state, &self.filters, self.limit)
-            .await?;
-
-        finalize_deferred_batch(
-            batch,
-            self.physical_filter.as_ref(),
-            self.projection.as_deref(),
-            self.limit,
-            self.source_name(),
-        )
-    }
-}
-
-#[async_trait]
-impl TableProvider for ExtendedInformationSchemaColumnsProvider {
-    fn schema(&self) -> SchemaRef {
-        Arc::clone(&self.schema)
-    }
-
-    fn table_type(&self) -> TableType {
-        TableType::View
-    }
-
-    async fn scan(
-        &self,
-        state: &dyn Session,
-        projection: Option<&Vec<usize>>,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        let session_state = state
-            .as_any()
-            .downcast_ref::<SessionState>()
-            .ok_or_else(|| DataFusionError::Plan("expected SessionState".to_string()))?
-            .clone();
-
-        let output_schema = match projection {
-            Some(indices) => self
-                .schema()
-                .project(indices)
-                .map(Arc::new)
-                .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?,
-            None => self.schema(),
-        };
-
-        let physical_filter = if let Some(filter) = combined_filter(filters) {
-            let df_schema = datafusion::common::DFSchema::try_from(self.schema())?;
-            Some(state.create_physical_expr(filter, &df_schema)?)
-        } else {
-            None
-        };
-
-        Ok(Arc::new(DeferredBatchExec::new(Arc::new(ExtendedColumnsScanSource {
-            provider: Arc::new(ExtendedInformationSchemaColumnsProvider {
-                inner: Arc::clone(&self.inner),
-                schema: Arc::clone(&self.schema),
-                system_tables: Arc::clone(&self.system_tables),
-            }),
-            session_state,
-            physical_filter,
-            projection: projection.cloned(),
-            limit,
-            output_schema,
-            filters: filters.to_vec(),
-        }))))
-    }
-
-    fn supports_filters_pushdown(
-        &self,
-        filters: &[&Expr],
-    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
-        self.inner.supports_filters_pushdown(filters)
-    }
 }

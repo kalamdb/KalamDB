@@ -8,27 +8,41 @@ use datafusion::arrow::{
     record_batch::RecordBatch,
 };
 use kalamdb_commons::SystemTable;
+use kalamdb_macros::table;
 use parking_lot::RwLock;
 
-use super::common::{
-    int_col, nullable_text_col, system_view_definition, text_col, SystemViewProvider,
-};
+use super::common::SystemViewProvider;
 use crate::view_base::VirtualView;
 
 crate::memoized_view_schema!(active_procedure_runs_schema, ActiveProcedureRunsView);
 
 /// Snapshot of one in-flight root procedure invocation.
+#[table(
+    name = "active_procedure_runs",
+    view = true,
+    comment = "In-memory root procedure invocations (no RocksDB row)"
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveProcedureRunSnapshot {
+    /// Root execution identifier
     pub execution_id: String,
+    /// Request transaction id
     pub request_id: String,
+    /// Schema-qualified procedure name
     pub procedure_id: String,
+    /// Pinned module when implementation is module
     pub module_id: Option<String>,
+    /// Pinned module revision
     pub revision_id: Option<String>,
+    /// Calling user id
     pub actor: String,
+    /// Effective principal user id
     pub principal: String,
+    /// sql | http | topic
     pub origin: String,
+    /// Unix time in milliseconds
     pub started_at: i64,
+    /// Current nested CALL depth
     pub depth: i64,
 }
 
@@ -61,22 +75,7 @@ impl ActiveProcedureRunsView {
     }
 
     pub fn definition() -> kalamdb_commons::schemas::TableDefinition {
-        system_view_definition(
-            SystemTable::ActiveProcedureRuns,
-            vec![
-                text_col(1, "execution_id", "Root execution identifier"),
-                text_col(2, "request_id", "Request transaction id"),
-                text_col(3, "procedure_id", "Schema-qualified procedure name"),
-                nullable_text_col(4, "module_id", "Pinned module when implementation is module"),
-                nullable_text_col(5, "revision_id", "Pinned module revision"),
-                text_col(6, "actor", "Calling user id"),
-                text_col(7, "principal", "Effective principal user id"),
-                text_col(8, "origin", "sql | http | topic"),
-                int_col(9, "started_at", "Unix time in milliseconds"),
-                int_col(10, "depth", "Current nested CALL depth"),
-            ],
-            "In-memory root procedure invocations (no RocksDB row)",
-        )
+        ActiveProcedureRunSnapshot::definition()
     }
 }
 

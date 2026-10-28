@@ -259,100 +259,6 @@ macro_rules! impl_system_table_provider_metadata {
     };
 }
 
-/// Implement the common provider boilerplate for `IndexedEntityStore`-backed system tables.
-///
-/// This macro centralizes the repeated implementations for:
-/// - `SystemTableScan`
-/// - `TableProvider`
-/// - shared deferred-scan boilerplate for indexed providers
-///
-/// It only wires the provider surface; business logic stays in each provider module.
-#[macro_export]
-macro_rules! impl_indexed_system_table_provider {
-    (
-        provider = $provider:ty,
-        key = $key:ty,
-        value = $value:ty,
-        store = $store_field:ident,
-        definition = $definition_method:ident,
-        build_batch = $build_batch_method:ident
-    ) => {
-        impl $crate::providers::base::SystemTableScan<$key, $value> for $provider {
-            fn store(&self) -> &kalamdb_store::IndexedEntityStore<$key, $value> {
-                &self.$store_field
-            }
-
-            fn table_name(&self) -> &str {
-                let definition = Self::$definition_method();
-                definition.table_name
-            }
-
-            fn primary_key_column(&self) -> &str {
-                let definition = Self::$definition_method();
-                definition.primary_key_column
-            }
-
-            fn arrow_schema(&self) -> datafusion::arrow::datatypes::SchemaRef {
-                let definition = Self::$definition_method();
-                (definition.schema)()
-            }
-
-            fn parse_key(&self, value: &str) -> Option<$key> {
-                let definition = Self::$definition_method();
-                (definition.parse_key)(value)
-            }
-
-            fn create_batch_from_pairs(
-                &self,
-                pairs: Vec<($key, $value)>,
-            ) -> Result<datafusion::arrow::array::RecordBatch, $crate::error::SystemError> {
-                self.$build_batch_method(pairs)
-            }
-        }
-
-        #[async_trait::async_trait]
-        impl datafusion::datasource::TableProvider for $provider {
-            fn schema(&self) -> datafusion::arrow::datatypes::SchemaRef {
-                let definition = Self::$definition_method();
-                (definition.schema)()
-            }
-
-            fn table_type(&self) -> datafusion::datasource::TableType {
-                datafusion::datasource::TableType::Base
-            }
-
-            fn supports_filters_pushdown(
-                &self,
-                filters: &[&datafusion::logical_expr::Expr],
-            ) -> datafusion::error::Result<
-                Vec<datafusion::logical_expr::TableProviderFilterPushDown>,
-            > {
-                $crate::providers::base::exact_filter_pushdown(filters)
-            }
-
-            async fn scan(
-                &self,
-                state: &dyn datafusion::catalog::Session,
-                projection: Option<&Vec<usize>>,
-                filters: &[datafusion::logical_expr::Expr],
-                limit: Option<usize>,
-            ) -> datafusion::error::Result<
-                std::sync::Arc<dyn datafusion::physical_plan::ExecutionPlan>,
-            > {
-                <Self as $crate::providers::base::SystemTableScan<$key, $value>>::base_system_scan(
-                    self,
-                    state,
-                    projection,
-                    filters,
-                    limit,
-                )
-                .await
-            }
-        }
-
-    };
-}
-
 /// Implement the common provider boilerplate for non-indexed/simple system tables.
 #[macro_export]
 macro_rules! impl_simple_system_table_provider {
@@ -419,6 +325,14 @@ macro_rules! impl_simple_system_table_provider {
             ) -> datafusion::error::Result<
                 std::sync::Arc<dyn datafusion::physical_plan::ExecutionPlan>,
             > {
+                let table_id = kalamdb_commons::models::TableId::from_strings(
+                    kalamdb_commons::constants::SYSTEM_NAMESPACE,
+                    <Self as $crate::providers::base::SimpleSystemTableScan<$key, $value>>::table_name(
+                        self,
+                    ),
+                );
+                kalamdb_session_datafusion::check_system_table_access(state, &table_id)
+                    .map_err(|error| datafusion::error::DataFusionError::Plan(error.to_string()))?;
                 <Self as $crate::providers::base::SimpleSystemTableScan<$key, $value>>::base_simple_scan(
                     self,
                     state,

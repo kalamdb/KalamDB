@@ -627,9 +627,15 @@ mod tests {
 
         // Create DataFusion session
         let ctx = datafusion::execution::context::SessionContext::new();
-        let state = ctx.state();
+        let mut state = ctx.state();
+        state.config_mut().options_mut().extensions.insert(
+            kalamdb_session_datafusion::SessionUserContext::new(
+                kalamdb_commons::models::UserId::new("system"),
+                kalamdb_commons::models::Role::System,
+                kalamdb_commons::models::ReadContext::Internal,
+            ),
+        );
 
-        // Scan via DataFusion
         let plan = provider.scan(&state, None, &[], None).await.unwrap();
         assert!(!plan.schema().fields().is_empty());
     }

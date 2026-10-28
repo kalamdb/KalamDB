@@ -560,20 +560,44 @@ impl TransactionCoordinator {
         transaction_id: &TransactionId,
         table_id: &TableId,
     ) -> Result<bool, KalamDbError> {
-        self.validate_table_access(transaction_id, table_id, TableType::Shared, None)?;
-        let Some(pinned) = self
-            .get_handle(transaction_id)
-            .and_then(|handle| handle.snapshot_commit_seq())
+        self.snapshot_matches_frontier(transaction_id, table_id, TableType::Shared, None)
+    }
+
+    /// Whether the transaction pin is still the commit frontier for this table's group.
+    pub fn snapshot_matches_frontier(
+        &self,
+        transaction_id: &TransactionId,
+        table_id: &TableId,
+        table_type: TableType,
+        user_id: Option<&UserId>,
+    ) -> Result<bool, KalamDbError> {
+        self.validate_table_access(transaction_id, table_id, table_type, user_id)?;
+        let Some(pinned) =
+            self.get_handle(transaction_id).and_then(|handle| handle.snapshot_commit_seq())
         else {
             return Ok(false);
         };
-        let group_id = self.app_context.shared_group_id(table_id)?;
+        let Some(group_id) = self.resolve_group_id(table_id, table_type, user_id)? else {
+            return Ok(false);
+        };
         Ok(self.commit_sequence_tracker.frontier(group_id) == pinned)
     }
 
     /// Current commit frontier for the shared group that owns `table_id`.
     pub fn shared_group_frontier(&self, table_id: &TableId) -> Result<u64, KalamDbError> {
-        let group_id = self.app_context.shared_group_id(table_id)?;
+        self.group_frontier(table_id, TableType::Shared, None)
+    }
+
+    /// Current commit frontier for a user or shared table group.
+    pub fn group_frontier(
+        &self,
+        table_id: &TableId,
+        table_type: TableType,
+        user_id: Option<&UserId>,
+    ) -> Result<u64, KalamDbError> {
+        let group_id = self.resolve_group_id(table_id, table_type, user_id)?.ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!("table '{table_id}' has no commit group"))
+        })?;
         Ok(self.commit_sequence_tracker.frontier(group_id))
     }
 

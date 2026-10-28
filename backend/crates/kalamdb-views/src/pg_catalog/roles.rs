@@ -1,11 +1,12 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, BooleanBuilder, Int64Builder, StringBuilder},
-    datatypes::{DataType, Field, Schema, SchemaRef},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use kalamdb_commons::Role;
+use kalamdb_macros::table;
 use kalamdb_session::is_admin_role;
 use kalamdb_system::SystemTablesRegistry;
 
@@ -14,23 +15,36 @@ use crate::{
     pg_catalog::{stable_oid, PgCatalogView},
 };
 
+#[table(
+    name = "pg_roles",
+    namespace = SchemaId::pg_catalog(),
+    view = true,
+    comment = "Roles"
+)]
+#[derive(Debug)]
+struct PgRolesRow {
+    /// Role oid
+    oid: i64,
+    /// Role name
+    rolname: String,
+    /// Superuser
+    rolsuper: bool,
+    /// Inherits privileges
+    rolinherit: bool,
+    /// Can create roles
+    rolcreaterole: bool,
+    /// Can create databases
+    rolcreatedb: bool,
+    /// Can log in
+    rolcanlogin: bool,
+    /// Replication
+    rolreplication: bool,
+    /// Bypasses row security
+    rolbypassrls: bool,
+}
+
 fn schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("oid", DataType::Int64, false),
-                Field::new("rolname", DataType::Utf8, false),
-                Field::new("rolsuper", DataType::Boolean, false),
-                Field::new("rolinherit", DataType::Boolean, false),
-                Field::new("rolcreaterole", DataType::Boolean, false),
-                Field::new("rolcreatedb", DataType::Boolean, false),
-                Field::new("rolcanlogin", DataType::Boolean, false),
-                Field::new("rolreplication", DataType::Boolean, false),
-                Field::new("rolbypassrls", DataType::Boolean, false),
-            ]))
-        })
-        .clone()
+    PgRolesRow::arrow_schema()
 }
 
 #[derive(Debug)]

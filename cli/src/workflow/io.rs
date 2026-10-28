@@ -8,6 +8,28 @@ pub(crate) fn display_project_path(project_root: &Path, path: &Path) -> String {
     path.strip_prefix(project_root).unwrap_or(path).display().to_string()
 }
 
+/// Path text for CLI output. On Windows this drops the `\\?\` prefix and uses `\`.
+pub(crate) fn display_path(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    if cfg!(windows) || text.starts_with(r"\\?\") {
+        windows_native_path(&text)
+    } else {
+        text.into_owned()
+    }
+}
+
+pub(crate) fn simplified_path(path: &Path) -> std::path::PathBuf {
+    std::path::PathBuf::from(display_path(path))
+}
+
+pub(crate) fn windows_native_path(path: &str) -> String {
+    let normalized = path.replace('/', "\\");
+    if let Some(rest) = normalized.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    normalized.strip_prefix(r"\\?\").unwrap_or(&normalized).to_string()
+}
+
 pub fn read_project_file(project_root: Option<&Path>, path: &Path, kind: &str) -> Result<String> {
     fs::read_to_string(path).map_err(|error| {
         let display = project_root
@@ -41,5 +63,23 @@ mod tests {
         let root = Path::new("/tmp/demo");
         let path = Path::new("/other/schema.sql");
         assert_eq!(display_project_path(root, path), "/other/schema.sql");
+    }
+
+    #[test]
+    fn display_path_strips_windows_verbatim_prefix() {
+        assert_eq!(
+            display_path(Path::new(r"\\?\C:\Users\Jamal\.kalam\servers\default")),
+            r"C:\Users\Jamal\.kalam\servers\default"
+        );
+        assert_eq!(
+            windows_native_path(r"C:\tmp\kalamdb-v8\.kalam/data\rocksdb"),
+            r"C:\tmp\kalamdb-v8\.kalam\data\rocksdb"
+        );
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn display_path_keeps_posix_paths() {
+        assert_eq!(display_path(Path::new("/tmp/foo")), "/tmp/foo");
     }
 }

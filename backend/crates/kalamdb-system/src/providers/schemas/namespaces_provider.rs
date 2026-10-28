@@ -3,28 +3,21 @@
 //! This module provides a DataFusion TableProvider implementation for the system.namespaces table.
 //! Uses the new EntityStore architecture with SchemaId keys.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
-use datafusion::{
-    arrow::{array::RecordBatch, datatypes::SchemaRef},
-    logical_expr::Expr,
-};
 use kalamdb_commons::{models::rows::SystemTableRow, SchemaId, SystemTable};
 use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBackend};
 
 use crate::{
     error::{SystemError, SystemResultExt},
-    providers::{
-        base::{extract_filter_value, system_rows_to_batch, SimpleProviderDefinition},
-        schemas::models::Namespace,
-    },
+    providers::{base::SimpleSystemTableScan, keyed_provider::KeyedTableProvider, schemas::models::Namespace},
     system_row_mapper::{model_to_system_row, system_row_to_model},
 };
 
 /// System.namespaces table provider using EntityStore architecture
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NamespacesTableProvider {
-    store: IndexedEntityStore<SchemaId, SystemTableRow>,
+    sql: KeyedTableProvider<SchemaId, SystemTableRow>,
 }
 
 impl NamespacesTableProvider {
@@ -43,19 +36,27 @@ impl NamespacesTableProvider {
                 .expect("Namespaces is a table"),
             Vec::new(),
         );
-        Self { store }
+        let sql = KeyedTableProvider::from_stored_rows(
+            store,
+            Namespace::definition(),
+            SystemTable::Namespaces.table_id(),
+            SystemTable::Namespaces.table_name(),
+            "namespace_id",
+            |value| Some(SchemaId::new(value)),
+        );
+        Self { sql }
     }
 
     /// Create a new namespace entry
     pub fn create_namespace(&self, namespace: Namespace) -> Result<(), SystemError> {
         let row = Self::encode_namespace_row(&namespace)?;
-        self.store.put(&namespace.namespace_id, &row)?;
+        self.sql.store().put(&namespace.namespace_id, &row)?;
         Ok(())
     }
 
     /// Get a namespace by ID
     pub fn get_namespace(&self, namespace_id: &SchemaId) -> Result<Option<Namespace>, SystemError> {
-        let row = self.store.get(namespace_id)?;
+        let row = self.sql.store().get(namespace_id)?;
         row.map(|value| Self::decode_namespace_row(&value)).transpose()
     }
 
@@ -67,7 +68,8 @@ impl NamespacesTableProvider {
         namespace_id: &SchemaId,
     ) -> Result<Option<Namespace>, SystemError> {
         let row = self
-            .store
+            .sql
+            .store()
             .get_async(namespace_id.clone())
             .await
             .into_system_error("get_async error")?;
@@ -77,7 +79,7 @@ impl NamespacesTableProvider {
     /// Update an existing namespace entry
     pub fn update_namespace(&self, namespace: Namespace) -> Result<(), SystemError> {
         // Check if namespace exists
-        if self.store.get(&namespace.namespace_id)?.is_none() {
+        if self.sql.store().get(&namespace.namespace_id)?.is_none() {
             return Err(SystemError::NotFound(format!(
                 "Namespace not found: {}",
                 namespace.namespace_id
@@ -85,19 +87,19 @@ impl NamespacesTableProvider {
         }
 
         let row = Self::encode_namespace_row(&namespace)?;
-        self.store.put(&namespace.namespace_id, &row)?;
+        self.sql.store().put(&namespace.namespace_id, &row)?;
         Ok(())
     }
 
     /// Delete a namespace entry
     pub fn delete_namespace(&self, namespace_id: &SchemaId) -> Result<(), SystemError> {
-        self.store.delete(namespace_id)?;
+        self.sql.store().delete(namespace_id)?;
         Ok(())
     }
 
     /// List all namespaces
     pub fn list_namespaces(&self) -> Result<Vec<Namespace>, SystemError> {
-        let iter = self.store.scan_iterator(None, None)?;
+        let iter = self.sql.store().scan_iterator(None, None)?;
         let mut namespaces = Vec::new();
         for item in iter {
             let (_, row) = item?;
@@ -107,41 +109,8 @@ impl NamespacesTableProvider {
     }
 
     /// Scan all namespaces and return as RecordBatch
-    pub fn scan_all_namespaces(&self) -> Result<RecordBatch, SystemError> {
-        let rows = self
-            .store
-            .scan_all_typed(None, None, None)?
-            .into_iter()
-            .map(|(_, row)| row)
-            .collect();
-        system_rows_to_batch(&Self::schema(), rows)
-    }
-    fn scan_to_batch_filtered(
-        &self,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> Result<RecordBatch, SystemError> {
-        // Check for primary key equality filter → O(1) point lookup
-        if let Some(ns_id_str) = extract_filter_value(filters, "namespace_id") {
-            let namespace_id = SchemaId::new(&ns_id_str);
-            if let Some(row) = self.store.get(&namespace_id)? {
-                return system_rows_to_batch(&Self::schema(), vec![row]);
-            }
-            return system_rows_to_batch(&Self::schema(), vec![]);
-        }
-
-        // Use iterator with early termination on limit
-        let iter = self.store.scan_iterator(None, None)?;
-        let effective_limit = limit.unwrap_or(100_000);
-        let mut entries = Vec::with_capacity(effective_limit.min(1000));
-        for item in iter {
-            let (_, row) = item?;
-            entries.push(row);
-            if entries.len() >= effective_limit {
-                break;
-            }
-        }
-        system_rows_to_batch(&Self::schema(), entries)
+    pub fn scan_all_namespaces(&self) -> Result<datafusion::arrow::array::RecordBatch, SystemError> {
+        self.sql.scan_all_to_batch()
     }
 
     fn encode_namespace_row(namespace: &Namespace) -> Result<SystemTableRow, SystemError> {
@@ -153,23 +122,7 @@ impl NamespacesTableProvider {
     }
 }
 
-crate::impl_system_table_provider_metadata!(
-    simple,
-    provider = NamespacesTableProvider,
-    table_name = SystemTable::Namespaces.table_name(),
-    schema = Namespace::definition()
-        .to_arrow_schema()
-        .expect("failed to build namespaces schema")
-);
-
-crate::impl_simple_system_table_provider!(
-    provider = NamespacesTableProvider,
-    key = SchemaId,
-    value = SystemTableRow,
-    definition = provider_definition,
-    scan_all = scan_all_namespaces,
-    scan_filtered = scan_to_batch_filtered
-);
+crate::impl_keyed_table_provider!(NamespacesTableProvider);
 
 #[cfg(test)]
 mod tests {
@@ -191,6 +144,30 @@ mod tests {
             options: Some(serde_json::json!({})),
             table_count: 0,
         }
+    }
+
+    #[test]
+    fn get_namespace_reads_the_entity_store_without_a_query_plan() {
+        let backend = Arc::new(InMemoryBackend::new());
+        let provider = NamespacesTableProvider::new(backend.clone());
+        provider
+            .create_namespace(create_test_namespace(&SchemaId::new("app"), "app"))
+            .unwrap();
+        backend.clear_recorded_ops();
+
+        let namespace = provider.get_namespace(&SchemaId::new("app")).unwrap().unwrap();
+
+        assert_eq!(namespace.name, "app");
+        let partition = SystemTable::Namespaces
+            .column_family_name()
+            .expect("namespaces is a table")
+            .to_string();
+        let ops = backend.recorded_ops();
+        assert!(!ops.is_empty());
+        assert!(
+            ops.iter().all(|(kind, name)| *kind == "get" && name == &partition),
+            "get_namespace must call IndexedEntityStore::get, recorded {ops:?}"
+        );
     }
 
     #[test]
@@ -280,9 +257,15 @@ mod tests {
 
         // Create DataFusion session
         let ctx = datafusion::execution::context::SessionContext::new();
-        let state = ctx.state();
+        let mut state = ctx.state();
+        state.config_mut().options_mut().extensions.insert(
+            kalamdb_session_datafusion::SessionUserContext::new(
+                kalamdb_commons::models::UserId::new("system"),
+                kalamdb_commons::models::Role::System,
+                kalamdb_commons::models::ReadContext::Internal,
+            ),
+        );
 
-        // Scan via DataFusion
         let plan = provider.scan(&state, None, &[], None).await.unwrap();
         assert!(!plan.schema().fields().is_empty());
     }

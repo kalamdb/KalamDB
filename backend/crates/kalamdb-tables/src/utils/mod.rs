@@ -13,7 +13,6 @@ pub mod datafusion_dml;
 pub mod dml_provider;
 pub mod parquet;
 pub mod pk; // Primary key utilities and existence checking
-pub(crate) mod prepared_update_assignments;
 pub mod row_utils;
 pub mod table_statistics;
 pub mod unified_dml; // Phase 13.6: Moved from tables/
@@ -38,7 +37,7 @@ pub mod streams {
 pub use core::TableServices;
 
 pub use base::{BaseTableProvider, TableProviderCore};
-pub use dml_provider::KalamTableProvider;
+pub use dml_provider::TableRowDml;
 pub use shared::SharedTableProvider;
 pub use streams::StreamTableProvider;
 // Re-export unified DML functions

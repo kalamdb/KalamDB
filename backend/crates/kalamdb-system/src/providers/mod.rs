@@ -15,6 +15,7 @@ pub mod base;
 pub mod catalog;
 pub mod job_nodes;
 pub mod jobs;
+pub mod keyed_provider;
 pub mod live;
 pub mod manifest;
 pub mod migrations;
@@ -43,6 +44,7 @@ pub use catalog::{
 };
 pub use job_nodes::JobNodesTableProvider;
 pub use jobs::JobsTableProvider;
+pub use keyed_provider::KeyedTableProvider;
 pub use manifest::{manifest_table_definition, InMemoryChecker, ManifestTableProvider};
 pub use migrations::MigrationsTableProvider;
 pub use schemas::NamespacesTableProvider;

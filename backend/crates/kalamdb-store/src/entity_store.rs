@@ -239,12 +239,7 @@ where
     }
 
     /// Decode `ordinals` when the store's codec can skip the other columns.
-    fn deserialize_selected(
-        &self,
-        key: &K,
-        bytes: &[u8],
-        ordinals: Option<&[usize]>,
-    ) -> Result<V> {
+    fn deserialize_selected(&self, key: &K, bytes: &[u8], ordinals: Option<&[usize]>) -> Result<V> {
         let _ = ordinals;
         self.deserialize(key, bytes)
     }

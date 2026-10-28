@@ -2,66 +2,53 @@
 
 use std::sync::Arc;
 
-use arrow::array::{Array, StringArray, StringBuilder};
-use async_trait::async_trait;
+use arrow::array::{Array, StringArray};
 use datafusion::{
-    arrow::{
-        compute::filter_record_batch,
-        datatypes::{DataType, Field, Schema, SchemaRef},
-        record_batch::RecordBatch,
-    },
-    catalog::Session,
-    datasource::{TableProvider, TableType},
+    arrow::{compute::filter_record_batch, record_batch::RecordBatch},
+    catalog::CatalogProviderList,
     error::{DataFusionError, Result as DataFusionResult},
-    execution::context::SessionState,
-    logical_expr::{Expr, TableProviderFilterPushDown},
-    physical_plan::ExecutionPlan,
 };
-use kalamdb_datafusion_sources::{
-    exec::{finalize_deferred_batch, DeferredBatchExec, DeferredBatchSource},
-    provider::combined_filter,
-};
+use kalamdb_macros::table;
 
-use super::extend::collect_inner_batch;
+use super::relation::InformationSchemaRelation;
 
-fn views_schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![
-        Field::new("table_catalog", DataType::Utf8, false),
-        Field::new("table_schema", DataType::Utf8, false),
-        Field::new("table_name", DataType::Utf8, false),
-        Field::new("view_definition", DataType::Utf8, true),
-        Field::new("check_option", DataType::Utf8, true),
-        Field::new("is_updatable", DataType::Utf8, false),
-        Field::new("is_insertable_into", DataType::Utf8, false),
-        Field::new("is_trigger_updatable", DataType::Utf8, false),
-        Field::new("is_trigger_deletable", DataType::Utf8, false),
-        Field::new("is_trigger_insertable_into", DataType::Utf8, false),
-    ]))
+#[table(
+    name = "views",
+    namespace = SchemaId::information_schema(),
+    view = true,
+    comment = "Views projected from information_schema.tables"
+)]
+#[derive(Clone, Debug)]
+struct InformationSchemaViewRow {
+    /// Catalog name
+    table_catalog: String,
+    /// Schema name
+    table_schema: String,
+    /// View name
+    table_name: String,
+    /// View SQL text. Kalam does not store view definitions here.
+    view_definition: Option<String>,
+    /// Check option
+    check_option: Option<String>,
+    /// YES or NO
+    is_updatable: String,
+    /// YES or NO
+    is_insertable_into: String,
+    /// YES or NO
+    is_trigger_updatable: String,
+    /// YES or NO
+    is_trigger_deletable: String,
+    /// YES or NO
+    is_trigger_insertable_into: String,
 }
 
 fn is_information_schema_view_type(table_type: &str) -> bool {
     matches!(table_type.to_ascii_uppercase().as_str(), "VIEW" | "LOCAL TEMPORARY VIEW")
 }
 
-fn constant_string_column(row_count: usize, value: &str) -> StringArray {
-    let mut builder = StringBuilder::with_capacity(row_count, value.len());
-    for _ in 0..row_count {
-        builder.append_value(value);
-    }
-    builder.finish()
-}
-
-fn nullable_string_column(row_count: usize) -> StringArray {
-    let mut builder = StringBuilder::new();
-    for _ in 0..row_count {
-        builder.append_null();
-    }
-    builder.finish()
-}
-
 fn tables_to_views_batch(tables_batch: &RecordBatch) -> DataFusionResult<RecordBatch> {
     if tables_batch.num_rows() == 0 {
-        return Ok(RecordBatch::new_empty(views_schema()));
+        return Ok(InformationSchemaViewRow::to_batch(&[]));
     }
 
     let schema = tables_batch.schema();
@@ -80,9 +67,8 @@ fn tables_to_views_batch(tables_batch: &RecordBatch) -> DataFusionResult<RecordB
     );
     let filtered = filter_record_batch(tables_batch, &mask)
         .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?;
-
     if filtered.num_rows() == 0 {
-        return Ok(RecordBatch::new_empty(views_schema()));
+        return Ok(InformationSchemaViewRow::to_batch(&[]));
     }
 
     let filtered_schema = filtered.schema();
@@ -95,145 +81,75 @@ fn tables_to_views_batch(tables_batch: &RecordBatch) -> DataFusionResult<RecordB
     let name_idx = filtered_schema.index_of("table_name").map_err(|error| {
         DataFusionError::Plan(format!("information_schema.tables missing table_name: {error}"))
     })?;
+    let catalogs = filtered
+        .column(catalog_idx)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .ok_or_else(|| DataFusionError::Plan("table_catalog column must be Utf8".to_string()))?;
+    let schemas = filtered
+        .column(schema_idx)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .ok_or_else(|| DataFusionError::Plan("table_schema column must be Utf8".to_string()))?;
+    let names = filtered
+        .column(name_idx)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .ok_or_else(|| DataFusionError::Plan("table_name column must be Utf8".to_string()))?;
 
-    let row_count = filtered.num_rows();
-    RecordBatch::try_new(
-        views_schema(),
-        vec![
-            Arc::clone(filtered.column(catalog_idx)),
-            Arc::clone(filtered.column(schema_idx)),
-            Arc::clone(filtered.column(name_idx)),
-            Arc::new(nullable_string_column(row_count)),
-            Arc::new(constant_string_column(row_count, "NONE")),
-            Arc::new(constant_string_column(row_count, "NO")),
-            Arc::new(constant_string_column(row_count, "NO")),
-            Arc::new(constant_string_column(row_count, "NO")),
-            Arc::new(constant_string_column(row_count, "NO")),
-            Arc::new(constant_string_column(row_count, "NO")),
-        ],
-    )
-    .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))
+    let rows = (0..filtered.num_rows())
+        .map(|row| InformationSchemaViewRow {
+            table_catalog: catalogs.value(row).to_string(),
+            table_schema: schemas.value(row).to_string(),
+            table_name: names.value(row).to_string(),
+            view_definition: None,
+            check_option: Some("NONE".to_string()),
+            is_updatable: "NO".to_string(),
+            is_insertable_into: "NO".to_string(),
+            is_trigger_updatable: "NO".to_string(),
+            is_trigger_deletable: "NO".to_string(),
+            is_trigger_insertable_into: "NO".to_string(),
+        })
+        .collect::<Vec<_>>();
+    Ok(InformationSchemaViewRow::to_batch(&rows))
 }
 
 /// Serves `information_schema.views` by filtering DataFusion `information_schema.tables`.
 #[derive(Debug)]
-pub struct InformationSchemaViewsProvider {
-    inner_tables: Arc<dyn TableProvider>,
-    schema: SchemaRef,
+pub(crate) struct ViewsRelation {
+    catalog_list: Arc<dyn CatalogProviderList>,
 }
 
-impl InformationSchemaViewsProvider {
-    pub fn new(inner_tables: Arc<dyn TableProvider>) -> Self {
-        Self {
-            inner_tables,
-            schema: views_schema(),
-        }
+impl ViewsRelation {
+    /// Relation that reads stock `information_schema.tables`.
+    pub fn new(catalog_list: Arc<dyn CatalogProviderList>) -> Self {
+        Self { catalog_list }
+    }
+}
+
+impl InformationSchemaRelation for ViewsRelation {
+    type Ext = ();
+    type Extra = ();
+
+    const NAME: &'static str = "views";
+    const STOCK: Option<&'static str> = Some("tables");
+
+    fn catalog_list(&self) -> Option<Arc<dyn CatalogProviderList>> {
+        Some(Arc::clone(&self.catalog_list))
     }
 
-    async fn collect_views_batch(
+    fn delegate_filter_pushdown(&self) -> bool {
+        true
+    }
+
+    fn output_schema(
         &self,
-        state: &SessionState,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<RecordBatch> {
-        let tables_batch = collect_inner_batch(&self.inner_tables, state, filters, limit).await?;
-        tables_to_views_batch(&tables_batch)
-    }
-}
-
-struct ViewsScanSource {
-    provider: Arc<InformationSchemaViewsProvider>,
-    session_state: SessionState,
-    physical_filter: Option<Arc<dyn datafusion::physical_expr::PhysicalExpr>>,
-    projection: Option<Vec<usize>>,
-    limit: Option<usize>,
-    output_schema: SchemaRef,
-    filters: Vec<Expr>,
-}
-
-#[async_trait]
-impl DeferredBatchSource for ViewsScanSource {
-    fn source_name(&self) -> &'static str {
-        "information_schema_views"
+        _stock: &datafusion::arrow::datatypes::SchemaRef,
+    ) -> datafusion::arrow::datatypes::SchemaRef {
+        InformationSchemaViewRow::arrow_schema()
     }
 
-    fn schema(&self) -> SchemaRef {
-        Arc::clone(&self.output_schema)
-    }
-
-    async fn produce_batch(&self) -> DataFusionResult<RecordBatch> {
-        let batch = self
-            .provider
-            .collect_views_batch(&self.session_state, &self.filters, self.limit)
-            .await?;
-
-        finalize_deferred_batch(
-            batch,
-            self.physical_filter.as_ref(),
-            self.projection.as_deref(),
-            self.limit,
-            self.source_name(),
-        )
-    }
-}
-
-#[async_trait]
-impl TableProvider for InformationSchemaViewsProvider {
-    fn schema(&self) -> SchemaRef {
-        Arc::clone(&self.schema)
-    }
-
-    fn table_type(&self) -> TableType {
-        TableType::View
-    }
-
-    async fn scan(
-        &self,
-        state: &dyn Session,
-        projection: Option<&Vec<usize>>,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        let session_state = state
-            .as_any()
-            .downcast_ref::<SessionState>()
-            .ok_or_else(|| DataFusionError::Plan("expected SessionState".to_string()))?
-            .clone();
-
-        let output_schema = match projection {
-            Some(indices) => self
-                .schema()
-                .project(indices)
-                .map(Arc::new)
-                .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?,
-            None => self.schema(),
-        };
-
-        let physical_filter = if let Some(filter) = combined_filter(filters) {
-            let df_schema = datafusion::common::DFSchema::try_from(self.schema())?;
-            Some(state.create_physical_expr(filter, &df_schema)?)
-        } else {
-            None
-        };
-
-        Ok(Arc::new(DeferredBatchExec::new(Arc::new(ViewsScanSource {
-            provider: Arc::new(InformationSchemaViewsProvider {
-                inner_tables: Arc::clone(&self.inner_tables),
-                schema: Arc::clone(&self.schema),
-            }),
-            session_state,
-            physical_filter,
-            projection: projection.cloned(),
-            limit,
-            filters: filters.to_vec(),
-            output_schema,
-        }))))
-    }
-
-    fn supports_filters_pushdown(
-        &self,
-        filters: &[&Expr],
-    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
-        self.inner_tables.supports_filters_pushdown(filters)
+    fn project(&self, stock: &RecordBatch) -> DataFusionResult<Option<RecordBatch>> {
+        tables_to_views_batch(stock).map(Some)
     }
 }

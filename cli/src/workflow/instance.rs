@@ -20,6 +20,7 @@ use crate::{
 
 pub const INSTANCE_SCHEMA_VERSION: u32 = 1;
 pub const DEFAULT_HTTP_PORT: u16 = 2900;
+pub const DEFAULT_POSTGRES_PORT: u16 = 5432;
 pub const SHARED_SERVER_NAME: &str = "default";
 const PORT_SEARCH_SPAN: u16 = 100;
 
@@ -32,7 +33,34 @@ pub enum TargetKind {
 }
 
 pub fn default_http_url(port: u16) -> String {
-    format!("http://127.0.0.1:{port}")
+    format!("http://localhost:{port}")
+}
+
+/// Browser URL for a loopback server. `127.0.0.1` and `::1` become `localhost`
+/// so the Admin UI origin matches the server's public origin.
+pub fn browser_http_url(url: &str) -> String {
+    let Ok(mut parsed) = url::Url::parse(url) else {
+        return url.to_string();
+    };
+    if matches!(parsed.host_str(), Some("127.0.0.1" | "[::1]" | "::1"))
+        && parsed.set_host(Some("localhost")).is_err()
+    {
+        return url.to_string();
+    }
+    let text = parsed.to_string();
+    if parsed.path() == "/" && parsed.query().is_none() && parsed.fragment().is_none() {
+        text.trim_end_matches('/').to_string()
+    } else {
+        text
+    }
+}
+
+pub fn admin_ui_url(server_url: &str) -> String {
+    format!("{}/ui", browser_http_url(server_url).trim_end_matches('/'))
+}
+
+pub fn postgres_client_url(port: u16) -> String {
+    format!("postgres://localhost:{port}")
 }
 
 pub fn shared_server_root() -> PathBuf {
@@ -240,6 +268,20 @@ pub fn allocate_http_port(preferred: u16, explicit: bool, owned_port: Option<u16
     )))
 }
 
+/// Pick a free port for a companion listener, skipping `reserved`.
+pub fn allocate_companion_port(preferred: u16, reserved: u16) -> Result<u16> {
+    let start = if preferred == reserved {
+        preferred.saturating_add(1)
+    } else {
+        preferred
+    };
+    let allocated = allocate_http_port(start, false, None)?;
+    if allocated != reserved {
+        return Ok(allocated);
+    }
+    allocate_http_port(allocated.saturating_add(1), false, None)
+}
+
 pub fn port_is_available(port: u16) -> bool {
     TcpListener::bind(("127.0.0.1", port)).is_ok()
 }
@@ -279,6 +321,28 @@ pub fn parse_server_listen_ports(config_path: &Path) -> Result<(u16, Option<u16>
     Ok((http, postgres))
 }
 
+pub fn preferred_postgres_port(config_path: &Path) -> Result<u16> {
+    if !config_path.is_file() {
+        return Ok(DEFAULT_POSTGRES_PORT);
+    }
+    let contents = fs::read_to_string(config_path).map_err(|error| {
+        CLIError::FileError(format!("failed to read '{}': {error}", config_path.display()))
+    })?;
+    let value: toml::Value = toml::from_str(&contents).map_err(|error| {
+        CLIError::ConfigurationError(format!(
+            "failed to parse '{}': {error}",
+            config_path.display()
+        ))
+    })?;
+    Ok(value
+        .get("postgres_wire")
+        .and_then(|wire| wire.get("port"))
+        .and_then(toml::Value::as_integer)
+        .and_then(|port| u16::try_from(port).ok())
+        .filter(|port| *port != 0)
+        .unwrap_or(DEFAULT_POSTGRES_PORT))
+}
+
 pub fn update_server_listen_ports(
     config_path: &Path,
     http_port: u16,
@@ -296,13 +360,25 @@ pub fn update_server_listen_ports(
             config_path.display()
         ))
     })?;
-    if let Some(server) = value.get_mut("server").and_then(toml::Value::as_table_mut) {
-        server.insert("port".into(), toml::Value::Integer(http_port as i64));
+    let Some(root) = value.as_table_mut() else {
+        return Err(CLIError::ConfigurationError(format!(
+            "'{}' must be a TOML table",
+            config_path.display()
+        )));
+    };
+    if let Some(server) = root.get_mut("server").and_then(toml::Value::as_table_mut) {
+        server.insert("port".into(), toml::Value::Integer(i64::from(http_port)));
     }
     if let Some(port) = postgres_port {
-        if let Some(wire) = value.get_mut("postgres_wire").and_then(toml::Value::as_table_mut) {
-            wire.insert("port".into(), toml::Value::Integer(port as i64));
-        }
+        let wire = root
+            .entry("postgres_wire")
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+        let Some(wire) = wire.as_table_mut() else {
+            return Err(CLIError::ConfigurationError("postgres_wire must be a TOML table".into()));
+        };
+        wire.insert("enabled".into(), toml::Value::Boolean(true));
+        wire.insert("port".into(), toml::Value::Integer(i64::from(port)));
+        wire.entry("host").or_insert_with(|| toml::Value::String("127.0.0.1".into()));
     }
     let serialized = toml::to_string_pretty(&value).map_err(|error| {
         CLIError::ConfigurationError(format!("failed to serialize server.toml: {error}"))
@@ -475,6 +551,44 @@ mod tests {
         let occupied = listener.local_addr().unwrap().port();
         let allocated = allocate_http_port(occupied, false, None).unwrap();
         assert_ne!(allocated, occupied);
+        assert!(port_is_available(allocated));
+    }
+
+    #[test]
+    fn browser_http_url_rewrites_loopback_addresses() {
+        assert_eq!(browser_http_url("http://127.0.0.1:2900"), "http://localhost:2900");
+        assert_eq!(browser_http_url("http://[::1]:2900"), "http://localhost:2900");
+        assert_eq!(browser_http_url("http://localhost:2900"), "http://localhost:2900");
+        assert_eq!(browser_http_url("https://db.example.com/ui"), "https://db.example.com/ui");
+        assert_eq!(admin_ui_url("http://127.0.0.1:2900"), "http://localhost:2900/ui");
+        assert_eq!(postgres_client_url(5432), "postgres://localhost:5432");
+    }
+
+    #[test]
+    fn update_server_listen_ports_enables_postgres_wire() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("server.toml");
+        fs::write(
+            &path,
+            "[server]\nport = 2900\n\n[postgres_wire]\nenabled = false\nhost = \"127.0.0.1\"\nport = 5432\n",
+        )
+        .unwrap();
+
+        update_server_listen_ports(&path, 2901, Some(5433)).unwrap();
+
+        let contents = fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("port = 2901"));
+        assert!(contents.contains("enabled = true"));
+        assert!(contents.contains("port = 5433"));
+        assert!(contents.contains("127.0.0.1"));
+    }
+
+    #[test]
+    fn allocate_companion_port_skips_the_http_port() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let reserved = listener.local_addr().unwrap().port();
+        let allocated = allocate_companion_port(reserved, reserved).unwrap();
+        assert_ne!(allocated, reserved);
         assert!(port_is_available(allocated));
     }
 }

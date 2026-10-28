@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::support::{create_cluster_app_context, create_user_table, row, unique_namespace};
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
     models::{pg_operations::InsertRequest, rows::Row, OperationKind, TransactionOrigin, UserId},
@@ -10,7 +11,6 @@ use kalamdb_pg::OperationExecutor;
 use kalamdb_pg_bridge::OperationService;
 use kalamdb_sharding::ShardRouter;
 use kalamdb_tables::UserTableProvider;
-use crate::support::{create_cluster_app_context, create_user_table, row, unique_namespace};
 
 fn insert_mutation(
     transaction_id: &kalamdb_commons::models::TransactionId,
@@ -96,11 +96,9 @@ async fn explicit_commit_persists_same_table_same_user_user_inserts() {
 
     let provider_arc = app_ctx
         .schema_registry()
-        .get_provider(&table_id)
+        .get_kalam_provider(&table_id)
         .expect("user provider should be registered");
-    let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<UserTableProvider>()
-        .expect("provider should downcast to UserTableProvider");
+    let provider = provider_arc.as_user().expect("provider should downcast to UserTableProvider");
 
     let (first_key, first_row) = provider
         .find_by_pk(&user_id, &ScalarValue::Int64(Some(1)))
@@ -175,11 +173,9 @@ async fn explicit_commit_preserves_user_scope_for_same_primary_keys() {
 
     let provider_arc = app_ctx
         .schema_registry()
-        .get_provider(&table_id)
+        .get_kalam_provider(&table_id)
         .expect("user provider should be registered");
-    let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<UserTableProvider>()
-        .expect("provider should downcast to UserTableProvider");
+    let provider = provider_arc.as_user().expect("provider should downcast to UserTableProvider");
 
     let first_user_first_row = load_user_row(provider, &first_user_id, 1).await;
     let first_user_second_row = load_user_row(provider, &first_user_id, 2).await;
@@ -251,11 +247,9 @@ async fn operation_service_preserves_user_scope_for_same_primary_keys() {
 
     let provider_arc = app_ctx
         .schema_registry()
-        .get_provider(&table_id)
+        .get_kalam_provider(&table_id)
         .expect("user provider should be registered");
-    let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<UserTableProvider>()
-        .expect("provider should downcast to UserTableProvider");
+    let provider = provider_arc.as_user().expect("provider should downcast to UserTableProvider");
 
     let first_user_first_row = load_user_row(provider, &first_user_id, 1).await;
     let first_user_second_row = load_user_row(provider, &first_user_id, 2).await;
