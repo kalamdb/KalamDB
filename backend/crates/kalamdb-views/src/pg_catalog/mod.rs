@@ -16,7 +16,7 @@ use kalamdb_session_datafusion::SessionConfigValues;
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
-    catalog_provider::{CatalogScanCtx, CatalogSource, CatalogTableProvider},
+    catalog_provider::{CatalogScanCtx, CatalogSource, ComputedCatalogProvider},
     error::RegistryError,
     system::sessions::SessionsSnapshotCallback,
 };
@@ -111,7 +111,7 @@ impl<V: PgCatalogView + 'static> CatalogSource for PgCatalogViewSource<V> {
 
 /// [`TableProvider`] for a [`PgCatalogView`].
 pub struct PgCatalogViewTableProvider<V: PgCatalogView + 'static> {
-    inner: CatalogTableProvider<PgCatalogViewSource<V>>,
+    inner: ComputedCatalogProvider<PgCatalogViewSource<V>>,
 }
 
 impl<V: PgCatalogView + 'static> Clone for PgCatalogViewTableProvider<V> {
@@ -135,7 +135,7 @@ impl<V: PgCatalogView + 'static> PgCatalogViewTableProvider<V> {
     /// Wrap a pg_catalog view.
     pub fn new(view: Arc<V>) -> Self {
         Self {
-            inner: CatalogTableProvider::new(Arc::new(PgCatalogViewSource { view })),
+            inner: ComputedCatalogProvider::new(Arc::new(PgCatalogViewSource { view })),
         }
     }
 }

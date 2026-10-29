@@ -151,9 +151,7 @@ impl JobExecutor for UserExportExecutor {
             let has_rocksdb_data = {
                 let provider_opt = schema_registry.get_kalam_provider(&table_id);
                 if let Some(provider_arc) = provider_opt {
-                    if let Some(provider) = provider_arc.as_user()
-                    {
-                        let store = provider.store();
+                    if let Some(store) = provider_arc.user_store() {
                         // Scan with the user-specific prefix to check only this user's data
                         let user_prefix = UserTableRowId::user_prefix(&user_id);
                         let partition = store.partition();

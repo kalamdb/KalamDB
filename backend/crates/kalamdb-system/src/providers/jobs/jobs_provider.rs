@@ -17,9 +17,9 @@
 //!
 //! Note: namespace_id and table_name are now stored in the parameters JSON field
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
-use datafusion::arrow::{array::RecordBatch, datatypes::SchemaRef};
+use datafusion::arrow::array::RecordBatch;
 use kalamdb_commons::{models::rows::SystemTableRow, JobId, SystemTable};
 use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBackend};
 
@@ -29,7 +29,7 @@ use super::{
 };
 use crate::{
     error::{SystemError, SystemResultExt},
-    providers::{base::SimpleSystemTableScan, keyed_provider::KeyedTableProvider},
+    providers::keyed_provider::KeyedTableProvider,
     system_row_mapper::{model_to_system_row, system_row_to_model},
     JobStatus,
 };
@@ -78,7 +78,10 @@ impl JobsTableProvider {
     /// TODO: Return a string message
     pub fn create_job(&self, job: Job) -> Result<String, SystemError> {
         let row = Self::encode_job_row(&job)?;
-        self.sql.store().insert(&job.job_id, &row).into_system_error("insert job error")?;
+        self.sql
+            .store()
+            .insert(&job.job_id, &row)
+            .into_system_error("insert job error")?;
         Ok(format!("Job {} created", job.job_id))
     }
 
@@ -88,7 +91,8 @@ impl JobsTableProvider {
     pub async fn insert_job_async(&self, job: Job) -> Result<(), SystemError> {
         let job_id = job.job_id.clone();
         let row = Self::encode_job_row(&job)?;
-        self.sql.store()
+        self.sql
+            .store()
             .insert_async(job_id, row)
             .await
             .into_system_error("insert_async job error")
@@ -131,7 +135,8 @@ impl JobsTableProvider {
         validate_job_update(&job)?;
         let new_row = Self::encode_job_row(&job)?;
 
-        self.sql.store()
+        self.sql
+            .store()
             .update_with_old(&job.job_id, Some(&old_row), &new_row)
             .into_system_error("update job error")
     }
@@ -226,7 +231,7 @@ impl JobsTableProvider {
                 // Scan by index - returns (JobId, Job) pairs
                 let iter = self
                     .sql
-            .store()
+                    .store()
                     .scan_by_index_iter(STATUS_INDEX, Some(&prefix), Some(limit - jobs.len()))
                     .into_system_error("scan_by_index_iter error")?;
 
@@ -316,7 +321,7 @@ impl JobsTableProvider {
                 let prefix = vec![status_to_u8(status)];
                 let job_entries = self
                     .sql
-            .store()
+                    .store()
                     .scan_by_index_async(STATUS_INDEX, Some(prefix), Some(limit - jobs.len()))
                     .await
                     .into_system_error("scan_by_index_async error")?;
@@ -479,7 +484,7 @@ impl JobsTableProvider {
             // Keys are [status_byte][created_at_be][job_id_bytes], sorted by created_at ASC.
             let iter = self
                 .sql
-            .store()
+                .store()
                 .scan_index_raw_typed_iter(STATUS_INDEX, Some(&prefix), None, None)
                 .into_system_error("scan_index_raw_typed_iter error")?;
 

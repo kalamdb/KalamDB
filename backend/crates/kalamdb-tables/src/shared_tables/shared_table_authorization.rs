@@ -14,7 +14,7 @@ use datafusion::{
 };
 use kalamdb_commons::{
     ids::{SharedTableRowId, VersionId},
-    models::{rows::Row, UserId},
+    models::{rows::Row, schemas::ColumnDefinition, UserId},
     AuthorizationRelation, PolicyCommand, PolicyProgram, Role, TableId,
 };
 use kalamdb_rls::{
@@ -351,19 +351,11 @@ impl SharedTableAuthorization {
         cold_columns: Option<&[String]>,
     ) -> Option<Vec<String>> {
         let mut columns = cold_columns?.to_vec();
-        for column_id in scan_context.policies.required_column_ids() {
-            if let Some(column) = host
-                .core
-                .table_def()
-                .columns
-                .iter()
-                .find(|column| column.column_id == column_id)
-            {
-                if !columns.iter().any(|name| name == &column.column_name) {
-                    columns.push(column.column_name.clone());
-                }
-            }
-        }
+        push_missing_column_names(
+            &mut columns,
+            &host.core.table_def().columns,
+            &scan_context.policies.required_column_ids(),
+        );
         Some(columns)
     }
 
@@ -534,6 +526,22 @@ impl SharedTableAuthorization {
                 "RLS dependency changed while rows were authorized".to_string(),
             )
         })
+    }
+}
+
+/// Append policy column names that are not already in `names`.
+pub(crate) fn push_missing_column_names(
+    names: &mut Vec<String>,
+    columns: &[ColumnDefinition],
+    column_ids: &[u64],
+) {
+    for column_id in column_ids {
+        let Some(column) = columns.iter().find(|column| column.column_id == *column_id) else {
+            continue;
+        };
+        if !names.iter().any(|name| name == &column.column_name) {
+            names.push(column.column_name.clone());
+        }
     }
 }
 

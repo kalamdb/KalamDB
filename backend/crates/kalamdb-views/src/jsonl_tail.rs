@@ -35,13 +35,6 @@ impl JsonlTailLimits {
         max_tail_bytes: 256 * 1024,
         max_line_bytes: 64 * 1024,
     };
-
-    /// Override [`Self::max_rows`] while keeping the other default caps.
-    #[must_use]
-    pub const fn with_max_rows(mut self, max_rows: usize) -> Self {
-        self.max_rows = max_rows;
-        self
-    }
 }
 
 impl Default for JsonlTailLimits {

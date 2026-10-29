@@ -1,19 +1,14 @@
 use datafusion::{
-    arrow::datatypes::SchemaRef,
     logical_expr::Expr,
     prelude::{col, lit},
 };
-use kalamdb_commons::{
-    constants::SystemColumnNames,
-    ids::VersionId,
-    models::{schemas::TableType, UserId},
-};
+use kalamdb_commons::{constants::SystemColumnNames, ids::VersionId, models::UserId};
 
 use crate::{
     error::KalamDbError,
     utils::{
         core::TableProviderCore,
-        parquet::scan_parquet_files_as_batch_async,
+        parquet::scan_provider_parquet_batch,
         version_resolution::{parquet_batch_to_rows, ParquetRowData},
     },
 };
@@ -21,7 +16,6 @@ use crate::{
 /// Ensure manifest.json exists (and is cached) for the current scope before hot writes.
 pub fn ensure_manifest_ready(
     core: &TableProviderCore,
-    _table_type: TableType,
     user_id: Option<&UserId>,
     log_label: &str,
 ) -> Result<(), KalamDbError> {
@@ -74,8 +68,6 @@ pub fn ensure_manifest_ready(
 /// `build_row` maps parsed Parquet data into the provider's row type.
 pub async fn load_row_from_parquet_by_seq<T, F>(
     core: &TableProviderCore,
-    table_type: TableType,
-    schema: &SchemaRef,
     user_id: Option<&UserId>,
     seq_id: VersionId,
     build_row: F,
@@ -84,16 +76,7 @@ where
     F: FnOnce(ParquetRowData) -> T,
 {
     let filter: Expr = col(SystemColumnNames::VERSION).eq(lit(seq_id.as_i64()));
-    let batch = scan_parquet_files_as_batch_async(
-        core,
-        core.table_id(),
-        table_type,
-        user_id,
-        schema.clone(),
-        Some(&filter),
-        None,
-    )
-    .await?;
+    let batch = scan_provider_parquet_batch(core, user_id, Some(&filter), None).await?;
     let rows = parquet_batch_to_rows(&batch)?;
 
     for row_data in rows.into_iter() {

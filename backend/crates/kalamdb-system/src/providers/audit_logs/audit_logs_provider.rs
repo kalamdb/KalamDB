@@ -17,10 +17,7 @@ use kalamdb_store::{
 
 use crate::{
     error::{SystemError, SystemResultExt},
-    providers::{
-        audit_logs::models::AuditLogEntry, base::SimpleSystemTableScan,
-        keyed_provider::KeyedTableProvider,
-    },
+    providers::{audit_logs::models::AuditLogEntry, keyed_provider::KeyedTableProvider},
     system_row_mapper::{model_to_system_row, system_row_to_model},
 };
 
@@ -73,7 +70,8 @@ impl AuditLogsTableProvider {
     /// Use this in async contexts to avoid blocking the Tokio runtime.
     pub async fn append_async(&self, entry: AuditLogEntry) -> Result<(), SystemError> {
         let row = Self::encode_audit_row(&entry)?;
-        self.sql.store()
+        self.sql
+            .store()
             .put_async(&entry.audit_id, &row)
             .await
             .into_system_error("put_async error")?;

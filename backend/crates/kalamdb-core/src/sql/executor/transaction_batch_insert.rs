@@ -1338,11 +1338,11 @@ pub(crate) async fn try_batch_inserts_in_transaction(
         let provider = cached_table.get_kalam_provider().ok_or_else(|| {
             KalamDbError::InvalidOperation(format!("Shared table provider not found: {table_id}"))
         })?;
-        let provider = provider.as_shared().ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!(
+        if !provider.is_shared() {
+            return Err(KalamDbError::InvalidOperation(format!(
                 "Shared table provider type mismatch: {table_id}"
-            ))
-        })?;
+            )));
+        }
         let snapshot_commit_seq = app_context
             .transaction_coordinator()
             .get_handle(transaction_id)
@@ -1356,7 +1356,7 @@ pub(crate) async fn try_batch_inserts_in_transaction(
                 .map(|packed| packed.version())
             });
         provider
-            .check_rows_authorized(
+            .check_shared_rows_authorized(
                 exec_ctx.user_id(),
                 exec_ctx.user_role(),
                 PolicyCommand::Insert,

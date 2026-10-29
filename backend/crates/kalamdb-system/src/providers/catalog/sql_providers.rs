@@ -24,15 +24,13 @@ pub type RoutinesTableProvider = KeyedTableProvider<RoutineId, CatalogRoutine>;
 pub type RoutineParametersTableProvider =
     KeyedTableProvider<RoutineParameterId, CatalogRoutineParameter>;
 pub type RoutineGrantsTableProvider = KeyedTableProvider<RoutineGrantId, CatalogRoutineGrant>;
-pub type FunctionModulesTableProvider =
-    KeyedTableProvider<FunctionModuleId, CatalogFunctionModule>;
+pub type FunctionModulesTableProvider = KeyedTableProvider<FunctionModuleId, CatalogFunctionModule>;
 pub type FunctionRevisionsTableProvider =
     KeyedTableProvider<FunctionRevisionId, CatalogFunctionRevision>;
 pub type FunctionArtifactsTableProvider = KeyedTableProvider<ArtifactId, CatalogFunctionArtifact>;
 pub type SchedulesTableProvider = KeyedTableProvider<ScheduleId, CatalogSchedule>;
 pub type TriggersTableProvider = KeyedTableProvider<TriggerId, CatalogTrigger>;
-pub type TriggerAttemptsTableProvider =
-    KeyedTableProvider<TriggerAttemptId, CatalogTriggerAttempt>;
+pub type TriggerAttemptsTableProvider = KeyedTableProvider<TriggerAttemptId, CatalogTriggerAttempt>;
 
 pub fn types_provider(stores: &CatalogStores) -> TypesTableProvider {
     keyed(

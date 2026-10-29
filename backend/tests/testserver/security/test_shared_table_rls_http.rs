@@ -89,7 +89,6 @@ fn authorization_cache_metrics(
         .schema_registry()
         .get_kalam_provider(&table_id)
         .expect("shared table provider");
-    let provider = provider.as_shared().expect("shared table provider downcast");
     provider.authorization_cache_metrics()
 }
 

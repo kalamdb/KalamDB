@@ -127,13 +127,12 @@ impl JobExecutor for StreamEvictionExecutor {
             Some(p) => p,
             None => return Ok(false),
         };
-        let stream_provider = provider_arc.as_stream()
-            .ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!(
-                    "Cached provider for {} is not a StreamTableProvider",
-                    params.table_id
-                ))
-            })?;
+        let stream_provider = provider_arc.as_stream().ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!(
+                "Cached provider for {} is not a StreamTableEngine",
+                params.table_id
+            ))
+        })?;
         let store = stream_provider.store_arc();
         let cutoff_ms = compute_cutoff_millis(params.ttl_seconds)?;
 
@@ -176,7 +175,7 @@ impl JobExecutor for StreamEvictionExecutor {
         ));
 
         // Get table's StreamTableStore
-        // Use the registered StreamTableProvider so we access the live in-memory store
+        // Use the registered StreamTableEngine so we access the live in-memory store
         let schema_registry = ctx.app_ctx.schema_registry();
         let provider_arc = match schema_registry.get_kalam_provider(&table_id) {
             Some(p) => p,
@@ -193,13 +192,12 @@ impl JobExecutor for StreamEvictionExecutor {
                 });
             },
         };
-        let stream_provider = provider_arc.as_stream()
-            .ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!(
-                    "Cached provider for {} is not a StreamTableProvider",
-                    table_id
-                ))
-            })?;
+        let stream_provider = provider_arc.as_stream().ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!(
+                "Cached provider for {} is not a StreamTableEngine",
+                table_id
+            ))
+        })?;
         let store = stream_provider.store_arc();
         let deleted_count = tokio::task::spawn_blocking(move || store.delete_old_logs(cutoff_ms))
             .await
@@ -256,7 +254,7 @@ mod tests {
     };
 
     use chrono::Utc;
-    use datafusion::{datasource::TableProvider, scalar::ScalarValue};
+    use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
         ids::StreamTableRowId,
         models::{
@@ -271,8 +269,8 @@ mod tests {
         app_context::AppContext,
         providers::{
             arrow_json_conversion::json_to_row,
-            base::{BaseTableProvider, TableProviderCore},
-            StreamTableProvider,
+            base::TableProviderCore,
+            StreamTableEngine,
         },
         test_helpers::test_app_context_simple,
     };
@@ -313,7 +311,7 @@ mod tests {
         table_id: TableId,
         namespace: SchemaId,
         table_name_value: String,
-        provider: Arc<StreamTableProvider>,
+        provider: Arc<StreamTableEngine>,
         stream_base_dir: PathBuf,
         _stream_temp_dir: tempfile::TempDir,
     }
@@ -390,12 +388,13 @@ mod tests {
             arrow_schema,
             HashMap::new(),
         ));
-        let provider = Arc::new(StreamTableProvider::new(core, stream_store, Some(1)));
-        let provider_trait: Arc<dyn TableProvider> = provider.clone();
+        let provider = Arc::new(StreamTableEngine::new(core, stream_store, Some(1)));
+        let kalam = Arc::new(kalamdb_tables::KalamTableProvider::from_stream((*provider).clone()));
         app_ctx
             .schema_registry()
-            .insert_provider(table_id.clone(), provider_trait)
-            .expect("register provider");
+            .get(&table_id)
+            .expect("cached stream table")
+            .set_kalam_provider(kalam);
 
         StreamTestHarness {
             table_id,

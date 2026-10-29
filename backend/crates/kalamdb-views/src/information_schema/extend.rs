@@ -1,4 +1,9 @@
 //! Shared helpers for extending DataFusion `information_schema` tables.
+//!
+//! Kalam-owned relations use [`ComputedCatalogProvider`]. Stock relations stay
+//! on [`InformationSchemaProvider`].
+
+pub(crate) use crate::catalog_provider::ComputedCatalogProvider;
 
 use std::sync::Arc;
 

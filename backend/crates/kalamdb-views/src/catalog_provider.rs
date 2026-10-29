@@ -49,7 +49,7 @@ pub trait CatalogSource: std::fmt::Debug + Send + Sync + 'static {
         None
     }
 
-    /// When true, [`CatalogTableProvider`] downcasts the session to [`SessionState`].
+    /// When true, [`ComputedCatalogProvider`] downcasts the session to [`SessionState`].
     fn needs_session_state(&self) -> bool {
         false
     }
@@ -66,12 +66,17 @@ pub trait CatalogSource: std::fmt::Debug + Send + Sync + 'static {
     async fn batch(&self, ctx: &CatalogScanCtx<'_>) -> DataFusionResult<RecordBatch>;
 }
 
+/// Name of the scan shell registered for Kalam-owned catalogs.
+pub fn computed_catalog_provider_name() -> &'static str {
+    stringify!(ComputedCatalogProvider)
+}
+
 /// [`TableProvider`] for any [`CatalogSource`].
-pub struct CatalogTableProvider<S: CatalogSource> {
+pub struct ComputedCatalogProvider<S: CatalogSource> {
     source: Arc<S>,
 }
 
-impl<S: CatalogSource> Clone for CatalogTableProvider<S> {
+impl<S: CatalogSource> Clone for ComputedCatalogProvider<S> {
     fn clone(&self) -> Self {
         Self {
             source: Arc::clone(&self.source),
@@ -79,16 +84,16 @@ impl<S: CatalogSource> Clone for CatalogTableProvider<S> {
     }
 }
 
-impl<S: CatalogSource> std::fmt::Debug for CatalogTableProvider<S> {
+impl<S: CatalogSource> std::fmt::Debug for ComputedCatalogProvider<S> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("CatalogTableProvider")
+            .debug_struct("ComputedCatalogProvider")
             .field("source", &self.source)
             .finish()
     }
 }
 
-impl<S: CatalogSource> CatalogTableProvider<S> {
+impl<S: CatalogSource> ComputedCatalogProvider<S> {
     /// Wrap a catalog source.
     pub fn new(source: Arc<S>) -> Self {
         Self { source }
@@ -153,7 +158,7 @@ impl<S: CatalogSource> DeferredBatchSource for CatalogDeferredSource<S> {
 }
 
 #[async_trait]
-impl<S: CatalogSource> TableProvider for CatalogTableProvider<S> {
+impl<S: CatalogSource> TableProvider for ComputedCatalogProvider<S> {
     fn schema(&self) -> SchemaRef {
         self.source.schema()
     }

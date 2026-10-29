@@ -550,19 +550,6 @@ impl TransactionCoordinator {
         }
     }
 
-    /// Whether this shared-table snapshot is still the group frontier.
-    ///
-    /// Pins the snapshot the same way a table scan would. A secondary index
-    /// stores the latest hot row, so a covering read is valid only while the
-    /// pin equals that frontier.
-    pub fn shared_snapshot_is_frontier(
-        &self,
-        transaction_id: &TransactionId,
-        table_id: &TableId,
-    ) -> Result<bool, KalamDbError> {
-        self.snapshot_matches_frontier(transaction_id, table_id, TableType::Shared, None)
-    }
-
     /// Whether the transaction pin is still the commit frontier for this table's group.
     pub fn snapshot_matches_frontier(
         &self,
@@ -581,11 +568,6 @@ impl TransactionCoordinator {
             return Ok(false);
         };
         Ok(self.commit_sequence_tracker.frontier(group_id) == pinned)
-    }
-
-    /// Current commit frontier for the shared group that owns `table_id`.
-    pub fn shared_group_frontier(&self, table_id: &TableId) -> Result<u64, KalamDbError> {
-        self.group_frontier(table_id, TableType::Shared, None)
     }
 
     /// Current commit frontier for a user or shared table group.

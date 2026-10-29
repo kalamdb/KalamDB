@@ -3,14 +3,12 @@
 //! The stored prefix is `PrefixIndex`'s encoding. User keys keep the
 //! `(user_id, pk, version)` layout. Shared keys keep `(pk, version)`.
 
-use std::sync::Arc;
-
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::{
     conversions::scalar_value_to_bytes, ids::ScopedRowKey, models::rows::VersionedTableRow,
     TableId, UserId,
 };
-use kalamdb_store::{IndexDefinition, PrefixIndex};
+use kalamdb_store::PrefixIndex;
 
 /// Primary-key prefix index over [`ScopedRowKey`] and [`VersionedTableRow`].
 pub type VersionedPkIndex = PrefixIndex<ScopedRowKey, VersionedTableRow>;
@@ -27,8 +25,6 @@ pub trait PkPrefix {
     fn build_user_pk_prefix(&self, user_id: &UserId, pk_value: &ScalarValue) -> Vec<u8>;
 
     fn build_shared_pk_prefix(&self, pk_value: &ScalarValue) -> Vec<u8>;
-
-    fn build_shared_string_pk_prefix(&self, pk_value: &str) -> Vec<u8>;
 }
 
 impl PkPrefix for VersionedPkIndex {
@@ -39,24 +35,6 @@ impl PkPrefix for VersionedPkIndex {
     fn build_shared_pk_prefix(&self, pk_value: &ScalarValue) -> Vec<u8> {
         self.encode_column_prefix(None, &[scalar_value_to_bytes(pk_value)])
     }
-
-    fn build_shared_string_pk_prefix(&self, pk_value: &str) -> Vec<u8> {
-        self.encode_column_prefix(None, &[pk_value.as_bytes().to_vec()])
-    }
-}
-
-pub fn create_user_table_pk_index(
-    table_id: &TableId,
-    pk_field_name: &str,
-) -> Arc<dyn IndexDefinition<ScopedRowKey, VersionedTableRow>> {
-    Arc::new(new_user_pk_index(table_id, pk_field_name))
-}
-
-pub fn create_shared_table_pk_index(
-    table_id: &TableId,
-    pk_field_name: &str,
-) -> Arc<dyn IndexDefinition<ScopedRowKey, VersionedTableRow>> {
-    Arc::new(new_shared_pk_index(table_id, pk_field_name))
 }
 
 #[cfg(test)]

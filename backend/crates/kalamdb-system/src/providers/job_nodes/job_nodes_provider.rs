@@ -66,14 +66,20 @@ impl JobNodesTableProvider {
         node_id: &NodeId,
     ) -> Result<Option<JobNode>, SystemError> {
         let key = JobNodeId::new(job_id, node_id);
-        let row = self.sql.store().get_async(key).await.into_system_error("get_async job_node error")?;
+        let row = self
+            .sql
+            .store()
+            .get_async(key)
+            .await
+            .into_system_error("get_async job_node error")?;
         row.map(|value| Self::decode_job_node_row(&value)).transpose()
     }
 
     pub async fn update_job_node_async(&self, job_node: JobNode) -> Result<(), SystemError> {
         let key = job_node.id();
         let row = Self::encode_job_node_row(&job_node)?;
-        self.sql.store()
+        self.sql
+            .store()
             .insert_async(key, row)
             .await
             .into_system_error("update_async job_node error")

@@ -219,7 +219,10 @@ impl TablePoliciesTableProvider {
             self.unregister_dependencies(policy);
         }
         let keys = policies.iter().map(|policy| policy.policy_id.clone()).collect::<Vec<_>>();
-        self.sql.store().delete_batch(&keys).into_system_error("delete table policies")?;
+        self.sql
+            .store()
+            .delete_batch(&keys)
+            .into_system_error("delete table policies")?;
         Ok(keys.len())
     }
 
@@ -273,13 +276,15 @@ impl TablePoliciesTableProvider {
     fn write_policy(&self, policy: &TablePolicy) -> Result<(), SystemError> {
         let record = TablePolicyRecord::from(policy.clone());
         let row = model_to_system_row(&record, &TablePolicyRecord::definition())?;
-        self.sql.store()
+        self.sql
+            .store()
             .insert(&policy.policy_id, &row)
             .into_system_error("write table policy")
     }
 
     fn get_policy_sync(&self, policy_id: &PolicyId) -> Result<Option<TablePolicy>, SystemError> {
-        self.sql.store()
+        self.sql
+            .store()
             .get(policy_id)
             .into_system_error("read table policy")?
             .map(|row| {
@@ -290,7 +295,8 @@ impl TablePoliciesTableProvider {
     }
 
     fn list_all(&self) -> Result<Vec<TablePolicy>, SystemError> {
-        self.sql.store()
+        self.sql
+            .store()
             .scan_all_typed(None, None, None)
             .into_system_error("list table policies")?
             .into_iter()

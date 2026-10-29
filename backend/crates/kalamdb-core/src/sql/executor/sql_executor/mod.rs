@@ -397,7 +397,6 @@ mod tests {
         app_context.schema_registry().register_table(table).unwrap();
         let table_id = TableId::from_strings("security", "cached_documents");
         let provider = app_context.schema_registry().get_kalam_provider(&table_id).unwrap();
-        let provider = provider.as_shared().unwrap();
         provider
             .insert_rows(
                 &UserId::new("system"),

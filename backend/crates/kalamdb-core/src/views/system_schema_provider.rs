@@ -18,6 +18,7 @@ use kalamdb_configs::ServerConfig;
 use kalamdb_raft::CommandExecutor;
 use kalamdb_session_datafusion::secure_provider;
 use kalamdb_system::SystemTablesRegistry;
+pub use kalamdb_views::catalog_provider::ComputedCatalogProvider;
 use kalamdb_views::{
     active_procedure_runs::{ActiveProcedureRunsTableProvider, ActiveProcedureRunsView},
     cluster::create_cluster_provider,

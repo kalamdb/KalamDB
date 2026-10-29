@@ -45,7 +45,8 @@ impl MigrationsTableProvider {
     pub async fn upsert_migration_async(&self, migration: Migration) -> Result<(), SystemError> {
         let migration_key = migration.migration_key.clone();
         let row = Self::encode_migration_row(&migration)?;
-        self.sql.store()
+        self.sql
+            .store()
             .insert_async(migration_key, row)
             .await
             .into_system_error("insert_async migration error")
@@ -77,7 +78,8 @@ impl MigrationsTableProvider {
             }
         }
         let deleted = keys.len();
-        self.sql.store()
+        self.sql
+            .store()
             .delete_batch(&keys)
             .into_system_error("delete namespace migrations error")?;
         Ok(deleted)

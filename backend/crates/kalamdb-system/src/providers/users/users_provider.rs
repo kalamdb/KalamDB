@@ -11,12 +11,9 @@
 //!    - Key: `{role}:{user_id}`
 //!    - Enables: "All users with role 'admin'"
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, OnceLock},
-};
+use std::{collections::HashMap, sync::Arc};
 
-use datafusion::arrow::{array::RecordBatch, datatypes::SchemaRef};
+use datafusion::arrow::array::RecordBatch;
 use kalamdb_commons::{models::rows::SystemTableRow, AuthType, Role, UserId};
 use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBackend};
 use parking_lot::RwLock;
@@ -24,9 +21,7 @@ use parking_lot::RwLock;
 use super::users_indexes::create_users_indexes;
 use crate::{
     error::{SystemError, SystemResultExt},
-    providers::{
-        base::SimpleSystemTableScan, keyed_provider::KeyedTableProvider, users::models::User,
-    },
+    providers::{keyed_provider::KeyedTableProvider, users::models::User},
     system_row_mapper::{model_to_system_row, system_row_to_model},
     SystemTable,
 };
@@ -102,7 +97,8 @@ impl UsersTableProvider {
 
             // Reactivate soft-deleted user rows while preserving index consistency.
             let row = Self::encode_user_row(&user)?;
-            self.sql.store()
+            self.sql
+                .store()
                 .update_with_old(&user.user_id, Some(&existing_row), &row)
                 .into_system_error("reactivate user error")?;
             self.update_role_caches_for_user(&user);
@@ -111,7 +107,10 @@ impl UsersTableProvider {
 
         // Insert user - indexes are managed automatically
         let row = Self::encode_user_row(&user)?;
-        self.sql.store().insert(&user.user_id, &row).into_system_error("insert user error")?;
+        self.sql
+            .store()
+            .insert(&user.user_id, &row)
+            .into_system_error("insert user error")?;
         self.update_role_caches_for_user(&user);
         Ok(())
     }
@@ -144,7 +143,8 @@ impl UsersTableProvider {
 
         // Use update_with_old for efficiency (we already have old entity)
         let new_row = Self::encode_user_row(&user)?;
-        self.sql.store()
+        self.sql
+            .store()
             .update_with_old(&user.user_id, Some(&existing_row), &new_row)
             .into_system_error("update user error")?;
         self.update_role_caches_for_user(&user);
@@ -407,14 +407,13 @@ mod tests {
         let user = provider.get_user_by_id(&UserId::new("user1")).unwrap().unwrap();
 
         assert_eq!(user.user_id, UserId::new("user1"));
-        let users_partition = SystemTable::Users
-            .column_family_name()
-            .expect("users is a table")
-            .to_string();
+        let users_partition =
+            SystemTable::Users.column_family_name().expect("users is a table").to_string();
         let ops = backend.recorded_ops();
         assert!(!ops.is_empty());
         assert!(
-            ops.iter().all(|(kind, partition)| *kind == "get" && partition == &users_partition),
+            ops.iter()
+                .all(|(kind, partition)| *kind == "get" && partition == &users_partition),
             "get_user_by_id must call IndexedEntityStore::get, recorded {ops:?}"
         );
     }

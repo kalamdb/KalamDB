@@ -16,6 +16,7 @@ use datafusion::{
     scalar::ScalarValue,
 };
 use kalamdb_commons::{
+    ids::{UserTableRowId, VersionId},
     models::{
         datatypes::KalamDataType,
         rows::Row,
@@ -30,7 +31,7 @@ use kalamdb_datafusion_sources::exec::DeferredBatchExec;
 use kalamdb_filestore::StorageRegistry;
 use kalamdb_session_datafusion::ScanDiagnosticsContext;
 use kalamdb_sharding::ShardRouter;
-use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend, StorageError};
+use kalamdb_store::{test_utils::InMemoryBackend, EntityStore, StorageBackend, StorageError};
 use kalamdb_system::{
     ClusterCoordinator, Manifest, ManifestCacheEntry, ManifestService, NotificationService,
     SchemaRegistry, SessionUserContext, Storage, StorageType, StoragesTableProvider,
@@ -38,9 +39,9 @@ use kalamdb_system::{
 };
 use kalamdb_tables::{
     new_indexed_shared_table_store, new_indexed_user_table_store, new_stream_table_store,
-    storage_schema_for_table, utils::TableServices, BaseTableProvider, SharedTableProvider,
-    SharedTableRow, StreamTableProvider, StreamTableStorageMode, StreamTableStoreConfig,
-    TableProviderCore, UserTableProvider, UserTableRow, VersionedTableEngine,
+    storage_schema_for_table, utils::TableServices, KalamTableProvider, SharedTableRow,
+    StreamTableEngine, StreamTableStorageMode, StreamTableStoreConfig, TableProviderCore,
+    TableRowDml, UserTableRow,
 };
 use kalamdb_transactions::{
     CommitSequenceSource, TransactionAccessError, TransactionAccessValidator,
@@ -183,10 +184,10 @@ impl ManifestService for NoopManifestService {
 
     fn ensure_manifest_initialized(
         &self,
-        _table_id: &TableId,
-        _user_id: Option<&UserId>,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
     ) -> Result<Manifest, StorageError> {
-        panic!("ensure_manifest_initialized is unused in provider source-model tests")
+        Ok(Manifest::new(table_id.clone(), user_id.cloned()))
     }
 
     fn stage_before_flush(
@@ -195,7 +196,7 @@ impl ManifestService for NoopManifestService {
         _user_id: Option<&UserId>,
         _manifest: &Manifest,
     ) -> Result<(), StorageError> {
-        panic!("stage_before_flush is unused in provider source-model tests")
+        Ok(())
     }
 
     fn get_manifest_user_ids(&self, _table_id: &TableId) -> Result<Vec<UserId>, StorageError> {
@@ -550,7 +551,7 @@ async fn stream_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
         },
         storage_schema_for_table(&table_def).expect("stream storage schema"),
     ));
-    let provider = Arc::new(StreamTableProvider::new(
+    let provider = Arc::new(StreamTableEngine::new(
         Arc::new(TableProviderCore::new(
             table_def,
             Arc::clone(&services.services),
@@ -623,7 +624,7 @@ async fn user_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
         &table_def.scalar_indexes,
         &table_def.columns,
     ));
-    let provider = Arc::new(UserTableProvider::new(
+    let provider = Arc::new(KalamTableProvider::user(
         Arc::new(TableProviderCore::new(
             table_def,
             Arc::clone(&services.services),
@@ -699,7 +700,7 @@ async fn user_provider_dba_session_reads_only_subject_rows() {
         &table_def.scalar_indexes,
         &table_def.columns,
     ));
-    let provider = UserTableProvider::new(
+    let provider = KalamTableProvider::user(
         Arc::new(TableProviderCore::new(
             table_def,
             Arc::clone(&services.services),
@@ -773,7 +774,7 @@ async fn user_provider_delete_only_tombstones_subject_row() {
         &table_def.scalar_indexes,
         &table_def.columns,
     ));
-    let provider = UserTableProvider::new(
+    let provider = KalamTableProvider::user(
         Arc::new(TableProviderCore::new(
             table_def,
             Arc::clone(&services.services),
@@ -817,7 +818,11 @@ async fn user_provider_delete_only_tombstones_subject_row() {
         .expect("seed dba row");
 
     let (deleted_row_key, _) = provider
-        .delete_by_pk_value_deferred(&dba_user, "1", kalamdb_commons::ids::VersionId::from(3_i64))
+        .delete_user_by_pk_value_deferred(
+            &dba_user,
+            "1",
+            kalamdb_commons::ids::VersionId::from(3_i64),
+        )
         .await
         .expect("delete dba row")
         .expect("delete produced tombstone");
@@ -859,7 +864,7 @@ async fn user_provider_scan_with_overlay_uses_transaction_overlay_exec() {
         &table_def.scalar_indexes,
         &table_def.columns,
     ));
-    let provider = UserTableProvider::new(
+    let provider = KalamTableProvider::user(
         Arc::new(TableProviderCore::new(
             table_def,
             Arc::clone(&services.services),
@@ -925,7 +930,7 @@ async fn shared_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
         &table_def.scalar_indexes,
         &table_def.columns,
     ));
-    let provider = Arc::new(SharedTableProvider::new(
+    let provider = Arc::new(KalamTableProvider::shared(
         Arc::new(TableProviderCore::new(
             table_def,
             Arc::clone(&services.services),
@@ -1000,7 +1005,7 @@ async fn shared_provider_unindexed_scan_keeps_latest_and_hides_tombstones() {
         &table_def.scalar_indexes,
         &table_def.columns,
     ));
-    let provider = Arc::new(SharedTableProvider::new(
+    let provider = Arc::new(KalamTableProvider::shared(
         Arc::new(TableProviderCore::new(
             table_def,
             Arc::clone(&services.services),
@@ -1071,7 +1076,7 @@ async fn shared_provider_scan_with_overlay_uses_transaction_overlay_exec() {
         &table_def.scalar_indexes,
         &table_def.columns,
     ));
-    let provider = SharedTableProvider::new(
+    let provider = KalamTableProvider::shared(
         Arc::new(TableProviderCore::new(
             table_def,
             Arc::clone(&services.services),
@@ -1136,7 +1141,7 @@ async fn shared_provider_conversation_filter_seeks_scalar_index() {
         &table_def.scalar_indexes,
         &table_def.columns,
     ));
-    let provider = Arc::new(SharedTableProvider::new(
+    let provider = Arc::new(KalamTableProvider::shared(
         Arc::new(TableProviderCore::new(
             table_def,
             Arc::clone(&services.services),
@@ -1201,7 +1206,7 @@ async fn shared_provider_numeric_range_filters_index_keys_before_row_fetch() {
         &table_def.scalar_indexes,
         &table_def.columns,
     ));
-    let provider = Arc::new(SharedTableProvider::new(
+    let provider = Arc::new(KalamTableProvider::shared(
         Arc::new(TableProviderCore::new(
             table_def,
             Arc::clone(&services.services),
@@ -1262,7 +1267,7 @@ async fn literal_equality_update_seeks_the_leading_index_column() {
         &table_def.scalar_indexes,
         &table_def.columns,
     ));
-    let provider = SharedTableProvider::new(
+    let provider = KalamTableProvider::shared(
         Arc::new(TableProviderCore::new(
             table_def,
             Arc::clone(&services.services),
@@ -1404,7 +1409,7 @@ async fn shared_provider_scalar_index_seek_does_not_resurrect_superseded_version
         &table_def.scalar_indexes,
         &table_def.columns,
     ));
-    let provider = Arc::new(SharedTableProvider::new(
+    let provider = Arc::new(KalamTableProvider::shared(
         Arc::new(TableProviderCore::new(
             table_def,
             Arc::clone(&services.services),
@@ -1524,7 +1529,7 @@ async fn user_provider_conversation_filter_seeks_scalar_index() {
         &table_def.scalar_indexes,
         &table_def.columns,
     ));
-    let provider = Arc::new(UserTableProvider::new(
+    let provider = Arc::new(KalamTableProvider::user(
         Arc::new(TableProviderCore::new(
             table_def,
             Arc::clone(&services.services),
@@ -1666,7 +1671,7 @@ async fn user_sql_dml_writes_each_version_once_with_statement_commit_seq() {
         &table_def.scalar_indexes,
         &table_def.columns,
     ));
-    let provider = UserTableProvider::new(
+    let provider = KalamTableProvider::user(
         Arc::new(TableProviderCore::new(
             table_def,
             Arc::clone(&services.services),
@@ -1806,7 +1811,7 @@ async fn shared_sql_dml_writes_each_version_once_with_statement_commit_seq() {
         &table_def.scalar_indexes,
         &table_def.columns,
     ));
-    let provider = SharedTableProvider::new(
+    let provider = KalamTableProvider::shared(
         Arc::new(TableProviderCore::new(
             table_def,
             Arc::clone(&services.services),
@@ -1967,7 +1972,7 @@ async fn user_and_shared_tables_execute_the_same_hot_paths() {
             )
             .expect("seed user hot path");
     }
-    let user_engine = VersionedTableEngine::User(UserTableProvider::new(
+    let user_engine = KalamTableProvider::user(
         Arc::new(TableProviderCore::new(
             user_def,
             Arc::clone(&user_services.services),
@@ -1976,7 +1981,7 @@ async fn user_and_shared_tables_execute_the_same_hot_paths() {
             HashMap::new(),
         )),
         Arc::clone(&user_store),
-    ));
+    );
 
     let shared_backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
     let shared_table_id = TableId::new(SchemaId::new("app"), TableName::new("shared_hot_paths"));
@@ -2006,7 +2011,7 @@ async fn user_and_shared_tables_execute_the_same_hot_paths() {
             )
             .expect("seed shared hot path");
     }
-    let shared_engine = VersionedTableEngine::Shared(SharedTableProvider::new(
+    let shared_engine = KalamTableProvider::shared(
         Arc::new(TableProviderCore::new(
             shared_def,
             Arc::clone(&shared_services.services),
@@ -2015,7 +2020,7 @@ async fn user_and_shared_tables_execute_the_same_hot_paths() {
             HashMap::new(),
         )),
         Arc::clone(&shared_store),
-    ));
+    );
 
     let user_scan = user_engine
         .columnar_hot_scan(Some(&user_id), None, None, None, None, false)
@@ -2078,4 +2083,323 @@ async fn user_and_shared_tables_execute_the_same_hot_paths() {
     shared_keys.sort();
     assert_eq!(user_keys, ["1", "2"]);
     assert_eq!(shared_keys, user_keys);
+}
+
+#[tokio::test]
+#[ntest::timeout(3000)]
+async fn shared_force_policy_check_applies_using_and_with_check_through_kalam_provider() {
+    let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new("shared_rls_shell"));
+    let table_def = build_shared_table_definition(&table_id);
+    let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
+    let store = Arc::new(new_indexed_shared_table_store(
+        backend,
+        &table_id,
+        "id",
+        storage_schema_for_table(&table_def).expect("shared storage schema"),
+        &table_def.scalar_indexes,
+        &table_def.columns,
+    ));
+    let seq = kalamdb_commons::ids::VersionId::from(1);
+    store
+        .insert(
+            &seq,
+            &SharedTableRow {
+                _version: seq,
+                _deleted: false,
+                fields: row(vec![
+                    ("id", ScalarValue::Int64(Some(1))),
+                    ("name", ScalarValue::Utf8(Some("secret".to_string()))),
+                ]),
+            },
+        )
+        .expect("seed shared row");
+    let provider = KalamTableProvider::shared(
+        Arc::new(TableProviderCore::new(
+            table_def,
+            Arc::clone(&services.services),
+            "id".to_string(),
+            Arc::clone(&services.schema),
+            HashMap::new(),
+        )),
+        Arc::clone(&store),
+    );
+    let user_id = UserId::new("member");
+    let candidate = row(vec![
+        ("id", ScalarValue::Int64(Some(1))),
+        ("name", ScalarValue::Utf8(Some("secret".to_string()))),
+    ]);
+    assert!(
+        provider
+            .check_shared_rows_authorized(
+                &user_id,
+                Role::User,
+                kalamdb_commons::PolicyCommand::Select,
+                false,
+                std::slice::from_ref(&candidate),
+                None,
+            )
+            .await
+            .is_err(),
+        "USING read predicate denies a row when no policy is bound"
+    );
+    assert!(
+        provider
+            .check_shared_rows_authorized(
+                &user_id,
+                Role::User,
+                kalamdb_commons::PolicyCommand::Insert,
+                true,
+                &[candidate],
+                None,
+            )
+            .await
+            .is_err(),
+        "WITH CHECK denies a row when no policy is bound"
+    );
+
+    let member = session_with_role(&user_id, Role::User);
+    let member_state = member.state();
+    let plan = provider
+        .scan_shared_relation(&member_state, None, &[], None)
+        .await
+        .expect("member scan");
+    let batches = collect(plan, member_state.task_ctx()).await.expect("collect member scan");
+    assert_eq!(total_rows(&batches), 0, "default deny hides shared rows");
+
+    let admin = session_with_role(&user_id, Role::Dba);
+    let admin_state = admin.state();
+    let plan = provider
+        .scan_shared_relation(&admin_state, None, &[], None)
+        .await
+        .expect("admin scan");
+    let batches = collect(plan, admin_state.task_ctx()).await.expect("collect admin scan");
+    assert_eq!(total_rows(&batches), 1, "policy bypass still returns the row");
+}
+
+#[tokio::test]
+#[ntest::timeout(3000)]
+async fn kalam_provider_insert_update_and_delete_typed_rows_without_sql() {
+    let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new("direct_row_dml"));
+    let table_def = build_user_table_definition(&table_id);
+    let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
+    let store = Arc::new(new_indexed_user_table_store(
+        backend,
+        &table_id,
+        "id",
+        storage_schema_for_table(&table_def).expect("user storage schema"),
+        &table_def.scalar_indexes,
+        &table_def.columns,
+    ));
+    let provider = KalamTableProvider::user(
+        Arc::new(TableProviderCore::new(
+            table_def,
+            Arc::clone(&services.services),
+            "id".to_string(),
+            Arc::clone(&services.schema),
+            HashMap::new(),
+        )),
+        Arc::clone(&store),
+    );
+    let user_id = UserId::new("direct-writer");
+    let inserted = provider
+        .insert_rows(
+            &user_id,
+            vec![row(vec![
+                ("id", ScalarValue::Int64(Some(1))),
+                ("name", ScalarValue::Utf8(Some("before".to_string()))),
+            ])],
+            &[kalamdb_commons::ids::VersionId::from(1)],
+        )
+        .await
+        .expect("direct insert");
+    assert_eq!(inserted, 1);
+
+    let updated = provider
+        .update_row_by_pk(
+            &user_id,
+            "1",
+            row(vec![("name", ScalarValue::Utf8(Some("after".to_string())))]),
+            kalamdb_commons::ids::VersionId::from(2),
+        )
+        .await
+        .expect("direct update");
+    assert!(updated);
+
+    let deleted = provider
+        .delete_row_by_pk(&user_id, "1", kalamdb_commons::ids::VersionId::from(3))
+        .await
+        .expect("direct delete");
+    assert!(deleted);
+}
+
+const WIDE_COMMIT_ROWS: i64 = 25_000;
+
+fn wide_commit_rows(duplicate_last: bool) -> (Vec<Row>, Vec<VersionId>) {
+    let mut rows = Vec::with_capacity(WIDE_COMMIT_ROWS as usize);
+    let mut versions = Vec::with_capacity(WIDE_COMMIT_ROWS as usize);
+    for seq in 1..=WIDE_COMMIT_ROWS {
+        let id = if duplicate_last && seq == WIDE_COMMIT_ROWS {
+            1
+        } else {
+            seq
+        };
+        rows.push(row(vec![
+            ("id", ScalarValue::Int64(Some(id))),
+            ("name", ScalarValue::Utf8(Some(seq.to_string()))),
+        ]));
+        versions.push(VersionId::from(seq));
+    }
+    (rows, versions)
+}
+
+fn recording_user_provider(
+    table_name: &str,
+) -> (Arc<recording_backend::RecordingBackend>, KalamTableProvider, OwnedServices) {
+    let recording = Arc::new(recording_backend::RecordingBackend::new());
+    let backend: Arc<dyn StorageBackend> = recording.clone();
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new(table_name));
+    let table_def = build_user_table_definition(&table_id);
+    let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
+    let store = Arc::new(new_indexed_user_table_store(
+        backend,
+        &table_id,
+        "id",
+        storage_schema_for_table(&table_def).expect("user storage schema"),
+        &table_def.scalar_indexes,
+        &table_def.columns,
+    ));
+    let provider = KalamTableProvider::user(
+        Arc::new(TableProviderCore::new(
+            table_def,
+            Arc::clone(&services.services),
+            "id".to_string(),
+            Arc::clone(&services.schema),
+            HashMap::new(),
+        )),
+        Arc::clone(&store),
+    );
+    (recording, provider, services)
+}
+
+fn recording_shared_provider(
+    table_name: &str,
+) -> (Arc<recording_backend::RecordingBackend>, KalamTableProvider, OwnedServices) {
+    let recording = Arc::new(recording_backend::RecordingBackend::new());
+    let backend: Arc<dyn StorageBackend> = recording.clone();
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new(table_name));
+    let table_def = build_shared_table_definition(&table_id);
+    let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
+    let store = Arc::new(new_indexed_shared_table_store(
+        backend,
+        &table_id,
+        "id",
+        storage_schema_for_table(&table_def).expect("shared storage schema"),
+        &table_def.scalar_indexes,
+        &table_def.columns,
+    ));
+    let provider = KalamTableProvider::shared(
+        Arc::new(TableProviderCore::new(
+            table_def,
+            Arc::clone(&services.services),
+            "id".to_string(),
+            Arc::clone(&services.schema),
+            HashMap::new(),
+        )),
+        store,
+    );
+    (recording, provider, services)
+}
+
+#[tokio::test]
+#[ntest::timeout(20_000)]
+async fn user_commit_of_25000_rows_submits_one_storage_batch() {
+    let user_id = UserId::new("wide-user");
+    let (recording, provider, _services) = recording_user_provider("user_wide_commit");
+    let (rows, versions) = wide_commit_rows(false);
+    let before = recording.batch_calls();
+
+    let inserted = provider
+        .insert_user_batch_with_versions(&user_id, rows, &versions)
+        .await
+        .expect("25000 user rows");
+
+    assert_eq!(inserted.len(), WIDE_COMMIT_ROWS as usize);
+    assert_eq!(recording.batch_calls() - before, 1);
+    let stored = provider
+        .user_store()
+        .expect("user store")
+        .get(&UserTableRowId::new(user_id.clone(), versions[0]))
+        .expect("read first row");
+    assert!(stored.is_some());
+}
+
+#[tokio::test]
+#[ntest::timeout(20_000)]
+async fn user_commit_failure_on_last_row_writes_nothing() {
+    let user_id = UserId::new("wide-user");
+    let (recording, provider, _services) = recording_user_provider("user_wide_fail");
+    let (rows, versions) = wide_commit_rows(true);
+    let before = recording.batch_calls();
+
+    let error = provider
+        .insert_user_batch_with_versions(&user_id, rows, &versions)
+        .await
+        .expect_err("duplicate last primary key");
+
+    assert!(error.to_string().contains("Primary key violation"), "{error}");
+    assert_eq!(recording.batch_calls(), before);
+    let stored = provider
+        .user_store()
+        .expect("user store")
+        .get(&UserTableRowId::new(user_id, versions[0]))
+        .expect("read after failed commit");
+    assert!(stored.is_none());
+}
+
+#[tokio::test]
+#[ntest::timeout(20_000)]
+async fn shared_commit_of_25000_rows_submits_one_storage_batch() {
+    let user_id = UserId::new("wide-shared");
+    let (recording, provider, _services) = recording_shared_provider("shared_wide_commit");
+    let (rows, versions) = wide_commit_rows(false);
+    let before = recording.batch_calls();
+
+    let inserted = provider
+        .insert_shared_batch_with_versions(Some(&user_id), rows, &versions)
+        .await
+        .expect("25000 shared rows");
+
+    assert_eq!(inserted.len(), WIDE_COMMIT_ROWS as usize);
+    assert_eq!(recording.batch_calls() - before, 1);
+    let stored = provider
+        .shared_store()
+        .expect("shared store")
+        .get(&versions[0])
+        .expect("read first shared row");
+    assert!(stored.is_some());
+}
+
+#[tokio::test]
+#[ntest::timeout(20_000)]
+async fn shared_commit_failure_on_last_row_writes_nothing() {
+    let user_id = UserId::new("wide-shared");
+    let (recording, provider, _services) = recording_shared_provider("shared_wide_fail");
+    let (rows, versions) = wide_commit_rows(true);
+    let before = recording.batch_calls();
+
+    let error = provider
+        .insert_shared_batch_with_versions(Some(&user_id), rows, &versions)
+        .await
+        .expect_err("duplicate last primary key");
+
+    assert!(error.to_string().contains("Primary key violation"), "{error}");
+    assert_eq!(recording.batch_calls(), before);
+    let stored = provider
+        .shared_store()
+        .expect("shared store")
+        .get(&versions[0])
+        .expect("read after failed shared commit");
+    assert!(stored.is_none());
 }

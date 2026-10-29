@@ -10,9 +10,7 @@ use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBacken
 
 use crate::{
     error::SystemError,
-    providers::{
-        base::SimpleSystemTableScan, keyed_provider::KeyedTableProvider, storages::models::Storage,
-    },
+    providers::{keyed_provider::KeyedTableProvider, storages::models::Storage},
     system_row_mapper::{model_to_system_row, system_row_to_model},
 };
 

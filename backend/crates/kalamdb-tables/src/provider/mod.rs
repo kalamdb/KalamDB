@@ -5,6 +5,7 @@
 //! capabilities, and explicit stream transactions stay rejected.
 
 mod capability;
+mod ops;
 
 use std::any::Any;
 
@@ -27,7 +28,7 @@ use kalamdb_commons::{
 use kalamdb_transactions::{StagedMutation, TransactionOverlay};
 
 use crate::{
-    error::KalamDbError, shared_tables::SharedTableProvider, stream_tables::StreamTableProvider,
+    error::KalamDbError, shared_tables::SharedTableProvider, stream_tables::StreamTableEngine,
     table_engine::VersionedTableEngine, user_tables::UserTableProvider, utils::TableRowDml,
 };
 
@@ -38,7 +39,7 @@ pub use capability::{
 
 enum ProviderKind {
     Versioned(VersionedTableEngine),
-    Stream(StreamTableProvider),
+    Stream(StreamTableEngine),
 }
 
 /// DataFusion provider registered for user, shared, and stream tables.
@@ -57,21 +58,21 @@ impl std::fmt::Debug for KalamTableProvider {
 }
 
 impl KalamTableProvider {
-    pub fn from_user(provider: UserTableProvider) -> Self {
+    pub(crate) fn from_user(provider: UserTableProvider) -> Self {
         Self {
             profile: TableCapabilityProfile::user(),
             kind: ProviderKind::Versioned(VersionedTableEngine::User(provider)),
         }
     }
 
-    pub fn from_shared(provider: SharedTableProvider) -> Self {
+    pub(crate) fn from_shared(provider: SharedTableProvider) -> Self {
         Self {
             profile: TableCapabilityProfile::shared(),
             kind: ProviderKind::Versioned(VersionedTableEngine::Shared(provider)),
         }
     }
 
-    pub fn from_stream(provider: StreamTableProvider) -> Self {
+    pub fn from_stream(provider: StreamTableEngine) -> Self {
         Self {
             profile: TableCapabilityProfile::stream(),
             kind: ProviderKind::Stream(provider),
@@ -82,21 +83,21 @@ impl KalamTableProvider {
         self.profile
     }
 
-    pub fn as_user(&self) -> Option<&UserTableProvider> {
+    pub(crate) fn as_user(&self) -> Option<&UserTableProvider> {
         match &self.kind {
             ProviderKind::Versioned(VersionedTableEngine::User(provider)) => Some(provider),
             _ => None,
         }
     }
 
-    pub fn as_shared(&self) -> Option<&SharedTableProvider> {
+    pub(crate) fn as_shared(&self) -> Option<&SharedTableProvider> {
         match &self.kind {
             ProviderKind::Versioned(VersionedTableEngine::Shared(provider)) => Some(provider),
             _ => None,
         }
     }
 
-    pub fn as_stream(&self) -> Option<&StreamTableProvider> {
+    pub fn as_stream(&self) -> Option<&StreamTableEngine> {
         match &self.kind {
             ProviderKind::Stream(provider) => Some(provider),
             _ => None,
@@ -197,28 +198,23 @@ impl KalamTableProvider {
     }
 }
 
-/// User provider behind either the unified wrapper or a directly built provider.
-pub fn as_user_table(provider: &dyn TableProvider) -> Option<&UserTableProvider> {
-    (provider as &dyn Any)
-        .downcast_ref::<KalamTableProvider>()
-        .and_then(KalamTableProvider::as_user)
-        .or_else(|| (provider as &dyn Any).downcast_ref::<UserTableProvider>())
+/// [`KalamTableProvider`] behind a DataFusion [`TableProvider`].
+pub fn as_kalam_table(provider: &dyn TableProvider) -> Option<&KalamTableProvider> {
+    (provider as &dyn Any).downcast_ref::<KalamTableProvider>()
 }
 
-/// Shared provider behind either the unified wrapper or a directly built provider.
-pub fn as_shared_table(provider: &dyn TableProvider) -> Option<&SharedTableProvider> {
+/// Shared provider stored on [`KalamTableProvider`].
+pub(crate) fn as_shared_table(provider: &dyn TableProvider) -> Option<&SharedTableProvider> {
     (provider as &dyn Any)
         .downcast_ref::<KalamTableProvider>()
         .and_then(KalamTableProvider::as_shared)
-        .or_else(|| (provider as &dyn Any).downcast_ref::<SharedTableProvider>())
 }
 
-/// Stream provider behind either the unified wrapper or a directly built provider.
-pub fn as_stream_table(provider: &dyn TableProvider) -> Option<&StreamTableProvider> {
+/// Stream engine stored on [`KalamTableProvider`].
+pub fn as_stream_table(provider: &dyn TableProvider) -> Option<&StreamTableEngine> {
     (provider as &dyn Any)
         .downcast_ref::<KalamTableProvider>()
         .and_then(KalamTableProvider::as_stream)
-        .or_else(|| (provider as &dyn Any).downcast_ref::<StreamTableProvider>())
 }
 
 #[async_trait]

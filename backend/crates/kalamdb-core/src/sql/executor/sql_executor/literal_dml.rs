@@ -8,7 +8,7 @@ use kalamdb_commons::{
     schemas::TableType,
     try_pk_bucket_key, PkBucketKey, Role,
 };
-use kalamdb_tables::{SharedTableProvider, UserTableProvider};
+use kalamdb_tables::KalamTableProvider;
 use sqlparser::ast::Statement;
 use uuid::Uuid;
 
@@ -37,8 +37,8 @@ struct OnConflictExistingRow {
 }
 
 enum OnConflictTableProvider<'a> {
-    User(&'a UserTableProvider),
-    Shared(&'a SharedTableProvider),
+    User(&'a KalamTableProvider),
+    Shared(&'a KalamTableProvider),
 }
 
 impl SqlExecutor {
@@ -142,12 +142,12 @@ impl SqlExecutor {
                             ))
                         },
                     )?;
-                let provider = provider.as_shared().ok_or_else(|| {
-                    KalamDbError::InvalidOperation(format!(
+                if !provider.is_shared() {
+                    return Err(KalamDbError::InvalidOperation(format!(
                         "Shared table provider type mismatch for RLS check: {}",
                         table_id
-                    ))
-                })?;
+                    )));
+                }
                 let snapshot_commit_seq = self
                     .app_context
                     .transaction_coordinator()
@@ -162,7 +162,7 @@ impl SqlExecutor {
                         .map(|packed| packed.version())
                     });
                 kalamdb_observability::kdb_await_in_info_span!(
-                    provider.check_rows_authorized(
+                    provider.check_shared_rows_authorized(
                         exec_ctx.user_id(),
                         exec_ctx.user_role(),
                         kalamdb_commons::PolicyCommand::Insert,
@@ -256,14 +256,14 @@ impl SqlExecutor {
                         ))
                     },
                 )?;
-            let provider = provider.as_shared().ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!(
+            if !provider.is_shared() {
+                return Err(KalamDbError::InvalidOperation(format!(
                     "Shared table provider type mismatch for RLS check: {}",
                     table_id
-                ))
-            })?;
+                )));
+            }
             kalamdb_observability::kdb_await_in_info_span!(
-                provider.check_rows_authorized(
+                provider.check_shared_rows_authorized(
                     exec_ctx.user_id(),
                     exec_ctx.user_role(),
                     kalamdb_commons::PolicyCommand::Insert,
@@ -422,22 +422,22 @@ impl SqlExecutor {
             })?;
         let table_provider = match on_conflict_rows.table_type {
             TableType::User | TableType::Stream => {
-                let provider = provider_arc.as_user().ok_or_else(|| {
-                    KalamDbError::InvalidOperation(format!(
+                if !provider_arc.is_user() {
+                    return Err(KalamDbError::InvalidOperation(format!(
                         "Provider type mismatch for user table {}",
                         table_id
-                    ))
-                })?;
-                OnConflictTableProvider::User(provider)
+                    )));
+                }
+                OnConflictTableProvider::User(provider_arc.as_ref())
             },
             TableType::Shared => {
-                let provider = provider_arc.as_shared().ok_or_else(|| {
-                    KalamDbError::InvalidOperation(format!(
+                if !provider_arc.is_shared() {
+                    return Err(KalamDbError::InvalidOperation(format!(
                         "Provider type mismatch for shared table {}",
                         table_id
-                    ))
-                })?;
-                OnConflictTableProvider::Shared(provider)
+                    )));
+                }
+                OnConflictTableProvider::Shared(provider_arc.as_ref())
             },
             TableType::System => unreachable!("system tables rejected above"),
         };
@@ -566,7 +566,7 @@ impl SqlExecutor {
                         "user table ON CONFLICT lookup requires user_id".to_string(),
                     )
                 })?;
-                Ok(provider.find_by_pk(&user_id, primary_key).await?.map(|(_, row)| {
+                Ok(provider.find_user_by_pk(&user_id, primary_key).await?.map(|(_, row)| {
                     OnConflictExistingRow {
                         row: row.fields,
                         mutation_user_id: Some(user_id),

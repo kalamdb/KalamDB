@@ -53,7 +53,7 @@ pub(crate) fn scan_diagnostics_enabled(state: &dyn Session) -> bool {
 }
 
 #[async_trait]
-pub trait DeferredMvccScanProvider<K: StorageKey, V>:
+pub(crate) trait DeferredMvccScanProvider<K: StorageKey, V>:
     BaseTableProvider<K, V> + Clone + Send + Sync + 'static
 where
     K: StorageKey + Clone + Send + Sync + 'static,
@@ -66,10 +66,6 @@ where
     fn build_scan_context(&self, state: &dyn Session) -> Result<Self::ScanContext, KalamDbError>;
 
     fn scan_snapshot_commit_seq(&self, scan_context: &Self::ScanContext) -> Option<VersionId>;
-
-    fn allow_pk_fast_path(&self, scan_context: &Self::ScanContext) -> bool {
-        self.scan_snapshot_commit_seq(scan_context).is_none()
-    }
 
     fn can_try_pk_fast_path(&self, _scan_context: &Self::ScanContext) -> bool {
         true
@@ -132,10 +128,6 @@ where
         Ok(rows)
     }
 
-    fn scan_scope_label(&self, _scan_context: &Self::ScanContext) -> &'static str {
-        "default"
-    }
-
     fn scan_cold_scope<'a>(&self, scan_context: &'a Self::ScanContext) -> Option<&'a UserId>;
 
     /// Return the newest hot-storage version, including tombstones.
@@ -163,31 +155,17 @@ where
         limit: Option<usize>,
         keep_deleted: bool,
         cold_columns: Option<&[String]>,
-    ) -> Result<Vec<(K, V)>, KalamDbError>;
-
-    async fn scan_kvs_with_diagnostics(
-        &self,
-        scan_context: &Self::ScanContext,
-        filter: Option<&Expr>,
-        since_seq: Option<VersionId>,
-        limit: Option<usize>,
-        keep_deleted: bool,
-        cold_columns: Option<&[String]>,
-    ) -> Result<MvccScanResult<K, V>, KalamDbError> {
-        let rows = self
-            .scan_kvs_with_context(
-                scan_context,
-                filter,
-                since_seq,
-                limit,
-                keep_deleted,
-                cold_columns,
-            )
-            .await?;
-        Ok(MvccScanResult {
-            rows,
-            diagnostics: DeferredScanDiagnostics::default(),
-        })
+    ) -> Result<Vec<(K, V)>, KalamDbError> {
+        self.scan_kvs_with_context_projected(
+            scan_context,
+            filter,
+            since_seq,
+            limit,
+            keep_deleted,
+            cold_columns,
+            None,
+        )
+        .await
     }
 
     async fn scan_kvs_with_context_projected(
@@ -199,18 +177,7 @@ where
         keep_deleted: bool,
         cold_columns: Option<&[String]>,
         storage_ordinals: Option<&[usize]>,
-    ) -> Result<Vec<(K, V)>, KalamDbError> {
-        let _ = storage_ordinals;
-        self.scan_kvs_with_context(
-            scan_context,
-            filter,
-            since_seq,
-            limit,
-            keep_deleted,
-            cold_columns,
-        )
-        .await
-    }
+    ) -> Result<Vec<(K, V)>, KalamDbError>;
 
     async fn scan_kvs_with_diagnostics_projected(
         &self,
@@ -221,42 +188,7 @@ where
         keep_deleted: bool,
         cold_columns: Option<&[String]>,
         storage_ordinals: Option<&[usize]>,
-    ) -> Result<MvccScanResult<K, V>, KalamDbError> {
-        let _ = storage_ordinals;
-        self.scan_kvs_with_diagnostics(
-            scan_context,
-            filter,
-            since_seq,
-            limit,
-            keep_deleted,
-            cold_columns,
-        )
-        .await
-    }
-
-    async fn scan_rows_with_context(
-        &self,
-        scan_context: &Self::ScanContext,
-        projection: Option<&Vec<usize>>,
-        filter: Option<&Expr>,
-        limit: Option<usize>,
-    ) -> Result<RecordBatch, KalamDbError> {
-        Ok(self
-            .scan_rows_output(scan_context, projection, filter, filter, limit, false)
-            .await?
-            .batch)
-    }
-
-    async fn scan_rows_with_diagnostics(
-        &self,
-        scan_context: &Self::ScanContext,
-        projection: Option<&Vec<usize>>,
-        filter: Option<&Expr>,
-        limit: Option<usize>,
-    ) -> Result<DeferredBatchOutput, KalamDbError> {
-        self.scan_rows_output(scan_context, projection, filter, filter, limit, true)
-            .await
-    }
+    ) -> Result<MvccScanResult<K, V>, KalamDbError>;
 
     async fn scan_rows_output(
         &self,

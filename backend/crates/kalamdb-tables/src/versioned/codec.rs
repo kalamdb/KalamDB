@@ -50,6 +50,14 @@ impl VersionedRowCodec {
         }
     }
 
+    pub(crate) fn decode_with_schema_history(
+        &self,
+        key: &ScopedRowKey,
+        bytes: &[u8],
+    ) -> StoreResult<VersionedTableRow> {
+        self.decode(key, bytes)
+    }
+
     pub(crate) fn decode(
         &self,
         key: &ScopedRowKey,
@@ -211,5 +219,50 @@ mod tests {
             codec.encode(&shared_key, &VersionedTableRow::Shared(shared.clone())).unwrap();
         assert_eq!(encoded, encode_shared_row(&shared, &schema).unwrap().into_bytes());
         assert_eq!(codec.decode(&shared_key, &encoded).unwrap(), VersionedTableRow::Shared(shared));
+    }
+
+    #[test]
+    fn historical_layout_decodes_through_the_engine() {
+        use kalamdb_serialization::{StorageField, StorageSchema};
+
+        let v1_fields = vec![StorageField::new("id", StorageDataType::Int64)];
+        let v1 = Arc::new(StorageSchema::new(1, v1_fields.clone()));
+        let mut current = StorageSchema::new(
+            2,
+            vec![
+                StorageField::new("id", StorageDataType::Int64),
+                StorageField::new("name", StorageDataType::Utf8),
+            ],
+        );
+        current.register_historical_version(1, &v1_fields);
+        let user_id = UserId::new("ada");
+        let version = VersionId::try_from_i64(3).unwrap();
+        let row = UserTableRow {
+            user_id: user_id.clone(),
+            _version: version,
+            _deleted: false,
+            fields: Row::new(BTreeMap::from([("id".to_string(), ScalarValue::Int64(Some(7)))])),
+        };
+        let key = ScopedRowKey::User(UserTableRowId::new(user_id, version));
+        let bytes = crate::table_engine::VersionedTableEngine::encode_row(
+            v1,
+            &key,
+            &VersionedTableRow::User(row),
+        )
+        .unwrap();
+        let decoded =
+            crate::table_engine::VersionedTableEngine::decode_row(Arc::new(current), &key, &bytes)
+                .unwrap();
+        let VersionedTableRow::User(decoded) = decoded else {
+            panic!("expected a user row");
+        };
+        assert_eq!(decoded.fields.get("id"), Some(&ScalarValue::Int64(Some(7))));
+        let name = decoded.fields.get("name");
+        assert!(
+            name.is_none()
+                || name == Some(&ScalarValue::Utf8(None))
+                || name == Some(&ScalarValue::Null),
+            "missing historical column stays empty, got {name:?}"
+        );
     }
 }

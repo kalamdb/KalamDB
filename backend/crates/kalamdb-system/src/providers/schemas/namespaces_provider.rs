@@ -10,7 +10,7 @@ use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBacken
 
 use crate::{
     error::{SystemError, SystemResultExt},
-    providers::{base::SimpleSystemTableScan, keyed_provider::KeyedTableProvider, schemas::models::Namespace},
+    providers::{keyed_provider::KeyedTableProvider, schemas::models::Namespace},
     system_row_mapper::{model_to_system_row, system_row_to_model},
 };
 
@@ -109,7 +109,9 @@ impl NamespacesTableProvider {
     }
 
     /// Scan all namespaces and return as RecordBatch
-    pub fn scan_all_namespaces(&self) -> Result<datafusion::arrow::array::RecordBatch, SystemError> {
+    pub fn scan_all_namespaces(
+        &self,
+    ) -> Result<datafusion::arrow::array::RecordBatch, SystemError> {
         self.sql.scan_all_to_batch()
     }
 

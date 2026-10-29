@@ -839,9 +839,7 @@ impl SchemaRegistry {
         };
 
         use crate::{
-            providers::{
-                SharedTableProvider, StreamTableProvider, TableProviderCore, UserTableProvider,
-            },
+            providers::{StreamTableEngine, TableProviderCore},
             schema_registry::TablesSchemaRegistryAdapter,
         };
 
@@ -919,10 +917,7 @@ impl SchemaRegistry {
                     &table_def.columns,
                 ));
 
-                let provider = Arc::new(KalamTableProvider::from_user(UserTableProvider::new(
-                    core,
-                    user_table_store,
-                )));
+                let provider = Arc::new(KalamTableProvider::user(core, user_table_store));
                 Ok(provider)
             },
             TableType::Shared => {
@@ -935,10 +930,7 @@ impl SchemaRegistry {
                     &table_def.columns,
                 ));
 
-                let provider = Arc::new(KalamTableProvider::from_shared(SharedTableProvider::new(
-                    core,
-                    shared_store,
-                )));
+                let provider = Arc::new(KalamTableProvider::shared(core, shared_store));
                 Ok(provider)
             },
             TableType::Stream => {
@@ -965,7 +957,7 @@ impl SchemaRegistry {
                     storage_schema,
                 ));
 
-                let provider = Arc::new(KalamTableProvider::from_stream(StreamTableProvider::new(
+                let provider = Arc::new(KalamTableProvider::from_stream(StreamTableEngine::new(
                     core,
                     stream_store,
                     Some(ttl_seconds),
@@ -1103,47 +1095,6 @@ impl SchemaRegistry {
     /// Check if cache is empty
     pub fn is_empty(&self) -> bool {
         self.table_cache.len() == 0 && self.version_cache.len() == 0
-    }
-
-    // ===== Provider Methods (consolidated from ProviderRegistry) =====
-
-    /// Insert a DataFusion provider into the cache for a table
-    ///
-    /// Stores the provider in CachedTableData and registers with DataFusion's
-    /// catalog.
-    pub fn insert_provider(
-        &self,
-        table_id: TableId,
-        provider: Arc<dyn TableProvider + Send + Sync>,
-    ) -> Result<(), KalamDbError> {
-        log::debug!("[SchemaRegistry] Inserting provider for table {}", table_id);
-
-        // Store in CachedTableData (as system provider — no DML support)
-        if let Some(cached) = self.get(&table_id) {
-            cached.set_provider(provider.clone());
-        } else {
-            // Table not in cache - try to load from persistence first
-            if let Some(_table_def) = self.get_table_if_exists(&table_id)? {
-                if let Some(cached) = self.get(&table_id) {
-                    cached.set_provider(provider.clone());
-                } else {
-                    return Err(KalamDbError::TableNotFound(format!(
-                        "Cannot insert provider: table {} not in cache",
-                        table_id
-                    )));
-                }
-            } else {
-                return Err(KalamDbError::TableNotFound(format!(
-                    "Cannot insert provider: table {} not found",
-                    table_id
-                )));
-            }
-        }
-
-        // Register with DataFusion's catalog if available
-        self.register_with_datafusion(&table_id, provider)?;
-
-        Ok(())
     }
 
     /// Get a cached DataFusion provider for a table.

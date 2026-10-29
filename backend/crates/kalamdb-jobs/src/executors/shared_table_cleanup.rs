@@ -1,8 +1,5 @@
 use kalamdb_commons::TableId;
-use kalamdb_core::{
-    error::KalamDbError,
-    providers::{row_utils::system_user_id, BaseTableProvider},
-};
+use kalamdb_core::error::KalamDbError;
 
 use crate::executors::{JobContext, JobParams};
 
@@ -14,27 +11,14 @@ pub(crate) async fn cleanup_empty_shared_scope_if_needed<T: JobParams>(
         KalamDbError::TableNotFound(format!("Provider not found for {}", table_id))
     })?;
 
-    let shared_provider = provider.as_shared()
-        .ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!(
-                "Provider for {} is not a SharedTableProvider",
-                table_id
-            ))
-        })?;
+    if !provider.is_shared() {
+        return Err(KalamDbError::InvalidOperation(format!(
+            "Provider for {} is not a shared table",
+            table_id
+        )));
+    }
 
-    let live_rows = shared_provider
-        .scan_with_version_resolution_to_kvs_async(
-            system_user_id(),
-            None,
-            None,
-            Some(1),
-            false,
-            None,
-            None,
-        )
-        .await?;
-
-    if !live_rows.is_empty() {
+    if provider.shared_has_live_row().await? {
         return Ok(());
     }
 

@@ -42,8 +42,8 @@ impl TableProvider for UserTableProvider {
         check_user_table_access(state, self.core.table_id())
             .map_err(session_error_to_datafusion)?;
 
-        let (user_id, _role) = extract_user_context(state)
-            .map_err(crate::error::into_datafusion)?;
+        let (user_id, _role) =
+            extract_user_context(state).map_err(crate::error::into_datafusion)?;
 
         self.base_scan_with_overlay(state, projection, filters, limit, Some(user_id.clone()))
             .await
@@ -150,38 +150,27 @@ impl TableProvider for UserTableProvider {
                 let context = transaction_query_context
                     .as_ref()
                     .expect("transaction_query_context must exist when staging DELETE");
-                if let Some(claims) = context.pk_claims() {
-                    claims.acquire(self.core.table_id(), &pk_value, &context.transaction_id).await;
-                    let live = self.committed_primary_key_is_live(&user_id, &pk_value).await?;
-                    if !live {
-                        claims.release_key(
-                            self.core.table_id(),
-                            &pk_value,
-                            &context.transaction_id,
-                        );
-                        continue;
-                    }
-                }
-                staged_mutations.push(StagedMutation::new(
-                    context.transaction_id.clone(),
-                    self.core.table_id().clone(),
+                if crate::utils::datafusion_dml::stage_delete_if_committed_live(
+                    staged_mutations,
+                    context,
+                    self.core.table_id(),
                     TableType::User,
-                    Some(user_id.clone()),
-                    OperationKind::Delete,
-                    pk_value,
-                    Row::new(std::collections::BTreeMap::new()),
-                    true,
-                ));
-                deleted += 1;
+                    &user_id,
+                    &pk_value,
+                    || self.committed_primary_key_is_live(&user_id, &pk_value),
+                )
+                .await?
+                {
+                    deleted += 1;
+                }
                 continue;
             }
 
-            let version = version_from_commit_seq(
+            let version = base::next_statement_version(
                 commit_seq.expect("commit_seq must exist for direct DELETE"),
-                ordinal,
+                &mut ordinal,
             )
             .map_err(crate::error::into_datafusion)?;
-            ordinal = ordinal.saturating_add(1);
             if self
                 .delete_by_pk_value_with_version(user_id, &pk_value, version)
                 .await
@@ -271,65 +260,45 @@ impl TableProvider for UserTableProvider {
                     &pk_column,
                     &pk_value,
                 )? {
-                    if self.core.is_auto_increment_pk() {
-                        return Err(DataFusionError::Plan(format!(
-                            "Cannot modify auto-increment primary key column '{}'",
-                            pk_column
-                        )));
-                    }
-                    let inserted_row = coerce_updates(
-                        crate::utils::datafusion_dml::row_for_primary_key_move(
-                            &row,
-                            &evaluated_updates,
-                        ),
+                    let inserted_row = crate::utils::datafusion_dml::prepared_primary_key_move(
+                        self.core.is_auto_increment_pk(),
+                        &pk_column,
+                        &row,
+                        &evaluated_updates,
                         &schema,
-                    )
-                    .map_err(DataFusionError::Execution)?;
+                    )?;
                     if let Some(staged_mutations) = staged_mutations.as_mut() {
                         let transaction_id = transaction_query_context
                             .expect("transaction_query_context must exist when staging UPDATE")
                             .transaction_id
                             .clone();
-                        staged_mutations.extend(
-                            build_insert_staged_mutations(
-                                &transaction_id,
-                                self.core.table_id(),
-                                TableType::User,
-                                Some(user_id.clone()),
-                                &pk_column,
-                                vec![inserted_row],
-                            )
-                            .map_err(|error| DataFusionError::Execution(error.to_string()))?,
-                        );
-                        staged_mutations.push(StagedMutation::new(
+                        crate::utils::datafusion_dml::stage_primary_key_move(
+                            staged_mutations,
                             transaction_id,
-                            self.core.table_id().clone(),
+                            self.core.table_id(),
                             TableType::User,
-                            Some(user_id.clone()),
-                            OperationKind::Delete,
+                            user_id.clone(),
+                            &pk_column,
                             pk_value,
-                            Row::new(std::collections::BTreeMap::new()),
-                            true,
-                        ));
+                            inserted_row,
+                        )?;
                         updated += 1;
                         continue;
                     }
 
-                    let insert_version = version_from_commit_seq(
+                    let insert_version = base::next_statement_version(
                         commit_seq.expect("commit_seq must exist for direct UPDATE"),
-                        ordinal,
+                        &mut ordinal,
                     )
                     .map_err(crate::error::into_datafusion)?;
-                    ordinal = ordinal.saturating_add(1);
                     self.insert_batch_with_versions(user_id, vec![inserted_row], &[insert_version])
                         .await
                         .map_err(crate::error::into_datafusion)?;
-                    let delete_version = version_from_commit_seq(
+                    let delete_version = base::next_statement_version(
                         commit_seq.expect("commit_seq must exist for direct UPDATE"),
-                        ordinal,
+                        &mut ordinal,
                     )
                     .map_err(crate::error::into_datafusion)?;
-                    ordinal = ordinal.saturating_add(1);
                     self.delete_by_pk_value_with_version(user_id, &pk_value, delete_version)
                         .await
                         .map_err(crate::error::into_datafusion)?;
@@ -346,29 +315,28 @@ impl TableProvider for UserTableProvider {
                 }
 
                 if let Some(staged_mutations) = staged_mutations.as_mut() {
-                    staged_mutations.push(StagedMutation::new(
-                        transaction_query_context
-                            .expect("transaction_query_context must exist when staging UPDATE")
-                            .transaction_id
-                            .clone(),
-                        self.core.table_id().clone(),
+                    let transaction_id = transaction_query_context
+                        .expect("transaction_query_context must exist when staging UPDATE")
+                        .transaction_id
+                        .clone();
+                    crate::utils::datafusion_dml::stage_field_update(
+                        staged_mutations,
+                        transaction_id,
+                        self.core.table_id(),
                         TableType::User,
-                        Some(user_id.clone()),
-                        OperationKind::Update,
+                        user_id.clone(),
                         pk_value,
                         evaluated_updates,
-                        false,
-                    ));
+                    );
                     updated += 1;
                     continue;
                 }
 
-                let version = version_from_commit_seq(
+                let version = base::next_statement_version(
                     commit_seq.expect("commit_seq must exist for direct UPDATE"),
-                    ordinal,
+                    &mut ordinal,
                 )
                 .map_err(crate::error::into_datafusion)?;
-                ordinal = ordinal.saturating_add(1);
                 let result = self
                     .update_by_pk_value_with_version(user_id, &pk_value, evaluated_updates, version)
                     .await
@@ -422,12 +390,9 @@ impl crate::utils::dml_provider::TableRowDml for UserTableProvider {
         updates: Row,
         version: VersionId,
     ) -> Result<bool, KalamDbError> {
-        match self.update_by_pk_value(user_id, pk_value, updates, version).await {
-            Ok(Some(_)) => Ok(true),
-            Ok(None) => Ok(false), // no-op: row unchanged
-            Err(KalamDbError::NotFound(_)) => Ok(false),
-            Err(e) => Err(e),
-        }
+        crate::versioned::mutation_applied(
+            self.update_by_pk_value(user_id, pk_value, updates, version).await,
+        )
     }
 
     async fn delete_row_by_pk(
@@ -457,49 +422,22 @@ impl UserTableProvider {
         );
         async move {
             let pk_name = self.primary_key_field_name().to_string();
-            let (previous, latest_row) = match self.load_mutation_target(user_id, pk_value).await? {
-                crate::versioned::MutationTarget::Hot(key, row) => (Some((key, row.clone())), row),
-                crate::versioned::MutationTarget::Cold(row) => (None, row),
-                crate::versioned::MutationTarget::Tombstoned => {
-                    return Err(KalamDbError::NotFound(format!(
-                        "Row with {}={} was deleted",
-                        pk_name, pk_value
-                    )));
-                },
-                crate::versioned::MutationTarget::Missing => {
-                    return Err(KalamDbError::NotFound(format!(
-                        "Row with {}={} not found (checked both hot and cold storage)",
-                        pk_name, pk_value
-                    )));
-                },
-            };
+            let (previous, latest_row) = crate::versioned::require_live_row(
+                self.load_mutation_target(user_id, pk_value).await?,
+                &pk_name,
+                pk_value,
+            )?;
 
             // Coerce update values to match schema types (e.g., Utf8 → TimestampMicrosecond).
             // Without this, the no-op comparison would fail for any column where the
             // SQL literal type differs from the stored Arrow type (TIMESTAMP, INT, etc.).
-            let coerced = coerce_updates(updates, &self.schema_ref()).map_err(|e| {
-                KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
-            })?;
-
-            // Merge coerced updates onto latest
-            let mut merged = latest_row.fields.values.clone();
-            for (k, v) in coerced.values {
-                merged.insert(k, v);
-            }
-
-            let new_fields = Row::new(merged);
+            let coerced = crate::versioned::coerce_update_row(updates, &self.schema_ref())?;
+            let new_fields = crate::versioned::merge_row_updates(&latest_row.fields, coerced);
 
             // Skip write if the merged row is identical to the existing row.
             // Like PostgreSQL / MySQL, a no-op UPDATE should not create a new
             // MVCC version, fire notifications, or count as a row affected.
             if new_fields == latest_row.fields {
-                // if log::log_enabled!(log::Level::Debug) {
-                //     log::debug!(
-                //         table_id = %self.core.table_id(),
-                //         pk = pk_value,
-                //         "table.update_noop: row unchanged, skipping write"
-                //     );
-                // }
                 return Ok(None);
             }
 
@@ -512,10 +450,10 @@ impl UserTableProvider {
             let seq_id = version;
 
             let entity = UserTableRow {
-                user_id:  user_id.clone(),
+                user_id: user_id.clone(),
                 _version: seq_id,
                 _deleted: false,
-                fields:   new_fields,
+                fields: new_fields,
             };
             let row_key = UserTableRowId::new(user_id.clone(), seq_id);
             self.write_replaced_row(
@@ -526,61 +464,34 @@ impl UserTableProvider {
             )
             .await?;
 
-            if let Err(e) = self.stage_vector_upsert(user_id, seq_id, &entity.fields).await {
-                log::warn!(
-                    "Failed to stage vector upsert for table={}, user={}, seq={}: {}",
+            if let Err(error) = self.stage_vector_upsert(user_id, seq_id, &entity.fields).await {
+                crate::versioned::warn_vector_upsert(
                     self.core.table_id(),
-                    user_id.as_str(),
-                    seq_id.as_i64(),
-                    e
+                    Some(user_id),
+                    seq_id,
+                    &error,
                 );
             }
 
-            // Mark manifest as having pending writes (hot data needs to be flushed)
-            let manifest_service = self.core.services.manifest_service.clone();
-            if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), Some(user_id))
-            {
-                log::warn!(
-                    "Failed to mark manifest as pending_write for {}: {}",
-                    self.core.table_id(),
-                    e
-                );
-            }
+            crate::versioned::mark_table_pending_write(&self.core, Some(user_id));
 
-            // Fire live query + topic notification (UPDATE)
-            let notification_service = self.core.services.notification_service.clone();
-            let table_id = self.core.table_id().clone();
-
-            let has_topics = self.core.has_topic_routes(&table_id);
-            let has_live_subs = notification_service.has_subscribers(Some(&user_id), &table_id);
-            if has_topics || has_live_subs {
-                let new_row = Self::build_notification_row(&entity);
-                if has_topics {
-                    self.core
-                        .publish_to_topics(
-                            &table_id,
-                            kalamdb_commons::models::TopicOp::Update,
-                            &new_row,
-                            Some(&user_id),
-                        )
-                        .await;
-                }
-                if has_live_subs {
-                    let old_row = Self::build_notification_row(&latest_row);
-                    let pk_col = self.primary_key_field_name().to_string();
-                    let notification = ChangeNotification::update(
-                        table_id.clone(),
-                        old_row,
-                        new_row,
-                        vec![pk_col],
-                    );
-                    notification_service.notify_table_change(
-                        Some(user_id.clone()),
+            let pk_col = self.primary_key_field_name().to_string();
+            crate::versioned::fanout_row_change(
+                &self.core,
+                Some(user_id),
+                Some(user_id),
+                kalamdb_commons::models::TopicOp::Update,
+                || Self::build_notification_row(&entity),
+                |table_id, new_row| {
+                    crate::versioned::update_notification(
                         table_id,
-                        notification,
-                    );
-                }
-            }
+                        Self::build_notification_row(&latest_row),
+                        new_row,
+                        pk_col,
+                    )
+                },
+            )
+            .await;
             Ok(Some(row_key))
         }
         .instrument(span)
@@ -601,18 +512,15 @@ impl UserTableProvider {
         );
         async move {
             let pk_name = self.primary_key_field_name().to_string();
-            let (previous, latest_row) = match self.load_mutation_target(user_id, pk_value).await? {
-                crate::versioned::MutationTarget::Hot(key, row) => (Some((key, row.clone())), row),
-                crate::versioned::MutationTarget::Cold(row) => (None, row),
-                crate::versioned::MutationTarget::Tombstoned
-                | crate::versioned::MutationTarget::Missing => {
-                    log::trace!(
-                        "[UserProvider DELETE_BY_PK] Row with {}={} not found",
-                        pk_name,
-                        pk_value
-                    );
-                    return Ok(false);
-                },
+            let Some((previous, latest_row)) = crate::versioned::optional_live_row(
+                self.load_mutation_target(user_id, pk_value).await?,
+            ) else {
+                log::trace!(
+                    "[UserProvider DELETE_BY_PK] Row with {}={} not found",
+                    pk_name,
+                    pk_value
+                );
+                return Ok(false);
             };
 
             let seq_id = version;
@@ -622,10 +530,10 @@ impl UserTableProvider {
             let values = latest_row.fields.values.clone();
 
             let entity = UserTableRow {
-                user_id:  user_id.clone(),
+                user_id: user_id.clone(),
                 _version: seq_id,
                 _deleted: true,
-                fields:   Row::new(values),
+                fields: Row::new(values),
             };
             let row_key = UserTableRowId::new(user_id.clone(), seq_id);
 
@@ -645,56 +553,27 @@ impl UserTableProvider {
             )
             .await?;
 
-            if let Err(e) = self.stage_vector_delete(user_id, seq_id, pk_value).await {
-                log::warn!(
-                    "Failed to stage vector delete for table={}, user={}, seq={}, pk={}: {}",
+            if let Err(error) = self.stage_vector_delete(user_id, seq_id, pk_value).await {
+                crate::versioned::warn_vector_delete(
                     self.core.table_id(),
-                    user_id.as_str(),
-                    seq_id.as_i64(),
+                    Some(user_id),
+                    seq_id,
                     pk_value,
-                    e
+                    &error,
                 );
             }
 
-            // Mark manifest as having pending writes (hot data needs to be flushed)
-            let manifest_service = self.core.services.manifest_service.clone();
-            if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), Some(user_id))
-            {
-                log::warn!(
-                    "Failed to mark manifest as pending_write for {}: {}",
-                    self.core.table_id(),
-                    e
-                );
-            }
+            crate::versioned::mark_table_pending_write(&self.core, Some(user_id));
 
-            // Fire live query + topic notification (DELETE soft)
-            let notification_service = self.core.services.notification_service.clone();
-            let table_id = self.core.table_id().clone();
-
-            let has_topics = self.core.has_topic_routes(&table_id);
-            let has_live_subs = notification_service.has_subscribers(Some(&user_id), &table_id);
-            if has_topics || has_live_subs {
-                // Provide tombstone entity with system columns for filter matching
-                let row = Self::build_notification_row(&entity);
-                if has_topics {
-                    self.core
-                        .publish_to_topics(
-                            &table_id,
-                            kalamdb_commons::models::TopicOp::Delete,
-                            &row,
-                            Some(&user_id),
-                        )
-                        .await;
-                }
-                if has_live_subs {
-                    let notification = ChangeNotification::delete_soft(table_id.clone(), row);
-                    notification_service.notify_table_change(
-                        Some(user_id.clone()),
-                        table_id,
-                        notification,
-                    );
-                }
-            }
+            crate::versioned::fanout_row_change(
+                &self.core,
+                Some(user_id),
+                Some(user_id),
+                kalamdb_commons::models::TopicOp::Delete,
+                || Self::build_notification_row(&entity),
+                |table_id, row| ChangeNotification::delete_soft(table_id, row),
+            )
+            .await;
             Ok(true)
         }
         .instrument(span)

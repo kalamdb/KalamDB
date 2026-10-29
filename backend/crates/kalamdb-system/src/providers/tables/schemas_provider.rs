@@ -3,10 +3,7 @@
 //! Phase 16: Consolidated provider using single store with TableVersionId keys.
 //! Exposes all table versions with is_latest flag for schema history queries.
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, OnceLock},
-};
+use std::{collections::HashMap, sync::Arc};
 
 use datafusion::{
     arrow::{array::RecordBatch, datatypes::SchemaRef},
@@ -21,7 +18,7 @@ use kalamdb_store::StorageBackend;
 use super::{new_schemas_store, schemas_arrow_schema, SchemasStore};
 use crate::{
     error::{SystemError, SystemResultExt},
-    providers::base::{extract_filter_value, SimpleProviderDefinition},
+    providers::base::{deferred_system_scan, extract_filter_value},
 };
 
 /// System.tables table provider using consolidated store with versioning
@@ -367,21 +364,64 @@ impl SchemasTableProvider {
     }
 }
 
-crate::impl_system_table_provider_metadata!(
-    simple,
-    provider = SchemasTableProvider,
-    table_name = kalamdb_commons::SystemTable::Schemas.table_name(),
-    schema = schemas_arrow_schema()
-);
+impl std::fmt::Debug for SchemasTableProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SchemasTableProvider").finish()
+    }
+}
 
-crate::impl_simple_system_table_provider!(
-    provider = SchemasTableProvider,
-    key = TableId,
-    value = TableDefinition,
-    definition = provider_definition,
-    scan_all = scan_all_tables,
-    scan_filtered = scan_to_batch_filtered
-);
+#[async_trait::async_trait]
+impl datafusion::datasource::TableProvider for SchemasTableProvider {
+    fn schema(&self) -> SchemaRef {
+        schemas_arrow_schema()
+    }
+
+    fn table_type(&self) -> datafusion::datasource::TableType {
+        datafusion::datasource::TableType::Base
+    }
+
+    fn supports_filters_pushdown(
+        &self,
+        filters: &[&Expr],
+    ) -> datafusion::error::Result<Vec<datafusion::logical_expr::TableProviderFilterPushDown>> {
+        crate::providers::base::exact_filter_pushdown(filters)
+    }
+
+    async fn scan(
+        &self,
+        state: &dyn datafusion::catalog::Session,
+        projection: Option<&Vec<usize>>,
+        filters: &[Expr],
+        limit: Option<usize>,
+    ) -> datafusion::error::Result<std::sync::Arc<dyn datafusion::physical_plan::ExecutionPlan>>
+    {
+        let table_id = TableId::from_strings(
+            kalamdb_commons::constants::SYSTEM_NAMESPACE,
+            kalamdb_commons::SystemTable::Schemas.table_name(),
+        );
+        kalamdb_session_datafusion::check_system_table_access(state, &table_id)
+            .map_err(|error| datafusion::error::DataFusionError::Plan(error.to_string()))?;
+        let provider = self.clone();
+        deferred_system_scan(
+            state,
+            schemas_arrow_schema(),
+            projection,
+            filters,
+            limit,
+            kalamdb_commons::SystemTable::Schemas.table_name().to_string(),
+            "simple_system_scan",
+            true,
+            Arc::new(move |filters, limit| {
+                provider.scan_to_batch_filtered(filters, limit).map_err(|error| {
+                    datafusion::error::DataFusionError::Execution(format!(
+                        "Failed to build schemas batch: {error}"
+                    ))
+                })
+            }),
+        )
+        .await
+    }
+}
 
 #[cfg(test)]
 mod tests {

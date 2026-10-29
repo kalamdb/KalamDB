@@ -29,16 +29,22 @@ Columns follow T001. `batch submissions` applies to commit workloads. Lookup and
 | Workload | Build profile | Hardware note | Median seconds | p99 seconds | Batch submissions |
 |----------|---------------|---------------|----------------|-------------|-------------------|
 | Pre-change `system.users` primary-key lookup (`test_create_and_get_user`) | dev | Apple M5 Pro, 24 GiB | 0.014 | 0.017 | |
+| Candidate `system.users` primary-key lookup (`test_create_and_get_user`) | dev | Apple M5 Pro, 24 GiB | 0.011 | 0.012 | |
 | Pre-change `system.users` email index lookup (`test_get_active_oidc_invite_by_email_uses_email_index`) | dev | Apple M5 Pro, 24 GiB | 0.014 | 0.017 | |
+| Candidate `system.users` email index lookup (`test_get_active_oidc_invite_by_email_uses_email_index`) | dev | Apple M5 Pro, 24 GiB | 0.011 | 0.012 | |
 | Pre-change `system.jobs` primary-key lookup (`test_create_and_get_job`) | dev | Apple M5 Pro, 24 GiB | 0.014 | 0.017 | |
+| Candidate `system.jobs` primary-key lookup (`test_create_and_get_job`) | dev | Apple M5 Pro, 24 GiB | 0.011 | 0.012 | |
 | Pre-change namespace lookup (`test_create_and_get_namespace`) | dev | Apple M5 Pro, 24 GiB | 0.014 | 0.017 | |
+| Candidate namespace lookup (`test_create_and_get_namespace`) | dev | Apple M5 Pro, 24 GiB | 0.011 | 0.011 | |
 | Pre-change catalog type lookup (`implicit_row_type_and_alias_have_catalog_relationships`) | dev | Apple M5 Pro, 24 GiB | 0.014 | 0.017 | |
+| Candidate catalog type lookup (`implicit_row_type_and_alias_have_catalog_relationships`) | dev | Apple M5 Pro, 24 GiB | 0.011 | 0.012 | |
 | Pre-change `pg_catalog` namespaces, tables, and columns (`pg_catalog_shims_project_namespaces_tables_columns_and_database`, `kalamdb-core` `--test pg18`) | dev | Apple M5 Pro, 24 GiB | 0.080 | 0.112 | |
+| Candidate `pg_catalog` namespaces, tables, and columns (`pg_catalog_shims_project_namespaces_tables_columns_and_database`, `kalamdb-core` `--test pg18`) | dev | Apple M5 Pro, 24 GiB | 0.074 | 0.078 | |
 | Pre-change `information_schema.columns` introspection (`pg_catalog_shim_beekeeper_information_schema_column_query`, `kalamdb-core` `--test pg18`) | dev | Apple M5 Pro, 24 GiB | 0.085 | 0.115 | |
+| Candidate `information_schema.columns` introspection (`pg_catalog_shim_beekeeper_information_schema_column_query`, `kalamdb-core` `--test pg18`) | dev | Apple M5 Pro, 24 GiB | 0.081 | 0.085 | |
 | Pre-change 25,000-row insert | dev | Apple M5 Pro, 24 GiB | | | |
 | Pre-change 25,000-row update | dev | Apple M5 Pro, 24 GiB | | | |
 | Pre-change 25,000-row delete | dev | Apple M5 Pro, 24 GiB | | | |
-| Candidate system-catalog lookups and introspection | dev | Apple M5 Pro, 24 GiB | | | |
 | Candidate 25,000-row insert, update, and delete | dev | Apple M5 Pro, 24 GiB | | | |
 
-The 25,000-row rows stay empty until Gate 3. Candidate rows stay empty until the matching story is measured.
+The 25,000-row rows stay empty until Gate 3. Catalog candidate rows were measured on 2026-10-29 after the harness was already compiled: five `dev` nextest runs, nearest-rank median, p99 = slowest of the five. None exceeded its baseline.

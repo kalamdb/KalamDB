@@ -8,8 +8,7 @@
 //! - Shared core via Arc<TableProviderCore>
 //! - No handlers - all DML logic inline
 //! - RLS via user_id parameter in DML methods
-//! - SessionState extraction for scan_rows()
-//! - PK Index for efficient row lookup (Phase 14)
+//! - PK index for row lookup
 
 use std::{
     collections::{HashMap, HashSet},
@@ -27,18 +26,14 @@ use datafusion::{
     scalar::ScalarValue,
 };
 use kalamdb_commons::{
-    conversions::arrow_json_conversion::{coerce_rows, coerce_updates},
     ids::{SeqId, UserTableRowId, VersionId},
-    models::{rows::Row, OperationKind, UserId},
+    models::{rows::Row, UserId},
     websocket::ChangeNotification,
     StorageKey, TableType,
 };
 use kalamdb_datafusion_sources::dml::PreparedUpdateAssignments;
 use kalamdb_datafusion_sources::{
-    exec::{
-        pk_bucket_key_from_row, resolve_latest_kvs_from_cold_batch, DeferredScanDiagnostics,
-        PkBucketKey, VersionedRow,
-    },
+    exec::{pk_bucket_key_from_row, resolve_latest_kvs_from_cold_batch, DeferredScanDiagnostics},
     provider::{
         merged_projection_scan_descriptor, mvcc_filter_capability, FilterCapability,
         ScanDescriptor, SourceProvider,
@@ -49,9 +44,7 @@ use kalamdb_session_datafusion::{
     check_user_table_access, check_user_table_write_access, session_error_to_datafusion,
 };
 use kalamdb_store::EntityStore;
-use kalamdb_transactions::{
-    build_insert_staged_mutations, extract_transaction_query_context, StagedMutation,
-};
+use kalamdb_transactions::extract_transaction_query_context;
 use kalamdb_vector::{new_indexed_user_vector_hot_store, UserVectorHotOpId, UserVectorHotStore};
 use tracing::Instrument;
 
@@ -77,7 +70,7 @@ use crate::{
 /// - RLS enforced via user_id parameter
 /// - PK Index for efficient row lookup (Phase 14)
 #[derive(Clone)]
-pub struct UserTableProvider {
+pub(crate) struct UserTableProvider {
     /// Shared core (services, schema, pk_name, column_defaults, non_null_columns)
     core: Arc<TableProviderCore>,
 
@@ -92,33 +85,6 @@ pub struct UserTableProvider {
 
     /// Cached vector staging stores keyed by embedding column name.
     vector_stores: HashMap<String, Arc<UserVectorHotStore>>,
-}
-
-struct UserMvccRow(UserTableRow);
-
-impl VersionedRow for UserMvccRow {
-    fn version(&self) -> VersionId {
-        self.0._version
-    }
-
-    fn deleted(&self) -> bool {
-        self.0._deleted
-    }
-
-    fn pk_value(&self, pk_name: &str) -> Option<String> {
-        match self.pk_bucket_key(pk_name) {
-            PkBucketKey::Version(_) => None,
-            key => Some(key.to_string()),
-        }
-    }
-
-    fn pk_bucket_key(&self, pk_name: &str) -> PkBucketKey {
-        pk_bucket_key_from_row(&self.0.fields, pk_name, self.0._version)
-    }
-}
-
-fn version_from_commit_seq(commit_seq: u64, ordinal: u32) -> Result<VersionId, KalamDbError> {
-    crate::utils::base::statement_row_version(commit_seq, ordinal)
 }
 
 include!("storage.rs");

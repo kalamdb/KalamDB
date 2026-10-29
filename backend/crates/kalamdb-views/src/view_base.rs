@@ -21,7 +21,7 @@ use datafusion::{
 use kalamdb_system::SystemTable;
 
 use crate::{
-    catalog_provider::{CatalogScanCtx, CatalogSource, CatalogTableProvider},
+    catalog_provider::{CatalogScanCtx, CatalogSource, ComputedCatalogProvider},
     error::RegistryError,
 };
 
@@ -100,7 +100,7 @@ impl<V: VirtualView + 'static> CatalogSource for VirtualViewSource<V> {
 /// This generic provider eliminates repeated scan/pushdown boilerplate across
 /// views. Each view only needs to implement `VirtualView`.
 pub struct ViewTableProvider<V: VirtualView + 'static> {
-    inner: CatalogTableProvider<VirtualViewSource<V>>,
+    inner: ComputedCatalogProvider<VirtualViewSource<V>>,
 }
 
 impl<V: VirtualView + 'static> Clone for ViewTableProvider<V> {
@@ -121,7 +121,7 @@ impl<V: VirtualView + 'static> ViewTableProvider<V> {
     /// Create a new view table provider
     pub fn new(view: Arc<V>) -> Self {
         Self {
-            inner: CatalogTableProvider::new(Arc::new(VirtualViewSource { view })),
+            inner: ComputedCatalogProvider::new(Arc::new(VirtualViewSource { view })),
         }
     }
 

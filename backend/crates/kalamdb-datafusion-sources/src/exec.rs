@@ -37,7 +37,7 @@ use kalamdb_commons::{
     constants::SystemColumnNames,
     conversions::arrow_json_conversion::arrow_value_to_scalar,
     ids::VersionId,
-    models::rows::{Row, RowMetadata, SharedTableRow},
+    models::rows::{Row, RowMetadata, SharedTableRow, UserTableRow},
 };
 pub use kalamdb_commons::{
     pk_bucket_key_from_array, pk_bucket_key_from_row, pk_bucket_key_from_scalar, PkBucketKey,
@@ -289,6 +289,27 @@ pub trait VersionedRow {
             Some(value) if !value.is_empty() => PkBucketKey::Text(value),
             _ => PkBucketKey::Version(self.version().as_i64()),
         }
+    }
+}
+
+impl VersionedRow for UserTableRow {
+    fn version(&self) -> VersionId {
+        self._version
+    }
+
+    fn deleted(&self) -> bool {
+        self._deleted
+    }
+
+    fn pk_value(&self, pk_name: &str) -> Option<String> {
+        match self.pk_bucket_key(pk_name) {
+            PkBucketKey::Version(_) => None,
+            key => Some(key.to_string()),
+        }
+    }
+
+    fn pk_bucket_key(&self, pk_name: &str) -> PkBucketKey {
+        pk_bucket_key_from_row(&self.fields, pk_name, self._version)
     }
 }
 

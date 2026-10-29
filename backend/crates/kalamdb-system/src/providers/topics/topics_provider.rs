@@ -64,7 +64,8 @@ impl TopicsTableProvider {
     /// Success message or error
     pub fn create_topic(&self, topic: Topic) -> Result<String, SystemError> {
         let row = Self::encode_topic_row(&topic)?;
-        self.sql.store()
+        self.sql
+            .store()
             .insert(&topic.topic_id, &row)
             .into_system_error("insert topic error")?;
         Ok(format!("Topic {} created", topic.name))
@@ -74,7 +75,8 @@ impl TopicsTableProvider {
     pub async fn create_topic_async(&self, topic: Topic) -> Result<(), SystemError> {
         let topic_id = topic.topic_id.clone();
         let row = Self::encode_topic_row(&topic)?;
-        self.sql.store()
+        self.sql
+            .store()
             .insert_async(topic_id, row)
             .await
             .into_system_error("insert_async topic error")
@@ -113,7 +115,8 @@ impl TopicsTableProvider {
         let row = Self::encode_topic_row(&topic)?;
 
         // No secondary indexes configured for topics in this phase.
-        self.sql.store()
+        self.sql
+            .store()
             .update_with_old(&topic.topic_id, Some(&Self::encode_topic_row(&old_topic)?), &row)
             .into_system_error("update topic error")
     }
@@ -133,7 +136,8 @@ impl TopicsTableProvider {
         }
 
         let row = Self::encode_topic_row(&topic)?;
-        self.sql.store()
+        self.sql
+            .store()
             .insert_async(topic.topic_id.clone(), row)
             .await
             .into_system_error("insert_async topic error")
@@ -141,7 +145,8 @@ impl TopicsTableProvider {
 
     /// Delete a topic by ID.
     pub async fn delete_topic_async(&self, topic_id: &TopicId) -> Result<(), SystemError> {
-        self.sql.store()
+        self.sql
+            .store()
             .delete_async(topic_id.clone())
             .await
             .into_system_error("delete_async topic error")

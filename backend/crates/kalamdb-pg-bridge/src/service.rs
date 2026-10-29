@@ -141,12 +141,11 @@ impl OperationService {
             .schema_registry()
             .get_kalam_provider(table_id)
             .ok_or_else(|| Status::not_found(format!("shared table {table_id} not found")))?;
-        let shared = provider.as_shared()
-            .ok_or_else(|| {
-                Status::failed_precondition(format!("{table_id} is not a shared table"))
-            })?;
-        shared
-            .check_rows_authorized(user_id, role, command, check, rows, None)
+        if !provider.is_shared() {
+            return Err(Status::failed_precondition(format!("{table_id} is not a shared table")));
+        }
+        provider
+            .check_shared_rows_authorized(user_id, role, command, check, rows, None)
             .await
             .map_err(|error| Status::permission_denied(error.to_string()))
     }
@@ -172,12 +171,11 @@ impl OperationService {
             .schema_registry()
             .get_kalam_provider(table_id)
             .ok_or_else(|| Status::not_found(format!("shared table {table_id} not found")))?;
-        let shared = provider.as_shared()
-            .ok_or_else(|| {
-                Status::failed_precondition(format!("{table_id} is not a shared table"))
-            })?;
-        shared
-            .row_by_pk_value(pk_value)
+        if !provider.is_shared() {
+            return Err(Status::failed_precondition(format!("{table_id} is not a shared table")));
+        }
+        provider
+            .shared_row_by_pk_value(pk_value)
             .await
             .map_err(|error| Status::internal(error.to_string()))
     }

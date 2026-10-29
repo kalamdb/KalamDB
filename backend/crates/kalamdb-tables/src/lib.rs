@@ -49,7 +49,7 @@ pub mod row_codec;
 pub mod scalar_index_sync;
 pub mod shared_tables;
 pub mod stream_tables;
-#[path = "versioned/table_engine.rs"]
+#[path = "versioned/engine.rs"]
 pub mod table_engine;
 pub mod user_tables;
 pub mod utils;
@@ -71,7 +71,7 @@ pub use row_codec::{
 };
 pub use scalar_index_sync::{sync_scalar_indexes, sync_scalar_indexes_with_arrow};
 pub use shared_tables::{
-    pk_index::{create_shared_table_pk_index, new_shared_pk_index},
+    pk_index::new_shared_pk_index,
     shared_table_store::{
         new_indexed_shared_table_store, new_shared_table_store, SharedTableIndexedStore,
         SharedTableRow, SharedTableStore,
@@ -81,18 +81,14 @@ pub use stream_tables::stream_table_store::{
     new_stream_table_store, StreamTableStorageMode, StreamTableStore, StreamTableStoreConfig,
 };
 pub use user_tables::{
-    pk_index::{create_user_table_pk_index, new_user_pk_index, VersionedPkIndex},
+    pk_index::{new_user_pk_index, VersionedPkIndex},
     user_table_store::{
         new_indexed_user_table_store, new_user_table_store, UserTableIndexedStore, UserTableStore,
     },
 };
 // Re-export providers for core integration
-pub use provider::{
-    as_shared_table, as_stream_table, as_user_table, KalamTableProvider, TableCapabilityProfile,
-};
-pub use table_engine::VersionedTableEngine;
-pub use utils::{
-    BaseTableProvider, SharedTableProvider, StreamTableProvider, TableProviderCore, TableRowDml,
-    UserTableProvider,
-};
+pub(crate) use provider::as_shared_table;
+pub use provider::{as_kalam_table, as_stream_table, KalamTableProvider, TableCapabilityProfile};
+pub(crate) use utils::SharedTableProvider;
+pub use utils::{StreamTableEngine, TableProviderCore, TableRowDml};
 pub use versioned::DeferredMutation;

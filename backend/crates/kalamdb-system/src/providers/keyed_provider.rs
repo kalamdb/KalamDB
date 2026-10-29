@@ -26,8 +26,8 @@ use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore};
 use serde::Serialize;
 
 use super::base::{
-    exact_filter_pushdown, extract_filter_value, system_rows_to_batch, SimpleSystemTableScan,
-    SystemTableScan,
+    build_indexed_batch, deferred_system_scan, exact_filter_pushdown, extract_filter_value,
+    system_rows_to_batch,
 };
 use crate::error::SystemError;
 
@@ -46,7 +46,16 @@ where
     to_row: fn(&V, &TableDefinition) -> Result<SystemTableRow, SystemError>,
     indexed: bool,
     schema: OnceLock<SchemaRef>,
+    /// Replaces the generic key scan when a table filters on a composite key
+    /// or fills columns that are not stored, such as manifest `in_memory`.
+    custom_scan: Option<CustomSystemScan<K, V>>,
 }
+
+pub(crate) type CustomSystemScan<K, V> = Arc<
+    dyn Fn(&IndexedEntityStore<K, V>, &[Expr], Option<usize>) -> Result<RecordBatch, SystemError>
+        + Send
+        + Sync,
+>;
 
 impl<K, V> Clone for KeyedTableProvider<K, V>
 where
@@ -64,6 +73,7 @@ where
             to_row: self.to_row,
             indexed: self.indexed,
             schema: OnceLock::new(),
+            custom_scan: self.custom_scan.clone(),
         }
     }
 }
@@ -74,9 +84,7 @@ where
     V: KSerializable + 'static,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("KeyedTableProvider")
-            .field("table", &self.table_name)
-            .finish()
+        f.debug_struct("KeyedTableProvider").field("table", &self.table_name).finish()
     }
 }
 
@@ -104,11 +112,17 @@ where
             to_row,
             indexed: false,
             schema: OnceLock::new(),
+            custom_scan: None,
         }
     }
 
     pub fn store(&self) -> &IndexedEntityStore<K, V> {
         &self.store
+    }
+
+    /// Scan through `scan` instead of the generic primary-key reader.
+    pub fn set_custom_scan(&mut self, scan: CustomSystemScan<K, V>) {
+        self.custom_scan = Some(scan);
     }
 }
 
@@ -125,15 +139,7 @@ where
         pk_column: &'static str,
         parse_key: fn(&str) -> Option<K>,
     ) -> Self {
-        Self::new(
-            store,
-            definition,
-            table_id,
-            table_name,
-            pk_column,
-            parse_key,
-            stored_system_row,
-        )
+        Self::new(store, definition, table_id, table_name, pk_column, parse_key, stored_system_row)
     }
 
     /// SQL provider whose scan uses the shared secondary-index iterator.
@@ -145,55 +151,42 @@ where
         pk_column: &'static str,
         parse_key: fn(&str) -> Option<K>,
     ) -> Self {
-        let mut provider = Self::from_stored_rows(
-            store,
-            definition,
-            table_id,
-            table_name,
-            pk_column,
-            parse_key,
-        );
+        let mut provider =
+            Self::from_stored_rows(store, definition, table_id, table_name, pk_column, parse_key);
         provider.indexed = true;
         provider
     }
 }
 
-impl<K, V> SimpleSystemTableScan<K, V> for KeyedTableProvider<K, V>
+impl<K, V> KeyedTableProvider<K, V>
 where
     K: StorageKey + Clone + Send + Sync + 'static,
     V: KSerializable + Serialize + Clone + Send + Sync + 'static,
 {
-    fn table_name(&self) -> &str {
-        self.table_name
-    }
-
-    fn arrow_schema(&self) -> SchemaRef {
+    pub fn arrow_schema(&self) -> SchemaRef {
         self.schema
-            .get_or_init(|| {
-                self.definition
-                    .to_arrow_schema()
-                    .expect("system table arrow schema")
-            })
+            .get_or_init(|| self.definition.to_arrow_schema().expect("system table arrow schema"))
             .clone()
     }
 
-    fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError> {
-        scan_all_rows(
-            &self.store,
-            &SimpleSystemTableScan::arrow_schema(self),
-            &self.definition,
-            self.to_row,
-        )
+    pub fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError> {
+        if let Some(scan) = &self.custom_scan {
+            return scan(&self.store, &[], None);
+        }
+        scan_all_rows(&self.store, &self.arrow_schema(), &self.definition, self.to_row)
     }
 
-    fn scan_to_batch(
+    pub fn scan_to_batch(
         &self,
         filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<RecordBatch, SystemError> {
+        if let Some(scan) = &self.custom_scan {
+            return scan(&self.store, filters, limit);
+        }
         scan_filtered_rows(
             &self.store,
-            &SimpleSystemTableScan::arrow_schema(self),
+            &self.arrow_schema(),
             &self.definition,
             self.pk_column,
             self.parse_key,
@@ -202,39 +195,30 @@ where
             limit,
         )
     }
-}
 
-impl<K, V> SystemTableScan<K, V> for KeyedTableProvider<K, V>
-where
-    K: StorageKey + Clone + Send + Sync + 'static,
-    V: KSerializable + Serialize + Clone + Send + Sync + 'static,
-{
-    fn store(&self) -> &IndexedEntityStore<K, V> {
-        &self.store
-    }
-
-    fn table_name(&self) -> &str {
-        self.table_name
-    }
-
-    fn primary_key_column(&self) -> &str {
-        self.pk_column
-    }
-
-    fn arrow_schema(&self) -> SchemaRef {
-        SimpleSystemTableScan::arrow_schema(self)
-    }
-
-    fn parse_key(&self, value: &str) -> Option<K> {
-        (self.parse_key)(value)
-    }
-
-    fn create_batch_from_pairs(&self, pairs: Vec<(K, V)>) -> Result<RecordBatch, SystemError> {
-        let rows = pairs
-            .into_iter()
-            .map(|(_, value)| (self.to_row)(&value, &self.definition))
-            .collect::<Result<Vec<_>, _>>()?;
-        system_rows_to_batch(&SimpleSystemTableScan::arrow_schema(self), rows)
+    fn indexed_batch(
+        &self,
+        filters: &[Expr],
+        limit: Option<usize>,
+    ) -> DataFusionResult<RecordBatch> {
+        let to_row = self.to_row;
+        let definition = self.definition.clone();
+        let schema = self.arrow_schema();
+        build_indexed_batch(
+            &self.store,
+            self.table_name,
+            self.pk_column,
+            self.parse_key,
+            filters,
+            limit,
+            move |pairs| {
+                let rows = pairs
+                    .into_iter()
+                    .map(|(_, value)| to_row(&value, &definition))
+                    .collect::<Result<Vec<_>, _>>()?;
+                current_layout_batch(&schema, rows)
+            },
+        )
     }
 }
 
@@ -245,7 +229,7 @@ where
     V: KSerializable + Serialize + Clone + Send + Sync + 'static,
 {
     fn schema(&self) -> SchemaRef {
-        SimpleSystemTableScan::arrow_schema(self)
+        self.arrow_schema()
     }
 
     fn table_type(&self) -> datafusion::logical_expr::TableType {
@@ -268,11 +252,35 @@ where
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         check_system_table_access(state, &self.table_id)
             .map_err(|error| DataFusionError::Plan(error.to_string()))?;
-        if self.indexed {
-            self.base_system_scan(state, projection, filters, limit).await
-        } else {
-            self.base_simple_scan(state, projection, filters, limit).await
-        }
+        let provider = self.clone();
+        let indexed = self.indexed;
+        deferred_system_scan(
+            state,
+            self.arrow_schema(),
+            projection,
+            filters,
+            limit,
+            self.table_name.to_string(),
+            if indexed {
+                "indexed_system_scan"
+            } else {
+                "simple_system_scan"
+            },
+            !indexed,
+            Arc::new(move |filters, limit| {
+                if indexed {
+                    provider.indexed_batch(filters, limit)
+                } else {
+                    provider.scan_to_batch(filters, limit).map_err(|error| {
+                        DataFusionError::Execution(format!(
+                            "Failed to build {} batch: {error}",
+                            provider.table_name
+                        ))
+                    })
+                }
+            }),
+        )
+        .await
     }
 
     async fn insert_into(
@@ -281,9 +289,7 @@ where
         _input: Arc<dyn ExecutionPlan>,
         _insert_op: InsertOp,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        Err(DataFusionError::Plan(
-            "Cannot modify system table via SQL DML".into(),
-        ))
+        Err(DataFusionError::Plan("Cannot modify system table via SQL DML".into()))
     }
 
     async fn delete_from(
@@ -291,9 +297,7 @@ where
         _state: &dyn Session,
         _filters: Vec<Expr>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        Err(DataFusionError::Plan(
-            "Cannot modify system table via SQL DML".into(),
-        ))
+        Err(DataFusionError::Plan("Cannot modify system table via SQL DML".into()))
     }
 
     async fn update(
@@ -302,9 +306,7 @@ where
         _assignments: Vec<(String, Expr)>,
         _filters: Vec<Expr>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        Err(DataFusionError::Plan(
-            "Cannot modify system table via SQL DML".into(),
-        ))
+        Err(DataFusionError::Plan("Cannot modify system table via SQL DML".into()))
     }
 }
 
@@ -377,6 +379,13 @@ macro_rules! impl_keyed_table_provider {
     };
 }
 
+fn current_layout_batch(
+    schema: &SchemaRef,
+    rows: Vec<SystemTableRow>,
+) -> Result<RecordBatch, SystemError> {
+    system_rows_to_batch(schema, rows)
+}
+
 fn scan_all_rows<K, V>(
     store: &IndexedEntityStore<K, V>,
     schema: &SchemaRef,
@@ -392,7 +401,7 @@ where
         .into_iter()
         .map(|(_, model)| to_row(&model, definition))
         .collect::<Result<Vec<_>, _>>()?;
-    system_rows_to_batch(schema, rows)
+    current_layout_batch(schema, rows)
 }
 
 fn scan_filtered_rows<K, V>(
@@ -412,10 +421,10 @@ where
     if let Some(pk) = extract_filter_value(filters, pk_column) {
         if let Some(key) = parse_key(&pk) {
             if let Some(model) = store.get(&key)? {
-                return system_rows_to_batch(schema, vec![to_row(&model, definition)?]);
+                return current_layout_batch(schema, vec![to_row(&model, definition)?]);
             }
         }
-        return system_rows_to_batch(schema, vec![]);
+        return current_layout_batch(schema, vec![]);
     }
 
     let iter = store.scan_iterator(None, None)?;
@@ -428,7 +437,7 @@ where
             break;
         }
     }
-    system_rows_to_batch(schema, rows)
+    current_layout_batch(schema, rows)
 }
 
 fn stored_system_row(

@@ -1,10 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use datafusion::{
-    arrow::{
-        datatypes::{Field, SchemaRef},
-        record_batch::RecordBatch,
-    },
+    arrow::{datatypes::SchemaRef, record_batch::RecordBatch},
     catalog::Session,
     common::DFSchema,
     datasource::TableProvider,
@@ -18,47 +15,12 @@ use kalamdb_commons::{
         arrow_json_conversion::{arrow_value_to_scalar, coerce_updates, json_rows_to_arrow_batch},
         scalar_to_pk_string,
     },
-    models::{rows::Row, UserId},
+    models::{rows::Row, OperationKind, TransactionId, UserId},
     CodedError, NotLeaderError, TableId, TableType,
 };
 use kalamdb_transactions::{
     build_insert_staged_mutations, StagedMutation, TransactionAccessError, TransactionQueryContext,
 };
-
-pub struct OverlayScanProjection {
-    pub effective_projection: Option<Vec<usize>>,
-    pub final_projection: Option<Vec<usize>>,
-}
-
-pub fn prepare_overlay_scan_projection(
-    schema: &SchemaRef,
-    projection: Option<&Vec<usize>>,
-    pk_column: &str,
-) -> DataFusionResult<OverlayScanProjection> {
-    let pk_index = schema
-        .index_of(pk_column)
-        .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?;
-    let needs_pk_projection = projection.is_some_and(|columns| !columns.contains(&pk_index));
-    let effective_projection = projection.map(|columns| {
-        if needs_pk_projection {
-            let mut augmented = columns.clone();
-            augmented.push(pk_index);
-            augmented
-        } else {
-            columns.clone()
-        }
-    });
-    let final_projection = if needs_pk_projection {
-        projection.map(|columns| (0..columns.len()).collect::<Vec<_>>())
-    } else {
-        None
-    };
-
-    Ok(OverlayScanProjection {
-        effective_projection,
-        final_projection,
-    })
-}
 
 pub fn stage_transaction_mutations(
     transaction_query_context: &TransactionQueryContext,
@@ -203,6 +165,125 @@ pub fn row_for_primary_key_move(existing: &Row, updates: &Row) -> Row {
         }
     }
     Row::new(values)
+}
+
+/// Coerce the row written when an update changes the primary key.
+pub fn prepared_primary_key_move(
+    is_auto_increment: bool,
+    pk_column: &str,
+    existing: &Row,
+    updates: &Row,
+    schema: &SchemaRef,
+) -> DataFusionResult<Row> {
+    if is_auto_increment {
+        return Err(DataFusionError::Plan(format!(
+            "Cannot modify auto-increment primary key column '{pk_column}'"
+        )));
+    }
+    coerce_updates(row_for_primary_key_move(existing, updates), schema)
+        .map_err(DataFusionError::Execution)
+}
+
+/// Stage a primary-key move as an insert of the new key and a delete of the old key.
+pub fn stage_primary_key_move(
+    staged: &mut Vec<StagedMutation>,
+    transaction_id: TransactionId,
+    table_id: &TableId,
+    table_type: TableType,
+    user_id: UserId,
+    pk_column: &str,
+    old_pk: String,
+    inserted_row: Row,
+) -> DataFusionResult<()> {
+    let inserts = build_insert_staged_mutations(
+        &transaction_id,
+        table_id,
+        table_type,
+        Some(user_id.clone()),
+        pk_column,
+        vec![inserted_row],
+    )
+    .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+    staged.extend(inserts);
+    stage_delete(staged, transaction_id, table_id, table_type, user_id, old_pk);
+    Ok(())
+}
+
+/// Stage a delete of one primary key. The stored row is empty because commit reloads it.
+pub fn stage_delete(
+    staged: &mut Vec<StagedMutation>,
+    transaction_id: TransactionId,
+    table_id: &TableId,
+    table_type: TableType,
+    user_id: UserId,
+    pk_value: String,
+) {
+    staged.push(StagedMutation::new(
+        transaction_id,
+        table_id.clone(),
+        table_type,
+        Some(user_id),
+        OperationKind::Delete,
+        pk_value,
+        Row::new(BTreeMap::new()),
+        true,
+    ));
+}
+
+/// Stage an update that keeps the primary key.
+pub fn stage_field_update(
+    staged: &mut Vec<StagedMutation>,
+    transaction_id: TransactionId,
+    table_id: &TableId,
+    table_type: TableType,
+    user_id: UserId,
+    pk_value: String,
+    updates: Row,
+) {
+    staged.push(StagedMutation::new(
+        transaction_id,
+        table_id.clone(),
+        table_type,
+        Some(user_id),
+        OperationKind::Update,
+        pk_value,
+        updates,
+        false,
+    ));
+}
+
+/// Claim `pk_value` when this transaction tracks claims, then stage the delete if it is live.
+///
+/// A claim that loses the liveness check is released and the delete is not staged.
+pub async fn stage_delete_if_committed_live<F, Fut>(
+    staged: &mut Vec<StagedMutation>,
+    context: &TransactionQueryContext,
+    table_id: &TableId,
+    table_type: TableType,
+    user_id: &UserId,
+    pk_value: &str,
+    is_live: F,
+) -> DataFusionResult<bool>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = DataFusionResult<bool>>,
+{
+    if let Some(claims) = context.pk_claims() {
+        claims.acquire(table_id, pk_value, &context.transaction_id).await;
+        if !is_live().await? {
+            claims.release_key(table_id, pk_value, &context.transaction_id);
+            return Ok(false);
+        }
+    }
+    stage_delete(
+        staged,
+        context.transaction_id.clone(),
+        table_id,
+        table_type,
+        user_id.clone(),
+        pk_value.to_string(),
+    );
+    Ok(true)
 }
 
 /// Reject an insert whose non-null foreign key does not match a live row.
@@ -508,64 +589,10 @@ fn row_number(row_idx: usize) -> i64 {
     i64::try_from(row_idx + 1).unwrap_or(i64::MAX)
 }
 
-/// Validate NOT NULL constraints on rows before INSERT/UPDATE
+/// Validate NOT NULL constraints on rows before INSERT/UPDATE.
 ///
-/// According to ADR-016, validation must occur before any RocksDB write.
-/// This ensures atomicity - if validation fails, no data is written.
-///
-/// # Arguments
-/// * `schema` - Arrow schema with field nullability information
-/// * `rows` - Rows to validate (each row is a map of column name -> ScalarValue)
-///
-/// # Returns
-/// * `Ok(())` if all non-nullable columns have non-NULL values
-/// * `Err(CodedError)` if any NOT NULL constraint is violated
-///
-/// # Example
-/// ```ignore
-/// let schema = table_provider.schema();
-/// validate_not_null_constraints(&schema, &rows)?;
-/// // Safe to write to storage now - validation passed
-/// ```
-pub fn validate_not_null_constraints(schema: &SchemaRef, rows: &[Row]) -> Result<(), CodedError> {
-    // Precompute non-nullable columns to avoid repeated checks
-    let non_nullable_columns: Vec<Arc<Field>> =
-        schema.fields().iter().filter(|f| !f.is_nullable()).cloned().collect();
-
-    if non_nullable_columns.is_empty() {
-        return Ok(()); // No constraints to validate
-    }
-
-    // Validate each row
-    for (row_idx, row) in rows.iter().enumerate() {
-        for field in &non_nullable_columns {
-            let column_name = field.name();
-
-            // Check if column value exists and is non-NULL
-            match row.values.get(column_name) {
-                None => {
-                    return Err(CodedError::missing_column(
-                        column_name.clone(),
-                        row_number(row_idx),
-                    ));
-                },
-                Some(value) if value.is_null() => {
-                    // Use is_null() to catch both ScalarValue::Null and typed NULLs like
-                    // Utf8(None), Int32(None), etc.
-                    return Err(CodedError::not_null(column_name.clone(), row_number(row_idx)));
-                },
-                Some(_) => continue,
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Validate NOT NULL constraints using a precomputed set of non-nullable column names.
-///
-/// This is faster than `validate_not_null_constraints` because it avoids recomputing
-/// the non-nullable column set from the schema on every call.
+/// Validation runs before any RocksDB write. A failure leaves no stored row.
+/// The caller passes the precomputed set of non-nullable column names.
 ///
 /// # Arguments
 /// * `non_null_columns` - Precomputed set of column names with NOT NULL constraints

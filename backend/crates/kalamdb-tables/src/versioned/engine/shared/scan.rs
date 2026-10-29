@@ -1,7 +1,7 @@
 #[derive(Clone)]
 pub struct SharedScanContext {
     snapshot_commit_seq: Option<VersionId>,
-    policies:            kalamdb_rls::BoundTablePolicies,
+    policies: kalamdb_rls::BoundTablePolicies,
 }
 
 #[async_trait]
@@ -84,10 +84,6 @@ impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableP
         self.authorization.authorize_resolved_rows(self, scan_context, rows).await
     }
 
-    fn scan_scope_label(&self, _scan_context: &Self::ScanContext) -> &'static str {
-        "shared"
-    }
-
     fn scan_cold_scope<'a>(&self, _scan_context: &'a Self::ScanContext) -> Option<&'a UserId> {
         None
     }
@@ -108,66 +104,13 @@ impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableP
         self.count_resolved_rows_async(scan_context.snapshot_commit_seq).await
     }
 
-    async fn scan_kvs_with_context(
-        &self,
-        scan_context: &Self::ScanContext,
-        filter: Option<&Expr>,
-        since_seq: Option<VersionId>,
-        limit: Option<usize>,
-        keep_deleted: bool,
-        cold_columns: Option<&[String]>,
-    ) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
-        let scan_limit = scan_context.policies.bypasses_rls().then_some(limit).flatten();
-        let cold_columns = self.authorization_cold_columns(scan_context, cold_columns);
-        self.scan_with_version_resolution_to_kvs_async(
-            base::system_user_id(),
-            filter,
-            since_seq,
-            scan_limit,
-            keep_deleted,
-            cold_columns.as_deref(),
-            scan_context.snapshot_commit_seq,
-        )
-        .await
-    }
-
-    async fn scan_kvs_with_diagnostics(
-        &self,
-        scan_context: &Self::ScanContext,
-        filter: Option<&Expr>,
-        since_seq: Option<VersionId>,
-        limit: Option<usize>,
-        keep_deleted: bool,
-        cold_columns: Option<&[String]>,
-    ) -> Result<base::MvccScanResult<SharedTableRowId, SharedTableRow>, KalamDbError> {
-        let scan_limit = scan_context.policies.bypasses_rls().then_some(limit).flatten();
-        let cold_columns = self.authorization_cold_columns(scan_context, cold_columns);
-        self.scan_with_version_resolution_to_kvs_result_async(
-            filter,
-            since_seq,
-            scan_limit,
-            keep_deleted,
-            cold_columns.as_deref(),
-            scan_context.snapshot_commit_seq,
-            true,
-            None,
-        )
-        .await
-    }
-
     fn additional_stored_column_names(&self, scan_context: &Self::ScanContext) -> Vec<String> {
         let mut names = Vec::new();
-        for column_id in scan_context.policies.required_column_ids() {
-            if let Some(column) = self
-                .core
-                .table_def()
-                .columns
-                .iter()
-                .find(|column| column.column_id == column_id)
-            {
-                names.push(column.column_name.clone());
-            }
-        }
+        shared_table_authorization::push_missing_column_names(
+            &mut names,
+            &self.core.table_def().columns,
+            &scan_context.policies.required_column_ids(),
+        );
         names
     }
 
@@ -254,16 +197,12 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         let row = SharedTableRow {
             _version: row_data.version,
             _deleted: row_data.deleted,
-            fields:   row_data.fields.clone(),
+            fields: row_data.fields.clone(),
         };
         Ok(Some((row_key, row)))
     }
 
-    /// Find row by PK value using the PK index for O(1) lookup.
-    ///
-    /// OPTIMIZED: Uses `pk_exists_in_hot` for fast hot-path check.
-    /// OPTIMIZED: Uses `pk_exists_in_cold` with manifest-based segment pruning for cold storage.
-    /// For shared tables, user_id is ignored (no RLS).
+    /// Find a row key by primary-key value. A cold hit still returns `None`.
     async fn find_row_key_by_id_field(
         &self,
         _user_id: &UserId,
@@ -277,28 +216,6 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 return Ok(None);
             }
             return Ok(Some(row_id));
-        }
-
-        // Not found in hot storage - check cold storage using optimized manifest-based lookup
-        // This uses column_stats to prune segments that can't contain the PK
-        let pk_name = self.primary_key_field_name();
-        let pk_column_id = self.core.primary_key_column_id();
-        let exists_in_cold = base::pk_exists_in_cold(
-            &self.core,
-            self.core.table_id(),
-            self.core.table_type(),
-            None, // No user scoping for shared tables
-            pk_name,
-            pk_column_id,
-            id_value,
-        )
-        .await?;
-
-        if exists_in_cold {
-            log::trace!("[SharedTableProvider] PK {} exists in cold storage", id_value);
-            // For PK uniqueness check, we just need to know it exists
-            // Return None to indicate "exists but key not available synchronously"
-            return Ok(None);
         }
 
         Ok(None)
@@ -318,24 +235,21 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         );
         async move {
             let _authorization_mutation = self.begin_authorization_mutation();
-            ensure_manifest_ready(&self.core, self.core.table_type(), None, "SharedTableProvider")?;
+            ensure_manifest_ready(&self.core, None, "SharedTableProvider")?;
 
             crate::utils::datafusion_dml::validate_not_null_with_set(
                 self.core.non_null_columns(),
                 std::slice::from_ref(&row_data),
             )?;
 
-            // IGNORE user_id parameter - no RLS for shared tables
             let predecessor = self.insert_predecessor(&row_data).await?;
 
-            // Generate new SeqId via SystemColumnsService
             let seq_id = version;
 
-            // Create SharedTableRow directly
             let entity = SharedTableRow {
                 _version: seq_id,
                 _deleted: false,
-                fields:   row_data,
+                fields: row_data,
             };
 
             // Key is just the SeqId (SharedTableRowId is type alias for SeqId)
@@ -351,49 +265,21 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
             log::debug!("Inserted shared table row with _seq {}", seq_id);
 
-            if let Err(e) = self.stage_vector_upsert(seq_id, &entity.fields).await {
-                log::warn!(
-                    "Failed to stage vector upsert for table={}, seq={}: {}",
-                    self.core.table_id(),
-                    seq_id.as_i64(),
-                    e
-                );
+            if let Err(error) = self.stage_vector_upsert(seq_id, &entity.fields).await {
+                crate::versioned::warn_vector_upsert(self.core.table_id(), None, seq_id, &error);
             }
 
-            // Mark manifest as having pending writes (hot data needs to be flushed)
-            let manifest_service = self.core.services.manifest_service.clone();
-            if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
-                log::warn!(
-                    "Failed to mark manifest as pending_write for {}: {}",
-                    self.core.table_id(),
-                    e
-                );
-            }
+            crate::versioned::mark_table_pending_write(&self.core, None);
 
-            // Fire topic/CDC notification (INSERT). User is actor metadata only;
-            // live fanout remains shared-scoped.
-            let notification_service = self.core.services.notification_service.clone();
-            let table_id = self.core.table_id().clone();
-
-            let has_topics = self.core.has_topic_routes(&table_id);
-            let has_live_subs = notification_service.has_subscribers(None, &table_id);
-            if has_topics || has_live_subs {
-                let row = Self::build_notification_row(&entity);
-                if has_topics {
-                    self.core
-                        .publish_to_topics(
-                            &table_id,
-                            kalamdb_commons::models::TopicOp::Insert,
-                            &row,
-                            Some(_user_id),
-                        )
-                        .await;
-                }
-                if has_live_subs {
-                    let notification = ChangeNotification::insert(table_id.clone(), row);
-                    notification_service.notify_table_change(None, table_id, notification);
-                }
-            }
+            crate::versioned::fanout_row_change(
+                &self.core,
+                None,
+                Some(_user_id),
+                kalamdb_commons::models::TopicOp::Insert,
+                || Self::build_notification_row(&entity),
+                |table_id, row| ChangeNotification::insert(table_id, row),
+            )
+            .await;
 
             Ok(row_key)
         }
@@ -401,19 +287,6 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         .await
     }
 
-    /// Optimized batch insert using single RocksDB WriteBatch
-    ///
-    /// **Performance**: This method is significantly faster than calling insert() N times:
-    /// - Single mutex acquisition for all SeqId generation
-    /// - Single RocksDB WriteBatch for all rows (one disk write vs N)
-    /// - Batch PK validation (single scan for large batches, O(1) lookups for small batches)
-    ///
-    /// # Arguments
-    /// * `_user_id` - Ignored for shared tables (no RLS)
-    /// * `rows` - Vector of Row objects to insert
-    ///
-    /// # Returns
-    /// Vector of generated SharedTableRowIds (SeqIds)
     async fn insert_batch(
         &self,
         _user_id: &UserId,
@@ -430,35 +303,21 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         updates: Row,
         version: VersionId,
     ) -> Result<Option<SharedTableRowId>, KalamDbError> {
-        // IGNORE user_id parameter - no RLS for shared tables
-        // Extract PK from prior row, then delegate to update_by_pk_value
         let pk_name = self.primary_key_field_name().to_string();
 
         // Load referenced prior version to derive PK value
-        let prior_opt = self.store.get(key).into_kalamdb_error("Failed to load prior version")?;
+        let prior = crate::versioned::hot_row_or_else(
+            self.store.get(key).into_kalamdb_error("Failed to load prior version")?,
+            load_row_from_parquet_by_seq(&self.core, None, *key, |row_data| SharedTableRow {
+                _version: row_data.version,
+                _deleted: row_data.deleted,
+                fields: row_data.fields,
+            }),
+            "Row not found for update",
+        )
+        .await?;
 
-        let prior = if let Some(p) = prior_opt {
-            p
-        } else {
-            load_row_from_parquet_by_seq(
-                &self.core,
-                self.core.table_type(),
-                &self.core.schema_ref(),
-                None,
-                *key,
-                |row_data| SharedTableRow {
-                    _version: row_data.version,
-                    _deleted: row_data.deleted,
-                    fields:   row_data.fields,
-                },
-            )
-            .await?
-            .ok_or_else(|| KalamDbError::NotFound("Row not found for update".to_string()))?
-        };
-
-        let pk_value_scalar = prior.fields.get(&pk_name).cloned().ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!("Prior row missing PK {}", pk_name))
-        })?;
+        let pk_value_scalar = crate::versioned::required_pk_scalar(&prior.fields, &pk_name)?;
 
         // Validate PK is not being changed to a value that already exists
         base::validate_pk_update(self, None, &updates, &pk_value_scalar).await?;
@@ -477,46 +336,6 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         self.update_by_pk_value_with_version(_user_id, pk_value, updates, version).await
     }
 
-    async fn delete(
-        &self,
-        _user_id: &UserId,
-        key: &SharedTableRowId,
-        version: VersionId,
-    ) -> Result<(), KalamDbError> {
-        // IGNORE user_id parameter - no RLS for shared tables
-        // Extract PK from prior row, then delegate to delete_by_pk_value
-        let pk_name = self.primary_key_field_name().to_string();
-
-        let prior_opt = self.store.get(key).into_kalamdb_error("Failed to load prior version")?;
-
-        let prior = if let Some(p) = prior_opt {
-            p
-        } else {
-            load_row_from_parquet_by_seq(
-                &self.core,
-                self.core.table_type(),
-                &self.core.schema_ref(),
-                None,
-                *key,
-                |row_data| SharedTableRow {
-                    _version: row_data.version,
-                    _deleted: row_data.deleted,
-                    fields:   row_data.fields,
-                },
-            )
-            .await?
-            .ok_or_else(|| KalamDbError::NotFound("Row not found for delete".to_string()))?
-        };
-
-        let pk_value_scalar = prior.fields.get(&pk_name).cloned().ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!("Prior row missing PK {}", pk_name))
-        })?;
-        let pk_value_str = pk_value_scalar.to_string();
-
-        self.delete_by_pk_value(_user_id, &pk_value_str, version).await?;
-        Ok(())
-    }
-
     async fn delete_by_pk_value(
         &self,
         _user_id: &UserId,
@@ -524,17 +343,6 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         version: VersionId,
     ) -> Result<bool, KalamDbError> {
         self.delete_by_pk_value_with_version(_user_id, pk_value, version).await
-    }
-
-    async fn scan_rows(
-        &self,
-        state: &dyn Session,
-        projection: Option<&Vec<usize>>,
-        filter: Option<&Expr>,
-        limit: Option<usize>,
-    ) -> Result<RecordBatch, KalamDbError> {
-        let scan_context = self.build_scan_context(state)?;
-        self.scan_rows_with_context(&scan_context, projection, filter, limit).await
     }
 
     async fn scan_with_version_resolution_to_kvs_async(
@@ -560,13 +368,73 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         .await
         .map(|result| result.rows)
     }
-
-    fn extract_row(row: &SharedTableRow) -> &Row {
-        &row.fields
-    }
 }
 
 impl SharedTableProvider {
+    pub(crate) async fn columnar_hot_scan(
+        &self,
+        snapshot: Option<VersionId>,
+        projection: Option<&Vec<usize>>,
+        filter: Option<&Expr>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+    ) -> Result<Option<(RecordBatch, usize)>, KalamDbError> {
+        crate::versioned::columnar::run_columnar_hot_scan(
+            &self.core,
+            &self.store,
+            None,
+            snapshot,
+            projection,
+            filter,
+            limit,
+            keep_deleted,
+            crate::versioned::columnar::decode_shared_version,
+        )
+        .await
+    }
+
+    pub async fn sum_hot_covering_integers(
+        &self,
+        filters: &[Expr],
+        value_column: &str,
+    ) -> Result<Option<(u64, i128)>, KalamDbError> {
+        crate::versioned::covering::sum_hot_covering_integers(
+            &self.core,
+            &self.store,
+            None,
+            filters,
+            value_column,
+        )
+        .await
+    }
+
+    pub async fn plan_literal_equality_updates(
+        &self,
+        transaction_id: &kalamdb_commons::TransactionId,
+        user_id: &UserId,
+        snapshot_commit_seq: Option<VersionId>,
+        overlay: Option<&kalamdb_transactions::TransactionOverlay>,
+        seek_column: &str,
+        seek_value: &ScalarValue,
+        assignments: &[(String, ScalarValue)],
+    ) -> Result<Option<Vec<kalamdb_transactions::StagedMutation>>, KalamDbError> {
+        crate::versioned::equality::plan_literal_equality_updates(
+            &self.core,
+            &self.store,
+            &self.vector_columns,
+            TableType::Shared,
+            None,
+            transaction_id,
+            user_id,
+            snapshot_commit_seq,
+            overlay,
+            seek_column,
+            seek_value,
+            assignments,
+        )
+        .await
+    }
+
     /// SELECT visibility for one shared FILE path.
     ///
     /// DBA and System bypass. An empty policy set denies. Otherwise a current
@@ -681,14 +549,14 @@ impl SharedTableProvider {
                         scan_limit,
                         pk_name,
                         None,
-                        storage_ordinals.clone(),
+                        storage_ordinals,
                     )
                     .await?;
                     base::reject_truncated_unbounded_scan(limit, rows.len())?;
                     return Ok(rows);
                 }
             }
-            let scanned = if let Some(ordinals) = storage_ordinals.clone() {
+            let scanned = if let Some(ordinals) = storage_ordinals {
                 self.store
                     .scan_typed_with_prefix_and_start_selected_async(
                         None,
@@ -716,9 +584,9 @@ impl SharedTableProvider {
         };
         let cold_future = async {
             if include_diagnostics {
-                self.scan_parquet_files_with_stats_async(filter, cold_columns).await
+                base::scan_provider_parquet_stats(&self.core, None, filter, cold_columns).await
             } else {
-                self.scan_parquet_files_as_result_async(filter, cold_columns).await
+                base::scan_provider_parquet_result(&self.core, None, filter, cold_columns).await
             }
         };
         let resolved = base::resolve_latest_scan_from_futures(
@@ -744,12 +612,12 @@ impl SharedTableProvider {
         );
         let diagnostics = if include_diagnostics {
             DeferredScanDiagnostics {
-                hot_rows_scanned:   Some(resolved.hot_rows_scanned),
-                cold_rows_scanned:  Some(resolved.cold_rows_scanned),
-                cold_files_total:   Some(resolved.cold_files_total),
+                hot_rows_scanned: Some(resolved.hot_rows_scanned),
+                cold_rows_scanned: Some(resolved.cold_rows_scanned),
+                cold_files_total: Some(resolved.cold_files_total),
                 cold_files_skipped: Some(resolved.cold_files_skipped),
                 cold_files_scanned: Some(resolved.cold_files_scanned),
-                cold_files:         resolved.cold_files,
+                cold_files: resolved.cold_files,
             }
         } else {
             DeferredScanDiagnostics::default()

@@ -1,14 +1,7 @@
-use datafusion::{
-    arrow::{datatypes::SchemaRef, record_batch::RecordBatch},
-    logical_expr::Expr,
-};
+use datafusion::{arrow::record_batch::RecordBatch, logical_expr::Expr};
 use kalamdb_commons::{
     constants::SystemColumnNames,
-    models::{
-        schemas::{TableDefinition, TableType},
-        UserId,
-    },
-    TableId,
+    models::{schemas::TableDefinition, UserId},
 };
 
 use crate::{
@@ -28,65 +21,43 @@ pub(crate) struct ParquetScanResult {
     pub stats: ParquetScanStats,
 }
 
-/// Async helper for loading Parquet batches via ManifestAccessPlanner.
-///
-/// Uses async file I/O to avoid blocking the tokio runtime.
-pub(crate) async fn scan_parquet_files_as_batch_async(
+pub(crate) async fn scan_provider_parquet_batch(
     core: &TableProviderCore,
-    table_id: &TableId,
-    table_type: TableType,
     user_id: Option<&UserId>,
-    schema: SchemaRef,
     filter: Option<&Expr>,
     columns: Option<&[String]>,
 ) -> Result<RecordBatch, KalamDbError> {
-    Ok(scan_parquet_files_as_result_async(
-        core, table_id, table_type, user_id, schema, filter, columns,
-    )
-    .await?
-    .batch)
+    Ok(scan_provider_parquet_result(core, user_id, filter, columns).await?.batch)
 }
 
-pub(crate) async fn scan_parquet_files_as_result_async(
+pub(crate) async fn scan_provider_parquet_result(
     core: &TableProviderCore,
-    table_id: &TableId,
-    table_type: TableType,
     user_id: Option<&UserId>,
-    schema: SchemaRef,
     filter: Option<&Expr>,
     columns: Option<&[String]>,
 ) -> Result<ParquetScanResult, KalamDbError> {
-    scan_parquet_files_internal_async(
-        core, table_id, table_type, user_id, schema, filter, columns, false,
-    )
-    .await
+    scan_parquet_files_internal_async(core, user_id, filter, columns, false).await
 }
 
-pub(crate) async fn scan_parquet_files_with_stats_async(
+pub(crate) async fn scan_provider_parquet_stats(
     core: &TableProviderCore,
-    table_id: &TableId,
-    table_type: TableType,
     user_id: Option<&UserId>,
-    schema: SchemaRef,
     filter: Option<&Expr>,
     columns: Option<&[String]>,
 ) -> Result<ParquetScanResult, KalamDbError> {
-    scan_parquet_files_internal_async(
-        core, table_id, table_type, user_id, schema, filter, columns, true,
-    )
-    .await
+    scan_parquet_files_internal_async(core, user_id, filter, columns, true).await
 }
 
 async fn scan_parquet_files_internal_async(
     core: &TableProviderCore,
-    table_id: &TableId,
-    table_type: TableType,
     user_id: Option<&UserId>,
-    schema: SchemaRef,
     filter: Option<&Expr>,
     columns: Option<&[String]>,
     record_visited_files: bool,
 ) -> Result<ParquetScanResult, KalamDbError> {
+    let table_id = core.table_id();
+    let table_type = core.table_type();
+    let schema = core.schema_ref();
     let cache_result = core.services.manifest_service.get_or_load_async(table_id, user_id).await;
 
     // Fast path: if manifest loaded successfully and has no segments,

@@ -103,24 +103,22 @@ impl FlushTarget {
 
         match table_type {
             TableType::User => {
-                let provider = provider_arc.as_user()
-                    .ok_or_else(|| {
-                        KalamDbError::InvalidOperation(
-                            "Cached provider type mismatch for user table".into(),
-                        )
-                    })?;
+                let store = provider_arc.user_store().ok_or_else(|| {
+                    KalamDbError::InvalidOperation(
+                        "Cached provider type mismatch for user table".into(),
+                    )
+                })?;
 
-                Ok(Some(Self::User(provider.store())))
+                Ok(Some(Self::User(store)))
             },
             TableType::Shared => {
-                let provider = provider_arc.as_shared()
-                    .ok_or_else(|| {
-                        KalamDbError::InvalidOperation(
-                            "Cached provider type mismatch for shared table".into(),
-                        )
-                    })?;
+                let store = provider_arc.shared_store().ok_or_else(|| {
+                    KalamDbError::InvalidOperation(
+                        "Cached provider type mismatch for shared table".into(),
+                    )
+                })?;
 
-                Ok(Some(Self::Shared(provider.store())))
+                Ok(Some(Self::Shared(store)))
             },
             TableType::Stream | TableType::System => Ok(None),
         }

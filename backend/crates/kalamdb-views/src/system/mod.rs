@@ -18,6 +18,8 @@ macro_rules! memoized_view_schema {
     };
 }
 
+pub use crate::catalog_provider::ComputedCatalogProvider;
+
 pub mod active_procedure_runs;
 pub mod cluster;
 pub mod cluster_groups;

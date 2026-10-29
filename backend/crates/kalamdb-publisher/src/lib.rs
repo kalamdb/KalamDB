@@ -10,7 +10,7 @@
 //! # Architecture
 //!
 //! The publisher is called **synchronously** from table providers (SharedTableProvider,
-//! UserTableProvider, StreamTableProvider) during insert/update/delete operations.
+//! UserTableProvider, StreamTableEngine) during insert/update/delete operations.
 //! This ensures topic messages are durable before the write is acknowledged.
 //!
 //! ```text

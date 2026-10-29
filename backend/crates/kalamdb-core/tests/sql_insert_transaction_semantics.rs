@@ -41,15 +41,15 @@ async fn load_user_rows(
         .schema_registry()
         .get_kalam_provider(table_id)
         .expect("user provider should be registered");
-    let provider = provider_arc.as_user().expect("provider should downcast to UserTableProvider");
+    let provider = provider_arc.as_ref();
 
     let (_, first_row) = provider
-        .find_by_pk(user_id, &ScalarValue::Int64(Some(first_id)))
+        .find_user_by_pk(user_id, &ScalarValue::Int64(Some(first_id)))
         .await
         .expect("lookup succeeds")
         .expect("first row exists");
     let (_, second_row) = provider
-        .find_by_pk(user_id, &ScalarValue::Int64(Some(second_id)))
+        .find_user_by_pk(user_id, &ScalarValue::Int64(Some(second_id)))
         .await
         .expect("lookup succeeds")
         .expect("second row exists");

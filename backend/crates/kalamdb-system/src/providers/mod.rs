@@ -30,9 +30,7 @@ pub mod users;
 // Re-export base traits
 // Re-export all providers
 pub use audit_logs::{AuditLogEntry, AuditLogsTableProvider};
-pub use base::{
-    extract_filter_value, extract_range_filters, SimpleSystemTableScan, SystemTableScan,
-};
+pub use base::{extract_filter_value, extract_range_filters};
 pub use catalog::{
     ActivateFunctionOutcome, CatalogFunctionArtifact, CatalogFunctionModule,
     CatalogFunctionRevision, CatalogRoutine, CatalogRoutineGrant, CatalogRoutineParameter,

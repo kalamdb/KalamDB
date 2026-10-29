@@ -110,13 +110,13 @@ impl LiveAuthorizationBinder for LiveAuthorizationBinderAdapter {
             .schema_registry()
             .get_kalam_provider(table_id)
             .ok_or_else(|| LiveError::TableNotFound(table_id.to_string()))?;
-        let provider = provider.as_shared().ok_or_else(|| {
-            LiveError::InvalidOperation(format!(
+        if !provider.is_shared() {
+            return Err(LiveError::InvalidOperation(format!(
                 "Shared-table RLS provider unavailable for {table_id}"
-            ))
-        })?;
+            )));
+        }
         let bound = provider
-            .bind_live_authorization(user_id, role)
+            .bind_shared_live_authorization(user_id, role)
             .await
             .map_err(live_authorization_bind_error)?;
         let live_route = match bound.live_route().map_err(LiveError::InvalidOperation)? {

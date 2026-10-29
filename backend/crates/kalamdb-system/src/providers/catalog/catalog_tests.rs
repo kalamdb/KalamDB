@@ -620,10 +620,7 @@ fn get_type_reads_the_entity_store_without_a_query_plan() {
     let loaded = stores.get_type(&catalog_type.type_id).unwrap().unwrap();
 
     assert_eq!(loaded, catalog_type);
-    let partition = SystemTable::Types
-        .column_family_name()
-        .expect("types is a table")
-        .to_string();
+    let partition = SystemTable::Types.column_family_name().expect("types is a table").to_string();
     let ops = backend.recorded_ops();
     assert!(!ops.is_empty());
     assert!(

@@ -46,11 +46,20 @@ pub struct Namespace {
         comment = "Namespace creation timestamp"
     )]
     pub created_at: i64, // Unix timestamp in milliseconds
-    #[column(id = 1, ordinal = 1, primary_key = true, comment = "Namespace identifier")]
+    #[column(
+        id = 1,
+        ordinal = 1,
+        primary_key = true,
+        comment = "Namespace identifier"
+    )]
     pub namespace_id: SchemaId,
     #[column(id = 2, ordinal = 2, comment = "Namespace name")]
     pub name: String,
-    #[column(id = 4, ordinal = 4, comment = "Namespace configuration options (JSON)")]
+    #[column(
+        id = 4,
+        ordinal = 4,
+        comment = "Namespace configuration options (JSON)"
+    )]
     #[serde(default)]
     pub options: Option<Value>,
     #[column(id = 5, ordinal = 5, comment = "Number of tables in this namespace")]

@@ -563,13 +563,9 @@ fn user_table_has_hot_rows(
     let Some(provider_arc) = ctx.app_ctx.schema_registry().get_kalam_provider(table_id) else {
         return false;
     };
-    let Some(provider) =
-        provider_arc.as_user()
-    else {
+    let Some(store) = provider_arc.user_store() else {
         return true;
     };
-
-    let store = provider.store();
     let user_prefix = kalamdb_commons::ids::UserTableRowId::user_prefix(user_id);
     let partition = store.partition();
     store

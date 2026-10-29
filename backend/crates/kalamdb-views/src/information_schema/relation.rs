@@ -22,10 +22,13 @@ use kalamdb_commons::schemas::CatalogRow;
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
-    catalog_provider::{CatalogScanCtx, CatalogSource, CatalogTableProvider},
+    catalog_provider::{CatalogScanCtx, CatalogSource},
     information_schema::{
         catalog_metadata::CatalogMetadataIndex,
-        extend::{cast_batch_to_schema, collect_inner_batch, concat_or_either, load_inner_table},
+        extend::{
+            cast_batch_to_schema, collect_inner_batch, concat_or_either, load_inner_table,
+            ComputedCatalogProvider,
+        },
     },
 };
 
@@ -220,7 +223,7 @@ impl<R: InformationSchemaRelation> InfoSchemaSource<R> {
 
     /// Register the relation on the shared catalog scan shell.
     pub fn provider(relation: R) -> Arc<dyn TableProvider> {
-        Arc::new(CatalogTableProvider::new(Arc::new(Self::new(relation))))
+        Arc::new(ComputedCatalogProvider::new(Arc::new(Self::new(relation))))
     }
 }
 

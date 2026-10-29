@@ -134,91 +134,26 @@ impl UserTableProvider {
         I: IntoIterator<Item = &'a Row>,
     {
         let pk_name = self.primary_key_field_name();
-        let rows = rows.into_iter();
-        let (lower_bound, upper_bound) = rows.size_hint();
-        let capacity = upper_bound.unwrap_or(lower_bound);
-        let mut pk_values_to_check: Vec<(String, ScalarValue)> = Vec::with_capacity(capacity);
-        let mut seen_batch_pks = HashSet::with_capacity(capacity);
-
-        for row_data in rows {
-            if let Some(pk_value) = row_data.get(pk_name) {
-                if !matches!(pk_value, ScalarValue::Null) {
-                    let pk_str =
-                        crate::utils::unified_dml::extract_user_pk_value(row_data, pk_name)?;
-                    if !seen_batch_pks.insert(pk_str.clone()) {
-                        return Err(KalamDbError::AlreadyExists(format!(
-                            "Primary key violation: value '{}' appears multiple times in the \
-                             insert batch for column '{}'",
-                            pk_str, pk_name
-                        )));
-                    }
-                    pk_values_to_check.push((pk_str, pk_value.clone()));
-                }
-            }
-        }
-
-        if pk_values_to_check.is_empty() {
+        let pk_values = crate::versioned::batch_primary_keys(pk_name, rows)?;
+        if pk_values.is_empty() {
             return Ok(HashMap::new());
         }
-
-        let mut pk_prefixes: Vec<(String, Vec<u8>)> = Vec::with_capacity(pk_values_to_check.len());
-        for (pk_str, pk_value) in &pk_values_to_check {
-            pk_prefixes
-                .push((pk_str.clone(), self.pk_index.build_user_pk_prefix(user_id, pk_value)));
-        }
-
-        let store = self.store.clone();
-        let hot_scan = if pk_prefixes.len() <= 1 {
-            scan_user_hot_pk_insert(&store, &pk_prefixes)?
-        } else {
-            tokio::task::spawn_blocking(
-                move || -> Result<
-                    crate::versioned::HotInsertScan<UserTableRowId, UserTableRow>,
-                    KalamDbError,
-                > {
-                    scan_user_hot_pk_insert(&store, &pk_prefixes)
-                },
-            )
-            .await
-            .map_err(|e| KalamDbError::InvalidOperation(format!("spawn_blocking error: {}", e)))??
-        };
-
-        if let Some(dup_pk) = hot_scan.duplicate {
-            return Err(KalamDbError::AlreadyExists(format!(
-                "Primary key violation: value '{}' already exists in column '{}' (hot)",
-                dup_pk, pk_name
-            )));
-        }
-
-        let pk_column_id = self.core.primary_key_column_id();
-        let mut pk_values_for_cold_check: Vec<String> =
-            Vec::with_capacity(pk_values_to_check.len());
-        for (pk_str, _pk_value) in &pk_values_to_check {
-            if !hot_scan.tombstones.contains_key(pk_str) {
-                pk_values_for_cold_check.push(pk_str.clone());
-            }
-        }
-
-        if !pk_values_for_cold_check.is_empty() {
-            if let Some(found_pk) = base::pk_exists_batch_in_cold(
-                &self.core,
-                self.core.table_id(),
-                self.core.table_type(),
-                Some(user_id),
-                pk_name,
-                pk_column_id,
-                &pk_values_for_cold_check,
-            )
-            .await?
-            {
-                return Err(KalamDbError::AlreadyExists(format!(
-                    "Primary key violation: value '{}' already exists in column '{}' (cold)",
-                    found_pk, pk_name
-                )));
-            }
-        }
-
-        Ok(hot_scan.tombstones)
+        let prefixes = pk_values
+            .iter()
+            .map(|(pk_str, pk_value)| {
+                (pk_str.clone(), self.pk_index.build_user_pk_prefix(user_id, pk_value))
+            })
+            .collect();
+        crate::versioned::tombstones_replacing_insert_keys(
+            Arc::clone(&self.store),
+            &self.core,
+            Some(user_id),
+            pk_name,
+            prefixes,
+            Some("hot"),
+            Some("cold"),
+        )
+        .await
     }
 
     async fn persist_insert_batch_rows(
@@ -232,16 +167,9 @@ impl UserTableProvider {
             return Ok(Vec::new());
         }
 
-        ensure_manifest_ready(
-            &self.core,
-            self.core.table_type(),
-            Some(user_id),
-            "UserTableProvider",
-        )?;
+        ensure_manifest_ready(&self.core, Some(user_id), "UserTableProvider")?;
 
-        let coerced_rows = coerce_rows(rows, &self.schema_ref()).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
-        })?;
+        let coerced_rows = crate::versioned::coerce_row_batch(rows, &self.schema_ref())?;
 
         crate::utils::datafusion_dml::validate_not_null_with_set(
             self.core.non_null_columns(),
@@ -256,13 +184,7 @@ impl UserTableProvider {
             HashMap::new()
         };
 
-        if versions.len() != row_count {
-            return Err(KalamDbError::InvalidOperation(format!(
-                "version count {} does not match row count {}",
-                versions.len(),
-                row_count
-            )));
-        }
+        crate::versioned::require_version_count(versions.len(), row_count)?;
 
         let mut entries: Vec<(UserTableRowId, UserTableRow)> = Vec::with_capacity(row_count);
 
@@ -279,46 +201,19 @@ impl UserTableProvider {
             ));
         }
 
-        let store = self.store.clone();
-        if replaced_tombstones.is_empty() {
-            store.insert_batch(&entries).map_err(|e| {
-                KalamDbError::InvalidOperation(format!("Failed to batch insert table rows: {}", e))
-            })?;
-        } else {
-            let pk_name = self.primary_key_field_name();
-            let mut replaced_tombstones = replaced_tombstones;
-            let items = entries
-                .iter()
-                .map(|(key, entity)| {
-                    let previous =
-                        crate::utils::unified_dml::extract_user_pk_value(&entity.fields, pk_name)
-                            .ok()
-                            .and_then(|pk| replaced_tombstones.remove(&pk));
-                    (previous, key.clone(), entity.clone())
-                })
-                .collect::<Vec<_>>();
-            store.replace_batch(&items).map_err(|e| {
-                KalamDbError::InvalidOperation(format!("Failed to batch insert table rows: {}", e))
-            })?;
+        crate::versioned::write_insert_batch(
+            &self.store,
+            &entries,
+            replaced_tombstones,
+            self.primary_key_field_name(),
+            |entity| &entity.fields,
+        )?;
+
+        if let Err(error) = self.stage_vector_upsert_batch(user_id, &entries).await {
+            crate::versioned::warn_vector_upsert_batch(self.core.table_id(), Some(user_id), &error);
         }
 
-        if let Err(e) = self.stage_vector_upsert_batch(user_id, &entries).await {
-            log::warn!(
-                "Failed to batch stage vector upserts for table={}, user={}: {}",
-                self.core.table_id(),
-                user_id.as_str(),
-                e
-            );
-        }
-
-        let manifest_service = self.core.services.manifest_service.clone();
-        if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), Some(user_id)) {
-            log::warn!(
-                "Failed to mark manifest as pending_write for {}: {}",
-                self.core.table_id(),
-                e
-            );
-        }
+        crate::versioned::mark_table_pending_write(&self.core, Some(user_id));
 
         log::debug!(
             "Batch inserted {} user table rows for user {} with _seq range [{}, {}]",
@@ -342,43 +237,23 @@ impl UserTableProvider {
         if payloads.is_empty() {
             return Ok(0);
         }
-        if self.core.table_def().columns.iter().any(|column| {
-            matches!(column.data_type(), kalamdb_commons::models::datatypes::KalamDataType::File)
-        }) {
-            let rows = rows_from_field_payloads(payloads, self.core.storage_schema().as_ref())?;
+        if crate::versioned::table_has_file_columns(self.core.table_def()) {
+            let rows = crate::versioned::rows_from_field_payloads(
+                payloads,
+                self.core.storage_schema().as_ref(),
+            )?;
             return Ok(self.insert_batch_with_versions(user_id, rows, versions).await?.len());
         }
 
         let entries = self.persist_encoded_field_rows(user_id, payloads, versions).await?;
         let row_count = entries.len();
-        let notification_service = self.core.services.notification_service.clone();
-        let table_id = self.core.table_id().clone();
-        let has_topics = self.core.has_topic_routes(&table_id);
-        let has_live_subs = notification_service.has_subscribers(Some(user_id), &table_id);
-        if has_topics || has_live_subs {
-            let rows: Vec<_> =
-                entries.iter().map(|(_, entity)| Self::build_notification_row(entity)).collect();
-            if has_topics {
-                self.core
-                    .publish_batch_to_topics(
-                        &table_id,
-                        kalamdb_commons::models::TopicOp::Insert,
-                        &rows,
-                        Some(user_id),
-                    )
-                    .await;
-            }
-            if has_live_subs {
-                for row in rows {
-                    let notification = ChangeNotification::insert(table_id.clone(), row);
-                    notification_service.notify_table_change(
-                        Some(user_id.clone()),
-                        table_id.clone(),
-                        notification,
-                    );
-                }
-            }
-        }
+        crate::versioned::fanout_insert_notifications(
+            &self.core,
+            Some(user_id),
+            Some(user_id),
+            || entries.iter().map(|(_, entity)| Self::build_notification_row(entity)).collect(),
+        )
+        .await;
         Ok(row_count)
     }
 
@@ -388,36 +263,18 @@ impl UserTableProvider {
         payloads: &[Vec<u8>],
         versions: &[VersionId],
     ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
-        ensure_manifest_ready(
-            &self.core,
-            self.core.table_type(),
-            Some(user_id),
-            "UserTableProvider",
-        )?;
+        ensure_manifest_ready(&self.core, Some(user_id), "UserTableProvider")?;
         let storage = Arc::clone(self.core.storage_schema());
         let arrow = self.schema_ref();
-        let mut decoded = Vec::with_capacity(payloads.len());
-        for payload in payloads {
-            let mut columns =
-                kalamdb_serialization::decode_row_fields_columns(payload, storage.as_ref())
-                    .map_err(|error| {
-                        KalamDbError::InvalidOperation(format!(
-                            "ordinal insert decode failed: {error}"
-                        ))
-                    })?;
-            coerce_storage_columns(&mut columns, storage.as_ref(), &arrow)?;
-            decoded.push(columns);
-        }
-        validate_encoded_not_null(&decoded, storage.as_ref(), self.core.non_null_columns())?;
-        if versions.len() != decoded.len() {
-            return Err(KalamDbError::InvalidOperation(format!(
-                "version count {} does not match row count {}",
-                versions.len(),
-                decoded.len()
-            )));
-        }
-
-        let names: Vec<String> = storage.fields.iter().map(|field| field.name.clone()).collect();
+        let decoded = crate::versioned::decode_ordinal_insert(
+            payloads,
+            storage.as_ref(),
+            &arrow,
+            self.core.non_null_columns(),
+            versions,
+        )?;
+        let names = decoded.names;
+        let decoded = decoded.columns;
         let pk_name = self.primary_key_field_name();
         let pk_ordinal = storage.fields.iter().position(|field| field.name == pk_name);
         let pk_rows: Vec<Row> = decoded
@@ -466,25 +323,9 @@ impl UserTableProvider {
             KalamDbError::InvalidOperation(format!("Failed to batch insert table rows: {error}"))
         })?;
         if let Err(error) = self.stage_vector_upsert_batch(user_id, &entries).await {
-            log::warn!(
-                "Failed to batch stage vector upserts for table={}, user={}: {}",
-                self.core.table_id(),
-                user_id.as_str(),
-                error
-            );
+            crate::versioned::warn_vector_upsert_batch(self.core.table_id(), Some(user_id), &error);
         }
-        if let Err(error) = self
-            .core
-            .services
-            .manifest_service
-            .mark_pending_write(self.core.table_id(), Some(user_id))
-        {
-            log::warn!(
-                "Failed to mark manifest as pending_write for {}: {}",
-                self.core.table_id(),
-                error
-            );
-        }
+        crate::versioned::mark_table_pending_write(&self.core, Some(user_id));
         Ok(entries)
     }
 
@@ -521,18 +362,7 @@ impl UserTableProvider {
         storage_ordinals: Option<&[usize]>,
     ) -> Result<Option<(UserTableRowId, UserTableRow)>, KalamDbError> {
         let prefix = self.pk_index.build_user_pk_prefix(user_id, pk_value);
-        match storage_ordinals {
-            Some(ordinals) => self
-                .store
-                .get_latest_by_index_prefix_selected_async(0, prefix, ordinals.to_vec())
-                .await
-                .into_kalamdb_error("PK index scan failed"),
-            None => self
-                .store
-                .get_latest_by_index_prefix_async(0, prefix)
-                .await
-                .into_kalamdb_error("PK index scan failed"),
-        }
+        crate::versioned::latest_hot_by_prefix(&self.store, prefix, storage_ordinals).await
     }
 
     async fn hot_pk_lookup(
@@ -552,31 +382,14 @@ impl UserTableProvider {
         pk_value: &str,
     ) -> Result<crate::versioned::MutationTarget<UserTableRowId, UserTableRow>, KalamDbError> {
         let pk_name = self.primary_key_field_name();
-        let schema = self.schema_ref();
-        let pk_field = schema.field_with_name(pk_name).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "PK column '{}' not found in schema: {}",
-                pk_name, e
-            ))
-        })?;
-        let pk_scalar =
-            kalamdb_commons::conversions::parse_string_as_scalar(pk_value, pk_field.data_type())
-                .map_err(KalamDbError::InvalidOperation)?;
-
-        match self.hot_pk_lookup(user_id, &pk_scalar).await? {
-            crate::versioned::HotPkLookup::Live(key, row) => {
-                Ok(crate::versioned::MutationTarget::Hot(key, row))
-            },
-            crate::versioned::HotPkLookup::Tombstoned(_, _) => {
-                Ok(crate::versioned::MutationTarget::Tombstoned)
-            },
-            crate::versioned::HotPkLookup::Missing => {
-                match base::find_row_by_pk(self, Some(user_id), pk_value).await? {
-                    Some((_, row)) => Ok(crate::versioned::MutationTarget::Cold(row)),
-                    None => Ok(crate::versioned::MutationTarget::Missing),
-                }
-            },
-        }
+        let pk_scalar = crate::versioned::pk_text_to_scalar(&self.schema_ref(), pk_name, pk_value)?;
+        let lookup = self.hot_pk_lookup(user_id, &pk_scalar).await?;
+        let cold = if matches!(lookup, crate::versioned::HotPkLookup::Missing) {
+            base::find_row_by_pk(self, Some(user_id), pk_value).await?.map(|(_, row)| row)
+        } else {
+            None
+        };
+        Ok(crate::versioned::mutation_target_from_hot(lookup, cold))
     }
 
     async fn insert_predecessor(
@@ -584,40 +397,16 @@ impl UserTableProvider {
         user_id: &UserId,
         row_data: &Row,
     ) -> Result<Option<(UserTableRowId, UserTableRow)>, KalamDbError> {
-        if self.core.is_auto_increment_pk() {
-            return Ok(None);
-        }
         let pk_name = self.primary_key_field_name();
-        let Some(pk_value) = row_data.get(pk_name) else {
+        let Some((pk_value, pk_str)) =
+            crate::versioned::insert_pk_parts(self.core.is_auto_increment_pk(), row_data, pk_name)?
+        else {
             return Ok(None);
         };
-        if matches!(pk_value, ScalarValue::Null) {
-            return Ok(None);
-        }
-        let pk_str = crate::utils::unified_dml::extract_user_pk_value(row_data, pk_name)?;
         let prefix = self.pk_index.build_user_pk_prefix(user_id, pk_value);
-        match self
-            .store
-            .get_latest_deleted_flag_by_index_prefix(0, &prefix)
-            .into_kalamdb_error("PK index scan failed")?
-        {
-            Some((_, false)) => Err(KalamDbError::AlreadyExists(format!(
-                "Primary key violation: value '{}' already exists in column '{}' (hot storage)",
-                pk_str, pk_name
-            ))),
-            Some((key, true)) => {
-                let row = self
-                    .store
-                    .get(&key)
-                    .into_kalamdb_error("PK tombstone load failed")?
-                    .ok_or_else(|| {
-                        KalamDbError::NotFound(format!(
-                            "tombstone for primary key '{pk_str}' disappeared before replacement"
-                        ))
-                    })?;
-                Ok(Some((key, row)))
-            },
-            None => {
+        match crate::versioned::hot_insert_predecessor(&self.store, &prefix, &pk_str, pk_name)? {
+            crate::versioned::InsertPredecessor::Tombstone(key, row) => Ok(Some((key, row))),
+            crate::versioned::InsertPredecessor::Missing => {
                 base::ensure_pk_absent_in_cold(self, Some(user_id), &pk_str).await?;
                 Ok(None)
             },
@@ -631,12 +420,8 @@ impl UserTableProvider {
         entity: UserTableRow,
         error_context: &str,
     ) -> Result<(), KalamDbError> {
-        let written = if previous.is_some() {
-            self.store.replace_async(previous, row_key, entity).await
-        } else {
-            self.store.insert_async(row_key, entity).await
-        };
-        written.map_err(|e| KalamDbError::InvalidOperation(format!("{}: {}", error_context, e)))
+        crate::versioned::write_replaced_row(&self.store, previous, row_key, entity, error_context)
+            .await
     }
 
     pub async fn find_by_pk(
@@ -644,128 +429,19 @@ impl UserTableProvider {
         user_id: &UserId,
         pk_value: &ScalarValue,
     ) -> Result<Option<(UserTableRowId, UserTableRow)>, KalamDbError> {
-        Ok(self.latest_hot_pk_entry(user_id, pk_value).await?.and_then(|(row_id, row)| {
-            if row._deleted {
-                None
-            } else {
-                Some((row_id, row))
-            }
-        }))
-    }
-
-    pub async fn patch_commit_seq_for_row_key(
-        &self,
-        row_key: &UserTableRowId,
-        version: VersionId,
-    ) -> Result<(), KalamDbError> {
-        let row = self
-            .store
-            .get(row_key)
-            .into_kalamdb_error("Failed to load row for commit_seq patch")?
-            .ok_or_else(|| {
-                KalamDbError::NotFound(format!(
-                    "row '{}' not found while patching commit_seq",
-                    row_key.version()
-                ))
-            })?;
-        let _ = version; // version is assigned at insert; patch is a no-op
-        self.store.insert_async(row_key.clone(), row).await.map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to patch commit_seq: {}", e))
-        })
-    }
-
-    pub async fn patch_latest_commit_seq_by_pk(
-        &self,
-        user_id: &UserId,
-        pk_value: &str,
-        version: VersionId,
-    ) -> Result<bool, KalamDbError> {
-        let schema = self.schema_ref();
-        let pk_field = schema.field_with_name(self.primary_key_field_name()).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("PK column lookup failed: {}", e))
-        })?;
-        let pk_scalar =
-            kalamdb_commons::conversions::parse_string_as_scalar(pk_value, pk_field.data_type())
-                .map_err(KalamDbError::InvalidOperation)?;
-
-        let Some((row_key, _)) = self.latest_hot_pk_entry(user_id, &pk_scalar).await? else {
-            return Ok(false);
-        };
-
-        self.patch_commit_seq_for_row_key(&row_key, version).await?;
-        Ok(true)
-    }
-
-    /// Scan Parquet files from cold storage for a specific user (async version).
-    ///
-    /// Lists all *.parquet files in the user's storage directory and merges them into a single
-    /// RecordBatch. Returns an empty batch if no Parquet files exist.
-    ///
-    /// **Phase 4 (US6, T082-T084)**: Integrated with ManifestService for manifest caching.
-    /// Logs cache hits/misses and updates last_accessed timestamp. Full query optimization
-    /// (batch file pruning based on manifest metadata) implemented in Phase 5 (US2, T119-T123).
-    async fn scan_parquet_files_as_batch_async(
-        &self,
-        user_id: &UserId,
-        filter: Option<&Expr>,
-        columns: Option<&[String]>,
-    ) -> Result<RecordBatch, KalamDbError> {
-        base::scan_parquet_files_as_batch_async(
-            &self.core,
-            self.core.table_id(),
-            self.core.table_type(),
-            Some(user_id),
-            self.schema_ref(),
-            filter,
-            columns,
-        )
-        .await
-    }
-
-    async fn scan_parquet_files_with_stats_async(
-        &self,
-        user_id: &UserId,
-        filter: Option<&Expr>,
-        columns: Option<&[String]>,
-    ) -> Result<base::ParquetScanResult, KalamDbError> {
-        base::scan_parquet_files_with_stats_async(
-            &self.core,
-            self.core.table_id(),
-            self.core.table_type(),
-            Some(user_id),
-            self.schema_ref(),
-            filter,
-            columns,
-        )
-        .await
-    }
-
-    async fn scan_parquet_files_as_result_async(
-        &self,
-        user_id: &UserId,
-        filter: Option<&Expr>,
-        columns: Option<&[String]>,
-    ) -> Result<base::ParquetScanResult, KalamDbError> {
-        base::scan_parquet_files_as_result_async(
-            &self.core,
-            self.core.table_id(),
-            self.core.table_type(),
-            Some(user_id),
-            self.schema_ref(),
-            filter,
-            columns,
-        )
-        .await
+        Ok(crate::versioned::live_indexed_row(
+            self.latest_hot_pk_entry(user_id, pk_value).await?,
+            |row| row._deleted,
+        ))
     }
 
     fn construct_mvcc_row_from_parquet_data(
         &self,
         user_id: &UserId,
         row_data: crate::utils::version_resolution::ParquetRowData,
-    ) -> DataFusionResult<(UserTableRowId, UserMvccRow)> {
+    ) -> DataFusionResult<(UserTableRowId, UserTableRow)> {
         self.construct_row_from_parquet_data(user_id, &row_data)
             .map_err(crate::error::into_datafusion)?
-            .map(|(row_id, row)| (row_id, UserMvccRow(row)))
             .ok_or_else(|| {
                 DataFusionError::Execution("missing user row from parquet data".to_string())
             })
@@ -832,9 +508,9 @@ impl UserTableProvider {
 
         for user_id in user_ids {
             let cold_result = if include_diagnostics {
-                self.scan_parquet_files_with_stats_async(&user_id, filter, None).await?
+                base::scan_provider_parquet_stats(&self.core, Some(&user_id), filter, None).await?
             } else {
-                self.scan_parquet_files_as_result_async(&user_id, filter, None).await?
+                base::scan_provider_parquet_result(&self.core, Some(&user_id), filter, None).await?
             };
             if include_diagnostics {
                 diagnostics.cold_rows_scanned =
@@ -850,16 +526,16 @@ impl UserTableProvider {
                 diagnostics.cold_files.extend(cold_result.stats.visited_files);
             }
             let hot_rows = hot_rows_by_user.remove(&user_id).unwrap_or_default();
-            let resolved: Vec<(UserTableRowId, UserMvccRow)> = resolve_latest_kvs_from_cold_batch(
+            let resolved = resolve_latest_kvs_from_cold_batch(
                 &pk_name,
-                hot_rows.into_iter().map(|(row_id, row)| (row_id, UserMvccRow(row))),
+                hot_rows,
                 &cold_result.batch,
                 keep_deleted,
                 snapshot_commit_seq,
                 |row_data| self.construct_mvcc_row_from_parquet_data(&user_id, row_data),
             )
             .map_err(|error| KalamDbError::DataFusion(error.to_string()))?;
-            result.extend(resolved.into_iter().map(|(row_id, row)| (row_id, row.0)));
+            result.extend(resolved);
         }
 
         base::apply_limit(&mut result, limit);
@@ -881,65 +557,4 @@ impl UserTableProvider {
         )
         .await
     }
-}
-
-fn rows_from_field_payloads(
-    payloads: &[Vec<u8>],
-    storage: &kalamdb_serialization::StorageSchema,
-) -> Result<Vec<Row>, KalamDbError> {
-    let names: Vec<String> = storage.fields.iter().map(|field| field.name.clone()).collect();
-    payloads
-        .iter()
-        .map(|payload| {
-            let columns = kalamdb_serialization::decode_row_fields_columns(payload, storage)
-                .map_err(|error| {
-                    KalamDbError::InvalidOperation(format!("ordinal insert decode failed: {error}"))
-                })?;
-            Ok(Row::from_aligned(&names, columns))
-        })
-        .collect()
-}
-
-fn coerce_storage_columns(
-    columns: &mut [ScalarValue],
-    storage: &kalamdb_serialization::StorageSchema,
-    arrow: &SchemaRef,
-) -> Result<(), KalamDbError> {
-    for (value, field) in columns.iter_mut().zip(storage.fields.iter()) {
-        if field.dropped {
-            continue;
-        }
-        let Ok(arrow_field) = arrow.field_with_name(&field.name) else {
-            continue;
-        };
-        let owned = std::mem::replace(value, ScalarValue::Null);
-        *value = kalamdb_commons::conversions::coerce_scalar_to_field(owned, arrow_field).map_err(
-            |error| KalamDbError::InvalidOperation(format!("Schema coercion failed: {error}")),
-        )?;
-    }
-    Ok(())
-}
-
-fn validate_encoded_not_null(
-    rows: &[Vec<ScalarValue>],
-    storage: &kalamdb_serialization::StorageSchema,
-    required: &HashSet<String>,
-) -> Result<(), KalamDbError> {
-    if required.is_empty() {
-        return Ok(());
-    }
-    for (row_index, row) in rows.iter().enumerate() {
-        for name in required {
-            let Some(ordinal) = storage.fields.iter().position(|field| &field.name == name) else {
-                continue;
-            };
-            if row.get(ordinal).is_none_or(ScalarValue::is_null) {
-                return Err(KalamDbError::Coded(kalamdb_commons::CodedError::not_null(
-                    name.clone(),
-                    (row_index + 1) as i64,
-                )));
-            }
-        }
-    }
-    Ok(())
 }

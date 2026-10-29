@@ -21,7 +21,7 @@ use crate::{
     utils::TableRowDml, versioned::VersionedRowCodec,
 };
 
-pub enum VersionedTableEngine {
+pub(crate) enum VersionedTableEngine {
     User(UserTableProvider),
     Shared(SharedTableProvider),
 }
@@ -40,7 +40,7 @@ impl VersionedTableEngine {
         key: &ScopedRowKey,
         bytes: &[u8],
     ) -> StoreResult<VersionedTableRow> {
-        VersionedRowCodec::new(schema).decode(key, bytes)
+        VersionedRowCodec::new(schema).decode_with_schema_history(key, bytes)
     }
 
     pub async fn columnar_hot_scan(

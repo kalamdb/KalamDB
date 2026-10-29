@@ -16,7 +16,7 @@ use std::{
 };
 
 use kalamdb_commons::{
-    ids::{SharedTableRowId, StreamTableRowId, UserTableRowId, VersionId},
+    ids::{SharedTableRowId, UserTableRowId, VersionId},
     models::{rows::Row, OperationKind, TopicOp, TransactionId, UserId},
     schemas::TableType,
     websocket::{ChangeNotification, ChangeType},
@@ -25,7 +25,7 @@ use kalamdb_commons::{
 use kalamdb_raft::{assign_entry_versions, TransactionApplyResult};
 use kalamdb_sharding::{GroupId, ShardRouter};
 use kalamdb_system::{FileRef, NotificationService as NotificationServiceTrait, TopicPublisher};
-use kalamdb_tables::{utils::base as table_base, SharedTableRow, StreamTableRow, UserTableRow};
+use kalamdb_tables::{KalamTableProvider, SharedTableRow, UserTableRow};
 use kalamdb_transactions::StagedMutation;
 
 use crate::{
@@ -37,10 +37,7 @@ use crate::{
             delete_file_refs_best_effort,
         },
     },
-    providers::{
-        base::{find_row_by_pk, BaseTableProvider},
-        SharedTableProvider, StreamTableProvider, UserTableProvider,
-    },
+    providers::StreamTableEngine,
     transactions::CommitSideEffectPlan,
 };
 
@@ -319,7 +316,7 @@ impl DmlExecutor {
 
     async fn collect_user_file_refs_for_mutation(
         &self,
-        provider: &UserTableProvider,
+        provider: &KalamTableProvider,
         table_id: &TableId,
         user_id: &UserId,
         pk_value: &str,
@@ -329,9 +326,7 @@ impl DmlExecutor {
         if !self.table_has_file_columns(table_id) {
             return Vec::new();
         }
-        let Some(prior_row) =
-            self.load_user_row_for_cleanup(provider, table_id, user_id, pk_value).await
-        else {
+        let Some(prior_row) = provider.user_cleanup_row(table_id, user_id, pk_value).await else {
             return Vec::new();
         };
         self.collect_file_refs_for_prior_row(table_id, &prior_row, operation_kind, payload)
@@ -339,7 +334,7 @@ impl DmlExecutor {
 
     async fn collect_shared_file_refs_for_mutation(
         &self,
-        provider: &SharedTableProvider,
+        provider: &KalamTableProvider,
         table_id: &TableId,
         pk_value: &str,
         operation_kind: OperationKind,
@@ -348,8 +343,7 @@ impl DmlExecutor {
         if !self.table_has_file_columns(table_id) {
             return Vec::new();
         }
-        let Some(prior_row) = self.load_shared_row_for_cleanup(provider, table_id, pk_value).await
-        else {
+        let Some(prior_row) = provider.shared_cleanup_row(table_id, pk_value).await else {
             return Vec::new();
         };
         self.collect_file_refs_for_prior_row(table_id, &prior_row, operation_kind, payload)
@@ -440,10 +434,11 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
 
-        // Try UserTableProvider first, then StreamTableProvider
-        if let Some(provider) = provider_arc.as_user() {
+        // Try a user table first, then StreamTableEngine
+        if provider_arc.is_user() {
+            let provider = provider_arc.as_ref();
             let row_ids = provider
-                .insert_batch_with_versions(user_id, rows, versions)
+                .insert_user_batch_with_versions(user_id, rows, versions)
                 .await
                 .map_err(|e| ApplierError::from_table(e, "Failed to insert batch"))?;
             self.defer_observe(table_id, TableType::User, Some(user_id), log_index);
@@ -480,12 +475,13 @@ impl DmlExecutor {
             return Ok(None);
         }
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
-        let Some(provider) = provider_arc.as_user() else {
+        if !provider_arc.is_user() {
             return Ok(None);
-        };
+        }
+        let provider = provider_arc.as_ref();
         let log_index = Self::log_index_from_versions(versions)?;
         let count = provider
-            .insert_encoded_fields_with_versions(user_id, payloads, versions)
+            .insert_user_encoded_fields_with_versions(user_id, payloads, versions)
             .await
             .map_err(|error| ApplierError::from_table(error, "Failed to insert batch"))?;
         self.defer_observe(table_id, TableType::User, Some(user_id), log_index);
@@ -526,9 +522,10 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
 
-        if let Some(provider) = provider_arc.as_user() {
+        if provider_arc.is_user() {
+            let provider = provider_arc.as_ref();
             let applied = provider
-                .update_batch_by_pk_values_deferred(
+                .update_user_batch_deferred(
                     user_id,
                     &[(pk_value.to_string(), update_row.clone(), version)],
                 )
@@ -600,11 +597,13 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
 
-        if let Some(provider) = provider_arc.as_user() {
-            let applied = provider
-                .delete_batch_by_pk_values_deferred(user_id, pk_values, versions)
-                .await
-                .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?;
+        if provider_arc.is_user() {
+            let provider = provider_arc.as_ref();
+            let applied =
+                provider
+                    .delete_user_batch_deferred(user_id, pk_values, versions)
+                    .await
+                    .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?;
             let deleted_count = applied.len();
             for mutation in applied {
                 if let Some(notification) = mutation.notification {
@@ -682,9 +681,10 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
 
-        if let Some(provider) = provider_arc.as_shared() {
+        if provider_arc.is_shared() {
+            let provider = provider_arc.as_ref();
             let row_ids = provider
-                .insert_batch_with_versions(actor_user_id, rows, versions)
+                .insert_shared_batch_with_versions(actor_user_id, rows, versions)
                 .await
                 .map_err(|e| ApplierError::from_table(e, "Failed to insert batch"))?;
             self.defer_observe(table_id, TableType::Shared, actor_user_id, log_index);
@@ -713,12 +713,13 @@ impl DmlExecutor {
             return Ok(None);
         }
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
-        let Some(provider) = provider_arc.as_shared() else {
+        if !provider_arc.is_shared() {
             return Ok(None);
-        };
+        }
+        let provider = provider_arc.as_ref();
         let log_index = Self::log_index_from_versions(versions)?;
         let count = provider
-            .insert_encoded_fields_with_versions(actor_user_id, payloads, versions)
+            .insert_shared_encoded_fields_with_versions(actor_user_id, payloads, versions)
             .await
             .map_err(|error| ApplierError::from_table(error, "Failed to insert batch"))?;
         self.defer_observe(table_id, TableType::Shared, actor_user_id, log_index);
@@ -763,9 +764,10 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
 
-        if let Some(provider) = provider_arc.as_shared() {
+        if provider_arc.is_shared() {
+            let provider = provider_arc.as_ref();
             let applied = provider
-                .update_batch_by_pk_values_deferred(&targets)
+                .update_shared_batch_deferred(&targets)
                 .await
                 .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
             let affected_rows = applied.len();
@@ -840,9 +842,10 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
 
-        if let Some(provider) = provider_arc.as_shared() {
+        if provider_arc.is_shared() {
+            let provider = provider_arc.as_ref();
             let applied = provider
-                .delete_batch_by_pk_values_deferred(pk_values, versions)
+                .delete_shared_batch_deferred(pk_values, versions)
                 .await
                 .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?;
             let deleted_count = applied.len();
@@ -896,17 +899,18 @@ impl DmlExecutor {
                 if all_inserts_same_table_and_user {
                     let provider_arc =
                         self.load_provider(&first_mutation.table_id, "Table provider").await?;
-                    let provider = provider_arc.as_user().ok_or_else(|| {
-                        ApplierError::Execution(format!(
+                    if !provider_arc.is_user() {
+                        return Err(ApplierError::Execution(format!(
                             "Provider type mismatch for user table {}",
                             first_mutation.table_id
-                        ))
-                    })?;
+                        )));
+                    }
+                    let provider = provider_arc.as_ref();
 
                     let batch_rows: Vec<&Row> =
                         mutations.iter().map(|mutation| &mutation.payload).collect();
 
-                    provider.validate_insert_batch_rows(user_id, batch_rows).await.map_err(
+                    provider.validate_user_insert_rows(user_id, batch_rows).await.map_err(
                         |error| ApplierError::from_table(error, "Failed to insert batch row"),
                     )?;
 
@@ -947,12 +951,13 @@ impl DmlExecutor {
                 cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
                 provider_arc
             };
-            let provider = provider_arc.as_user().ok_or_else(|| {
-                ApplierError::Execution(format!(
+            if !provider_arc.is_user() {
+                return Err(ApplierError::Execution(format!(
                     "Provider type mismatch for user table {}",
                     mutation.table_id
-                ))
-            })?;
+                )));
+            }
+            let provider = provider_arc.as_ref();
 
             let batch_key =
                 format!("{}|{}|{}", mutation.table_id, user_id.as_str(), mutation.primary_key);
@@ -965,7 +970,8 @@ impl DmlExecutor {
                 )));
             }
 
-            table_base::ensure_unique_pk_value(provider, Some(&user_id), &mutation.payload)
+            provider
+                .ensure_insert_pk_unique(Some(&user_id), &mutation.payload)
                 .await
                 .map_err(|error| ApplierError::from_table(error, "Failed to insert batch row"))?;
         }
@@ -1005,12 +1011,13 @@ impl DmlExecutor {
                 cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
                 provider_arc
             };
-            let provider = provider_arc.as_shared().ok_or_else(|| {
-                ApplierError::Execution(format!(
+            if !provider_arc.is_shared() {
+                return Err(ApplierError::Execution(format!(
                     "Provider type mismatch for shared table {}",
                     mutation.table_id
-                ))
-            })?;
+                )));
+            }
+            let provider = provider_arc.as_ref();
 
             let batch_key = format!("{}|{}", mutation.table_id, mutation.primary_key);
             if !seen_insert_keys.insert(batch_key) {
@@ -1022,7 +1029,8 @@ impl DmlExecutor {
                 )));
             }
 
-            table_base::ensure_unique_pk_value(provider, None, &mutation.payload)
+            provider
+                .ensure_insert_pk_unique(None, &mutation.payload)
                 .await
                 .map_err(|error| ApplierError::from_table(error, "Failed to insert batch row"))?;
         }
@@ -1064,15 +1072,16 @@ impl DmlExecutor {
                 if all_inserts_same_table_and_user {
                     let provider_arc =
                         self.load_provider(&first_mutation.table_id, "Table provider").await?;
-                    let provider = provider_arc.as_user().ok_or_else(|| {
-                        ApplierError::Execution(format!(
+                    if !provider_arc.is_user() {
+                        return Err(ApplierError::Execution(format!(
                             "Provider type mismatch for user table {}",
                             first_mutation.table_id
-                        ))
-                    })?;
+                        )));
+                    }
+                    let provider = provider_arc.as_ref();
 
                     let applied = provider
-                        .insert_batch_deferred_prevalidated_with_versions(
+                        .insert_user_batch_deferred_prevalidated(
                             &user_id,
                             mutations.iter().map(|mutation| mutation.payload.clone()).collect(),
                             versions,
@@ -1151,12 +1160,13 @@ impl DmlExecutor {
                 cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
                 provider_arc
             };
-            let provider = provider_arc.as_user().ok_or_else(|| {
-                ApplierError::Execution(format!(
+            if !provider_arc.is_user() {
+                return Err(ApplierError::Execution(format!(
                     "Provider type mismatch for user table {}",
                     mutation.table_id
-                ))
-            })?;
+                )));
+            }
+            let provider = provider_arc.as_ref();
 
             let written_key =
                 (mutation.table_id.clone(), user_id.clone(), mutation.primary_key.clone());
@@ -1199,7 +1209,7 @@ impl DmlExecutor {
                     }
                     let (row_key, notification) = if let Some(previous) = known {
                         provider
-                            .insert_over_hot_deferred(
+                            .insert_user_over_hot_deferred(
                                 &user_id,
                                 mutation.payload.clone(),
                                 version,
@@ -1208,7 +1218,7 @@ impl DmlExecutor {
                             .await
                     } else {
                         provider
-                            .insert_deferred_prevalidated(
+                            .insert_user_deferred_prevalidated(
                                 &user_id,
                                 mutation.payload.clone(),
                                 version,
@@ -1232,7 +1242,7 @@ impl DmlExecutor {
                 },
                 OperationKind::Update => {
                     let updated = provider
-                        .update_by_pk_value_deferred_with_hot(
+                        .update_user_deferred_with_hot(
                             &user_id,
                             mutation.primary_key.as_str(),
                             mutation.payload.clone(),
@@ -1250,7 +1260,7 @@ impl DmlExecutor {
                 },
                 OperationKind::Delete => {
                     let deleted = provider
-                        .delete_by_pk_value_deferred_with_hot(
+                        .delete_user_deferred_with_hot(
                             &user_id,
                             mutation.primary_key.as_str(),
                             version,
@@ -1341,15 +1351,16 @@ impl DmlExecutor {
             if all_inserts_same_table {
                 let provider_arc =
                     self.load_provider(&first_mutation.table_id, "Shared table provider").await?;
-                let provider = provider_arc.as_shared().ok_or_else(|| {
-                    ApplierError::Execution(format!(
+                if !provider_arc.is_shared() {
+                    return Err(ApplierError::Execution(format!(
                         "Provider type mismatch for shared table {}",
                         first_mutation.table_id
-                    ))
-                })?;
+                    )));
+                }
+                let provider = provider_arc.as_ref();
 
                 let applied = provider
-                    .insert_batch_deferred_prevalidated_with_versions(
+                    .insert_shared_batch_deferred_prevalidated(
                         mutations.iter().map(|mutation| mutation.payload.clone()).collect(),
                         versions,
                     )
@@ -1421,12 +1432,13 @@ impl DmlExecutor {
                 cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
                 provider_arc
             };
-            let provider = provider_arc.as_shared().ok_or_else(|| {
-                ApplierError::Execution(format!(
+            if !provider_arc.is_shared() {
+                return Err(ApplierError::Execution(format!(
                     "Provider type mismatch for shared table {}",
                     mutation.table_id
-                ))
-            })?;
+                )));
+            }
+            let provider = provider_arc.as_ref();
 
             let written_key = (mutation.table_id.clone(), mutation.primary_key.clone());
             let known = written.get(&written_key).cloned();
@@ -1467,11 +1479,15 @@ impl DmlExecutor {
                     }
                     let (row_key, notification) = if let Some(previous) = known {
                         provider
-                            .insert_over_hot_deferred(mutation.payload.clone(), version, previous)
+                            .insert_shared_over_hot_deferred(
+                                mutation.payload.clone(),
+                                version,
+                                previous,
+                            )
                             .await
                     } else {
                         provider
-                            .insert_deferred_prevalidated(mutation.payload.clone(), version)
+                            .insert_shared_deferred_prevalidated(mutation.payload.clone(), version)
                             .await
                     }
                     .map_err(|e| ApplierError::from_table(e, "Failed to insert batch row"))?;
@@ -1490,7 +1506,7 @@ impl DmlExecutor {
                 },
                 OperationKind::Update => {
                     let updated = provider
-                        .update_by_pk_value_deferred_with_hot(
+                        .update_shared_deferred_with_hot(
                             mutation.primary_key.as_str(),
                             mutation.payload.clone(),
                             version,
@@ -1507,7 +1523,7 @@ impl DmlExecutor {
                 },
                 OperationKind::Delete => {
                     let deleted = provider
-                        .delete_by_pk_value_deferred_with_hot(
+                        .delete_shared_deferred_with_hot(
                             mutation.primary_key.as_str(),
                             version,
                             known,
@@ -1578,139 +1594,10 @@ impl DmlExecutor {
         }
     }
 
-    async fn load_user_row_for_cleanup(
-        &self,
-        provider: &UserTableProvider,
-        table_id: &TableId,
-        user_id: &UserId,
-        pk_value: &str,
-    ) -> Option<Row> {
-        let pk_name = provider.primary_key_field_name();
-        let schema = provider.schema_ref();
-        let pk_field = match schema.field_with_name(pk_name) {
-            Ok(field) => field,
-            Err(err) => {
-                log::warn!(
-                    "Failed to resolve PK field for file cleanup in {} (pk={}): {}",
-                    table_id,
-                    pk_value,
-                    err
-                );
-                return None;
-            },
-        };
-
-        let pk_scalar = match kalamdb_commons::conversions::parse_string_as_scalar(
-            pk_value,
-            pk_field.data_type(),
-        ) {
-            Ok(value) => value,
-            Err(err) => {
-                log::warn!(
-                    "Failed to parse PK value for file cleanup in {} (pk={}): {}",
-                    table_id,
-                    pk_value,
-                    err
-                );
-                return None;
-            },
-        };
-
-        match provider.find_by_pk(user_id, &pk_scalar).await {
-            Ok(Some((_key, row))) => Some(row.fields),
-            Ok(None) => match find_row_by_pk(provider, Some(user_id), pk_value).await {
-                Ok(Some((_key, row))) => Some(row.fields),
-                Ok(None) => None,
-                Err(err) => {
-                    log::warn!(
-                        "Failed to load cold row for file cleanup in {} (pk={}): {}",
-                        table_id,
-                        pk_value,
-                        err
-                    );
-                    None
-                },
-            },
-            Err(err) => {
-                log::warn!(
-                    "Failed to load hot row for file cleanup in {} (pk={}): {}",
-                    table_id,
-                    pk_value,
-                    err
-                );
-                None
-            },
-        }
-    }
-
-    async fn load_shared_row_for_cleanup(
-        &self,
-        provider: &SharedTableProvider,
-        table_id: &TableId,
-        pk_value: &str,
-    ) -> Option<Row> {
-        let pk_name = provider.primary_key_field_name();
-        let schema = provider.schema_ref();
-        let pk_field = match schema.field_with_name(pk_name) {
-            Ok(field) => field,
-            Err(err) => {
-                log::warn!(
-                    "Failed to resolve PK field for file cleanup in {} (pk={}): {}",
-                    table_id,
-                    pk_value,
-                    err
-                );
-                return None;
-            },
-        };
-
-        let pk_scalar = match kalamdb_commons::conversions::parse_string_as_scalar(
-            pk_value,
-            pk_field.data_type(),
-        ) {
-            Ok(value) => value,
-            Err(err) => {
-                log::warn!(
-                    "Failed to parse PK value for file cleanup in {} (pk={}): {}",
-                    table_id,
-                    pk_value,
-                    err
-                );
-                return None;
-            },
-        };
-
-        match provider.find_by_pk(&pk_scalar).await {
-            Ok(Some((_key, row))) => Some(row.fields),
-            Ok(None) => match find_row_by_pk(provider, None, pk_value).await {
-                Ok(Some((_key, row))) => Some(row.fields),
-                Ok(None) => None,
-                Err(err) => {
-                    log::warn!(
-                        "Failed to load cold row for file cleanup in {} (pk={}): {}",
-                        table_id,
-                        pk_value,
-                        err
-                    );
-                    None
-                },
-            },
-            Err(err) => {
-                log::warn!(
-                    "Failed to load hot row for file cleanup in {} (pk={}): {}",
-                    table_id,
-                    pk_value,
-                    err
-                );
-                None
-            },
-        }
-    }
-
-    /// Update with fallback for StreamTableProvider
+    /// Update with fallback for StreamTableEngine
     async fn update_stream_provider(
         &self,
-        provider: &StreamTableProvider,
+        provider: &StreamTableEngine,
         user_id: &UserId,
         pk_value: &str,
         updates: Row,
@@ -1724,14 +1611,10 @@ impl DmlExecutor {
                         ApplierError::Execution(format!("Failed to find row key: {}", e))
                     })?
                 {
-                    let updated = <StreamTableProvider as BaseTableProvider<
-                        StreamTableRowId,
-                        StreamTableRow,
-                    >>::update(
-                        provider, user_id, &key, updates, version
-                    )
-                    .await
-                    .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
+                    let updated =
+                        provider.update(user_id, &key, updates, version).await.map_err(|e| {
+                            ApplierError::Execution(format!("Failed to update row: {}", e))
+                        })?;
                     Ok(usize::from(updated.is_some()))
                 } else {
                     Ok(0)
