@@ -405,7 +405,7 @@ mod canonical_cf_tests {
         drop(db);
 
         let init = RocksDbInit::with_defaults(temp.path().to_string_lossy());
-        let error = init.open().expect_err("old physical system table CF must fail startup");
+        let error = init.open().err().expect("old physical system table CF must fail startup");
         let message = format!("{error:#}");
         assert!(message.contains("system_users"), "{message}");
         assert!(message.contains("system_meta"), "{message}");
