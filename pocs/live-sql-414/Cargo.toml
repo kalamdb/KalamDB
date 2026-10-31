@@ -10,3 +10,6 @@ datafusion = { version = "=55.2.0", default-features = false, features = ["sql"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }
+
+# Standalone workspace prevents accidental full KalamDB workspace builds.
+[workspace]
