@@ -396,6 +396,26 @@ mod canonical_cf_tests {
     use super::*;
 
     #[test]
+    fn rejects_old_shared_hot_partition_without_dedicated_cf() {
+        use super::super::keyspace::logical_partition_registry_key;
+
+        let temp = tempfile::tempdir().unwrap();
+        {
+            let init = RocksDbInit::with_defaults(temp.path().to_string_lossy());
+            let db = init.open().unwrap();
+            let meta = db.cf_handle(SYSTEM_META_CF).unwrap();
+            db.put_cf(&meta, logical_partition_registry_key("shared_gc:old_hot"), b"")
+                .unwrap();
+        }
+
+        let init = RocksDbInit::with_defaults(temp.path().to_string_lossy());
+        let error = init.open().err().expect("legacy shared-hot layout must fail");
+        let message = format!("{error:#}");
+        assert!(message.contains("shared_gc:old_hot"), "{message}");
+        assert!(message.contains("dedicated"), "{message}");
+    }
+
+    #[test]
     fn rejects_old_dedicated_system_column_family() {
         let temp = tempfile::tempdir().unwrap();
         let mut options = Options::default();
