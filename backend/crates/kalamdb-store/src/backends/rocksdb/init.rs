@@ -19,7 +19,7 @@ use sysinfo::{MemoryRefreshKind, System};
 
 use super::{
     cf_tuning::{apply_cf_settings, apply_db_settings, install_write_buffer_manager},
-    keyspace::fixed_column_families,
+    keyspace::{decode_logical_partition_registry_key, fixed_column_families, logical_partition_registry_prefix, physical_cf_for_partition, SYSTEM_META_CF},
     restore::apply_pending_rocksdb_restore,
 };
 
@@ -250,6 +250,7 @@ impl RocksDbInit {
         eprintln!("startup: rocksdb calling DB::open");
         let db = DB::open_cf_descriptors(&db_opts, path, cf_descriptors)?;
         eprintln!("startup: rocksdb DB::open returned");
+        self.validate_partition_layout(&db)?;
         let db = Arc::new(db);
 
         if self.settings.compact_on_startup {
@@ -278,11 +279,40 @@ impl RocksDbInit {
         Ok((db, cf_names, write_buffer_manager))
     }
 
+    fn validate_partition_layout(&self, db: &DB) -> Result<()> {
+        let Some(metadata_cf) = db.cf_handle(SYSTEM_META_CF) else {
+            bail!("missing mandatory RocksDB column family '{SYSTEM_META_CF}'");
+        };
+        let prefix = logical_partition_registry_prefix();
+        let iter = db.iterator_cf(
+            &metadata_cf,
+            rocksdb::IteratorMode::From(&prefix, rocksdb::Direction::Forward),
+        );
+        for entry in iter {
+            let (key, _) = entry?;
+            if !key.starts_with(&prefix) {
+                break;
+            }
+            let partition_name = decode_logical_partition_registry_key(&key)
+                .ok_or_else(|| anyhow::anyhow!("invalid logical partition registry key"))?;
+            let physical = physical_cf_for_partition(partition_name);
+            if matches!(physical, "hot_data" | "hot_index")
+                && partition_name != physical
+                && db.cf_handle(partition_name).is_none()
+            {
+                bail!(
+                    "unsupported legacy shared-hot layout: partition '{partition_name}' is missing its dedicated RocksDB column family; export/import or use a fresh data directory"
+                );
+            }
+        }
+        Ok(())
+    }
+
     fn collect_column_family_names(&self, db_opts: &Options, path: &Path) -> Result<Vec<String>> {
         let mut existing = match DB::list_cf(db_opts, path) {
             Ok(cfs) if !cfs.is_empty() => cfs,
             Ok(_) => vec!["default".to_string()],
-            Err(_error) if !path.exists() => vec!["default".to_string()],
+            Err(_error) if !path.join("CURRENT").exists() => vec!["default".to_string()],
             Err(error) => {
                 bail!("failed to list RocksDB column families in {}: {error}", path.display())
             },
