@@ -1,9 +1,8 @@
 //! System.job_nodes table provider
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use chrono::Utc;
-use datafusion::arrow::{array::RecordBatch, datatypes::SchemaRef};
 use kalamdb_commons::{
     models::{rows::SystemTableRow, JobNodeId},
     next_storage_key_bytes, JobId, NodeId, StorageKey, SystemTable,
@@ -12,19 +11,16 @@ use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBacken
 
 use crate::{
     error::{SystemError, SystemResultExt},
-    providers::{
-        base::{system_rows_to_batch, IndexedProviderDefinition},
-        job_nodes::models::JobNode,
-    },
+    providers::{job_nodes::models::JobNode, keyed_provider::KeyedTableProvider},
     system_row_mapper::{model_to_system_row, system_row_to_model},
     JobStatus,
 };
 
 pub type JobNodesStore = IndexedEntityStore<JobNodeId, SystemTableRow>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct JobNodesTableProvider {
-    store: JobNodesStore,
+    sql: KeyedTableProvider<JobNodeId, SystemTableRow>,
 }
 
 impl JobNodesTableProvider {
@@ -36,13 +32,21 @@ impl JobNodesTableProvider {
                 .expect("JobNodes is a table, not a view"),
             Vec::new(),
         );
-        Self { store }
+        let sql = KeyedTableProvider::from_stored_rows(
+            store,
+            JobNode::definition(),
+            SystemTable::JobNodes.table_id(),
+            SystemTable::JobNodes.table_name(),
+            "id",
+            |value| JobNodeId::from_string(value).ok(),
+        );
+        Self { sql }
     }
 
     pub fn create_job_node(&self, job_node: JobNode) -> Result<String, SystemError> {
         let key = job_node.id();
         let row = Self::encode_job_node_row(&job_node)?;
-        self.store.insert(&key, &row).into_system_error("insert job_node error")?;
+        self.sql.store().insert(&key, &row).into_system_error("insert job_node error")?;
         Ok(format!("Job node {} created", key))
     }
 
@@ -52,7 +56,7 @@ impl JobNodesTableProvider {
         node_id: &NodeId,
     ) -> Result<Option<JobNode>, SystemError> {
         let key = JobNodeId::new(job_id, node_id);
-        let row = self.store.get(&key)?;
+        let row = self.sql.store().get(&key)?;
         row.map(|value| Self::decode_job_node_row(&value)).transpose()
     }
 
@@ -62,14 +66,20 @@ impl JobNodesTableProvider {
         node_id: &NodeId,
     ) -> Result<Option<JobNode>, SystemError> {
         let key = JobNodeId::new(job_id, node_id);
-        let row = self.store.get_async(key).await.into_system_error("get_async job_node error")?;
+        let row = self
+            .sql
+            .store()
+            .get_async(key)
+            .await
+            .into_system_error("get_async job_node error")?;
         row.map(|value| Self::decode_job_node_row(&value)).transpose()
     }
 
     pub async fn update_job_node_async(&self, job_node: JobNode) -> Result<(), SystemError> {
         let key = job_node.id();
         let row = Self::encode_job_node_row(&job_node)?;
-        self.store
+        self.sql
+            .store()
             .insert_async(key, row)
             .await
             .into_system_error("update_async job_node error")
@@ -89,7 +99,7 @@ impl JobNodesTableProvider {
 
         loop {
             let rows = {
-                let store = self.store.clone();
+                let store = self.sql.store().clone();
                 let prefix = prefix.clone();
                 let start_key = start_key.clone();
                 tokio::task::spawn_blocking(move || {
@@ -128,7 +138,8 @@ impl JobNodesTableProvider {
 
     pub async fn list_for_job_id_async(&self, job_id: &JobId) -> Result<Vec<JobNode>, SystemError> {
         let rows: Vec<(Vec<u8>, SystemTableRow)> = self
-            .store
+            .sql
+            .store()
             .scan_all_async(None, None, None)
             .await
             .into_system_error("scan_async job_nodes error")?;
@@ -143,14 +154,6 @@ impl JobNodesTableProvider {
         Ok(filtered)
     }
 
-    fn create_batch(
-        &self,
-        rows: Vec<(JobNodeId, SystemTableRow)>,
-    ) -> Result<RecordBatch, SystemError> {
-        let rows = rows.into_iter().map(|(_, row)| row).collect();
-        system_rows_to_batch(&Self::schema(), rows)
-    }
-
     /// Delete job_nodes older than retention period (in days).
     ///
     /// Only deletes terminal statuses: Completed, Failed, Cancelled.
@@ -161,7 +164,8 @@ impl JobNodesTableProvider {
         let cutoff_time = now - retention_ms;
 
         let rows = self
-            .store
+            .sql
+            .store()
             .scan_all_typed(None, None, None)
             .into_system_error("scan job_nodes error")?;
 
@@ -182,7 +186,7 @@ impl JobNodesTableProvider {
             let reference_time = node.finished_at.or(node.started_at).unwrap_or(node.updated_at);
 
             if reference_time < cutoff_time {
-                self.store.delete(&node.id()).into_system_error("delete job_node error")?;
+                self.sql.store().delete(&node.id()).into_system_error("delete job_node error")?;
                 deleted += 1;
             }
         }
@@ -199,26 +203,7 @@ impl JobNodesTableProvider {
     }
 }
 
-crate::impl_system_table_provider_metadata!(
-    indexed,
-    provider = JobNodesTableProvider,
-    key = JobNodeId,
-    table_name = SystemTable::JobNodes.table_name(),
-    primary_key_column = "id",
-    parse_key = |value| JobNodeId::from_string(value).ok(),
-    schema = JobNode::definition()
-        .to_arrow_schema()
-        .expect("failed to build job_nodes schema")
-);
-
-crate::impl_indexed_system_table_provider!(
-    provider = JobNodesTableProvider,
-    key = JobNodeId,
-    value = SystemTableRow,
-    store = store,
-    definition = provider_definition,
-    build_batch = create_batch
-);
+crate::impl_keyed_table_provider!(JobNodesTableProvider);
 
 #[cfg(test)]
 mod tests {

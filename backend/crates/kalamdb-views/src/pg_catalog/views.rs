@@ -1,11 +1,12 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, StringBuilder},
-    datatypes::{DataType, Field, Schema, SchemaRef},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use kalamdb_commons::Role;
+use kalamdb_macros::table;
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
@@ -13,18 +14,26 @@ use crate::{
     pg_catalog::{relation_is_view, visible_table_definitions, PgCatalogView},
 };
 
+#[table(
+    name = "pg_views",
+    namespace = SchemaId::pg_catalog(),
+    view = true,
+    comment = "Views"
+)]
+#[derive(Debug)]
+struct PgViewsRow {
+    /// Schema name
+    schemaname: String,
+    /// View name
+    viewname: String,
+    /// View owner
+    viewowner: String,
+    /// View definition
+    definition: Option<String>,
+}
+
 fn schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("schemaname", DataType::Utf8, false),
-                Field::new("viewname", DataType::Utf8, false),
-                Field::new("viewowner", DataType::Utf8, false),
-                Field::new("definition", DataType::Utf8, true),
-            ]))
-        })
-        .clone()
+    PgViewsRow::arrow_schema()
 }
 
 #[derive(Debug)]

@@ -1,11 +1,12 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, BooleanBuilder, StringBuilder},
-    datatypes::{DataType, Field, Schema, SchemaRef},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use kalamdb_commons::Role;
+use kalamdb_macros::table;
 use kalamdb_session_datafusion::SessionConfigValues;
 
 use crate::{error::RegistryError, pg_catalog::PgCatalogView};
@@ -15,23 +16,36 @@ use crate::{error::RegistryError, pg_catalog::PgCatalogView};
 /// `max_index_keys` is required: pgjdbc `getImportedKeys` / `getExportedKeys` call
 /// `getMaxIndexKeys()`, which errors if this row is missing.
 
+#[table(
+    name = "pg_settings",
+    namespace = SchemaId::pg_catalog(),
+    view = true,
+    comment = "Server settings"
+)]
+#[derive(Debug)]
+struct PgSettingsRow {
+    /// Setting name
+    name: String,
+    /// Setting value
+    setting: String,
+    /// Unit
+    unit: Option<String>,
+    /// Category
+    category: Option<String>,
+    /// Short description
+    short_desc: Option<String>,
+    /// Context
+    context: Option<String>,
+    /// Value type
+    vartype: Option<String>,
+    /// Source
+    source: Option<String>,
+    /// Whether a restart is pending
+    pending_restart: Option<bool>,
+}
+
 fn schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("name", DataType::Utf8, false),
-                Field::new("setting", DataType::Utf8, false),
-                Field::new("unit", DataType::Utf8, true),
-                Field::new("category", DataType::Utf8, true),
-                Field::new("short_desc", DataType::Utf8, true),
-                Field::new("context", DataType::Utf8, true),
-                Field::new("vartype", DataType::Utf8, true),
-                Field::new("source", DataType::Utf8, true),
-                Field::new("pending_restart", DataType::Boolean, true),
-            ]))
-        })
-        .clone()
+    PgSettingsRow::arrow_schema()
 }
 
 #[derive(Debug, Default)]

@@ -3,9 +3,8 @@
 //! This module provides a DataFusion TableProvider implementation for the system.topics table.
 //! Uses `IndexedEntityStore` for automatic secondary index management.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
-use datafusion::arrow::{array::RecordBatch, datatypes::SchemaRef};
 use kalamdb_commons::{
     models::{rows::SystemTableRow, TopicId},
     SystemTable,
@@ -15,7 +14,7 @@ use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBacken
 use super::models::Topic;
 use crate::{
     error::{SystemError, SystemResultExt},
-    providers::base::{system_rows_to_batch, IndexedProviderDefinition},
+    providers::keyed_provider::KeyedTableProvider,
     system_row_mapper::{model_to_system_row, system_row_to_model},
 };
 
@@ -26,9 +25,9 @@ pub type TopicsStore = IndexedEntityStore<TopicId, SystemTableRow>;
 ///
 /// All insert/update/delete operations automatically maintain secondary indexes
 /// using RocksDB's atomic WriteBatch - no manual index management needed.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TopicsTableProvider {
-    store: TopicsStore,
+    sql: KeyedTableProvider<TopicId, SystemTableRow>,
 }
 
 impl TopicsTableProvider {
@@ -43,9 +42,17 @@ impl TopicsTableProvider {
         let store = IndexedEntityStore::new(
             backend,
             SystemTable::Topics.column_family_name().expect("Topics is a table, not a view"),
-            Vec::new(), // No secondary indexes for MVP
+            Vec::new(),
         );
-        Self { store }
+        let sql = KeyedTableProvider::from_stored_rows(
+            store,
+            Topic::definition(),
+            SystemTable::Topics.table_id(),
+            SystemTable::Topics.table_name(),
+            "topic_id",
+            |value| Some(TopicId::new(value)),
+        );
+        Self { sql }
     }
 
     /// Create a new topic entry.
@@ -57,7 +64,8 @@ impl TopicsTableProvider {
     /// Success message or error
     pub fn create_topic(&self, topic: Topic) -> Result<String, SystemError> {
         let row = Self::encode_topic_row(&topic)?;
-        self.store
+        self.sql
+            .store()
             .insert(&topic.topic_id, &row)
             .into_system_error("insert topic error")?;
         Ok(format!("Topic {} created", topic.name))
@@ -67,7 +75,8 @@ impl TopicsTableProvider {
     pub async fn create_topic_async(&self, topic: Topic) -> Result<(), SystemError> {
         let topic_id = topic.topic_id.clone();
         let row = Self::encode_topic_row(&topic)?;
-        self.store
+        self.sql
+            .store()
             .insert_async(topic_id, row)
             .await
             .into_system_error("insert_async topic error")
@@ -75,7 +84,7 @@ impl TopicsTableProvider {
 
     /// Get a topic by ID
     pub fn get_topic_by_id(&self, topic_id: &TopicId) -> Result<Option<Topic>, SystemError> {
-        let row = self.store.get(topic_id)?;
+        let row = self.sql.store().get(topic_id)?;
         row.map(|value| Self::decode_topic_row(&value)).transpose()
     }
 
@@ -85,7 +94,8 @@ impl TopicsTableProvider {
         topic_id: &TopicId,
     ) -> Result<Option<Topic>, SystemError> {
         let row = self
-            .store
+            .sql
+            .store()
             .get_async(topic_id.clone())
             .await
             .into_system_error("get_async error")?;
@@ -97,7 +107,7 @@ impl TopicsTableProvider {
     /// Indexes are automatically maintained via `IndexedEntityStore`.
     pub fn update_topic(&self, topic: Topic) -> Result<(), SystemError> {
         // Check if topic exists
-        let old_topic = self.store.get(&topic.topic_id)?;
+        let old_topic = self.sql.store().get(&topic.topic_id)?;
         if old_topic.is_none() {
             return Err(SystemError::NotFound(format!("Topic not found: {}", topic.topic_id)));
         }
@@ -105,7 +115,8 @@ impl TopicsTableProvider {
         let row = Self::encode_topic_row(&topic)?;
 
         // No secondary indexes configured for topics in this phase.
-        self.store
+        self.sql
+            .store()
             .update_with_old(&topic.topic_id, Some(&Self::encode_topic_row(&old_topic)?), &row)
             .into_system_error("update topic error")
     }
@@ -114,7 +125,8 @@ impl TopicsTableProvider {
     pub async fn update_topic_async(&self, topic: Topic) -> Result<(), SystemError> {
         // Check if topic exists
         let old_topic = self
-            .store
+            .sql
+            .store()
             .get_async(topic.topic_id.clone())
             .await
             .into_system_error("get_async error")?;
@@ -124,7 +136,8 @@ impl TopicsTableProvider {
         }
 
         let row = Self::encode_topic_row(&topic)?;
-        self.store
+        self.sql
+            .store()
             .insert_async(topic.topic_id.clone(), row)
             .await
             .into_system_error("insert_async topic error")
@@ -132,7 +145,8 @@ impl TopicsTableProvider {
 
     /// Delete a topic by ID.
     pub async fn delete_topic_async(&self, topic_id: &TopicId) -> Result<(), SystemError> {
-        self.store
+        self.sql
+            .store()
             .delete_async(topic_id.clone())
             .await
             .into_system_error("delete_async topic error")
@@ -140,16 +154,8 @@ impl TopicsTableProvider {
 
     /// List all topics
     pub fn list_topics(&self) -> Result<Vec<Topic>, SystemError> {
-        let rows = self.store.scan_all_typed(None, None, None)?;
+        let rows = self.sql.store().scan_all_typed(None, None, None)?;
         rows.into_iter().map(|(_, row)| Self::decode_topic_row(&row)).collect()
-    }
-
-    fn build_batch_from_pairs(
-        &self,
-        pairs: Vec<(TopicId, SystemTableRow)>,
-    ) -> Result<RecordBatch, SystemError> {
-        let rows = pairs.into_iter().map(|(_, row)| row).collect();
-        system_rows_to_batch(&Self::schema(), rows)
     }
 
     fn encode_topic_row(topic: &Topic) -> Result<SystemTableRow, SystemError> {
@@ -161,24 +167,7 @@ impl TopicsTableProvider {
     }
 }
 
-crate::impl_system_table_provider_metadata!(
-    indexed,
-    provider = TopicsTableProvider,
-    key = TopicId,
-    table_name = SystemTable::Topics.table_name(),
-    primary_key_column = "topic_id",
-    parse_key = |value| Some(TopicId::new(value)),
-    schema = Topic::definition().to_arrow_schema().expect("failed to build topics schema")
-);
-
-crate::impl_indexed_system_table_provider!(
-    provider = TopicsTableProvider,
-    key = TopicId,
-    value = SystemTableRow,
-    store = store,
-    definition = provider_definition,
-    build_batch = build_batch_from_pairs
-);
+crate::impl_keyed_table_provider!(TopicsTableProvider);
 
 #[cfg(test)]
 mod tests {

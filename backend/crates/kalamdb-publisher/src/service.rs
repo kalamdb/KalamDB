@@ -19,6 +19,15 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::{
+    keys::{GroupPartitionKey, TopicPartitionKey},
+    models::TopicCacheStats,
+    partition::{PartitionRuntime, PartitionWriteState},
+    payload,
+    routing::{RouteCache, RouteEntry},
+    TopicMessage, TopicMessageStore, TopicRetentionDeletionStats,
+    TOPIC_RETENTION_INDEX_PARTITION_NAME,
+};
 use dashmap::DashMap;
 use kalamdb_commons::{
     errors::{CommonError, Result},
@@ -30,18 +39,6 @@ use kalamdb_store::StorageBackend;
 use kalamdb_system::providers::{
     topic_offsets::{TopicOffset, TopicOffsetsTableProvider},
     topics::Topic,
-};
-use kalamdb_tables::{
-    TopicMessage, TopicMessageStore, TopicRetentionDeletionStats,
-    TOPIC_RETENTION_INDEX_PARTITION_NAME,
-};
-
-use crate::{
-    keys::{GroupPartitionKey, TopicPartitionKey},
-    models::TopicCacheStats,
-    partition::{PartitionRuntime, PartitionWriteState},
-    payload,
-    routing::{RouteCache, RouteEntry},
 };
 
 /// Lookup primary-key columns for a table so topic keys can be derived from

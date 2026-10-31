@@ -1,11 +1,12 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, Int64Builder, StringBuilder},
-    datatypes::{DataType, Field, Schema, SchemaRef},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use kalamdb_commons::{schemas::ColumnDefault, Role};
+use kalamdb_macros::table;
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
@@ -13,18 +14,26 @@ use crate::{
     pg_catalog::{class_oid, stable_oid, visible_table_definitions, PgCatalogView},
 };
 
+#[table(
+    name = "pg_attrdef",
+    namespace = SchemaId::pg_catalog(),
+    view = true,
+    comment = "Column defaults"
+)]
+#[derive(Debug)]
+struct PgAttrdefRow {
+    /// Default oid
+    oid: i64,
+    /// Relation oid
+    adrelid: i64,
+    /// Attribute number
+    adnum: i64,
+    /// Default expression
+    adbin: String,
+}
+
 fn schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("oid", DataType::Int64, false),
-                Field::new("adrelid", DataType::Int64, false),
-                Field::new("adnum", DataType::Int64, false),
-                Field::new("adbin", DataType::Utf8, false),
-            ]))
-        })
-        .clone()
+    PgAttrdefRow::arrow_schema()
 }
 
 #[derive(Debug)]

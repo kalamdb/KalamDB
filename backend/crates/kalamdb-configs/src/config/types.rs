@@ -247,10 +247,11 @@ impl ServerSettings {
             .unwrap_or_else(|| format!("http://localhost:{}", self.port))
     }
 
-    /// Hostname suitable for local browser access when `host` is an any-address bind.
+    /// Hostname for browser access. Loopback binds use `localhost` so the page
+    /// origin matches `public_origin` and the Admin UI WebSocket is accepted.
     pub fn local_access_host(&self) -> &str {
         match self.host.as_str() {
-            "0.0.0.0" | "::" | "[::]" => "localhost",
+            "0.0.0.0" | "::" | "[::]" | "127.0.0.1" | "::1" | "[::1]" => "localhost",
             host => host,
         }
     }

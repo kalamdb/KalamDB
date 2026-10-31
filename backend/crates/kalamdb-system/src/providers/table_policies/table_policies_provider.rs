@@ -1,10 +1,6 @@
-use std::{
-    collections::HashSet,
-    sync::{Arc, OnceLock},
-};
+use std::{collections::HashSet, sync::Arc};
 
 use dashmap::DashMap;
-use datafusion::arrow::{array::RecordBatch, datatypes::SchemaRef};
 use kalamdb_commons::{
     models::rows::SystemTableRow, KSerializable, PolicyId, SystemTable, TableId, TablePolicy,
 };
@@ -15,7 +11,7 @@ use tokio::sync::Mutex;
 use super::{CompiledTablePolicies, TablePolicyRecord};
 use crate::{
     error::{SystemError, SystemResultExt},
-    providers::base::{system_rows_to_batch, IndexedProviderDefinition},
+    providers::keyed_provider::KeyedTableProvider,
     system_row_mapper::{model_to_system_row, system_row_to_model},
 };
 
@@ -31,7 +27,7 @@ impl KSerializable for PolicyGenerationRecord {}
 
 #[derive(Clone)]
 pub struct TablePoliciesTableProvider {
-    store: TablePoliciesStore,
+    sql: KeyedTableProvider<PolicyId, SystemTableRow>,
     generations: PolicyGenerationsStore,
     /// Per-table generation + compiled bundle (same key, one map).
     runtime: Arc<DashMap<TableId, TablePolicyRuntime>>,
@@ -54,10 +50,18 @@ impl TablePoliciesTableProvider {
                 .expect("TablePolicies is a table, not a view"),
             Vec::new(),
         );
+        let sql = KeyedTableProvider::from_stored_rows(
+            store,
+            TablePolicyRecord::definition(),
+            SystemTable::TablePolicies.table_id(),
+            SystemTable::TablePolicies.table_name(),
+            "policy_id",
+            parse_policy_id,
+        );
         let generations =
             IndexedEntityStore::new(backend, "system_table_policy_generations", Vec::new());
         let provider = Self {
-            store,
+            sql,
             generations,
             runtime: Arc::new(DashMap::new()),
             reverse_dependencies: Arc::new(DashMap::new()),
@@ -127,8 +131,8 @@ impl TablePoliciesTableProvider {
         renamed.policy_name = new_name.to_string();
         renamed.policy_generation = self.bump_generation(&renamed.table_id)?;
         self.write_policy(&renamed)?;
-        if let Err(error) = self.store.delete(policy_id) {
-            let _ = self.store.delete(&renamed.policy_id);
+        if let Err(error) = self.sql.store().delete(policy_id) {
+            let _ = self.sql.store().delete(&renamed.policy_id);
             return Err(SystemError::Storage(format!("rename table policy: {error}")));
         }
         self.unregister_dependencies(&previous);
@@ -201,7 +205,7 @@ impl TablePoliciesTableProvider {
         };
         self.bump_generation(&policy.table_id)?;
         self.unregister_dependencies(&policy);
-        self.store.delete(policy_id).into_system_error("delete table policy")
+        self.sql.store().delete(policy_id).into_system_error("delete table policy")
     }
 
     pub async fn delete_for_table(&self, table_id: &TableId) -> Result<usize, SystemError> {
@@ -215,7 +219,10 @@ impl TablePoliciesTableProvider {
             self.unregister_dependencies(policy);
         }
         let keys = policies.iter().map(|policy| policy.policy_id.clone()).collect::<Vec<_>>();
-        self.store.delete_batch(&keys).into_system_error("delete table policies")?;
+        self.sql
+            .store()
+            .delete_batch(&keys)
+            .into_system_error("delete table policies")?;
         Ok(keys.len())
     }
 
@@ -269,13 +276,15 @@ impl TablePoliciesTableProvider {
     fn write_policy(&self, policy: &TablePolicy) -> Result<(), SystemError> {
         let record = TablePolicyRecord::from(policy.clone());
         let row = model_to_system_row(&record, &TablePolicyRecord::definition())?;
-        self.store
+        self.sql
+            .store()
             .insert(&policy.policy_id, &row)
             .into_system_error("write table policy")
     }
 
     fn get_policy_sync(&self, policy_id: &PolicyId) -> Result<Option<TablePolicy>, SystemError> {
-        self.store
+        self.sql
+            .store()
             .get(policy_id)
             .into_system_error("read table policy")?
             .map(|row| {
@@ -286,7 +295,8 @@ impl TablePoliciesTableProvider {
     }
 
     fn list_all(&self) -> Result<Vec<TablePolicy>, SystemError> {
-        self.store
+        self.sql
+            .store()
             .scan_all_typed(None, None, None)
             .into_system_error("list table policies")?
             .into_iter()
@@ -358,13 +368,12 @@ impl TablePoliciesTableProvider {
         }
         Ok(())
     }
+}
 
-    fn build_batch_from_pairs(
-        &self,
-        pairs: Vec<(PolicyId, SystemTableRow)>,
-    ) -> Result<RecordBatch, SystemError> {
-        system_rows_to_batch(&Self::schema(), pairs.into_iter().map(|(_, row)| row).collect())
-    }
+fn parse_policy_id(value: &str) -> Option<PolicyId> {
+    value
+        .rsplit_once(':')
+        .and_then(|(table_id, policy_name)| PolicyId::from_parts(table_id, policy_name).ok())
 }
 
 fn policy_dependencies(policy: &TablePolicy) -> Vec<TableId> {
@@ -383,25 +392,10 @@ fn policy_dependencies(policy: &TablePolicy) -> Vec<TableId> {
         .collect()
 }
 
-crate::impl_system_table_provider_metadata!(
-    indexed,
-    provider = TablePoliciesTableProvider,
-    key = PolicyId,
-    table_name = SystemTable::TablePolicies.table_name(),
-    primary_key_column = "policy_id",
-    parse_key = |value| value
-        .rsplit_once(':')
-        .and_then(|(table_id, policy_name)| PolicyId::from_parts(table_id, policy_name).ok()),
-    schema = TablePolicyRecord::definition()
-        .to_arrow_schema()
-        .expect("failed to build table policies schema")
-);
+impl std::fmt::Debug for TablePoliciesTableProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TablePoliciesTableProvider").finish()
+    }
+}
 
-crate::impl_indexed_system_table_provider!(
-    provider = TablePoliciesTableProvider,
-    key = PolicyId,
-    value = SystemTableRow,
-    store = store,
-    definition = provider_definition,
-    build_batch = build_batch_from_pairs
-);
+crate::impl_keyed_table_provider!(TablePoliciesTableProvider);

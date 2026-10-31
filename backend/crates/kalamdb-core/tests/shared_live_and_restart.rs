@@ -1,5 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
+use crate::support::{
+    create_cluster_app_context_with_shared_shards, execute_ok, observer_exec_ctx, result_rows,
+};
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
     constants::SystemColumnNames,
@@ -17,9 +20,6 @@ use kalamdb_core::{
 use kalamdb_live::{traits::LiveApplyBarrier, InitialDataOptions};
 use kalamdb_raft::{GroupId, RaftExecutor};
 use kalamdb_sharding::ShardRouter;
-use crate::support::{
-    create_cluster_app_context_with_shared_shards, execute_ok, observer_exec_ctx, result_rows,
-};
 use tokio::time::timeout;
 
 #[tokio::test]

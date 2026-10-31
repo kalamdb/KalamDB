@@ -15,6 +15,7 @@ pub mod base;
 pub mod catalog;
 pub mod job_nodes;
 pub mod jobs;
+pub mod keyed_provider;
 pub mod live;
 pub mod manifest;
 pub mod migrations;
@@ -29,9 +30,7 @@ pub mod users;
 // Re-export base traits
 // Re-export all providers
 pub use audit_logs::{AuditLogEntry, AuditLogsTableProvider};
-pub use base::{
-    extract_filter_value, extract_range_filters, SimpleSystemTableScan, SystemTableScan,
-};
+pub use base::{extract_filter_value, extract_range_filters};
 pub use catalog::{
     ActivateFunctionOutcome, CatalogFunctionArtifact, CatalogFunctionModule,
     CatalogFunctionRevision, CatalogRoutine, CatalogRoutineGrant, CatalogRoutineParameter,
@@ -43,6 +42,7 @@ pub use catalog::{
 };
 pub use job_nodes::JobNodesTableProvider;
 pub use jobs::JobsTableProvider;
+pub use keyed_provider::KeyedTableProvider;
 pub use manifest::{manifest_table_definition, InMemoryChecker, ManifestTableProvider};
 pub use migrations::MigrationsTableProvider;
 pub use schemas::NamespacesTableProvider;

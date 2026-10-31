@@ -1,8 +1,7 @@
 //! System.migrations table provider.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
-use datafusion::arrow::{array::RecordBatch, datatypes::SchemaRef};
 use kalamdb_commons::{
     models::{rows::SystemTableRow, MigrationId, SchemaId},
     SystemTable,
@@ -12,15 +11,15 @@ use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBacken
 use super::models::Migration;
 use crate::{
     error::{SystemError, SystemResultExt},
-    providers::base::{system_rows_to_batch, IndexedProviderDefinition},
+    providers::keyed_provider::KeyedTableProvider,
     system_row_mapper::{model_to_system_row, system_row_to_model},
 };
 
 pub type MigrationsStore = IndexedEntityStore<MigrationId, SystemTableRow>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MigrationsTableProvider {
-    store: MigrationsStore,
+    sql: KeyedTableProvider<MigrationId, SystemTableRow>,
 }
 
 impl MigrationsTableProvider {
@@ -32,13 +31,22 @@ impl MigrationsTableProvider {
                 .expect("Migrations is a table, not a view"),
             Vec::new(),
         );
-        Self { store }
+        let sql = KeyedTableProvider::from_stored_rows(
+            store,
+            Migration::definition(),
+            SystemTable::Migrations.table_id(),
+            SystemTable::Migrations.table_name(),
+            "migration_key",
+            |value| Some(MigrationId::new(value)),
+        );
+        Self { sql }
     }
 
     pub async fn upsert_migration_async(&self, migration: Migration) -> Result<(), SystemError> {
         let migration_key = migration.migration_key.clone();
         let row = Self::encode_migration_row(&migration)?;
-        self.store
+        self.sql
+            .store()
             .insert_async(migration_key, row)
             .await
             .into_system_error("insert_async migration error")
@@ -49,7 +57,8 @@ impl MigrationsTableProvider {
         migration_key: &MigrationId,
     ) -> Result<Option<Migration>, SystemError> {
         let row = self
-            .store
+            .sql
+            .store()
             .get_async(migration_key.clone())
             .await
             .into_system_error("get_async migration error")?;
@@ -60,7 +69,7 @@ impl MigrationsTableProvider {
         &self,
         namespace_id: &SchemaId,
     ) -> Result<usize, SystemError> {
-        let rows = self.store.scan_all_typed(None, None, None)?;
+        let rows = self.sql.store().scan_all_typed(None, None, None)?;
         let mut keys = Vec::new();
         for (key, row) in rows {
             let migration = Self::decode_migration_row(&row)?;
@@ -69,18 +78,11 @@ impl MigrationsTableProvider {
             }
         }
         let deleted = keys.len();
-        self.store
+        self.sql
+            .store()
             .delete_batch(&keys)
             .into_system_error("delete namespace migrations error")?;
         Ok(deleted)
-    }
-
-    fn build_batch_from_pairs(
-        &self,
-        pairs: Vec<(MigrationId, SystemTableRow)>,
-    ) -> Result<RecordBatch, SystemError> {
-        let rows = pairs.into_iter().map(|(_, row)| row).collect();
-        system_rows_to_batch(&Self::schema(), rows)
     }
 
     fn encode_migration_row(migration: &Migration) -> Result<SystemTableRow, SystemError> {
@@ -92,26 +94,7 @@ impl MigrationsTableProvider {
     }
 }
 
-crate::impl_system_table_provider_metadata!(
-    indexed,
-    provider = MigrationsTableProvider,
-    key = MigrationId,
-    table_name = SystemTable::Migrations.table_name(),
-    primary_key_column = "migration_key",
-    parse_key = |value| Some(MigrationId::new(value)),
-    schema = Migration::definition()
-        .to_arrow_schema()
-        .expect("failed to build migrations schema")
-);
-
-crate::impl_indexed_system_table_provider!(
-    provider = MigrationsTableProvider,
-    key = MigrationId,
-    value = SystemTableRow,
-    store = store,
-    definition = provider_definition,
-    build_batch = build_batch_from_pairs
-);
+crate::impl_keyed_table_provider!(MigrationsTableProvider);
 
 #[cfg(test)]
 mod tests {

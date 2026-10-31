@@ -4,19 +4,17 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use datafusion::{
-    arrow::{datatypes::SchemaRef, record_batch::RecordBatch},
+    arrow::datatypes::SchemaRef,
     catalog::Session,
     common::DFSchema,
-    datasource::TableProvider,
     error::{DataFusionError, Result as DataFusionResult},
     logical_expr::{Expr, TableProviderFilterPushDown},
     physical_expr::PhysicalExpr,
-    physical_plan::{ExecutionPlan, Statistics},
+    physical_plan::ExecutionPlan,
 };
 use kalamdb_commons::{
-    conversions::arrow_json_conversion::coerce_rows,
     ids::VersionId,
-    models::{rows::Row, SchemaId, TableName, UserId},
+    models::{rows::Row, UserId},
     schemas::TableType,
     NotLeaderError, StorageKey, TableId,
 };
@@ -51,7 +49,7 @@ use crate::{
 /// **Key Design Decisions**:
 /// - Generic K: StorageKey (UserTableRowId, SharedTableRowId, StreamTableRowId)
 /// - Generic V: Row type (UserTableRow, SharedTableRow, StreamTableRow)
-/// - Extends DataFusion::TableProvider (same struct serves both custom DML + SQL)
+/// - No DataFusion `TableProvider` supertrait: SQL entry stays on `KalamTableProvider`
 /// - No separate handlers - all DML logic in provider implementations
 /// - Stateless providers - user_id passed per-operation, not stored per-user
 ///
@@ -59,12 +57,12 @@ use crate::{
 /// ```text
 /// ExecutionContext → SessionState.extensions (SessionUserContext)
 ///                 ↓
-/// Provider.scan_rows(state) → extract_user_context(state)
-///                           ↓
+/// Provider.scan() → base_scan()
+///                 ↓
 /// Provider.scan_kvs_with_context(scan_context, filter)
 /// ```
 #[async_trait]
-pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
+pub(crate) trait BaseTableProvider<K: StorageKey, V>: Send + Sync {
     // ===========================
     // Core Access (required)
     // ===========================
@@ -109,30 +107,6 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         self.core().primary_key_field_name()
     }
 
-    /// Get namespace ID from table_id (default implementation)
-    fn namespace_id(&self) -> &SchemaId {
-        self.table_id().namespace_id()
-    }
-
-    /// Get table name from table_id (default implementation)
-    fn table_name(&self) -> &TableName {
-        self.table_id().table_name()
-    }
-
-    /// Get RocksDB column family name (default implementation)
-    fn column_family_name(&self) -> String {
-        format!(
-            "{}:{}",
-            match <Self as BaseTableProvider<K, V>>::provider_table_type(self) {
-                TableType::User => "user_table",
-                TableType::Shared => "shared_table",
-                TableType::Stream => "stream_table",
-                _ => "table",
-            },
-            self.table_id() // TableId Display: "namespace:table"
-        )
-    }
-
     // ===========================
     // Row Construction (required per provider)
     // ===========================
@@ -173,42 +147,13 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         version: VersionId,
     ) -> Result<K, KalamDbError>;
 
-    /// Insert multiple rows in a batch (optimized for bulk operations)
-    ///
-    /// # Arguments
-    /// * `user_id` - Subject user ID for RLS
-    /// * `rows` - Vector of Row objects
-    /// * `versions` - Canonical versions for each row (same length as `rows`)
-    ///
-    /// # Default Implementation
-    /// Iterates over rows and calls insert() for each. Providers may override
-    /// with batch-optimized implementation.
+    /// Insert multiple rows. `versions` has one entry per row.
     async fn insert_batch(
         &self,
         user_id: &UserId,
         rows: Vec<Row>,
         versions: &[VersionId],
-    ) -> Result<Vec<K>, KalamDbError> {
-        // Coerce rows to match schema types (e.g. String -> Timestamp)
-        // This ensures real-time events match the storage format
-        let coerced_rows = coerce_rows(rows, &self.schema_ref()).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
-        })?;
-
-        if versions.len() != coerced_rows.len() {
-            return Err(KalamDbError::InvalidOperation(format!(
-                "versions length {} does not match rows length {}",
-                versions.len(),
-                coerced_rows.len()
-            )));
-        }
-
-        let mut results = Vec::with_capacity(coerced_rows.len());
-        for (row, &version) in coerced_rows.into_iter().zip(versions.iter()) {
-            results.push(self.insert(user_id, row, version).await?);
-        }
-        Ok(results)
-    }
+    ) -> Result<Vec<K>, KalamDbError>;
 
     /// Update a row by key (appends new version with incremented _seq)
     ///
@@ -228,66 +173,6 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         updates: Row,
         version: VersionId,
     ) -> Result<Option<K>, KalamDbError>;
-
-    /// Delete a row by key (appends tombstone with _deleted=true)
-    ///
-    /// **Implementation**: Uses version_resolution helpers + unified_dml
-    ///
-    /// # Arguments
-    /// * `user_id` - Subject user ID for RLS
-    /// * `key` - Storage key identifying the row
-    async fn delete(
-        &self,
-        user_id: &UserId,
-        key: &K,
-        version: VersionId,
-    ) -> Result<(), KalamDbError>;
-
-    /// Update multiple rows in a batch (default implementation).
-    /// Returns only the keys that were actually modified (skips no-op updates).
-    async fn update_batch(
-        &self,
-        user_id: &UserId,
-        updates: Vec<(K, Row)>,
-        versions: &[VersionId],
-    ) -> Result<Vec<K>, KalamDbError> {
-        if versions.len() != updates.len() {
-            return Err(KalamDbError::InvalidOperation(format!(
-                "versions length {} does not match updates length {}",
-                versions.len(),
-                updates.len()
-            )));
-        }
-        let mut results = Vec::with_capacity(updates.len());
-        for ((key, update), &version) in updates.into_iter().zip(versions.iter()) {
-            if let Some(k) = BaseTableProvider::update(self, user_id, &key, update, version).await?
-            {
-                results.push(k);
-            }
-        }
-        Ok(results)
-    }
-
-    /// Delete multiple rows in a batch (default implementation)
-    async fn delete_batch(
-        &self,
-        user_id: &UserId,
-        keys: Vec<K>,
-        versions: &[VersionId],
-    ) -> Result<Vec<()>, KalamDbError> {
-        if versions.len() != keys.len() {
-            return Err(KalamDbError::InvalidOperation(format!(
-                "versions length {} does not match keys length {}",
-                versions.len(),
-                keys.len()
-            )));
-        }
-        let mut results = Vec::with_capacity(keys.len());
-        for (key, &version) in keys.into_iter().zip(versions.iter()) {
-            results.push(self.delete(user_id, &key, version).await?);
-        }
-        Ok(results)
-    }
 
     // ===========================
     // Convenience Methods (with default implementations)
@@ -349,11 +234,9 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         self.update_by_pk_value(user_id, id_value, updates, version).await
     }
 
-    /// Delete a row by primary key value directly (no key lookup needed)
+    /// Delete a row by primary key value.
     ///
-    /// This is more efficient than `delete()` and works for both hot and cold storage.
-    /// It finds the row by PK value (using find_row_by_pk for cold storage),
-    /// then writes a tombstone.
+    /// Finds the row by PK value, including cold storage, then writes a tombstone.
     ///
     /// # Arguments
     /// * `user_id` - Subject user ID for RLS
@@ -396,18 +279,6 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         Ok(pushdown_results_for_filters(filters, |filter| self.filter_capability(filter)))
     }
 
-    /// Manifest-backed table statistics for the DataFusion optimizer.
-    ///
-    /// DataFusion's mainline planner does not consume [`TableProvider::statistics`] yet,
-    /// but KalamDB exposes cold-segment estimates here for future optimizer rules and
-    /// downstream tooling.
-    fn statistics(&self) -> Option<Statistics> {
-        crate::utils::table_statistics::compute_manifest_table_statistics(
-            self.core(),
-            self.provider_table_type(),
-        )
-    }
-
     /// Default implementation for scan
     async fn base_scan(
         &self,
@@ -441,39 +312,21 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         let effective_projection =
             pruning.projection.columns.as_ref().map(|indices| indices.as_ref().to_vec());
 
-        let merged_schema = match effective_projection.as_ref() {
-            Some(indices) => descriptor
-                .schema
-                .project(indices)
-                .map(Arc::new)
-                .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?,
-            None => Arc::clone(&descriptor.schema),
-        };
-        let output_projection = if pruning.filters.filters.is_empty() {
-            None
-        } else {
-            projection.map(|indices| {
-                remap_projection_indices(&descriptor.schema, &merged_schema, indices)
-            })
-        };
-        let output_schema = match projection {
-            Some(indices) => descriptor
-                .schema
-                .project(indices)
-                .map(Arc::new)
-                .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?,
-            None => Arc::clone(&descriptor.schema),
-        };
         // PK equality is already applied by `resolve_pk_point_lookup`. Building
         // a DataFusion PhysicalExpr for `id = $1` is unused on both the skip-Arrow
         // and batch PK fast paths.
-        let physical_filter = if let Some(filter) = exact_filter {
-            let df_schema = DFSchema::try_from(Arc::clone(&merged_schema))?;
-            let _physical = kalamdb_observability::kdb_info_span_entered!("table.physical_expr");
-            Some(state.create_physical_expr(filter, &df_schema)?)
-        } else {
-            None
-        };
+        let PlannedScanOutput {
+            output_projection,
+            output_schema,
+            physical_filter,
+        } = plan_scan_output(
+            state,
+            &descriptor.schema,
+            projection,
+            effective_projection.as_deref(),
+            !pruning.filters.filters.is_empty(),
+            exact_filter,
+        )?;
         let scan_context = {
             let _ctx = kalamdb_observability::kdb_info_span_entered!("table.scan_context");
             self.build_scan_context(state).map_err(kalam_error_to_datafusion)?
@@ -607,55 +460,10 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     // Scan Operations (with version resolution)
     // ===========================
 
-    /// Scan rows with optional filter (merges hot + cold storage with version resolution)
-    ///
-    /// **Called by DataFusion during query execution via TableProvider::scan()**
-    ///
-    /// The `state` parameter contains SessionUserContext in extensions,
-    /// which providers extract to apply RLS filtering.
-    ///
-    /// **User/Shared Tables**:
-    /// 1. Extract user_id from SessionState.config().options().extensions
-    /// 2. Scan RocksDB (hot storage)
-    /// 3. Scan Parquet files (cold storage)
-    /// 4. Apply version resolution (MAX(_seq) per primary key) via DataFusion
-    /// 5. Filter _deleted = false
-    /// 6. Apply user filter expression
-    /// 7. For User tables: Apply RLS (user_id = subject)
-    ///
-    /// **Stream Tables**:
-    /// 1. Extract user_id from SessionState
-    /// 2. Scan ONLY RocksDB (hot storage, no Parquet)
-    /// 3. Apply TTL filtering
-    /// 4. Filter _deleted = false (if applicable)
-    /// 5. Apply user filter expression
-    /// 6. Apply RLS (user_id = subject)
-    ///
-    /// # Arguments
-    /// * `state` - DataFusion SessionState (contains SessionUserContext)
-    /// * `projection` - Optional column projection
-    /// * `filter` - Optional DataFusion expression for filtering
-    /// * `limit` - Optional limit on number of rows
-    ///
-    /// # Returns
-    /// RecordBatch with resolved, filtered rows
-    ///
-    /// # Note
-    /// Called by DataFusion's TableProvider::scan(). For direct DML operations,
-    /// use scan_with_version_resolution_to_kvs_async().
-    async fn scan_rows(
-        &self,
-        state: &dyn Session,
-        projection: Option<&Vec<usize>>,
-        filter: Option<&Expr>,
-        limit: Option<usize>,
-    ) -> Result<RecordBatch, KalamDbError>;
-
     /// Async scan with version resolution returning key-value pairs (for internal DML use)
     ///
     /// Used by UPDATE/DELETE to find current version before appending new version.
-    /// Unlike scan_rows(), this is called directly by DML operations with user_id
-    /// passed explicitly.
+    /// DML passes `user_id` explicitly.
     ///
     /// Uses `spawn_blocking` internally to prevent blocking the async runtime.
     ///
@@ -675,11 +483,6 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         cold_columns: Option<&[String]>,
         snapshot_commit_seq: Option<VersionId>,
     ) -> Result<Vec<(K, V)>, KalamDbError>;
-
-    /// Extract row fields from provider-specific value type
-    ///
-    /// Each provider implements this to access the internal `Row` stored on their row type.
-    fn extract_row(row: &V) -> &Row;
 }
 
 pub(crate) fn transaction_access_error_to_datafusion(
@@ -691,6 +494,59 @@ pub(crate) fn transaction_access_error_to_datafusion(
         },
         TransactionAccessError::InvalidOperation(message) => DataFusionError::Execution(message),
     }
+}
+
+pub(crate) struct PlannedScanOutput {
+    pub output_projection: Option<Vec<usize>>,
+    pub output_schema: SchemaRef,
+    pub physical_filter: Option<Arc<dyn PhysicalExpr>>,
+}
+
+/// Project the scan schema and build the residual physical filter.
+///
+/// User and shared scans pass the MVCC pruning projection. Stream scans pass
+/// the descriptor projection and keep the full predicate. Storage stays with
+/// the caller.
+pub(crate) fn plan_scan_output(
+    state: &dyn Session,
+    schema: &SchemaRef,
+    requested_projection: Option<&Vec<usize>>,
+    merged_indices: Option<&[usize]>,
+    remap_output: bool,
+    physical_filter: Option<Expr>,
+) -> DataFusionResult<PlannedScanOutput> {
+    let merged_schema = match merged_indices {
+        Some(indices) => schema
+            .project(indices)
+            .map(Arc::new)
+            .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?,
+        None => Arc::clone(schema),
+    };
+    let output_projection = if remap_output {
+        requested_projection
+            .map(|indices| remap_projection_indices(schema, &merged_schema, indices))
+    } else {
+        None
+    };
+    let output_schema = match requested_projection {
+        Some(indices) => schema
+            .project(indices)
+            .map(Arc::new)
+            .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?,
+        None => Arc::clone(schema),
+    };
+    let physical_filter = if let Some(filter) = physical_filter {
+        let df_schema = DFSchema::try_from(Arc::clone(&merged_schema))?;
+        let _physical = kalamdb_observability::kdb_info_span_entered!("table.physical_expr");
+        Some(state.create_physical_expr(filter, &df_schema)?)
+    } else {
+        None
+    };
+    Ok(PlannedScanOutput {
+        output_projection,
+        output_schema,
+        physical_filter,
+    })
 }
 
 /// Rebuild the scan predicate so rows staged in the open transaction are

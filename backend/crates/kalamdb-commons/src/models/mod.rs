@@ -103,7 +103,9 @@ pub use row_level_security::{
     TablePolicy,
 };
 #[cfg(feature = "rows")]
-pub use rows::{KTableRow, SharedTableRow, StreamTableRow, SystemTableRow, UserTableRow};
+pub use rows::{
+    KTableRow, SharedTableRow, StreamTableRow, SystemTableRow, UserTableRow, VersionedTableRow,
+};
 pub use schemas::{FieldFlag, FieldFlags, SchemaField, TableAccess, TableName};
 pub use session_origin::SessionOrigin;
 pub use storage_mode::StorageMode;

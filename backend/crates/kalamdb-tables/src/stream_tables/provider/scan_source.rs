@@ -1,13 +1,13 @@
 struct StreamScanSource {
-    core:              Arc<TableProviderCore>,
-    store:             Arc<StreamTableStore>,
-    ttl_seconds:       Option<u64>,
-    user_id:           UserId,
-    descriptor:        ScanDescriptor,
-    filter:            Option<Expr>,
-    physical_filter:   Option<Arc<dyn PhysicalExpr>>,
+    core: Arc<TableProviderCore>,
+    store: Arc<StreamTableStore>,
+    ttl_seconds: Option<u64>,
+    user_id: UserId,
+    descriptor: ScanDescriptor,
+    filter: Option<Expr>,
+    physical_filter: Option<Arc<dyn PhysicalExpr>>,
     output_projection: Option<Vec<usize>>,
-    output_schema:     SchemaRef,
+    output_schema: SchemaRef,
 }
 
 impl std::fmt::Debug for StreamScanSource {
@@ -38,11 +38,12 @@ impl StreamScanSource {
         // enough to prove semantic safety when ORDER BY may execute above the scan.
         let scan_limit = None;
         let ttl_ms = self.ttl_seconds.map(|seconds| seconds * 1000);
-        let now_ms = StreamTableProvider::now_millis().map_err(|error| {
+        let now_ms = StreamTableEngine::now_millis().map_err(|error| {
             DataFusionError::Execution(format!("stream scan clock failed: {error}"))
         })?;
 
-        let start_seq = since_seq.map(|seq| VersionId::try_from_i64(seq.as_i64().saturating_add(1)).unwrap_or(seq));
+        let start_seq = since_seq
+            .map(|seq| VersionId::try_from_i64(seq.as_i64().saturating_add(1)).unwrap_or(seq));
         let results = self
             .store
             .scan_user_streaming_async(
@@ -86,12 +87,12 @@ impl StreamScanSource {
         let mut output = DeferredBatchOutput::new(batch);
         if include_diagnostics {
             output = output.with_diagnostics(DeferredScanDiagnostics {
-                hot_rows_scanned:   Some(hot_rows_scanned),
-                cold_rows_scanned:  Some(0),
-                cold_files_total:   Some(0),
+                hot_rows_scanned: Some(hot_rows_scanned),
+                cold_rows_scanned: Some(0),
+                cold_files_total: Some(0),
                 cold_files_skipped: Some(0),
                 cold_files_scanned: Some(0),
-                cold_files:         Vec::new(),
+                cold_files: Vec::new(),
             });
         }
         Ok(output)

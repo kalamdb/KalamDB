@@ -368,22 +368,7 @@ pub mod helpers {
         }
     }
 
-    /// Convert rows with _version and _deleted system columns to Arrow RecordBatch
-    ///
-    /// This is the common pattern used by both user and shared table flush.
-    /// Adds _version and _deleted columns to each row before conversion.
-    pub fn rows_to_arrow_batch(schema: &SchemaRef, rows: &[(Vec<u8>, Row)]) -> Result<RecordBatch> {
-        // Avoid cloning: collect references, then build columnar arrays directly.
-        // The JSON conversion function requires owned Rows (it consumes the BTreeMap),
-        // so we must clone — but we skip cloning the key bytes.
-        let arrow_rows: Vec<Row> = rows.iter().map(|(_, row)| row.clone()).collect();
-        json_rows_to_arrow_batch(schema, arrow_rows).into_flush_error("Failed to build RecordBatch")
-    }
-
-    /// Convert owned rows (consuming the key bytes) to Arrow RecordBatch.
-    ///
-    /// More efficient than `rows_to_arrow_batch` when you can pass ownership,
-    /// avoiding one Row clone per row.
+    /// Convert owned rows to an Arrow record batch, dropping the key bytes.
     pub fn rows_into_arrow_batch(
         schema: &SchemaRef,
         rows: Vec<(Vec<u8>, Row)>,

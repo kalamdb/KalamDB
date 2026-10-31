@@ -12,14 +12,11 @@ use datafusion::arrow::{
     datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
-use kalamdb_commons::{
-    datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
-    SystemTable,
-};
+use kalamdb_commons::{schemas::TableDefinition, SystemTable};
+use kalamdb_macros::table;
 use parking_lot::RwLock;
 
-use super::common::{system_view_definition, SystemViewProvider};
+use super::common::SystemViewProvider;
 use crate::view_base::VirtualView;
 
 crate::memoized_view_schema!(transactions_schema, TransactionsView);
@@ -40,6 +37,35 @@ pub struct TransactionSnapshot {
 
 /// Active-transaction snapshot callback type.
 pub type TransactionsSnapshotCallback = Arc<dyn Fn() -> Vec<TransactionSnapshot> + Send + Sync>;
+
+#[table(
+    name = "transactions",
+    view = true,
+    comment = "Active explicit transactions across pg RPC, SQL batch, and internal origins"
+)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TransactionRow {
+    /// Canonical explicit transaction identifier
+    pub transaction_id: String,
+    /// Human-readable execution owner identifier
+    pub owner_id: String,
+    /// Transaction origin surface
+    pub origin: String,
+    /// Current transaction lifecycle state
+    pub state: String,
+    /// Transaction age in milliseconds
+    pub age_ms: i64,
+    /// Milliseconds since the transaction last performed work
+    pub idle_ms: i64,
+    /// Number of staged mutations currently buffered
+    pub write_count: i64,
+    /// Approximate in-memory size of the staged write set
+    pub write_bytes: i64,
+    /// Number of tables referenced by the transaction
+    pub touched_tables_count: i64,
+    /// Committed snapshot boundary captured at BEGIN
+    pub snapshot_commit_seq: i64,
+}
 
 /// Virtual view that snapshots active explicit transactions from memory.
 pub struct TransactionsView {
@@ -66,124 +92,7 @@ impl TransactionsView {
     }
 
     pub fn definition() -> TableDefinition {
-        let columns = vec![
-            ColumnDefinition::new(
-                1,
-                "transaction_id",
-                1,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Canonical explicit transaction identifier".to_string()),
-            ),
-            ColumnDefinition::new(
-                2,
-                "owner_id",
-                2,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Human-readable execution owner identifier".to_string()),
-            ),
-            ColumnDefinition::new(
-                3,
-                "origin",
-                3,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Transaction origin surface".to_string()),
-            ),
-            ColumnDefinition::new(
-                4,
-                "state",
-                4,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Current transaction lifecycle state".to_string()),
-            ),
-            ColumnDefinition::new(
-                5,
-                "age_ms",
-                5,
-                KalamDataType::BigInt,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Transaction age in milliseconds".to_string()),
-            ),
-            ColumnDefinition::new(
-                6,
-                "idle_ms",
-                6,
-                KalamDataType::BigInt,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Milliseconds since the transaction last performed work".to_string()),
-            ),
-            ColumnDefinition::new(
-                7,
-                "write_count",
-                7,
-                KalamDataType::BigInt,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Number of staged mutations currently buffered".to_string()),
-            ),
-            ColumnDefinition::new(
-                8,
-                "write_bytes",
-                8,
-                KalamDataType::BigInt,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Approximate in-memory size of the staged write set".to_string()),
-            ),
-            ColumnDefinition::new(
-                9,
-                "touched_tables_count",
-                9,
-                KalamDataType::BigInt,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Number of tables referenced by the transaction".to_string()),
-            ),
-            ColumnDefinition::new(
-                10,
-                "snapshot_commit_seq",
-                10,
-                KalamDataType::BigInt,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Committed snapshot boundary captured at BEGIN".to_string()),
-            ),
-        ];
-
-        system_view_definition(
-            SystemTable::Transactions,
-            columns,
-            "Active explicit transactions across pg RPC, SQL batch, and internal origins",
-        )
+        TransactionRow::definition()
     }
 }
 

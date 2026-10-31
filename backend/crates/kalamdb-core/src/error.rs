@@ -560,11 +560,6 @@ impl ConfigError {
 }
 
 impl ApiError {
-    /// Create an invalid request error
-    pub fn invalid_request<S: Into<String>>(msg: S) -> Self {
-        ApiError::InvalidRequest(msg.into())
-    }
-
     /// Create an internal error
     pub fn internal<S: Into<String>>(msg: S) -> Self {
         ApiError::Internal(msg.into())
@@ -581,24 +576,9 @@ impl ColumnFamilyError {
     pub fn create_failed<S: Into<String>>(msg: S) -> Self {
         ColumnFamilyError::CreateFailed(msg.into())
     }
-
-    /// Create a drop failed error
-    pub fn drop_failed<S: Into<String>>(msg: S) -> Self {
-        ColumnFamilyError::DropFailed(msg.into())
-    }
 }
 
 impl FlushError {
-    /// Create a read failed error
-    pub fn read_failed<S: Into<String>>(msg: S) -> Self {
-        FlushError::ReadFailed(msg.into())
-    }
-
-    /// Create a write failed error
-    pub fn write_failed<S: Into<String>>(msg: S) -> Self {
-        FlushError::WriteFailed(msg.into())
-    }
-
     /// Create a no data error
     pub fn no_data<S: Into<String>>(table: S) -> Self {
         FlushError::NoData(table.into())
@@ -614,16 +594,6 @@ impl BackupError {
     /// Create a create failed error
     pub fn create_failed<S: Into<String>>(msg: S) -> Self {
         BackupError::CreateFailed(msg.into())
-    }
-
-    /// Create a restore failed error
-    pub fn restore_failed<S: Into<String>>(msg: S) -> Self {
-        BackupError::RestoreFailed(msg.into())
-    }
-
-    /// Create a validation failed error
-    pub fn validation_failed<S: Into<String>>(msg: S) -> Self {
-        BackupError::ValidationFailed(msg.into())
     }
 }
 
@@ -743,20 +713,6 @@ impl KalamDbError {
         KalamDbError::IoMessage {
             message: message.into(),
             source: None,
-        }
-    }
-
-    /// Create an IO error with a message and source error.
-    ///
-    /// Use this when you have access to the original error for better error chains.
-    pub fn io_with_source<S, E>(message: S, source: E) -> Self
-    where
-        S: Into<String>,
-        E: std::error::Error + Send + Sync + 'static,
-    {
-        KalamDbError::IoMessage {
-            message: message.into(),
-            source: Some(Box::new(source)),
         }
     }
 }

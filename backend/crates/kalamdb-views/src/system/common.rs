@@ -3,14 +3,17 @@
 use std::sync::{Arc, OnceLock};
 
 use datafusion::arrow::datatypes::SchemaRef;
-use kalamdb_commons::{
-    datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
-    SchemaId, TableName,
-};
-use kalamdb_system::{SystemTable, SystemTablesRegistry};
+use kalamdb_commons::schemas::TableDefinition;
+use kalamdb_system::SystemTablesRegistry;
 
 use crate::view_base::{ViewTableProvider, VirtualView};
+
+/// `i64` timestamp column. `#[table(view = true)]` maps this name to
+/// `KalamDataType::Timestamp`.
+pub type Timestamp = i64;
+
+/// JSON column. `#[table(view = true)]` maps this name to `KalamDataType::Json`.
+pub type Json = serde_json::Value;
 
 /// Memoize an Arrow schema derived from a view [`TableDefinition`].
 pub fn schema_from_definition(
@@ -23,23 +26,6 @@ pub fn schema_from_definition(
             .expect("view TableDefinition must convert to Arrow schema")
     })
     .clone()
-}
-
-/// Build a [`TableDefinition`] for a `system.*` virtual view.
-pub fn system_view_definition(
-    system_table: SystemTable,
-    columns: Vec<ColumnDefinition>,
-    comment: impl Into<String>,
-) -> TableDefinition {
-    TableDefinition::new(
-        SchemaId::system(),
-        TableName::new(system_table.table_name()),
-        TableType::System,
-        columns,
-        TableOptions::system(),
-        Some(comment.into()),
-    )
-    .expect("system view definition must be valid")
 }
 
 /// [`ViewTableProvider`] alias used by most system views.
@@ -70,40 +56,4 @@ where
     V: VirtualView + 'static,
 {
     SystemViewProvider::new(Arc::new(constructor(system_registry)))
-}
-
-pub fn text_col(ordinal: u32, name: &str, comment: &str) -> ColumnDefinition {
-    column(ordinal, name, KalamDataType::Text, false, comment)
-}
-
-pub fn nullable_text_col(ordinal: u32, name: &str, comment: &str) -> ColumnDefinition {
-    column(ordinal, name, KalamDataType::Text, true, comment)
-}
-
-pub fn int_col(ordinal: u32, name: &str, comment: &str) -> ColumnDefinition {
-    column(ordinal, name, KalamDataType::BigInt, false, comment)
-}
-
-pub fn bool_col(ordinal: u32, name: &str, comment: &str) -> ColumnDefinition {
-    column(ordinal, name, KalamDataType::Boolean, false, comment)
-}
-
-fn column(
-    ordinal: u32,
-    name: &str,
-    data_type: KalamDataType,
-    nullable: bool,
-    comment: &str,
-) -> ColumnDefinition {
-    ColumnDefinition::new(
-        u64::from(ordinal),
-        name,
-        ordinal,
-        data_type,
-        nullable,
-        false,
-        false,
-        ColumnDefault::None,
-        Some(comment.to_string()),
-    )
 }

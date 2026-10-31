@@ -5,7 +5,7 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
-use kalamdb_tables::TopicMessage;
+use crate::TopicMessage;
 
 const TAIL_MAX_MESSAGES: usize = 1024;
 const TAIL_MAX_BYTES: usize = 1024 * 1024;

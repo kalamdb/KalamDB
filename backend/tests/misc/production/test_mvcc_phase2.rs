@@ -67,10 +67,7 @@ async fn test_create_table_without_pk_uses_stable_row_id() {
     );
 
     let selected = server
-        .execute_sql_as_user(
-            &format!("SELECT * FROM {}.no_pk_table", ns),
-            "user1",
-        )
+        .execute_sql_as_user(&format!("SELECT * FROM {}.no_pk_table", ns), "user1")
         .await;
     assert_eq!(selected.status, ResponseStatus::Success, "{:?}", selected.error);
     let rows = selected.rows_as_maps();
@@ -79,10 +76,7 @@ async fn test_create_table_without_pk_uses_stable_row_id() {
     assert_eq!(row.get("id").and_then(|value| value.as_str()), Some("row-1"));
     assert_eq!(row.get("name").and_then(|value| value.as_str()), Some("Widget"));
     assert_eq!(parse_i64(row.get("value").expect("value column")), 7);
-    assert!(
-        !row.contains_key("_row_id"),
-        "hidden row id must stay out of SELECT *"
-    );
+    assert!(!row.contains_key("_row_id"), "hidden row id must stay out of SELECT *");
 }
 
 /// T052: CREATE TABLE with user PK → verify `_version` and `_deleted` auto-added to schema

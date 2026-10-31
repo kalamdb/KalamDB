@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+use crate::support::{
+    create_cluster_app_context, create_shared_table_with_public_policy, row, unique_namespace,
+};
 use kalamdb_commons::{
     conversions::arrow_json_conversion::record_batch_to_json_rows,
     models::{
@@ -10,9 +13,6 @@ use kalamdb_commons::{
 };
 use kalamdb_pg::OperationExecutor;
 use kalamdb_pg_bridge::OperationService;
-use crate::support::{
-    create_cluster_app_context, create_shared_table_with_public_policy, row, unique_namespace,
-};
 
 async fn scan_names(
     service: &OperationService,

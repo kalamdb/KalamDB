@@ -34,7 +34,6 @@ use kalamdb_sql::{
     OnConflictUpdateAssignment, OnConflictUpdateValue, ParsedOnConflictAction,
     ValuesInsertShapeOptions, ValuesInsertView,
 };
-use kalamdb_tables::SharedTableProvider;
 use kalamdb_transactions::{build_insert_staged_mutations, StagedMutation};
 use sqlparser::ast::{
     Expr, FunctionArg, FunctionArgExpr, FunctionArguments, Insert, ObjectName, ObjectNamePart,
@@ -1336,16 +1335,14 @@ pub(crate) async fn try_batch_inserts_in_transaction(
         &app_context,
     )?;
     if table_type == TableType::Shared {
-        let provider = cached_table.get_provider().ok_or_else(|| {
+        let provider = cached_table.get_kalam_provider().ok_or_else(|| {
             KalamDbError::InvalidOperation(format!("Shared table provider not found: {table_id}"))
         })?;
-        let provider = (provider.as_ref() as &dyn std::any::Any)
-            .downcast_ref::<SharedTableProvider>()
-            .ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!(
-                    "Shared table provider type mismatch: {table_id}"
-                ))
-            })?;
+        if !provider.is_shared() {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Shared table provider type mismatch: {table_id}"
+            )));
+        }
         let snapshot_commit_seq = app_context
             .transaction_coordinator()
             .get_handle(transaction_id)
@@ -1359,7 +1356,7 @@ pub(crate) async fn try_batch_inserts_in_transaction(
                 .map(|packed| packed.version())
             });
         provider
-            .check_rows_authorized(
+            .check_shared_rows_authorized(
                 exec_ctx.user_id(),
                 exec_ctx.user_role(),
                 PolicyCommand::Insert,

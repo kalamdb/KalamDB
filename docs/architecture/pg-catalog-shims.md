@@ -157,11 +157,11 @@ DataFusion's built-in `information_schema.columns` omits PostgreSQL `udt_name` a
 
 - rewrites `data_type` and `udt_name` from persisted `KalamDataType` metadata (SQL-standard `data_type`, PostgreSQL `udt_name`)
 - appends `udt_schema` and `is_generated` for pgwire client compatibility
-- appends Kalam-only `kdb_*` columns projected from `system.columns` semantics: `kdb_data_type`, `kdb_namespace_id`, `kdb_version`, `kdb_column_id`, `kdb_comment`, `kdb_default_value`, `kdb_primary_key`, `kdb_primary_key_pos`
+- appends Kalam-only `kdb_*` columns: `kdb_data_type`, `kdb_namespace_id`, `kdb_version`, `kdb_column_id`, `kdb_comment`, `kdb_default_value`, `kdb_primary_key`, `kdb_primary_key_pos`
 
 ## `information_schema.tables`
 
-The stock DataFusion `information_schema.tables` view is wrapped to append Kalam-only `kdb_*` columns from `system.tables` semantics: `kdb_namespace_id`, `kdb_table_type`, `kdb_storage_id`, `kdb_version`, `kdb_options`, `kdb_comment`, `kdb_updated_at`, `kdb_created_at`. `information_schema.views` filters the extended tables provider.
+The stock DataFusion `information_schema.tables` view is wrapped to append Kalam-only `kdb_*` columns: `kdb_namespace_id`, `kdb_table_type`, `kdb_storage_id`, `kdb_version`, `kdb_options`, `kdb_comment`, `kdb_updated_at`, `kdb_created_at`. `information_schema.views` filters the extended tables provider.
 
 ## `information_schema.routines`
 
@@ -171,16 +171,7 @@ DataFusion's `information_schema.routines` lists session UDFs (scalar/aggregate/
 
 The stock DataFusion `parameters` view lists session UDF arguments. KalamDB appends `character_maximum_length` (always NULL) and **procedure arguments** from `system.routine_parameters`, joined by Tabularis as `parameters.specific_name = routines.specific_name`.
 
-Kalam-only metadata should use the `kdb_*` prefix, matching how `udt_name` was added for PostgreSQL compatibility.
-
-## Deprecated `system.tables` / `system.columns`
-
-`system.tables` and `system.columns` remain registered for backward compatibility but are **deprecated**. New clients should query:
-
-- `information_schema.tables` with `kdb_namespace_id`, `kdb_table_type`, `kdb_storage_id`, `kdb_options`, `kdb_updated_at`, etc.
-- `information_schema.columns` with `kdb_data_type`, `kdb_column_id`, `kdb_primary_key`, `kdb_default_value`, etc.
-
-The CLI (`\dt`, `--watch-schema`), pgwire parity tests, and SDK smoke tests have been migrated to `information_schema.*`.
+Kalam-only metadata should use the `kdb_*` prefix, matching how `udt_name` was added for PostgreSQL compatibility. Table and column metadata is queried from `information_schema.tables` and `information_schema.columns`.
 
 ## Implementation notes
 

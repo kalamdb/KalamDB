@@ -792,11 +792,6 @@ impl StorageCached {
     pub fn invalidate_object_store(&self) {
         *self.object_store.write() = None;
     }
-
-    /// Check if `ObjectStore` has been initialized.
-    pub fn is_object_store_initialized(&self) -> bool {
-        self.object_store.read().is_some()
-    }
 }
 
 /// Extract sorted, deduplicated `.parquet` filenames from a list result.

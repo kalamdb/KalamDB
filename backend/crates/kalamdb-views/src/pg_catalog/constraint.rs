@@ -1,11 +1,12 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, Int64Builder, ListBuilder, StringBuilder},
-    datatypes::{DataType, Field, Schema, SchemaRef},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use kalamdb_commons::Role;
+use kalamdb_macros::table;
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
@@ -17,30 +18,42 @@ use crate::{
     },
 };
 
-fn int64_list_type() -> DataType {
-    DataType::List(Arc::new(Field::new("item", DataType::Int64, true)))
+#[table(
+    name = "pg_constraint",
+    namespace = SchemaId::pg_catalog(),
+    view = true,
+    comment = "Table constraints"
+)]
+#[derive(Debug)]
+struct PgConstraintRow {
+    /// Constraint oid
+    oid: i64,
+    /// Constraint name
+    conname: String,
+    /// Namespace oid
+    connamespace: i64,
+    /// Constraint type
+    contype: String,
+    /// Constrained relation oid
+    conrelid: i64,
+    /// Foreign relation oid
+    confrelid: i64,
+    /// Supporting index oid
+    conindid: i64,
+    /// Constrained column numbers
+    conkey: Vec<i64>,
+    /// Foreign column numbers
+    confkey: Option<Vec<i64>>,
+    /// Parent constraint oid
+    conparentid: i64,
+    /// Foreign update action
+    confupdtype: String,
+    /// Foreign delete action
+    confdeltype: String,
 }
 
 fn schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("oid", DataType::Int64, false),
-                Field::new("conname", DataType::Utf8, false),
-                Field::new("connamespace", DataType::Int64, false),
-                Field::new("contype", DataType::Utf8, false),
-                Field::new("conrelid", DataType::Int64, false),
-                Field::new("confrelid", DataType::Int64, false),
-                Field::new("conindid", DataType::Int64, false),
-                Field::new("conkey", int64_list_type(), false),
-                Field::new("confkey", int64_list_type(), true),
-                Field::new("conparentid", DataType::Int64, false),
-                Field::new("confupdtype", DataType::Utf8, false),
-                Field::new("confdeltype", DataType::Utf8, false),
-            ]))
-        })
-        .clone()
+    PgConstraintRow::arrow_schema()
 }
 
 #[derive(Debug)]

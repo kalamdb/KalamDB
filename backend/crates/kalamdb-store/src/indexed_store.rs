@@ -102,7 +102,7 @@ use std::sync::Arc;
 use datafusion::logical_expr::{Expr, Operator};
 #[cfg(feature = "datafusion")]
 use datafusion::scalar::ScalarValue;
-#[cfg(feature = "datafusion")]
+use kalamdb_commons::ids::VersionId;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::{KSerializable, StorageKey};
 
@@ -112,6 +112,22 @@ use crate::{
     persist::{object_entity_codec, EntityCodec},
     storage_trait::{Operation, Partition, Result, StorageBackend, StorageError},
 };
+
+/// Snapshot window for a hot replace. The previous row stays while a reader
+/// can still see it: `old_version <= snapshot < new_version`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PinnedHotVersion {
+    pub old_version: VersionId,
+    pub new_version: VersionId,
+    pub snapshot: VersionId,
+}
+
+impl PinnedHotVersion {
+    /// Keep the previous hot row when a pinned snapshot still includes it.
+    pub fn retains_previous(self) -> bool {
+        self.old_version <= self.snapshot && self.snapshot < self.new_version
+    }
+}
 
 // ============================================================================
 // IndexDefinition Trait
@@ -836,7 +852,21 @@ where
     /// index entries are dropped and the entity is overwritten.
     pub fn replace(&self, previous: Option<(&K, &V)>, new_key: &K, new_entity: &V) -> Result<()> {
         let mut operations = Vec::with_capacity(2 + self.indexes.len() * 2);
-        self.push_replace(&mut operations, previous, new_key, new_entity)?;
+        self.push_replace(&mut operations, previous, new_key, new_entity, None)?;
+        self.backend.batch(operations)
+    }
+
+    /// Replace one hot key, keeping the previous row when `retention` says a
+    /// pinned snapshot can still read it.
+    pub fn replace_pinned(
+        &self,
+        previous: Option<(&K, &V)>,
+        new_key: &K,
+        new_entity: &V,
+        retention: PinnedHotVersion,
+    ) -> Result<()> {
+        let mut operations = Vec::with_capacity(2 + self.indexes.len() * 2);
+        self.push_replace(&mut operations, previous, new_key, new_entity, Some(retention))?;
         self.backend.batch(operations)
     }
 
@@ -865,6 +895,7 @@ where
                 previous.as_ref().map(|(key, entity)| (key, entity)),
                 new_key,
                 new_entity,
+                None,
             )?;
         }
         self.backend.batch(operations)
@@ -876,25 +907,30 @@ where
         previous: Option<(&K, &V)>,
         new_key: &K,
         new_entity: &V,
+        retention: Option<PinnedHotVersion>,
     ) -> Result<()> {
         let new_storage = new_key.storage_key();
+        let retain_previous = retention.is_some_and(PinnedHotVersion::retains_previous);
         if let Some((old_key, old_entity)) = previous {
             let old_storage = old_key.storage_key();
             let same_key = old_storage == new_storage;
-            if !same_key {
+            if !same_key && !retain_previous {
                 operations.push(Operation::Delete {
                     partition: self.main_partition.clone(),
                     key: old_storage,
                 });
             }
-            for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
+            for (index_position, (index, index_partition)) in
+                self.indexes.iter().zip(self.index_partitions.iter()).enumerate()
+            {
                 let old_index_key = index.extract_key(old_key, old_entity);
                 let drop_old = if same_key {
                     old_index_key != index.extract_key(new_key, new_entity)
                 } else {
                     true
                 };
-                if drop_old {
+                // Index 0 is the primary-key index. Later indexes are secondary.
+                if drop_old && !(retain_previous && index_position == 0) {
                     if let Some(index_key) = old_index_key {
                         operations.push(Operation::Delete {
                             partition: index_partition.clone(),
@@ -1239,14 +1275,17 @@ where
             keys.push(key);
             values.push(value);
             if keys.len() == INDEX_SUM_BATCH {
-                if self.accumulate_visible_integers(&mut keys, &mut values, &mut count, &mut sum)?
+                if self
+                    .accumulate_visible_integers(&mut keys, &mut values, &mut count, &mut sum)?
                     .is_none()
                 {
                     return Ok(None);
                 }
             }
         }
-        if self.accumulate_visible_integers(&mut keys, &mut values, &mut count, &mut sum)?.is_none()
+        if self
+            .accumulate_visible_integers(&mut keys, &mut values, &mut count, &mut sum)?
+            .is_none()
         {
             return Ok(None);
         }
@@ -1461,14 +1500,11 @@ where
         self.codec.decode(key, bytes)
     }
 
-    fn deserialize_selected(
-        &self,
-        key: &K,
-        bytes: &[u8],
-        ordinals: Option<&[usize]>,
-    ) -> Result<V> {
+    fn deserialize_selected(&self, key: &K, bytes: &[u8], ordinals: Option<&[usize]>) -> Result<V> {
         match ordinals {
-            Some(ordinals) if !ordinals.is_empty() => self.codec.decode_selected(key, bytes, ordinals),
+            Some(ordinals) if !ordinals.is_empty() => {
+                self.codec.decode_selected(key, bytes, ordinals)
+            },
             _ => self.codec.decode(key, bytes),
         }
     }
@@ -1712,11 +1748,11 @@ pub fn extract_i64_equality(filter: &Expr) -> Option<(&str, i64)> {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::{JobId, NodeId};
+    use kalamdb_commons::{ids::VersionId, JobId, NodeId};
     use kalamdb_system::{providers::jobs::models::Job, JobStatus, JobType};
 
     use super::*;
-    use crate::test_utils::InMemoryBackend;
+    use crate::{test_utils::InMemoryBackend, StorageBackend};
 
     // Test index: Jobs by status
     struct TestStatusIndex;
@@ -1785,6 +1821,42 @@ mod tests {
             queue: None,
             priority: None,
         }
+    }
+
+    #[test]
+    fn pinned_snapshot_keeps_the_previous_hot_row_and_primary_index() {
+        let backend = Arc::new(InMemoryBackend::new());
+        let store =
+            IndexedEntityStore::new(backend.clone(), "test_jobs", vec![Arc::new(TestStatusIndex)]);
+        let old = create_test_job("job-old", JobStatus::Running);
+        let new_job = create_test_job("job-new", JobStatus::Running);
+        store.insert(&old.job_id, &old).unwrap();
+        let old_index_key = TestStatusIndex.extract_key(&old.job_id, &old).unwrap();
+
+        let retention = PinnedHotVersion {
+            old_version: VersionId::try_from_i64(1).unwrap(),
+            new_version: VersionId::try_from_i64(5).unwrap(),
+            snapshot: VersionId::try_from_i64(3).unwrap(),
+        };
+        store
+            .replace_pinned(Some((&old.job_id, &old)), &new_job.job_id, &new_job, retention)
+            .unwrap();
+
+        assert!(store.get(&old.job_id).unwrap().is_some());
+        assert!(store.get(&new_job.job_id).unwrap().is_some());
+        assert!(backend.get(&TestStatusIndex.partition(), &old_index_key).unwrap().is_some());
+    }
+
+    #[test]
+    fn replace_without_a_pin_drops_the_previous_hot_row() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+        let store = IndexedEntityStore::new(backend, "test_jobs", vec![Arc::new(TestStatusIndex)]);
+        let old = create_test_job("job-old", JobStatus::Running);
+        let new_job = create_test_job("job-new", JobStatus::Running);
+        store.insert(&old.job_id, &old).unwrap();
+        store.replace(Some((&old.job_id, &old)), &new_job.job_id, &new_job).unwrap();
+        assert!(store.get(&old.job_id).unwrap().is_none());
+        assert!(store.get(&new_job.job_id).unwrap().is_some());
     }
 
     #[test]

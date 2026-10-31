@@ -94,6 +94,14 @@ Persisted `system.*` tables stay **shared-scope, direct-keyed (`K -> V`), hot-on
 - It emits the primary-key column name and the ordinal column order.
 - `build_record_batch!` consumes that order. A relation must not keep a second field list that can drift from the macro.
 
+### 2.6 Shared-Table View Scan
+A SQL view over a shared table does not get its own scan engine. `KalamTableProvider::scan_shared_relation` is the hook:
+
+- It accepts only a shared table whose profile is `RlsMode::ForcePolicyCheck`.
+- It calls the shared provider `scan`. That path applies `SharedTableAuthorization` to read predicates.
+- Insert and update `WITH CHECK` stay on the same shared provider through `TableRowDml`.
+- Stream and user tables are rejected by this hook. Stream TTL remains an append-log capability.
+
 ---
 
 ## 3. Unified `VersionedTableEngine` & Shared Fast Paths Contract (FR-002, FR-040, FR-041)

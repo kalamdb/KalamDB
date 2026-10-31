@@ -2,22 +2,11 @@
 
 use std::sync::Arc;
 
-use kalamdb_commons::{
-    ids::{SharedTableRowId, UserTableRowId},
-    models::rows::{SharedTableRow, UserTableRow},
-    schemas::TableDefinition,
-};
+use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_serialization::{
-    decode_row_metadata, decode_shared_row, decode_shared_row_selected, decode_user_row,
-    decode_user_row_selected, encode_shared_row, encode_user_row, storage_schema_from_table,
-    storage_schema_from_table_versions_with_arrow, storage_schema_from_table_with_arrow,
-    StorageDataType, StorageField, StorageSchema,
+    storage_schema_from_table, storage_schema_from_table_versions_with_arrow,
+    storage_schema_from_table_with_arrow, StorageDataType, StorageField, StorageSchema,
 };
-use kalamdb_store::{EntityCodec, StorageError};
-
-fn map_ser(err: kalamdb_serialization::SerializationError) -> StorageError {
-    StorageError::SerializationError(err.to_string())
-}
 
 /// Build a storage schema from a catalog table definition.
 pub fn storage_schema_for_table(table: &TableDefinition) -> Result<Arc<StorageSchema>, String> {
@@ -60,95 +49,4 @@ pub fn storage_schema_from_named_fields(
             .map(|(name, data_type)| StorageField::new(name, data_type))
             .collect(),
     ))
-}
-
-/// Ordinal USER row codec. Identity is reconstructed from [`UserTableRowId`].
-#[derive(Debug, Clone)]
-pub struct UserRowCodec {
-    schema: Arc<StorageSchema>,
-}
-
-impl UserRowCodec {
-    pub fn new(schema: Arc<StorageSchema>) -> Self {
-        Self { schema }
-    }
-}
-
-impl EntityCodec<UserTableRowId, UserTableRow> for UserRowCodec {
-    fn encode(
-        &self,
-        _key: &UserTableRowId,
-        entity: &UserTableRow,
-    ) -> kalamdb_store::storage_trait::Result<Vec<u8>> {
-        encode_user_row(entity, &self.schema)
-            .map(|encoded| encoded.into_bytes())
-            .map_err(map_ser)
-    }
-
-    fn decode(
-        &self,
-        key: &UserTableRowId,
-        bytes: &[u8],
-    ) -> kalamdb_store::storage_trait::Result<UserTableRow> {
-        decode_user_row(bytes, &self.schema, key.user_id.clone(), key.version).map_err(map_ser)
-    }
-
-    fn decode_selected(
-        &self,
-        key: &UserTableRowId,
-        bytes: &[u8],
-        ordinals: &[usize],
-    ) -> kalamdb_store::storage_trait::Result<UserTableRow> {
-        decode_user_row_selected(bytes, &self.schema, key.user_id.clone(), key.version, ordinals)
-            .map_err(map_ser)
-    }
-
-    fn row_deleted_flag(&self, bytes: &[u8]) -> kalamdb_store::storage_trait::Result<Option<bool>> {
-        decode_row_metadata(bytes).map(|meta| Some(meta.deleted)).map_err(map_ser)
-    }
-}
-
-/// Ordinal SHARED row codec. Identity is reconstructed from [`SharedTableRowId`].
-#[derive(Debug, Clone)]
-pub struct SharedRowCodec {
-    schema: Arc<StorageSchema>,
-}
-
-impl SharedRowCodec {
-    pub fn new(schema: Arc<StorageSchema>) -> Self {
-        Self { schema }
-    }
-}
-
-impl EntityCodec<SharedTableRowId, SharedTableRow> for SharedRowCodec {
-    fn encode(
-        &self,
-        _key: &SharedTableRowId,
-        entity: &SharedTableRow,
-    ) -> kalamdb_store::storage_trait::Result<Vec<u8>> {
-        encode_shared_row(entity, &self.schema)
-            .map(|encoded| encoded.into_bytes())
-            .map_err(map_ser)
-    }
-
-    fn decode(
-        &self,
-        key: &SharedTableRowId,
-        bytes: &[u8],
-    ) -> kalamdb_store::storage_trait::Result<SharedTableRow> {
-        decode_shared_row(bytes, &self.schema, *key).map_err(map_ser)
-    }
-
-    fn decode_selected(
-        &self,
-        key: &SharedTableRowId,
-        bytes: &[u8],
-        ordinals: &[usize],
-    ) -> kalamdb_store::storage_trait::Result<SharedTableRow> {
-        decode_shared_row_selected(bytes, &self.schema, *key, ordinals).map_err(map_ser)
-    }
-
-    fn row_deleted_flag(&self, bytes: &[u8]) -> kalamdb_store::storage_trait::Result<Option<bool>> {
-        decode_row_metadata(bytes).map(|meta| Some(meta.deleted)).map_err(map_ser)
-    }
 }

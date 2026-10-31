@@ -48,7 +48,7 @@ pub use index::{
 #[cfg(feature = "datafusion")]
 pub use indexed_store::{extract_i64_equality, extract_string_equality};
 // Phase 15: Export IndexedEntityStore for automatic index management
-pub use indexed_store::{IndexDefinition, IndexedEntityStore};
+pub use indexed_store::{IndexDefinition, IndexedEntityStore, PinnedHotVersion};
 // Re-export StorageKey from kalamdb-commons to avoid import inconsistency
 pub use kalamdb_commons::StorageKey;
 pub use persist::{
