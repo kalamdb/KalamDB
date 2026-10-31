@@ -8,7 +8,8 @@ use std::{path::Path, sync::Arc};
 #[cfg(target_os = "linux")]
 use libc::{sigaction, SA_ONSTACK, SA_SIGINFO, SIGSEGV};
 
-use anyhow::Result;
+use anyhow::{bail, Result};
+use kalamdb_commons::system_tables::{classify_column_family_name, ColumnFamilyProfile};
 use kalamdb_configs::RocksDbSettings;
 use rocksdb::{
     BlockBasedOptions, Cache, ColumnFamilyDescriptor, DataBlockIndexType, Options,
@@ -230,7 +231,7 @@ impl RocksDbInit {
         eprintln!("startup: rocksdb restore check");
         apply_pending_rocksdb_restore(path)?;
         eprintln!("startup: rocksdb listing column families");
-        let cf_names = self.collect_column_family_names(db_opts, path);
+        let cf_names = self.collect_column_family_names(db_opts, path)?;
         eprintln!("startup: rocksdb opening {} column families", cf_names.len());
         let write_buffer_manager =
             install_write_buffer_manager(db_opts, &self.settings, cf_names.len());
@@ -277,11 +278,31 @@ impl RocksDbInit {
         Ok((db, cf_names, write_buffer_manager))
     }
 
-    fn collect_column_family_names(&self, db_opts: &Options, path: &Path) -> Vec<String> {
+    fn collect_column_family_names(&self, db_opts: &Options, path: &Path) -> Result<Vec<String>> {
         let mut existing = match DB::list_cf(db_opts, path) {
             Ok(cfs) if !cfs.is_empty() => cfs,
-            _ => vec!["default".to_string()],
+            Ok(_) => vec!["default".to_string()],
+            Err(_error) if !path.exists() => vec!["default".to_string()],
+            Err(error) => {
+                bail!("failed to list RocksDB column families in {}: {error}", path.display())
+            },
         };
+
+        // An old per-system-table/index CF is not a supported storage format.
+        // Refuse to open it rather than silently ignore its contents.
+        for name in &existing {
+            if fixed_column_families().contains(&name.as_str()) {
+                continue;
+            }
+            if !matches!(
+                classify_column_family_name(name),
+                ColumnFamilyProfile::HotData | ColumnFamilyProfile::HotIndex
+            ) {
+                bail!(
+                    "unsupported RocksDB column family '{name}': this version requires all persisted system tables in 'system_meta' and system indexes in 'system_index'; export/import or use a fresh data directory"
+                );
+            }
+        }
 
         for name in fixed_column_families() {
             if !existing.iter().any(|existing_name| existing_name == name) {
@@ -289,7 +310,7 @@ impl RocksDbInit {
             }
         }
 
-        existing
+        Ok(existing)
     }
 }
 
@@ -338,4 +359,25 @@ fn host_total_memory_bytes() -> Option<u64> {
     system.refresh_memory_specifics(MemoryRefreshKind::everything());
     let total = system.total_memory();
     (total > 0).then_some(total)
+}
+
+#[cfg(test)]
+mod canonical_cf_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_old_dedicated_system_column_family() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut options = Options::default();
+        options.create_if_missing(true);
+        let db = DB::open(&options, temp.path()).unwrap();
+        db.create_cf("system_users", &Options::default()).unwrap();
+        drop(db);
+
+        let init = RocksDbInit::with_defaults(temp.path().to_string_lossy());
+        let error = init.open().expect_err("old physical system table CF must fail startup");
+        let message = format!("{error:#}");
+        assert!(message.contains("system_users"), "{message}");
+        assert!(message.contains("system_meta"), "{message}");
+    }
 }
