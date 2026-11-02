@@ -223,12 +223,15 @@ void main() {
       await session.kalam.pause();
       await session.markRead(secondAssistant.value);
       await session.kalam.resume();
+      // Offline markRead completes the HTTP write before the live UPDATE may
+      // land; awaitingServerEcho is enough locally. Peer proves server truth.
       await waitForRow<ChatMessage>(
         session.messages,
         (row) =>
             row.value.id == secondAssistant.value.id &&
             row.value.status == ChatDeliveryStatus.read &&
-            row.sync.isSynced,
+            (row.sync.isSynced ||
+                row.sync.phase == KalamRowSyncPhase.awaitingServerEcho),
       );
       await waitForRow<ChatMessage>(
         peerMessages,
