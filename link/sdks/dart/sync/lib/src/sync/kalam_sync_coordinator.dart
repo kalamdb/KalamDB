@@ -89,16 +89,40 @@ final class KalamSyncCoordinator {
     _paused = false;
     await transport.resume();
     if (generation != _lifecycleGeneration || _disposed || _paused) return;
+    // Transport resume reconnects the socket. Mirror that into coordinator
+    // state here so pending outbox work is not stuck waiting for a raced or
+    // coalesced connection stream event after pause.
+    _connected = true;
     for (final active in _consumers.values) {
       await _open(active);
     }
     if (generation != _lifecycleGeneration || _disposed || _paused) return;
+    // Never await a flush while an apply still holds the store lock — that
+    // deadlocks pause/resume cancellation. Drain immediately when idle, else
+    // schedule once applies finish.
+    if (_inFlightApplies == 0) {
+      await _flushActions();
+    } else {
+      unawaited(_flushWhenIdle(generation));
+    }
+    if (generation != _lifecycleGeneration || _disposed || _paused) return;
     _emit(
       _state.copyWith(
-        phase: _connected ? KalamSyncPhase.catchingUp : KalamSyncPhase.offline,
+        phase: KalamSyncPhase.catchingUp,
         clearError: true,
       ),
     );
+  }
+
+  Future<void> _flushWhenIdle(int generation) async {
+    while ((_flushInProgress || _inFlightApplies > 0) &&
+        !_disposed &&
+        !_paused &&
+        generation == _lifecycleGeneration) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    if (generation != _lifecycleGeneration || _disposed || _paused) return;
+    await _flushActions();
   }
 
   Future<void> dispose() async {
