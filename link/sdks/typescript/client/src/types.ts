@@ -333,6 +333,8 @@ export type SubscriptionErrorEvent = Extract<
 export interface LiveCheckpoint {
   subscriptionId: string;
   lastVersionId: TypedVersionId;
+  /** SHARED-table domain required to resume with `from` after the WASM client is replaced. */
+  versionDomain?: VersionDomain;
 }
 
 /**
@@ -491,6 +493,8 @@ export interface SubscriptionInfo {
   createdAt: Date;
   /** Last received row version (for resume on reconnect), if any */
   lastVersionId?: import('./version_id.js').VersionId;
+  /** SHARED-table domain paired with `lastVersionId` for durable resume. */
+  versionDomain?: VersionDomain;
   /** Whether this subscription has been closed */
   closed: boolean;
 }

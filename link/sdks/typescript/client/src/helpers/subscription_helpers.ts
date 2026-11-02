@@ -40,10 +40,63 @@ export function normalizeLiveStreamOptions(
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
+/**
+ * Keep resume `from` paired with the SHARED-table domain learned from prior acks.
+ *
+ * `login()` replaces the WASM client and clears its in-WASM learned-domain map, so the
+ * TypeScript client must remember domains across that boundary.
+ */
+export function withLearnedVersionDomain<T extends LiveStreamOptions>(
+  options: T | undefined,
+  sql: string,
+  learnedDomains: ReadonlyMap<string, VersionDomain>,
+): T | undefined {
+  if (!options) {
+    return undefined;
+  }
+
+  if (options.from === undefined || options.versionDomain !== undefined) {
+    return options;
+  }
+
+  const learned = learnedDomains.get(sql);
+  if (!learned) {
+    return options;
+  }
+
+  return {
+    ...options,
+    versionDomain: learned,
+  };
+}
+
+export function rememberLearnedVersionDomain(
+  learnedDomains: Map<string, VersionDomain>,
+  sql: string,
+  domain: VersionDomain | undefined,
+): void {
+  if (!domain) {
+    return;
+  }
+
+  learnedDomains.set(sql, domain);
+}
+
 export type NormalizedSubscriptionEvent = ServerMessage & {
   rows?: RowData[];
   old_values?: RowData[];
 };
+
+export function versionDomainFromSubscriptionEvent(
+  event: NormalizedSubscriptionEvent,
+): VersionDomain | undefined {
+  if (!('batch_control' in event)) {
+    return undefined;
+  }
+
+  const batchControl = event.batch_control as { version_domain?: VersionDomain } | undefined;
+  return batchControl?.version_domain;
+}
 
 export type LiveRowsWasmEvent = {
   type: 'rows' | 'error';
@@ -63,6 +116,7 @@ interface WasmSubscriptionSnapshot {
   id: string;
   query?: string;
   lastSeqId?: string;
+  versionDomain?: VersionDomain;
   closed?: boolean;
 }
 
@@ -301,19 +355,26 @@ export function removeMaterializedRows<T>(
 export function readSubscriptionInfos(
   raw: unknown,
   metadata: ReadonlyMap<string, LocalSubscriptionMetadata>,
+  learnedDomains: ReadonlyMap<string, VersionDomain> | Map<string, VersionDomain> = new Map(),
 ): SubscriptionInfo[] {
   const parsed = parseWasmSubscriptions(raw);
   if (!parsed.parsed) {
-    return localSubscriptionInfos(metadata);
+    return localSubscriptionInfos(metadata, learnedDomains);
   }
 
   return parsed.subscriptions.map((subscription) => {
     const local = metadata.get(subscription.id);
+    const tableName = subscription.query ?? local?.tableName ?? '';
+    if (subscription.versionDomain && learnedDomains instanceof Map) {
+      rememberLearnedVersionDomain(learnedDomains, tableName, subscription.versionDomain);
+    }
+    const versionDomain = subscription.versionDomain ?? learnedDomains.get(tableName);
     return {
       id: subscription.id,
-      tableName: subscription.query ?? local?.tableName ?? '',
+      tableName,
       createdAt: new Date(local?.createdAtMs ?? 0),
       lastVersionId: parseVersionId(subscription.lastSeqId),
+      ...(versionDomain ? { versionDomain } : {}),
       closed: subscription.closed ?? false,
     };
   });
@@ -350,12 +411,16 @@ function parseWasmSubscriptions(raw: unknown): ParsedWasmSubscriptions {
 
 function localSubscriptionInfos(
   metadata: ReadonlyMap<string, LocalSubscriptionMetadata>,
+  learnedDomains: ReadonlyMap<string, VersionDomain> = new Map(),
 ): SubscriptionInfo[] {
   return Array.from(metadata.entries()).map(([id, local]) => ({
     id,
     tableName: local.tableName,
     createdAt: new Date(local.createdAtMs),
     lastVersionId: undefined,
+    ...(learnedDomains.get(local.tableName)
+      ? { versionDomain: learnedDomains.get(local.tableName) }
+      : {}),
     closed: false,
   }));
 }
