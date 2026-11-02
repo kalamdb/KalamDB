@@ -97,12 +97,11 @@ final class KalamSyncCoordinator {
       await _open(active);
     }
     if (generation != _lifecycleGeneration || _disposed || _paused) return;
-    // Never await a flush while an apply still holds the store lock — that
-    // deadlocks pause/resume cancellation. Drain immediately when idle, else
-    // schedule once applies finish.
-    if (_inFlightApplies == 0) {
-      await _flushActions();
-    } else {
+    // Drain the outbox after pause without relying on a connection stream
+    // event (those can race or coalesce). Only schedule when work is pending so
+    // Flutter widget tests' fake-async binding is not left with orphaned Drift
+    // futures from an empty flush.
+    if (_state.pendingActions > 0) {
       unawaited(_flushWhenIdle(generation));
     }
     if (generation != _lifecycleGeneration || _disposed || _paused) return;
