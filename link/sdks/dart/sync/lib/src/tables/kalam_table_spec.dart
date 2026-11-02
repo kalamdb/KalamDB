@@ -37,8 +37,9 @@ final class KalamTableSpec<T> {
   KalamDecodedRow<T> decodeChange(KalamRemoteChange change) {
     if (change.kind == KalamChangeKind.delete) {
       final key = change.row[keyColumn];
-      if (key == null)
+      if (key == null) {
         throw FormatException('Delete event is missing $keyColumn');
+      }
       return KalamDeletedRow(key.toString());
     }
     if (change.isPartialUpdate) {
