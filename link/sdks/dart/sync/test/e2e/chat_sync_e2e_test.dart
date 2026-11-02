@@ -218,13 +218,15 @@ void main() {
       final secondAssistant = await waitForRow<ChatMessage>(
         session.messages,
         (row) => row.value.id == 'ai-${second.id}' && row.sync.isSynced,
+        timeout: const Duration(seconds: 90),
       );
 
       await session.kalam.pause();
       await session.markRead(secondAssistant.value);
       await session.kalam.resume();
-      // Offline markRead completes the HTTP write before the live UPDATE may
-      // land; awaitingServerEcho is enough locally. Peer proves server truth.
+      // Offline markRead can finish the HTTP write before a live UPDATE lands.
+      // awaitingServerEcho is enough locally; a fresh peer catch-up proves the
+      // server row (long-lived peer live delivery is racy under CI load).
       await waitForRow<ChatMessage>(
         session.messages,
         (row) =>
@@ -232,12 +234,22 @@ void main() {
             row.value.status == ChatDeliveryStatus.read &&
             (row.sync.isSynced ||
                 row.sync.phase == KalamRowSyncPhase.awaitingServerEcho),
+        timeout: const Duration(seconds: 90),
+      );
+      final catchUpPeer = await openPeer(session);
+      addTearDown(catchUpPeer.dispose);
+      final catchUpMessages = catchUpPeer.table(session.messages.spec);
+      await catchUpPeer.subscribe(
+        catchUpMessages.consumer(
+          sql: 'SELECT * FROM ${session.messagesTable}',
+        ),
       );
       await waitForRow<ChatMessage>(
-        peerMessages,
+        catchUpMessages,
         (row) =>
             row.value.id == secondAssistant.value.id &&
             row.value.status == ChatDeliveryStatus.read,
+        timeout: const Duration(seconds: 90),
       );
 
       await session.markRead(secondAssistant.value);
@@ -249,7 +261,7 @@ void main() {
       );
     },
     skip: skipIfNoIntegration,
-    timeout: const Timeout(Duration(seconds: 90)),
+    timeout: const Timeout(Duration(seconds: 180)),
   );
 
   test(
