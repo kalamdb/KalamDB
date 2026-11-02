@@ -168,7 +168,9 @@ final class KalamLinkTransport implements KalamSyncTransport {
     final client = await ensureClient();
     await client.reconnectWebSocket();
     if (await client.isConnected) {
-      _emitConnection(KalamTransportConnection.connected);
+      // Always notify listeners on resume. A coalesced connected→connected
+      // skip would leave the coordinator paused-offline with a full outbox.
+      _emitConnection(KalamTransportConnection.connected, force: true);
     }
   }
 
@@ -180,8 +182,12 @@ final class KalamLinkTransport implements KalamSyncTransport {
     await _connections.close();
   }
 
-  void _emitConnection(KalamTransportConnection connection) {
-    if (_connection == connection || _connections.isClosed) return;
+  void _emitConnection(
+    KalamTransportConnection connection, {
+    bool force = false,
+  }) {
+    if (_connections.isClosed) return;
+    if (!force && _connection == connection) return;
     _connection = connection;
     _connections.add(connection);
   }

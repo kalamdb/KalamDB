@@ -89,39 +89,16 @@ final class KalamSyncCoordinator {
     _paused = false;
     await transport.resume();
     if (generation != _lifecycleGeneration || _disposed || _paused) return;
-    // Transport resume reconnects the socket. Mirror that into coordinator
-    // state here so pending outbox work is not stuck waiting for a raced or
-    // coalesced connection stream event after pause.
-    _connected = true;
     for (final active in _consumers.values) {
       await _open(active);
     }
     if (generation != _lifecycleGeneration || _disposed || _paused) return;
-    // Drain the outbox after pause without relying on a connection stream
-    // event (those can race or coalesce). Only schedule when work is pending so
-    // Flutter widget tests' fake-async binding is not left with orphaned Drift
-    // futures from an empty flush.
-    if (_state.pendingActions > 0) {
-      unawaited(_flushWhenIdle(generation));
-    }
-    if (generation != _lifecycleGeneration || _disposed || _paused) return;
     _emit(
       _state.copyWith(
-        phase: KalamSyncPhase.catchingUp,
+        phase: _connected ? KalamSyncPhase.catchingUp : KalamSyncPhase.offline,
         clearError: true,
       ),
     );
-  }
-
-  Future<void> _flushWhenIdle(int generation) async {
-    while ((_flushInProgress || _inFlightApplies > 0) &&
-        !_disposed &&
-        !_paused &&
-        generation == _lifecycleGeneration) {
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-    }
-    if (generation != _lifecycleGeneration || _disposed || _paused) return;
-    await _flushActions();
   }
 
   Future<void> dispose() async {
