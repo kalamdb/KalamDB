@@ -1,14 +1,14 @@
 //! Shared helpers for extending DataFusion `information_schema` tables.
+//!
+//! Kalam-owned relations use [`ComputedCatalogProvider`]. Stock relations stay
+//! on [`InformationSchemaProvider`].
+
+pub(crate) use crate::catalog_provider::ComputedCatalogProvider;
 
 use std::sync::Arc;
 
 use datafusion::{
-    arrow::{
-        array::{ArrayRef, UInt64Array},
-        compute::cast,
-        datatypes::{DataType, Field, SchemaRef},
-        record_batch::RecordBatch,
-    },
+    arrow::{compute::cast, datatypes::SchemaRef, record_batch::RecordBatch},
     catalog::{information_schema::InformationSchemaProvider, CatalogProviderList, SchemaProvider},
     datasource::TableProvider,
     error::{DataFusionError, Result as DataFusionResult},
@@ -66,33 +66,19 @@ pub(crate) async fn collect_inner_batch(
     }
 }
 
-pub(crate) fn append_nullable_uint64_column(
-    batch: &RecordBatch,
-    output_schema: &SchemaRef,
-    _field_name: &str,
-) -> DataFusionResult<RecordBatch> {
-    let row_count = batch.num_rows();
-    let nulls = UInt64Array::new_null(row_count);
-    let mut columns = batch.columns().to_vec();
-    columns.push(Arc::new(nulls) as ArrayRef);
-    RecordBatch::try_new(Arc::clone(output_schema), columns)
-        .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))
-}
-
-pub(crate) fn schema_with_field(base: &SchemaRef, field_name: &str) -> SchemaRef {
-    let mut fields = base.fields().to_vec();
-    if fields.iter().all(|field| field.name() != field_name) {
-        fields.push(Arc::new(Field::new(field_name, DataType::UInt64, true)));
-    }
-    Arc::new(datafusion::arrow::datatypes::Schema::new(fields))
-}
-
 pub(crate) fn cast_batch_to_schema(
     batch: RecordBatch,
     schema: &SchemaRef,
 ) -> DataFusionResult<RecordBatch> {
     let mut columns = Vec::with_capacity(schema.fields().len());
     for (index, field) in schema.fields().iter().enumerate() {
+        if index >= batch.num_columns() {
+            columns.push(datafusion::arrow::array::new_null_array(
+                field.data_type(),
+                batch.num_rows(),
+            ));
+            continue;
+        }
         let column = batch.column(index);
         if column.data_type() == field.data_type() {
             columns.push(Arc::clone(column));

@@ -105,10 +105,7 @@ impl TopicPublisherService {
     fn delete_retention_batch(
         &self,
         partition: &PartitionRuntime,
-        entries: Vec<(
-            kalamdb_tables::TopicRetentionIndexKey,
-            kalamdb_tables::TopicRetentionIndexEntry,
-        )>,
+        entries: Vec<(crate::TopicRetentionIndexKey, crate::TopicRetentionIndexEntry)>,
         stats: &mut TopicRetentionDeletionStats,
     ) -> Result<()> {
         const CHUNK: usize = 512;

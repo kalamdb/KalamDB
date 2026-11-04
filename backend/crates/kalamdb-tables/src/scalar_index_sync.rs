@@ -5,7 +5,10 @@
 //! Doing that only on the node that accepted the HTTP request leaves the data
 //! leader with an empty index, and equality scans then miss live rows.
 
-use std::{collections::{HashMap, HashSet}, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use kalamdb_commons::{
     models::schemas::{ScalarIndexDefinition, TableDefinition},
@@ -52,9 +55,11 @@ pub fn sync_scalar_indexes_with_arrow(
         validate_scalar_index(table_id, table_def, definition)?;
     }
 
-    let previous_indexes: HashMap<&str, &ScalarIndexDefinition> =
-        previous.map(|table| table.scalar_indexes.iter().map(|index| (index.name.as_str(), index)).collect())
-            .unwrap_or_default();
+    let previous_indexes: HashMap<&str, &ScalarIndexDefinition> = previous
+        .map(|table| {
+            table.scalar_indexes.iter().map(|index| (index.name.as_str(), index)).collect()
+        })
+        .unwrap_or_default();
     let user_scoped = matches!(table_def.table_type, TableType::User);
 
     // A replacement with the same name but different columns/uniqueness must
@@ -66,9 +71,12 @@ pub fn sync_scalar_indexes_with_arrow(
         }
     }
 
-    let added: Vec<&str> = table_def.scalar_indexes.iter()
+    let added: Vec<&str> = table_def
+        .scalar_indexes
+        .iter()
         .filter(|index| previous_indexes.get(index.name.as_str()).is_none_or(|old| *old != *index))
-        .map(|index| index.name.as_str()).collect();
+        .map(|index| index.name.as_str())
+        .collect();
     if added.is_empty() {
         return Ok(());
     }
@@ -175,7 +183,9 @@ fn drop_index_partition(
     match backend.drop_partition(&partition) {
         Ok(()) => Ok(()),
         Err(err) if err.to_string().to_lowercase().contains("not found") => Ok(()),
-        Err(err) => Err(format!("Failed to drop scalar index partition {}: {}", partition.name(), err)),
+        Err(err) => {
+            Err(format!("Failed to drop scalar index partition {}: {}", partition.name(), err))
+        },
     }
 }
 
@@ -235,8 +245,11 @@ mod tests {
     fn same_name_definition_change_backfills_again() {
         let backend = Arc::new(RecordingBackend::new());
         let mut previous = shared_table(1);
-        previous.scalar_indexes =
-            vec![ScalarIndexDefinition::new("i2a", vec![ColumnId::new(2)], false)];
+        previous.scalar_indexes = vec![ScalarIndexDefinition::new(
+            "i2a",
+            vec![ColumnId::new(2)],
+            false,
+        )];
         let mut next = previous.clone();
         next.scalar_indexes[0].unique = true;
 
@@ -254,8 +267,11 @@ mod tests {
     fn identical_index_does_not_scan() {
         let backend = Arc::new(RecordingBackend::new());
         let mut table = shared_table(1);
-        table.scalar_indexes =
-            vec![ScalarIndexDefinition::new("i2a", vec![ColumnId::new(2)], false)];
+        table.scalar_indexes = vec![ScalarIndexDefinition::new(
+            "i2a",
+            vec![ColumnId::new(2)],
+            false,
+        )];
 
         sync_scalar_indexes(
             Arc::clone(&backend) as Arc<dyn StorageBackend>,
@@ -271,8 +287,11 @@ mod tests {
     fn unresolved_or_wide_index_fails_before_backfill() {
         let backend = Arc::new(RecordingBackend::new());
         let mut missing = shared_table(1);
-        missing.scalar_indexes =
-            vec![ScalarIndexDefinition::new("i2a", vec![ColumnId::new(99)], false)];
+        missing.scalar_indexes = vec![ScalarIndexDefinition::new(
+            "i2a",
+            vec![ColumnId::new(99)],
+            false,
+        )];
         let missing_error = sync_scalar_indexes(
             Arc::clone(&backend) as Arc<dyn StorageBackend>,
             &missing.table_id(),
@@ -299,4 +318,3 @@ mod tests {
         assert_eq!(backend.scan_calls(), 0);
     }
 }
-

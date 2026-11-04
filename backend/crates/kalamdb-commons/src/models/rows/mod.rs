@@ -7,6 +7,7 @@ pub mod stored_scalar_value;
 pub mod stream_table_row;
 pub mod system_table_row;
 pub mod user_table_row;
+pub mod versioned_table_row;
 
 pub use k_table_row::KTableRow;
 pub use row::{Row, RowConversionError, RowEnvelope, StoredScalarValue};
@@ -19,3 +20,4 @@ pub use stored_scalar_value::{
 pub use stream_table_row::StreamTableRow;
 pub use system_table_row::SystemTableRow;
 pub use user_table_row::UserTableRow;
+pub use versioned_table_row::VersionedTableRow;

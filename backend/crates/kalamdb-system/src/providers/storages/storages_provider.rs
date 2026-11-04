@@ -3,28 +3,21 @@
 //! This module provides a DataFusion TableProvider implementation for the system.storages table.
 //! Uses the new EntityStore architecture with StorageId keys.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
-use datafusion::{
-    arrow::{array::RecordBatch, datatypes::SchemaRef},
-    logical_expr::Expr,
-};
 use kalamdb_commons::{models::rows::SystemTableRow, StorageId, SystemTable};
 use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBackend};
 
 use crate::{
     error::SystemError,
-    providers::{
-        base::{extract_filter_value, system_rows_to_batch, SimpleProviderDefinition},
-        storages::models::Storage,
-    },
+    providers::{keyed_provider::KeyedTableProvider, storages::models::Storage},
     system_row_mapper::{model_to_system_row, system_row_to_model},
 };
 
 /// System.storages table provider using EntityStore architecture
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StoragesTableProvider {
-    store: IndexedEntityStore<StorageId, SystemTableRow>,
+    sql: KeyedTableProvider<StorageId, SystemTableRow>,
 }
 
 impl StoragesTableProvider {
@@ -41,13 +34,21 @@ impl StoragesTableProvider {
             crate::SystemTable::Storages.column_family_name().expect("Storages is a table"),
             Vec::new(),
         );
-        Self { store }
+        let sql = KeyedTableProvider::from_stored_rows(
+            store,
+            Storage::definition(),
+            SystemTable::Storages.table_id(),
+            SystemTable::Storages.table_name(),
+            "storage_id",
+            |value| Some(StorageId::new(value)),
+        );
+        Self { sql }
     }
 
     /// Create a new storage entry
     pub fn create_storage(&self, storage: Storage) -> Result<(), SystemError> {
         let row = Self::encode_storage_row(&storage)?;
-        self.store.put(&storage.storage_id, &row)?;
+        self.sql.store().put(&storage.storage_id, &row)?;
         Ok(())
     }
 
@@ -56,7 +57,7 @@ impl StoragesTableProvider {
         &self,
         storage_id: &StorageId,
     ) -> Result<Option<Storage>, SystemError> {
-        let row = self.store.get(storage_id)?;
+        let row = self.sql.store().get(storage_id)?;
         row.map(|value| Self::decode_storage_row(&value)).transpose()
     }
 
@@ -68,7 +69,7 @@ impl StoragesTableProvider {
     /// Update an existing storage entry
     pub fn update_storage(&self, storage: Storage) -> Result<(), SystemError> {
         // Check if storage exists
-        if self.store.get(&storage.storage_id)?.is_none() {
+        if self.sql.store().get(&storage.storage_id)?.is_none() {
             return Err(SystemError::NotFound(format!(
                 "Storage not found: {}",
                 storage.storage_id
@@ -76,19 +77,19 @@ impl StoragesTableProvider {
         }
 
         let row = Self::encode_storage_row(&storage)?;
-        self.store.put(&storage.storage_id, &row)?;
+        self.sql.store().put(&storage.storage_id, &row)?;
         Ok(())
     }
 
     /// Delete a storage entry
     pub fn delete_storage(&self, storage_id: &StorageId) -> Result<(), SystemError> {
-        self.store.delete(storage_id)?;
+        self.sql.store().delete(storage_id)?;
         Ok(())
     }
 
     /// List all storages
     pub fn list_storages(&self) -> Result<Vec<Storage>, SystemError> {
-        let iter = self.store.scan_iterator(None, None)?;
+        let iter = self.sql.store().scan_iterator(None, None)?;
         let mut storages = Vec::new();
         for item in iter {
             let (_, row) = item?;
@@ -98,45 +99,8 @@ impl StoragesTableProvider {
     }
 
     /// Scan all storages and return as RecordBatch
-    pub fn scan_all_storages(&self) -> Result<RecordBatch, SystemError> {
-        let rows = self
-            .store
-            .scan_all_typed(None, None, None)?
-            .into_iter()
-            .map(|(_, row)| row)
-            .collect();
-        system_rows_to_batch(&Self::schema(), rows)
-    }
-    fn scan_to_batch_filtered(
-        &self,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> Result<RecordBatch, SystemError> {
-        // Check for primary key equality filter → O(1) point lookup
-        if let Some(storage_id_str) = extract_filter_value(filters, "storage_id") {
-            let storage_id = StorageId::new(&storage_id_str);
-            if let Some(row) = self.store.get(&storage_id)? {
-                return system_rows_to_batch(&Self::schema(), vec![row]);
-            }
-            return system_rows_to_batch(&Self::schema(), vec![]);
-        }
-
-        // With limit: use iterator with early termination (skip sort)
-        if let Some(lim) = limit {
-            let iter = self.store.scan_iterator(None, None)?;
-            let mut rows = Vec::with_capacity(lim.min(1000));
-            for item in iter {
-                let (_, row) = item?;
-                rows.push(row);
-                if rows.len() >= lim {
-                    break;
-                }
-            }
-            return system_rows_to_batch(&Self::schema(), rows);
-        }
-
-        // No limit: full scan with sort (default behavior)
-        self.scan_all_storages()
+    pub fn scan_all_storages(&self) -> Result<datafusion::arrow::array::RecordBatch, SystemError> {
+        self.sql.scan_all_to_batch()
     }
 
     fn encode_storage_row(storage: &Storage) -> Result<SystemTableRow, SystemError> {
@@ -148,23 +112,7 @@ impl StoragesTableProvider {
     }
 }
 
-crate::impl_system_table_provider_metadata!(
-    simple,
-    provider = StoragesTableProvider,
-    table_name = SystemTable::Storages.table_name(),
-    schema = Storage::definition()
-        .to_arrow_schema()
-        .expect("failed to build storages schema")
-);
-
-crate::impl_simple_system_table_provider!(
-    provider = StoragesTableProvider,
-    key = StorageId,
-    value = SystemTableRow,
-    definition = provider_definition,
-    scan_all = scan_all_storages,
-    scan_filtered = scan_to_batch_filtered
-);
+crate::impl_keyed_table_provider!(StoragesTableProvider);
 
 #[cfg(test)]
 mod tests {
@@ -282,7 +230,14 @@ mod tests {
 
         // Create DataFusion session
         let ctx = datafusion::execution::context::SessionContext::new();
-        let state = ctx.state();
+        let mut state = ctx.state();
+        state.config_mut().options_mut().extensions.insert(
+            kalamdb_session_datafusion::SessionUserContext::new(
+                kalamdb_commons::models::UserId::new("system"),
+                kalamdb_commons::models::Role::System,
+                kalamdb_commons::models::ReadContext::Internal,
+            ),
+        );
 
         // Scan via DataFusion
         let plan = provider.scan(&state, None, &[], None).await.unwrap();

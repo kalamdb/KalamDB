@@ -20,10 +20,7 @@ use kalamdb_core::{
     test_helpers::{create_test_session_simple, test_app_context_simple},
 };
 use kalamdb_sql::ddl::{AlterPolicyStatement, CreatePolicyStatement, DropPolicyStatement};
-use kalamdb_tables::{
-    utils::{BaseTableProvider, KalamTableProvider},
-    SharedTableProvider,
-};
+use kalamdb_tables::utils::TableRowDml;
 
 use super::{AlterPolicyHandler, CreatePolicyHandler, DropPolicyHandler};
 
@@ -194,10 +191,7 @@ async fn shared_scan_default_denies_and_filters_post_bind() {
         .register_table(definition)
         .expect("register table");
     let table_id = TableId::from_strings("chat", "documents_scan");
-    let provider = app_context.schema_registry().get_provider(&table_id).unwrap();
-    let provider = (provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .expect("shared provider");
+    let provider = app_context.schema_registry().get_kalam_provider(&table_id).unwrap();
     provider
         .insert_rows(
             &UserId::new("system"),
@@ -313,14 +307,8 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
 
     let messages_id = TableId::from_strings("chat", "mvcc_messages");
     let members_id = TableId::from_strings("chat", "mvcc_members");
-    let messages_provider = app_context.schema_registry().get_provider(&messages_id).unwrap();
-    let messages_provider = (messages_provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .unwrap();
-    let members_provider = app_context.schema_registry().get_provider(&members_id).unwrap();
-    let members_provider = (members_provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .unwrap();
+    let messages_provider = app_context.schema_registry().get_kalam_provider(&messages_id).unwrap();
+    let members_provider = app_context.schema_registry().get_kalam_provider(&members_id).unwrap();
     let system = UserId::new("system");
     members_provider
         .insert_rows(
@@ -672,10 +660,7 @@ async fn omitted_policy_stays_default_deny_for_users() {
     app_context.schema_registry().register_table(definition.clone()).unwrap();
 
     let table_id = TableId::from_strings("chat", "documents_default_deny");
-    let provider = app_context.schema_registry().get_provider(&table_id).unwrap();
-    let provider = (provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .unwrap();
+    let provider = app_context.schema_registry().get_kalam_provider(&table_id).unwrap();
     provider
         .insert_rows(
             &UserId::new("system"),
@@ -709,10 +694,7 @@ async fn client_or_true_cannot_bypass_row_local_rls() {
         .unwrap();
     app_context.schema_registry().register_table(definition).unwrap();
     let table_id = TableId::from_strings("chat", "documents_bypass");
-    let provider = app_context.schema_registry().get_provider(&table_id).unwrap();
-    let provider = (provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .unwrap();
+    let provider = app_context.schema_registry().get_kalam_provider(&table_id).unwrap();
     provider
         .insert_rows(
             &UserId::new("system"),
@@ -769,10 +751,7 @@ async fn nested_query_cannot_bypass_row_local_rls() {
         .unwrap();
     app_context.schema_registry().register_table(definition).unwrap();
     let table_id = TableId::from_strings("chat", "documents_nested");
-    let provider = app_context.schema_registry().get_provider(&table_id).unwrap();
-    let provider = (provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .unwrap();
+    let provider = app_context.schema_registry().get_kalam_provider(&table_id).unwrap();
     provider
         .insert_rows(
             &UserId::new("system"),
@@ -833,10 +812,7 @@ async fn plan_cache_binds_current_user_after_lookup() {
         .unwrap();
     app_context.schema_registry().register_table(definition).unwrap();
     let table_id = TableId::from_strings("chat", "documents_plan_cache");
-    let provider = app_context.schema_registry().get_provider(&table_id).unwrap();
-    let provider = (provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .unwrap();
+    let provider = app_context.schema_registry().get_kalam_provider(&table_id).unwrap();
     provider
         .insert_rows(
             &UserId::new("system"),
@@ -938,10 +914,7 @@ async fn live_authorization_fail_closes_when_policy_catalog_changes() {
         .unwrap();
     app_context.schema_registry().register_table(definition).unwrap();
     let table_id = TableId::from_strings("chat", "documents_live_revoke");
-    let provider = app_context.schema_registry().get_provider(&table_id).unwrap();
-    let provider = (provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .unwrap();
+    let provider = app_context.schema_registry().get_kalam_provider(&table_id).unwrap();
     let alice_row = Row::from_vec(vec![
         ("id".to_string(), ScalarValue::Utf8(Some("doc-a".to_string()))),
         ("owner_id".to_string(), ScalarValue::Utf8(Some("alice".to_string()))),
@@ -970,7 +943,7 @@ async fn live_authorization_fail_closes_when_policy_catalog_changes() {
         .unwrap();
 
     let bound = provider
-        .bind_live_authorization(&UserId::new("alice"), Role::User)
+        .bind_shared_live_authorization(&UserId::new("alice"), Role::User)
         .await
         .unwrap();
     assert!(bound.authorizes(&alice_row));
@@ -994,7 +967,7 @@ async fn live_authorization_fail_closes_when_policy_catalog_changes() {
     );
 
     let rebound = provider
-        .bind_live_authorization(&UserId::new("alice"), Role::User)
+        .bind_shared_live_authorization(&UserId::new("alice"), Role::User)
         .await
         .unwrap();
     assert!(!rebound.authorizes(&alice_row));
@@ -1010,10 +983,7 @@ async fn live_authorization_does_not_pick_up_grants_until_rebind() {
         .unwrap();
     app_context.schema_registry().register_table(definition).unwrap();
     let table_id = TableId::from_strings("chat", "documents_live_grant");
-    let provider = app_context.schema_registry().get_provider(&table_id).unwrap();
-    let provider = (provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .unwrap();
+    let provider = app_context.schema_registry().get_kalam_provider(&table_id).unwrap();
     let alice_row = Row::from_vec(vec![
         ("id".to_string(), ScalarValue::Utf8(Some("doc-a".to_string()))),
         ("owner_id".to_string(), ScalarValue::Utf8(Some("alice".to_string()))),
@@ -1028,7 +998,7 @@ async fn live_authorization_does_not_pick_up_grants_until_rebind() {
         .unwrap();
 
     let bound = provider
-        .bind_live_authorization(&UserId::new("alice"), Role::User)
+        .bind_shared_live_authorization(&UserId::new("alice"), Role::User)
         .await
         .unwrap();
     assert!(!bound.authorizes(&alice_row));
@@ -1053,7 +1023,7 @@ async fn live_authorization_does_not_pick_up_grants_until_rebind() {
     );
 
     let rebound = provider
-        .bind_live_authorization(&UserId::new("alice"), Role::User)
+        .bind_shared_live_authorization(&UserId::new("alice"), Role::User)
         .await
         .unwrap();
     assert!(rebound.authorizes(&alice_row));
@@ -1069,10 +1039,7 @@ async fn rejects_unbounded_not_owner_policy() {
         .unwrap();
     app_context.schema_registry().register_table(definition).unwrap();
     let table_id = TableId::from_strings("chat", "documents_null_owner");
-    let provider = app_context.schema_registry().get_provider(&table_id).unwrap();
-    let provider = (provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .unwrap();
+    let provider = app_context.schema_registry().get_kalam_provider(&table_id).unwrap();
     provider
         .insert_rows(
             &UserId::new("system"),
@@ -1188,14 +1155,8 @@ async fn membership_policy_hides_rows_with_null_join_key() {
 
     let messages_id = TableId::from_strings("chat", "null_key_messages");
     let members_id = TableId::from_strings("chat", "null_key_members");
-    let messages_provider = app_context.schema_registry().get_provider(&messages_id).unwrap();
-    let messages_provider = (messages_provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .unwrap();
-    let members_provider = app_context.schema_registry().get_provider(&members_id).unwrap();
-    let members_provider = (members_provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .unwrap();
+    let messages_provider = app_context.schema_registry().get_kalam_provider(&messages_id).unwrap();
+    let members_provider = app_context.schema_registry().get_kalam_provider(&members_id).unwrap();
     let system = UserId::new("system");
     members_provider
         .insert_rows(
@@ -1278,10 +1239,7 @@ async fn union_cannot_bypass_row_local_rls() {
         .unwrap();
     app_context.schema_registry().register_table(definition).unwrap();
     let table_id = TableId::from_strings("chat", "documents_union");
-    let provider = app_context.schema_registry().get_provider(&table_id).unwrap();
-    let provider = (provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .unwrap();
+    let provider = app_context.schema_registry().get_kalam_provider(&table_id).unwrap();
     provider
         .insert_rows(
             &UserId::new("system"),
@@ -1368,14 +1326,8 @@ async fn live_authorization_fails_closed_when_membership_is_revoked() {
 
     let messages_id = TableId::from_strings("chat", "live_membership_messages");
     let members_id = TableId::from_strings("chat", "live_membership_members");
-    let messages_provider = app_context.schema_registry().get_provider(&messages_id).unwrap();
-    let messages_provider = (messages_provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .unwrap();
-    let members_provider = app_context.schema_registry().get_provider(&members_id).unwrap();
-    let members_provider = (members_provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .unwrap();
+    let messages_provider = app_context.schema_registry().get_kalam_provider(&messages_id).unwrap();
+    let members_provider = app_context.schema_registry().get_kalam_provider(&members_id).unwrap();
     let system = UserId::new("system");
     members_provider
         .insert_rows(
@@ -1418,7 +1370,7 @@ async fn live_authorization_fails_closed_when_membership_is_revoked() {
         .unwrap();
 
     let bound = messages_provider
-        .bind_live_authorization(&UserId::new("alice"), Role::User)
+        .bind_shared_live_authorization(&UserId::new("alice"), Role::User)
         .await
         .unwrap();
     assert!(bound.authorizes(&message_row));
@@ -1444,10 +1396,7 @@ async fn service_role_does_not_inherit_user_targeted_policies() {
         .unwrap();
     app_context.schema_registry().register_table(definition).unwrap();
     let table_id = TableId::from_strings("chat", "documents_service_role");
-    let provider = app_context.schema_registry().get_provider(&table_id).unwrap();
-    let provider = (provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .unwrap();
+    let provider = app_context.schema_registry().get_kalam_provider(&table_id).unwrap();
     provider
         .insert_rows(
             &UserId::new("system"),
@@ -1522,14 +1471,8 @@ async fn membership_bind_uses_indexed_principal_among_many_rows() {
 
     let messages_id = TableId::from_strings("chat", "scaled_messages");
     let members_id = TableId::from_strings("chat", "scaled_members");
-    let messages_provider = app_context.schema_registry().get_provider(&messages_id).unwrap();
-    let messages_provider = (messages_provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .unwrap();
-    let members_provider = app_context.schema_registry().get_provider(&members_id).unwrap();
-    let members_provider = (members_provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .unwrap();
+    let messages_provider = app_context.schema_registry().get_kalam_provider(&messages_id).unwrap();
+    let members_provider = app_context.schema_registry().get_kalam_provider(&members_id).unwrap();
     let system = UserId::new("system");
 
     let mut member_rows = Vec::with_capacity(1002);

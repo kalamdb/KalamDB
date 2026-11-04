@@ -12,9 +12,10 @@ use crate::{
     output::WorkflowOutput,
     workflow::{
         instance::{
-            self, allocate_http_port, default_http_url, live_instance, new_instance_record,
-            parse_server_listen_ports, relative_layout_path, save_instance,
-            stop_recorded_processes, InstanceRecord, ManagedLayout, StartedBy,
+            self, allocate_companion_port, allocate_http_port, browser_http_url, default_http_url,
+            live_instance, new_instance_record, parse_server_listen_ports, preferred_postgres_port,
+            relative_layout_path, save_instance, stop_recorded_processes, InstanceRecord,
+            ManagedLayout, StartedBy,
         },
         target::ResolvedTarget,
     },
@@ -75,11 +76,8 @@ pub fn prepare_managed_server(
         .and_then(|record| record.pid.is_some().then_some(record.http_port));
     let http_port = allocate_http_port(preferred, explicit_port.is_some(), owned_port)?;
 
-    let (_, configured_postgres) = parse_server_listen_ports(&layout.config_path)?;
-    let postgres_port = match configured_postgres {
-        Some(port) => Some(allocate_http_port(port, false, None)?),
-        None => None,
-    };
+    let preferred_postgres = preferred_postgres_port(&layout.config_path)?;
+    let postgres_port = Some(allocate_companion_port(preferred_postgres, http_port)?);
 
     let program = PathBuf::new();
 
@@ -123,10 +121,26 @@ pub async fn attach_or_start_managed_server(
         keep_on_dev_exit,
         Some(version.clone()),
     )?;
+    if prepared.already_running && started_by == StartedBy::Up && !postgres_wire_enabled(&prepared)
+    {
+        output.status("Restarting database to enable PostgreSQL wire");
+        stop_recorded_processes(&prepared.record);
+        let mut cleared = prepared.record.clone();
+        instance::clear_live_pids(&mut cleared);
+        save_instance(&prepared.layout, &cleared)?;
+        prepared = prepare_managed_server(
+            target,
+            explicit_port,
+            started_by,
+            keep_on_dev_exit,
+            Some(version.clone()),
+        )?;
+    }
     if prepared.already_running {
         super::track_server(&prepared.layout, output);
-        output.status(format!("database already running at {}", prepared.record.url));
-        output.agent_event("KALAM_SERVER_REUSED", &[("url", &prepared.record.url)]);
+        let url = browser_http_url(&prepared.record.url);
+        output.status(format!("database already running at {url}"));
+        output.agent_event("KALAM_SERVER_REUSED", &[("url", &url)]);
         return Ok(prepared);
     }
 
@@ -173,10 +187,18 @@ pub async fn attach_or_start_managed_server(
     drop(spinner);
     super::track_server(&prepared.layout, output);
     let binary = crate::workflow::dev::server::format_server_binary(&program);
-    output.status(format!("Server started at {} using {binary}", prepared.record.url));
-    output
-        .agent_event("KALAM_SERVER_STARTED", &[("url", &prepared.record.url), ("binary", &binary)]);
+    let url = browser_http_url(&prepared.record.url);
+    output.status(format!("Server started at {url} using {binary}"));
+    output.agent_event("KALAM_SERVER_STARTED", &[("url", &url), ("binary", &binary)]);
     Ok(prepared)
+}
+
+fn postgres_wire_enabled(prepared: &PreparedServer) -> bool {
+    match parse_server_listen_ports(&prepared.layout.config_path) {
+        Ok((_, Some(_))) => true,
+        Ok((_, None)) => false,
+        Err(_) => prepared.record.postgres_port.is_some(),
+    }
 }
 
 pub fn spawn_detached_server(

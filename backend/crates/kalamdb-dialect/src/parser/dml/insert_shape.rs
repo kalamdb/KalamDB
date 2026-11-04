@@ -4,7 +4,9 @@
 //! execution code in `kalamdb-core` does not pattern-match `SetExpr` directly.
 
 use sqlparser::ast::{
-    Expr, Insert, OnConflict, OnInsert, Parens, Query, SelectItem, SetExpr, Statement,
+    helpers::attached_token::AttachedToken, Expr, FromTable, GroupByExpr, Insert, ObjectName,
+    OnConflict, OnInsert, Parens, Query, Select, SelectFlavor, SelectItem, SetExpr, Statement,
+    TableFactor, TableObject, TableWithJoins, Value,
 };
 
 use super::on_conflict::on_conflict_from_insert;
@@ -65,26 +67,87 @@ pub fn insert_has_on_conflict(insert: &Insert) -> bool {
 }
 
 /// DataFusion cannot plan `INSERT`/`UPDATE`/`DELETE ... RETURNING`.
-/// Describe the result as `SELECT <returning> FROM <table> WHERE FALSE`.
-pub fn returning_describe_sql(statement: &Statement) -> Option<String> {
-    use sqlparser::ast::FromTable;
+///
+/// Build `SELECT <returning> FROM <table> WHERE FALSE` as a statement so describe
+/// can plan the parsed tree without formatting SQL and parsing it again.
+pub fn returning_describe_statement(statement: &Statement) -> Option<Statement> {
+    let (relation, returning) = describe_relation(statement)?;
+    if returning.is_empty() {
+        return None;
+    }
+    Some(Statement::Query(Box::new(Query {
+        with: None,
+        body: Box::new(SetExpr::Select(Box::new(Select {
+            select_token: AttachedToken::empty(),
+            optimizer_hints: Vec::new(),
+            distinct: None,
+            select_modifiers: None,
+            top: None,
+            top_before_distinct: false,
+            projection: returning.to_vec(),
+            exclude: None,
+            into: None,
+            from: vec![TableWithJoins { relation, joins: Vec::new() }],
+            lateral_views: Vec::new(),
+            prewhere: None,
+            selection: Some(Expr::Value(Value::Boolean(false).into())),
+            connect_by: Vec::new(),
+            group_by: GroupByExpr::Expressions(Vec::new(), Vec::new()),
+            cluster_by: Vec::new(),
+            distribute_by: Vec::new(),
+            sort_by: Vec::new(),
+            having: None,
+            named_window: Vec::new(),
+            qualify: None,
+            window_before_qualify: false,
+            value_table_mode: None,
+            flavor: SelectFlavor::Standard,
+        }))),
+        order_by: None,
+        limit_clause: None,
+        fetch: None,
+        locks: Vec::new(),
+        for_clause: None,
+        settings: None,
+        format_clause: None,
+        pipe_operators: Vec::new(),
+    })))
+}
 
-    let (from, returning) = match statement {
-        Statement::Insert(insert) => (insert.table.to_string(), insert.returning.as_deref()?),
-        Statement::Update(update) => (update.table.to_string(), update.returning.as_deref()?),
+fn describe_relation(statement: &Statement) -> Option<(TableFactor, &[SelectItem])> {
+    match statement {
+        Statement::Insert(insert) => {
+            let TableObject::TableName(name) = &insert.table else {
+                return None;
+            };
+            Some((named_table(name.clone()), insert.returning.as_deref()?))
+        },
+        Statement::Update(update) => {
+            Some((update.table.relation.clone(), update.returning.as_deref()?))
+        },
         Statement::Delete(delete) => {
             let tables = match &delete.from {
                 FromTable::WithFromKeyword(tables) | FromTable::WithoutKeyword(tables) => tables,
             };
-            (tables.first()?.to_string(), delete.returning.as_deref()?)
+            Some((tables.first()?.relation.clone(), delete.returning.as_deref()?))
         },
-        _ => return None,
-    };
-    if returning.is_empty() {
-        return None;
+        _ => None,
     }
-    let projection = returning.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
-    Some(format!("SELECT {projection} FROM {from} WHERE FALSE"))
+}
+
+fn named_table(name: ObjectName) -> TableFactor {
+    TableFactor::Table {
+        name,
+        alias: None,
+        args: None,
+        with_hints: Vec::new(),
+        version: None,
+        with_ordinality: false,
+        partitions: Vec::new(),
+        json_path: None,
+        sample: None,
+        index_hints: Vec::new(),
+    }
 }
 
 /// Returns the RETURNING projection list when present.
@@ -228,6 +291,26 @@ mod tests {
             on_conflict_values_insert(&statement).expect("on conflict insert");
         assert_eq!(view.value_rows.len(), 1);
         assert!(insert_returning_items(view.insert).is_some());
+    }
+
+    #[test]
+    fn returning_describe_statement_is_select_where_false() {
+        for sql in [
+            "INSERT INTO app.items (id) VALUES (1) RETURNING id, name",
+            "UPDATE app.items SET name = 'a' WHERE id = 1 RETURNING id",
+            "DELETE FROM app.items WHERE id = 1 RETURNING id",
+        ] {
+            let described = returning_describe_statement(&parse_statement(sql))
+                .unwrap_or_else(|| panic!("describe {sql}"));
+            let rendered = described.to_string().to_ascii_lowercase();
+            assert!(rendered.contains("select"), "{sql} -> {rendered}");
+            assert!(rendered.contains("app.items") || rendered.contains("items"), "{rendered}");
+            assert!(rendered.contains("where false"), "{rendered}");
+        }
+        assert!(returning_describe_statement(&parse_statement(
+            "INSERT INTO app.items (id) VALUES (1)"
+        ))
+        .is_none());
     }
 
     #[test]

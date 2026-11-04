@@ -138,6 +138,7 @@ kalamdb-observability = { path = "crates/kalamdb-observability" }
 kalamdb-store = { path = "crates/kalamdb-store" }
 kalamdb-commons = { path = "crates/kalamdb-commons" }
 kalamdb-configs = { path = "crates/kalamdb-configs" }
+kalamdb-publisher = { path = "crates/kalamdb-publisher" }
 kalamdb-tables = { path = "crates/kalamdb-tables" }
 kalamdb-rls = { workspace = true }
 kalamdb-raft = { path = "crates/kalamdb-raft" }

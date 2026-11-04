@@ -161,6 +161,43 @@ impl StorageKey for StreamTableRowId {
     }
 }
 
+/// User or shared row key. The stored bytes are the existing key for that scope,
+/// with no extra tag.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ScopedRowKey {
+    User(UserTableRowId),
+    Shared(SharedTableRowId),
+}
+
+impl ScopedRowKey {
+    pub fn from_user_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        UserTableRowId::from_storage_key(bytes).map(Self::User)
+    }
+
+    pub fn from_shared_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        SharedTableRowId::from_storage_key(bytes).map(Self::Shared)
+    }
+}
+
+impl StorageKey for ScopedRowKey {
+    fn storage_key(&self) -> Vec<u8> {
+        match self {
+            Self::User(id) => id.storage_key(),
+            Self::Shared(id) => id.storage_key(),
+        }
+    }
+
+    /// Shared keys are the 8-byte [`VersionId`]. User keys are a storekey tuple
+    /// and are longer, so the layouts do not overlap.
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() == 8 {
+            SharedTableRowId::from_storage_key(bytes).map(Self::Shared)
+        } else {
+            UserTableRowId::from_storage_key(bytes).map(Self::User)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,5 +280,36 @@ mod tests {
         let bob = StreamTableRowId::new(UserId::new("bob"), VersionId::try_from_i64(50).unwrap());
 
         assert!(alice.storage_key() < bob.storage_key(), "alice should sort before bob");
+    }
+
+    #[test]
+    fn scoped_row_key_bytes_match_the_existing_key() {
+        let user = UserTableRowId::new(UserId::new("alice"), VersionId::try_from_i64(7).unwrap());
+        let scoped_user = ScopedRowKey::User(user.clone());
+        assert_eq!(scoped_user.storage_key(), user.storage_key());
+        assert_eq!(ScopedRowKey::from_user_storage_key(&user.storage_key()).unwrap(), scoped_user);
+
+        let shared: SharedTableRowId = VersionId::try_from_i64(9).unwrap();
+        let scoped_shared = ScopedRowKey::Shared(shared);
+        assert_eq!(scoped_shared.storage_key(), shared.storage_key());
+        assert_eq!(
+            ScopedRowKey::from_shared_storage_key(&shared.storage_key()).unwrap(),
+            scoped_shared
+        );
+    }
+
+    #[test]
+    fn scoped_row_key_round_trip_uses_scope_from_length() {
+        let user = UserTableRowId::new(UserId::new("a"), VersionId::try_from_i64(1).unwrap());
+        assert_ne!(user.storage_key().len(), 8, "user keys must stay longer than a version id");
+        let scoped_user = ScopedRowKey::User(user);
+        assert_eq!(
+            ScopedRowKey::from_storage_key(&scoped_user.storage_key()).unwrap(),
+            scoped_user
+        );
+
+        let shared = ScopedRowKey::Shared(VersionId::try_from_i64(1).unwrap());
+        assert_eq!(shared.storage_key().len(), 8);
+        assert_eq!(ScopedRowKey::from_storage_key(&shared.storage_key()).unwrap(), shared);
     }
 }

@@ -478,7 +478,14 @@ impl SqlExecutor {
     ) -> Result<ExecutionResult, KalamDbError> {
         let isolated;
         let exec_ctx = if self
-            .is_stream_target_sql(sql, metadata.and_then(|m| m.table_id.as_ref()), exec_ctx)
+            .is_stream_target_sql(
+                sql,
+                metadata.and_then(|prepared| prepared.table_id.as_ref()),
+                metadata.and_then(|prepared| {
+                    prepared.datafusion_statement.as_deref().or(prepared.parsed_dml.as_deref())
+                }),
+                exec_ctx,
+            )
             .await?
         {
             isolated = Self::isolated_stream_exec_ctx(exec_ctx);
@@ -546,11 +553,7 @@ impl SqlExecutor {
                     return Ok(result);
                 }
                 if let Some(result) = self
-                    .try_execute_cached_covering_aggregate(
-                        template_plan.as_ref(),
-                        &bound,
-                        exec_ctx,
-                    )
+                    .try_execute_cached_covering_aggregate(template_plan.as_ref(), &bound, exec_ctx)
                     .await?
                 {
                     return Ok(result);
@@ -804,7 +807,7 @@ impl SqlExecutor {
     /// Loads table definitions from the store and creates/registers:
     /// - UserTableShared instances for USER tables
     /// - SharedTableProvider instances for SHARED tables
-    /// - StreamTableProvider instances for STREAM tables
+    /// - StreamTableEngine instances for STREAM tables
     ///
     /// # Returns
     /// Ok on success, error if table loading fails

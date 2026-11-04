@@ -12,17 +12,52 @@ use datafusion::arrow::{
     datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
-use kalamdb_commons::{
-    datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
-};
+use kalamdb_commons::schemas::TableDefinition;
+use kalamdb_macros::table;
 use kalamdb_raft::{CommandExecutor, GroupId};
 use kalamdb_system::SystemTable;
 
-use super::common::{system_view_definition, view_provider_with, SystemViewProvider};
+use super::common::{view_provider_with, Json, SystemViewProvider};
 use crate::{error::RegistryError, view_base::VirtualView};
 
 crate::memoized_view_schema!(cluster_groups_schema, ClusterGroupsView);
+
+#[table(
+    name = "cluster_groups",
+    view = true,
+    comment = "Per-Raft-group membership and replication status (read-only view)"
+)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClusterGroupRow {
+    /// Raft group numeric ID
+    pub group_id: i64,
+    /// Cluster identifier
+    pub cluster_id: String,
+    /// Raft node ID (this node's ID for the group)
+    pub node_id: i64,
+    /// Group type: meta, user_data, shared_data
+    pub group_type: String,
+    /// Current Raft term
+    pub current_term: Option<i64>,
+    /// Last accepted vote (JSON format)
+    pub vote: Option<Json>,
+    /// Last log index appended to this node's log
+    pub last_log_index: Option<i64>,
+    /// Last log index applied to state machine
+    pub last_applied: Option<i64>,
+    /// Last log index included in snapshot
+    pub snapshot: Option<i64>,
+    /// Last log index purged from storage (inclusive)
+    pub purged: Option<i64>,
+    /// Last log index committed by the cluster
+    pub committed: Option<i64>,
+    /// Server state: Leader, Follower, Candidate, Learner, Shutdown
+    pub state: Option<String>,
+    /// Current cluster leader node ID
+    pub current_leader: Option<i64>,
+    /// Milliseconds since most recent quorum acknowledgment (leader only)
+    pub millis_since_quorum_ack: Option<i64>,
+}
 
 #[derive(Debug)]
 pub struct ClusterGroupsView {
@@ -31,171 +66,7 @@ pub struct ClusterGroupsView {
 
 impl ClusterGroupsView {
     pub fn definition() -> TableDefinition {
-        let columns = vec![
-            ColumnDefinition::new(
-                1,
-                "group_id",
-                1,
-                KalamDataType::BigInt,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Raft group numeric ID".to_string()),
-            ),
-            ColumnDefinition::new(
-                2,
-                "cluster_id",
-                2,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Cluster identifier".to_string()),
-            ),
-            ColumnDefinition::new(
-                3,
-                "node_id",
-                3,
-                KalamDataType::BigInt,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Raft node ID (this node's ID for the group)".to_string()),
-            ),
-            ColumnDefinition::new(
-                4,
-                "group_type",
-                4,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Group type: meta, user_data, shared_data".to_string()),
-            ),
-            ColumnDefinition::new(
-                5,
-                "current_term",
-                5,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Current Raft term".to_string()),
-            ),
-            ColumnDefinition::new(
-                6,
-                "vote",
-                6,
-                KalamDataType::Json,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Last accepted vote (JSON format)".to_string()),
-            ),
-            ColumnDefinition::new(
-                7,
-                "last_log_index",
-                7,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Last log index appended to this node's log".to_string()),
-            ),
-            ColumnDefinition::new(
-                8,
-                "last_applied",
-                8,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Last log index applied to state machine".to_string()),
-            ),
-            ColumnDefinition::new(
-                9,
-                "snapshot",
-                9,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Last log index included in snapshot".to_string()),
-            ),
-            ColumnDefinition::new(
-                10,
-                "purged",
-                10,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Last log index purged from storage (inclusive)".to_string()),
-            ),
-            ColumnDefinition::new(
-                11,
-                "committed",
-                11,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Last log index committed by the cluster".to_string()),
-            ),
-            ColumnDefinition::new(
-                12,
-                "state",
-                12,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Server state: Leader, Follower, Candidate, Learner, Shutdown".to_string()),
-            ),
-            ColumnDefinition::new(
-                13,
-                "current_leader",
-                13,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Current cluster leader node ID".to_string()),
-            ),
-            ColumnDefinition::new(
-                14,
-                "millis_since_quorum_ack",
-                14,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some(
-                    "Milliseconds since most recent quorum acknowledgment (leader only)"
-                        .to_string(),
-                ),
-            ),
-        ];
-
-        system_view_definition(
-            SystemTable::ClusterGroups,
-            columns,
-            "Per-Raft-group membership and replication status (read-only view)",
-        )
+        ClusterGroupRow::definition()
     }
 
     pub fn new(executor: Arc<dyn CommandExecutor>) -> Self {

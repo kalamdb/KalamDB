@@ -106,11 +106,9 @@ impl SchemaAdaptPlan {
                 kalamdb_commons::conversions::read_kalam_missing_default(field.as_ref())
             {
                 let scalar = kalamdb_commons::conversions::json_value_to_scalar(&default_json);
-                let coerced = kalamdb_commons::conversions::coerce_scalar_to_field(
-                    scalar,
-                    field.as_ref(),
-                )
-                .map_err(KalamDbError::InvalidOperation)?;
+                let coerced =
+                    kalamdb_commons::conversions::coerce_scalar_to_field(scalar, field.as_ref())
+                        .map_err(KalamDbError::InvalidOperation)?;
                 columns.push(AdaptedColumn::Default(coerced));
             } else if field.is_nullable() {
                 columns.push(AdaptedColumn::Null(field.data_type().clone()));
@@ -130,13 +128,12 @@ impl SchemaAdaptPlan {
             let array = match column {
                 AdaptedColumn::Copy(index) => Arc::clone(batch.column(*index)),
                 AdaptedColumn::Cast(index, data_type) => {
-                    cast(batch.column(*index).as_ref(), data_type).into_arrow_error_ctx(
-                        &format!("Failed to cast column to {data_type:?}"),
-                    )?
+                    cast(batch.column(*index).as_ref(), data_type)
+                        .into_arrow_error_ctx(&format!("Failed to cast column to {data_type:?}"))?
                 },
-                AdaptedColumn::Default(scalar) => scalar.to_array_of_size(batch.num_rows()).into_arrow_error_ctx(
-                    "Failed to materialize missing column default array",
-                )?,
+                AdaptedColumn::Default(scalar) => scalar
+                    .to_array_of_size(batch.num_rows())
+                    .into_arrow_error_ctx("Failed to materialize missing column default array")?,
                 AdaptedColumn::Null(data_type) => {
                     datafusion::arrow::array::new_null_array(data_type, batch.num_rows())
                 },
@@ -442,8 +439,7 @@ impl ManifestAccessPlanner {
                 } else {
                     batch
                 };
-                combined =
-                    Some(append_record_batch(combined, projected_batch, &effective_schema)?);
+                combined = Some(append_record_batch(combined, projected_batch, &effective_schema)?);
             }
         }
 

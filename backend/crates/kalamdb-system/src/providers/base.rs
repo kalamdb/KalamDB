@@ -6,9 +6,8 @@
 //!
 //! ## Key Components
 //!
-//! - [`SystemTableScan`]: Trait for indexed system tables with unified scan logic
-//! - [`SimpleSystemTableScan`]: Trait for non-indexed/simple system tables
-//! - Shared deferred execution sources for lightweight planning
+//! - [`deferred_system_scan`]: one deferred execution path for system table scans
+//! - [`build_indexed_batch`]: secondary-index and primary-key iteration for keyed stores
 
 use std::sync::Arc;
 
@@ -41,26 +40,6 @@ use crate::error::SystemError;
 
 /// Result type for DataFusion operations
 pub type DataFusionResult<T> = Result<T, DataFusionError>;
-
-/// Shared static metadata for indexed system table providers.
-///
-/// Providers build this once and reuse it across:
-/// - `SystemTableScan` implementation (table_name, schema, key parsing)
-/// - `TableProvider` implementation (schema)
-#[derive(Clone, Copy)]
-pub struct IndexedProviderDefinition<K> {
-    pub table_name: &'static str,
-    pub primary_key_column: &'static str,
-    pub schema: fn() -> arrow::datatypes::SchemaRef,
-    pub parse_key: fn(&str) -> Option<K>,
-}
-
-/// Shared static metadata for non-indexed/simple system table providers.
-#[derive(Clone, Copy)]
-pub struct SimpleProviderDefinition {
-    pub table_name: &'static str,
-    pub schema: fn() -> arrow::datatypes::SchemaRef,
-}
 
 /// Exact pushdown strategy for providers that evaluate filters inside their
 /// deferred execution source before returning batches.
@@ -146,13 +125,16 @@ fn scan_limit_for_filters(filters: &FilterRequest, limit: LimitRequest) -> Optio
     }
 }
 
-fn build_indexed_batch<P, K, V>(
-    provider: P,
-    filters: Vec<Expr>,
+pub(crate) fn build_indexed_batch<K, V>(
+    store: &IndexedEntityStore<K, V>,
+    table_name: &str,
+    pk_column: &str,
+    mut parse_key: impl FnMut(&str) -> Option<K>,
+    filters: &[Expr],
     limit: Option<usize>,
+    create_batch: impl FnOnce(Vec<(K, V)>) -> Result<RecordBatch, SystemError>,
 ) -> DataFusionResult<RecordBatch>
 where
-    P: SystemTableScan<K, V> + Clone + Send + Sync + 'static,
     K: StorageKey + Clone + Send + Sync + 'static,
     V: KSerializable + Clone + Send + Sync + 'static,
 {
@@ -160,18 +142,15 @@ where
 
     let mut start_key: Option<K> = None;
     let mut prefix: Option<K> = None;
-    let pk_column = provider.primary_key_column();
-    for expr in &filters {
+    for expr in filters {
         if let Expr::BinaryExpr(binary) = expr {
             if let Expr::Column(col) = binary.left.as_ref() {
                 if let Expr::Literal(val, _) = binary.right.as_ref() {
                     if col.name == pk_column {
                         if let ScalarValue::Utf8(Some(value)) = val {
                             match binary.op {
-                                Operator::Eq => prefix = provider.parse_key(value),
-                                Operator::Gt | Operator::GtEq => {
-                                    start_key = provider.parse_key(value)
-                                },
+                                Operator::Eq => prefix = parse_key(value),
+                                Operator::Gt | Operator::GtEq => start_key = parse_key(value),
                                 _ => {},
                             }
                         }
@@ -184,30 +163,21 @@ where
     // Provider-side filters run after this store iteration. Pushing LIMIT down
     // under those filters can underfetch matching rows, so only use it when the
     // scan has no provider-evaluated filter work left to do.
-    let filter_request = FilterRequest::new(filters.clone());
+    let filter_request = FilterRequest::new(filters.to_vec());
     let limit_request = LimitRequest::new(limit);
     let scan_limit = scan_limit_for_filters(&filter_request, limit_request);
-    let store = provider.store();
     let mut pairs: Vec<(K, V)> = Vec::new();
-    if let Some((index_idx, index_prefix)) = store.find_best_index_for_filters(&filters) {
+    if let Some((index_idx, index_prefix)) = store.find_best_index_for_filters(filters) {
         let iter = store.scan_by_index_iter(index_idx, Some(&index_prefix), scan_limit).map_err(
             |error| {
-                DataFusionError::Execution(format!(
-                    "Failed to scan {} by index: {}",
-                    provider.table_name(),
-                    error
-                ))
+                DataFusionError::Execution(format!("Failed to scan {table_name} by index: {error}"))
             },
         )?;
 
         let effective_limit = scan_limit.unwrap_or(100_000);
         for result in iter {
             let (key, value) = result.map_err(|error| {
-                DataFusionError::Execution(format!(
-                    "Failed to scan {} by index: {}",
-                    provider.table_name(),
-                    error
-                ))
+                DataFusionError::Execution(format!("Failed to scan {table_name} by index: {error}"))
             })?;
             pairs.push((key, value));
             if pairs.len() >= effective_limit {
@@ -217,9 +187,7 @@ where
     } else {
         let iter = store.scan_iterator(prefix.as_ref(), start_key.as_ref()).map_err(|error| {
             DataFusionError::Execution(format!(
-                "Failed to create iterator for {}: {}",
-                provider.table_name(),
-                error
+                "Failed to create iterator for {table_name}: {error}"
             ))
         })?;
 
@@ -233,64 +201,31 @@ where
                     }
                 },
                 Err(error) => {
-                    log::warn!("Error during scan of {}: {}", provider.table_name(), error);
+                    log::warn!("Error during scan of {table_name}: {error}");
                 },
             }
         }
     }
 
-    provider.create_batch_from_pairs(pairs).map_err(|error| {
-        DataFusionError::Execution(format!(
-            "Failed to build {} batch: {}",
-            provider.table_name(),
-            error
-        ))
+    create_batch(pairs).map_err(|error| {
+        DataFusionError::Execution(format!("Failed to build {table_name} batch: {error}"))
     })
 }
 
-/// Trait for indexed system table providers with unified scan logic.
-///
-/// This trait provides a common implementation for the `scan()` method
-/// used by all system table providers, reducing code duplication.
-///
-/// ## Features
-/// - Automatic filter extraction for prefix/start_key scans
-/// - Secondary index lookup via `find_best_index_for_filters`
-/// - Deferred execution so store iteration runs at execute time, not planning time
-/// - Consistent error handling and logging
-///
-/// ## Example Implementation
-/// ```rust,ignore
-/// impl SystemTableScan<UserId, User> for UsersTableProvider {
-///     fn store(&self) -> &IndexedEntityStore<UserId, User> { &self.store }
-///     fn table_name(&self) -> &str { "system.users" }
-///     fn primary_key_column(&self) -> &str { "user_id" }
-///     fn arrow_schema(&self) -> SchemaRef { Self::schema() }
-///     fn create_batch_from_pairs(&self, pairs: Vec<(UserId, User)>) -> Result<RecordBatch, SystemError> { ... }
-/// }
-/// ```
-struct IndexedSystemScanSource<P, K, V>
-where
-    P: SystemTableScan<K, V> + Clone + Send + Sync + 'static,
-    K: StorageKey + Clone + Send + Sync + 'static,
-    V: KSerializable + Clone + Send + Sync + 'static,
-{
-    provider: P,
+struct SystemScanSource {
+    table_name: String,
+    source_name: &'static str,
+    apply_filter_limit: bool,
+    read: Arc<dyn Fn(&[Expr], Option<usize>) -> DataFusionResult<RecordBatch> + Send + Sync>,
     pruning: PruningRequest,
     physical_filter: Option<Arc<dyn PhysicalExpr>>,
     output_schema: arrow::datatypes::SchemaRef,
-    _marker: std::marker::PhantomData<(K, V)>,
 }
 
-impl<P, K, V> std::fmt::Debug for IndexedSystemScanSource<P, K, V>
-where
-    P: SystemTableScan<K, V> + Clone + Send + Sync + 'static,
-    K: StorageKey + Clone + Send + Sync + 'static,
-    V: KSerializable + Clone + Send + Sync + 'static,
-{
+impl std::fmt::Debug for SystemScanSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("IndexedSystemScanSource")
-            .field("table_name", &self.provider.table_name())
+        f.debug_struct("SystemScanSource")
+            .field("table_name", &self.table_name)
             .field("projection", &self.pruning.projection.columns)
             .field("limit", &self.pruning.limit.limit)
             .field("filter_count", &self.pruning.filters.filters.len())
@@ -299,14 +234,9 @@ where
 }
 
 #[async_trait]
-impl<P, K, V> DeferredBatchSource for IndexedSystemScanSource<P, K, V>
-where
-    P: SystemTableScan<K, V> + Clone + Send + Sync + 'static,
-    K: StorageKey + Clone + Send + Sync + 'static,
-    V: KSerializable + Clone + Send + Sync + 'static,
-{
+impl DeferredBatchSource for SystemScanSource {
     fn source_name(&self) -> &'static str {
-        "indexed_system_scan"
+        self.source_name
     }
 
     fn schema(&self) -> arrow::datatypes::SchemaRef {
@@ -314,19 +244,17 @@ where
     }
 
     async fn produce_batch(&self) -> DataFusionResult<RecordBatch> {
-        let provider = self.provider.clone();
+        let read = Arc::clone(&self.read);
         let filters = self.pruning.filters.filters.as_ref().to_vec();
-        let limit = self.pruning.limit.limit;
-        let table_name = self.provider.table_name().to_string();
-        let batch =
-            tokio::task::spawn_blocking(move || build_indexed_batch(provider, filters, limit))
-                .await
-                .map_err(|error| {
-                    DataFusionError::Execution(format!(
-                        "{} scan task failed: {}",
-                        table_name, error
-                    ))
-                })??;
+        let limit = if self.apply_filter_limit {
+            scan_limit_for_filters(&self.pruning.filters, self.pruning.limit)
+        } else {
+            self.pruning.limit.limit
+        };
+        let table_name = self.table_name.clone();
+        let batch = tokio::task::spawn_blocking(move || read(&filters, limit)).await.map_err(
+            |error| DataFusionError::Execution(format!("{table_name} scan task failed: {error}")),
+        )??;
 
         finalize_deferred_batch(
             batch,
@@ -338,252 +266,51 @@ where
     }
 }
 
-struct SimpleSystemScanSource<P, K, V>
-where
-    P: SimpleSystemTableScan<K, V> + Clone + Send + Sync + 'static,
-    K: StorageKey + Clone + Send + Sync + 'static,
-    V: KSerializable + Clone + Send + Sync + 'static,
-{
-    provider: P,
-    pruning: PruningRequest,
-    physical_filter: Option<Arc<dyn PhysicalExpr>>,
-    output_schema: arrow::datatypes::SchemaRef,
-    _marker: std::marker::PhantomData<(K, V)>,
+/// Plan a system-table scan. Store iteration runs when the plan executes.
+pub(crate) async fn deferred_system_scan(
+    state: &dyn Session,
+    schema: arrow::datatypes::SchemaRef,
+    projection: Option<&Vec<usize>>,
+    filters: &[Expr],
+    limit: Option<usize>,
+    table_name: String,
+    source_name: &'static str,
+    apply_filter_limit: bool,
+    read: Arc<dyn Fn(&[Expr], Option<usize>) -> DataFusionResult<RecordBatch> + Send + Sync>,
+) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+    let pruning = PruningRequest::new(
+        match projection {
+            Some(indices) => ProjectionRequest::columns(indices.clone()),
+            None => ProjectionRequest::full(),
+        },
+        FilterRequest::new(filters.to_vec()),
+        LimitRequest::new(limit),
+    );
+    let output_schema = match projection {
+        Some(indices) => schema
+            .project(indices)
+            .map(Arc::new)
+            .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?,
+        None => Arc::clone(&schema),
+    };
+    let physical_filter = if let Some(filter) = combined_filter(filters) {
+        let df_schema = DFSchema::try_from(Arc::clone(&schema))?;
+        Some(state.create_physical_expr(filter, &df_schema)?)
+    } else {
+        None
+    };
+
+    Ok(Arc::new(DeferredBatchExec::new(Arc::new(SystemScanSource {
+        table_name,
+        source_name,
+        apply_filter_limit,
+        read,
+        pruning,
+        physical_filter,
+        output_schema,
+    }))))
 }
 
-impl<P, K, V> std::fmt::Debug for SimpleSystemScanSource<P, K, V>
-where
-    P: SimpleSystemTableScan<K, V> + Clone + Send + Sync + 'static,
-    K: StorageKey + Clone + Send + Sync + 'static,
-    V: KSerializable + Clone + Send + Sync + 'static,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SimpleSystemScanSource")
-            .field("table_name", &self.provider.table_name())
-            .field("projection", &self.pruning.projection.columns)
-            .field("limit", &self.pruning.limit.limit)
-            .field("filter_count", &self.pruning.filters.filters.len())
-            .finish()
-    }
-}
-
-#[async_trait]
-impl<P, K, V> DeferredBatchSource for SimpleSystemScanSource<P, K, V>
-where
-    P: SimpleSystemTableScan<K, V> + Clone + Send + Sync + 'static,
-    K: StorageKey + Clone + Send + Sync + 'static,
-    V: KSerializable + Clone + Send + Sync + 'static,
-{
-    fn source_name(&self) -> &'static str {
-        "simple_system_scan"
-    }
-
-    fn schema(&self) -> arrow::datatypes::SchemaRef {
-        Arc::clone(&self.output_schema)
-    }
-
-    async fn produce_batch(&self) -> DataFusionResult<RecordBatch> {
-        let provider = self.provider.clone();
-        let filters = self.pruning.filters.filters.as_ref().to_vec();
-        let limit = scan_limit_for_filters(&self.pruning.filters, self.pruning.limit);
-        let table_name = self.provider.table_name().to_string();
-        let batch = tokio::task::spawn_blocking(move || {
-            provider.scan_to_batch(&filters, limit).map_err(|error| {
-                DataFusionError::Execution(format!(
-                    "Failed to build {} batch: {}",
-                    provider.table_name(),
-                    error
-                ))
-            })
-        })
-        .await
-        .map_err(|error| {
-            DataFusionError::Execution(format!("{} scan task failed: {}", table_name, error))
-        })??;
-
-        finalize_deferred_batch(
-            batch,
-            self.physical_filter.as_ref(),
-            self.pruning.projection.columns.as_deref(),
-            self.pruning.limit.limit,
-            self.source_name(),
-        )
-    }
-}
-
-#[async_trait]
-pub trait SystemTableScan<K, V>: Send + Sync + Clone
-where
-    K: StorageKey + Clone + Send + Sync + 'static,
-    V: KSerializable + Clone + Send + Sync + 'static,
-{
-    /// Returns a reference to the indexed entity store
-    fn store(&self) -> &IndexedEntityStore<K, V>;
-
-    /// Returns the table name for logging (e.g., "system.users")
-    fn table_name(&self) -> &str;
-
-    /// Returns the primary key column name for filter extraction (e.g., "user_id")
-    fn primary_key_column(&self) -> &str;
-
-    /// Returns the Arrow schema for this table
-    fn arrow_schema(&self) -> arrow::datatypes::SchemaRef;
-
-    /// Parse a string value into the key type (for filter extraction)
-    fn parse_key(&self, value: &str) -> Option<K>;
-
-    /// Create a RecordBatch from key-value pairs
-    ///
-    /// Implementations should convert their entity type to Arrow arrays.
-    fn create_batch_from_pairs(&self, pairs: Vec<(K, V)>) -> Result<RecordBatch, SystemError>;
-
-    /// Default scan implementation with deferred execution.
-    ///
-    /// Planning stays lightweight: `scan()` captures the filter, projection,
-    /// and optional limit, while the actual store iteration and batch building
-    /// happen inside the shared deferred execution node.
-    async fn base_system_scan(
-        &self,
-        state: &dyn Session,
-        projection: Option<&Vec<usize>>,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>>
-    where
-        Self: Sized + 'static,
-    {
-        let schema = self.arrow_schema();
-        let pruning = PruningRequest::new(
-            match projection {
-                Some(indices) => ProjectionRequest::columns(indices.clone()),
-                None => ProjectionRequest::full(),
-            },
-            FilterRequest::new(filters.to_vec()),
-            LimitRequest::new(limit),
-        );
-        let output_schema = match projection {
-            Some(indices) => schema
-                .project(indices)
-                .map(Arc::new)
-                .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?,
-            None => Arc::clone(&schema),
-        };
-        let physical_filter = if let Some(filter) = combined_filter(filters) {
-            let df_schema = DFSchema::try_from(Arc::clone(&schema))?;
-            Some(state.create_physical_expr(filter, &df_schema)?)
-        } else {
-            None
-        };
-
-        Ok(Arc::new(DeferredBatchExec::new(Arc::new(IndexedSystemScanSource::<
-            Self,
-            K,
-            V,
-        > {
-            provider: self.clone(),
-            pruning,
-            physical_filter,
-            output_schema,
-            _marker: std::marker::PhantomData,
-        }))))
-    }
-}
-
-/// Trait for simple system tables without secondary indexes
-///
-/// For tables like namespaces, storages that don't have IndexedEntityStore.
-///
-/// ## Performance
-///
-/// Override `scan_to_batch()` to enable filter/limit-aware scanning.
-/// The default falls back to `scan_all_to_batch()` (full table scan).
-///
-/// When `scan_to_batch()` is overridden, providers can:
-/// - Use primary key equality filters for O(1) point lookups
-/// - Respect `LIMIT` at the iterator level (early termination)
-/// - Avoid materializing the entire table for simple queries
-#[async_trait]
-pub trait SimpleSystemTableScan<K, V>: Send + Sync + Clone
-where
-    K: StorageKey + Clone + Send + Sync + 'static,
-    V: KSerializable + Clone + Send + Sync + 'static,
-{
-    /// Returns the table name for logging
-    fn table_name(&self) -> &str;
-
-    /// Returns the Arrow schema for this table
-    fn arrow_schema(&self) -> arrow::datatypes::SchemaRef;
-
-    /// Scan all entries and return as RecordBatch (full table scan).
-    ///
-    /// Used as fallback when `scan_to_batch` is not overridden.
-    fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError>;
-
-    /// Scan entries with optional filter and limit support.
-    ///
-    /// Override this method to enable optimized scanning:
-    /// - Primary key equality filter → point lookup via `EntityStore::get()`
-    /// - Limit → iterator with early termination
-    ///
-    /// Default falls back to `scan_all_to_batch()` (full table scan).
-    fn scan_to_batch(
-        &self,
-        _filters: &[Expr],
-        _limit: Option<usize>,
-    ) -> Result<RecordBatch, SystemError> {
-        self.scan_all_to_batch()
-    }
-
-    /// Default scan implementation for simple tables.
-    ///
-    /// Planning only captures the requested work. The concrete table read and
-    /// `RecordBatch` construction happen in the shared deferred execution node.
-    async fn base_simple_scan(
-        &self,
-        state: &dyn Session,
-        projection: Option<&Vec<usize>>,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>>
-    where
-        Self: Sized + 'static,
-    {
-        let schema = self.arrow_schema();
-        let pruning = PruningRequest::new(
-            match projection {
-                Some(indices) => ProjectionRequest::columns(indices.clone()),
-                None => ProjectionRequest::full(),
-            },
-            FilterRequest::new(filters.to_vec()),
-            LimitRequest::new(limit),
-        );
-        let output_schema = match projection {
-            Some(indices) => schema
-                .project(indices)
-                .map(Arc::new)
-                .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?,
-            None => Arc::clone(&schema),
-        };
-        let physical_filter = if let Some(filter) = combined_filter(filters) {
-            let df_schema = DFSchema::try_from(Arc::clone(&schema))?;
-            Some(state.create_physical_expr(filter, &df_schema)?)
-        } else {
-            None
-        };
-
-        Ok(Arc::new(DeferredBatchExec::new(Arc::new(
-            SimpleSystemScanSource::<Self, K, V> {
-                provider: self.clone(),
-                pruning,
-                physical_filter,
-                output_schema,
-                _marker: std::marker::PhantomData,
-            },
-        ))))
-    }
-}
-
-/// Helper function to extract string equality filter value for a column
 pub fn extract_filter_value(filters: &[Expr], column_name: &str) -> Option<String> {
     use datafusion::{logical_expr::Operator, scalar::ScalarValue};
 
@@ -644,6 +371,7 @@ mod tests {
             array::{RecordBatch, StringArray, TimestampMicrosecondArray},
             datatypes::{DataType, Field, Schema, TimeUnit},
         },
+        common::DataFusionError,
         execution::context::SessionContext,
         logical_expr::{col, lit},
         physical_plan::collect,
@@ -780,105 +508,61 @@ mod tests {
         }
     }
 
-    #[async_trait::async_trait]
-    impl SystemTableScan<kalamdb_commons::models::UserId, DummyValue> for DummyProvider {
-        fn store(&self) -> &IndexedEntityStore<kalamdb_commons::models::UserId, DummyValue> {
-            &self.store
-        }
-
-        fn table_name(&self) -> &str {
-            "system.dummy"
-        }
-
-        fn primary_key_column(&self) -> &str {
-            "user_id"
-        }
-
-        fn arrow_schema(&self) -> arrow::datatypes::SchemaRef {
-            Arc::new(Schema::new(vec![
-                Field::new("user_id", DataType::Utf8, false),
-                Field::new("value", DataType::Utf8, false),
-            ]))
-        }
-
-        fn parse_key(&self, value: &str) -> Option<kalamdb_commons::models::UserId> {
-            Some(kalamdb_commons::models::UserId::new(value))
-        }
-
-        fn create_batch_from_pairs(
-            &self,
-            pairs: Vec<(kalamdb_commons::models::UserId, DummyValue)>,
-        ) -> Result<RecordBatch, SystemError> {
-            let mut ids = Vec::with_capacity(pairs.len());
-            let mut values = Vec::with_capacity(pairs.len());
-            for (id, value) in pairs {
-                ids.push(Some(id.as_str().to_string()));
-                values.push(Some(value.value));
-            }
-            RecordBatch::try_new(
-                self.arrow_schema(),
-                vec![
-                    Arc::new(StringArray::from(ids)),
-                    Arc::new(StringArray::from(values)),
-                ],
-            )
-            .map_err(|e| SystemError::Other(e.to_string()))
-        }
+    fn dummy_schema() -> arrow::datatypes::SchemaRef {
+        Arc::new(Schema::new(vec![
+            Field::new("user_id", DataType::Utf8, false),
+            Field::new("value", DataType::Utf8, false),
+        ]))
     }
 
-    #[derive(Clone)]
-    struct DummySimpleProvider {
-        limits: Arc<Mutex<Vec<Option<usize>>>>,
+    fn dummy_batch(
+        pairs: Vec<(kalamdb_commons::models::UserId, DummyValue)>,
+    ) -> Result<RecordBatch, SystemError> {
+        let mut ids = Vec::with_capacity(pairs.len());
+        let mut values = Vec::with_capacity(pairs.len());
+        for (id, value) in pairs {
+            ids.push(Some(id.as_str().to_string()));
+            values.push(Some(value.value));
+        }
+        RecordBatch::try_new(
+            dummy_schema(),
+            vec![
+                Arc::new(StringArray::from(ids)),
+                Arc::new(StringArray::from(values)),
+            ],
+        )
+        .map_err(|error| SystemError::Other(error.to_string()))
     }
 
-    impl DummySimpleProvider {
-        fn new() -> Self {
-            Self {
-                limits: Arc::new(Mutex::new(Vec::new())),
-            }
-        }
-
-        fn arrow_schema_impl() -> arrow::datatypes::SchemaRef {
-            Arc::new(Schema::new(vec![
-                Field::new("user_id", DataType::Utf8, false),
-                Field::new("value", DataType::Utf8, false),
-            ]))
-        }
-
-        fn build_batch() -> Result<RecordBatch, SystemError> {
-            RecordBatch::try_new(
-                Self::arrow_schema_impl(),
-                vec![
-                    Arc::new(StringArray::from(vec![Some("u1"), Some("u2")])),
-                    Arc::new(StringArray::from(vec![Some("miss"), Some("match")])),
-                ],
-            )
-            .map_err(|error| SystemError::Other(error.to_string()))
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl SimpleSystemTableScan<kalamdb_commons::models::UserId, DummyValue> for DummySimpleProvider {
-        fn table_name(&self) -> &str {
-            "system.dummy_simple"
-        }
-
-        fn arrow_schema(&self) -> arrow::datatypes::SchemaRef {
-            Self::arrow_schema_impl()
-        }
-
-        fn scan_all_to_batch(&self) -> Result<RecordBatch, SystemError> {
-            Self::build_batch()
-        }
-
-        fn scan_to_batch(
-            &self,
-            _filters: &[Expr],
-            limit: Option<usize>,
-        ) -> Result<RecordBatch, SystemError> {
-            self.limits.lock().unwrap().push(limit);
-            Self::build_batch()
-        }
+    async fn scan_dummy(
+        provider: &DummyProvider,
+        state: &dyn datafusion::catalog::Session,
+        filters: &[Expr],
+        limit: Option<usize>,
+    ) -> DataFusionResult<Arc<dyn datafusion::physical_plan::ExecutionPlan>> {
+        let store = provider.store.clone();
+        deferred_system_scan(
+            state,
+            dummy_schema(),
+            None,
+            filters,
+            limit,
+            "system.dummy".to_string(),
+            "indexed_system_scan",
+            false,
+            Arc::new(move |filters, limit| {
+                build_indexed_batch(
+                    &store,
+                    "system.dummy",
+                    "user_id",
+                    |value| Some(kalamdb_commons::models::UserId::new(value)),
+                    filters,
+                    limit,
+                    dummy_batch,
+                )
+            }),
+        )
+        .await
     }
 
     #[test]
@@ -924,7 +608,7 @@ mod tests {
         let state = ctx.state();
         let filter = col("user_id").eq(lit("u1"));
 
-        let plan = provider.base_system_scan(&state, None, &[filter], None).await.unwrap();
+        let plan = scan_dummy(&provider, &state, &[filter], None).await.unwrap();
 
         // Deferred scans should not touch storage during planning.
         assert_eq!(backend.scan_calls(), 0);
@@ -966,7 +650,7 @@ mod tests {
         let state = ctx.state();
         let filter = col("value").eq(lit("match"));
 
-        let plan = provider.base_system_scan(&state, None, &[filter], Some(1)).await.unwrap();
+        let plan = scan_dummy(&provider, &state, &[filter], Some(1)).await.unwrap();
 
         let batches = collect(plan, state.task_ctx()).await.expect("collect filtered system scan");
         assert_eq!(batches.iter().map(|batch| batch.num_rows()).sum::<usize>(), 1);
@@ -990,13 +674,36 @@ mod tests {
 
     #[tokio::test]
     async fn test_base_simple_scan_skips_limit_pushdown_when_filters_exist() {
-        let provider = DummySimpleProvider::new();
-        let limits = Arc::clone(&provider.limits);
+        let limits = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&limits);
+        let schema = dummy_schema();
         let ctx = SessionContext::new();
         let state = ctx.state();
         let filter = col("value").eq(lit("match"));
 
-        let plan = provider.base_simple_scan(&state, None, &[filter], Some(1)).await.unwrap();
+        let plan = deferred_system_scan(
+            &state,
+            Arc::clone(&schema),
+            None,
+            &[filter],
+            Some(1),
+            "system.dummy_simple".to_string(),
+            "simple_system_scan",
+            true,
+            Arc::new(move |_filters, limit| {
+                recorded.lock().unwrap().push(limit);
+                RecordBatch::try_new(
+                    Arc::clone(&schema),
+                    vec![
+                        Arc::new(StringArray::from(vec![Some("u1"), Some("u2")])),
+                        Arc::new(StringArray::from(vec![Some("miss"), Some("match")])),
+                    ],
+                )
+                .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))
+            }),
+        )
+        .await
+        .unwrap();
 
         let batches = collect(plan, state.task_ctx()).await.expect("collect filtered simple scan");
         assert_eq!(batches.iter().map(|batch| batch.num_rows()).sum::<usize>(), 1);

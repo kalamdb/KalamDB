@@ -1,5 +1,9 @@
 use std::sync::Arc;
 
+use crate::support::{
+    create_cluster_app_context, create_shared_table_with_public_policy, create_user_table, row,
+    unique_namespace,
+};
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
     models::{pg_operations::InsertRequest, rows::Row, OperationKind, TransactionOrigin, UserId},
@@ -9,8 +13,7 @@ use kalamdb_core::transactions::{ExecutionOwnerKey, StagedMutation};
 use kalamdb_pg::OperationExecutor;
 use kalamdb_pg_bridge::OperationService;
 use kalamdb_sharding::ShardRouter;
-use kalamdb_tables::UserTableProvider;
-use crate::support::{create_cluster_app_context, create_user_table, row, unique_namespace};
+use kalamdb_tables::KalamTableProvider;
 
 fn insert_mutation(
     transaction_id: &kalamdb_commons::models::TransactionId,
@@ -47,12 +50,12 @@ fn same_user_shard_pair() -> (UserId, UserId) {
 }
 
 async fn load_user_row(
-    provider: &UserTableProvider,
+    provider: &KalamTableProvider,
     user_id: &UserId,
     pk_value: i64,
 ) -> kalamdb_tables::UserTableRow {
     provider
-        .find_by_pk(user_id, &ScalarValue::Int64(Some(pk_value)))
+        .find_user_by_pk(user_id, &ScalarValue::Int64(Some(pk_value)))
         .await
         .expect("lookup succeeds")
         .expect("row exists after commit")
@@ -96,19 +99,17 @@ async fn explicit_commit_persists_same_table_same_user_user_inserts() {
 
     let provider_arc = app_ctx
         .schema_registry()
-        .get_provider(&table_id)
+        .get_kalam_provider(&table_id)
         .expect("user provider should be registered");
-    let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<UserTableProvider>()
-        .expect("provider should downcast to UserTableProvider");
+    let provider = provider_arc.as_ref();
 
     let (first_key, first_row) = provider
-        .find_by_pk(&user_id, &ScalarValue::Int64(Some(1)))
+        .find_user_by_pk(&user_id, &ScalarValue::Int64(Some(1)))
         .await
         .expect("lookup succeeds")
         .expect("first row exists after commit");
     let (second_key, second_row) = provider
-        .find_by_pk(&user_id, &ScalarValue::Int64(Some(2)))
+        .find_user_by_pk(&user_id, &ScalarValue::Int64(Some(2)))
         .await
         .expect("lookup succeeds")
         .expect("second row exists after commit");
@@ -175,11 +176,9 @@ async fn explicit_commit_preserves_user_scope_for_same_primary_keys() {
 
     let provider_arc = app_ctx
         .schema_registry()
-        .get_provider(&table_id)
+        .get_kalam_provider(&table_id)
         .expect("user provider should be registered");
-    let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<UserTableProvider>()
-        .expect("provider should downcast to UserTableProvider");
+    let provider = provider_arc.as_ref();
 
     let first_user_first_row = load_user_row(provider, &first_user_id, 1).await;
     let first_user_second_row = load_user_row(provider, &first_user_id, 2).await;
@@ -251,11 +250,9 @@ async fn operation_service_preserves_user_scope_for_same_primary_keys() {
 
     let provider_arc = app_ctx
         .schema_registry()
-        .get_provider(&table_id)
+        .get_kalam_provider(&table_id)
         .expect("user provider should be registered");
-    let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<UserTableProvider>()
-        .expect("provider should downcast to UserTableProvider");
+    let provider = provider_arc.as_ref();
 
     let first_user_first_row = load_user_row(provider, &first_user_id, 1).await;
     let first_user_second_row = load_user_row(provider, &first_user_id, 2).await;
@@ -278,4 +275,177 @@ async fn operation_service_preserves_user_scope_for_same_primary_keys() {
         second_user_second_row.fields.get("name"),
         Some(&ScalarValue::Utf8(Some("beta-b".to_string())))
     );
+}
+
+const WIDE_COMMIT_ROWS: i64 = 25_000;
+
+async fn assert_user_pk(provider: &KalamTableProvider, user_id: &UserId, id: i64, present: bool) {
+    let found = provider
+        .find_user_by_pk(user_id, &ScalarValue::Int64(Some(id)))
+        .await
+        .expect("user lookup")
+        .is_some();
+    assert_eq!(found, present, "user primary key {id}");
+}
+
+async fn assert_shared_pk(provider: &KalamTableProvider, id: i64, present: bool) {
+    let found = provider
+        .find_by_pk(&ScalarValue::Int64(Some(id)))
+        .await
+        .expect("shared lookup")
+        .is_some();
+    assert_eq!(found, present, "shared primary key {id}");
+}
+
+fn wide_rows(duplicate_last: bool) -> Vec<Row> {
+    let mut rows = Vec::with_capacity(WIDE_COMMIT_ROWS as usize);
+    for id in 1..=WIDE_COMMIT_ROWS {
+        let stored_id = if duplicate_last && id == WIDE_COMMIT_ROWS {
+            1
+        } else {
+            id
+        };
+        rows.push(row(stored_id, "n"));
+    }
+    rows
+}
+
+#[tokio::test]
+#[ntest::timeout(6_000)]
+async fn explicit_commit_of_25000_user_rows_is_all_or_nothing() {
+    let (app_ctx, _test_db) = create_cluster_app_context().await;
+    let service = OperationService::new(Arc::clone(&app_ctx));
+    let session_id = "pg-25000-c0ffee";
+    let user_id = UserId::new("tx-25k-user");
+
+    let committed = create_user_table(&app_ctx, &unique_namespace("tx_user_25k"), "items").await;
+    let transaction_id = service
+        .begin_transaction(session_id)
+        .await
+        .expect("begin")
+        .expect("transaction id");
+    service
+        .execute_insert(InsertRequest {
+            table_id: committed.clone(),
+            table_type: TableType::User,
+            session_id: Some(session_id.to_string()),
+            user_id: Some(user_id.clone()),
+            rows: wide_rows(false),
+        })
+        .await
+        .expect("stage 25000 user rows");
+    service
+        .commit_transaction(session_id, &transaction_id)
+        .await
+        .expect("commit 25000 user rows")
+        .expect("commit returns transaction id");
+    let provider = app_ctx.schema_registry().get_kalam_provider(&committed).expect("user provider");
+    assert_user_pk(&provider, &user_id, 1, true).await;
+    assert_user_pk(&provider, &user_id, WIDE_COMMIT_ROWS / 2, true).await;
+    assert_user_pk(&provider, &user_id, WIDE_COMMIT_ROWS, true).await;
+
+    let rejected =
+        create_user_table(&app_ctx, &unique_namespace("tx_user_25k_fail"), "items").await;
+    let failed_id = service
+        .begin_transaction(session_id)
+        .await
+        .expect("begin failure transaction")
+        .expect("transaction id");
+    service
+        .execute_insert(InsertRequest {
+            table_id: rejected.clone(),
+            table_type: TableType::User,
+            session_id: Some(session_id.to_string()),
+            user_id: Some(user_id.clone()),
+            rows: wide_rows(true),
+        })
+        .await
+        .expect("stage duplicate last row");
+    let error = service
+        .commit_transaction(session_id, &failed_id)
+        .await
+        .expect_err("last-row primary key failure");
+    assert!(error.to_string().contains("Primary key"), "{error}");
+    let rejected_provider = app_ctx
+        .schema_registry()
+        .get_kalam_provider(&rejected)
+        .expect("rejected user provider");
+    assert_user_pk(&rejected_provider, &user_id, 1, false).await;
+    assert_user_pk(&rejected_provider, &user_id, WIDE_COMMIT_ROWS - 1, false).await;
+}
+
+#[tokio::test]
+#[ntest::timeout(12_000)]
+async fn explicit_commit_of_25000_shared_rows_is_all_or_nothing() {
+    let (app_ctx, _test_db) = create_cluster_app_context().await;
+    let service = OperationService::new(Arc::clone(&app_ctx));
+    let session_id = "pg-25001-c0ffee";
+    let user_id = UserId::new("tx-25k-shared");
+
+    let committed = create_shared_table_with_public_policy(
+        &app_ctx,
+        &unique_namespace("tx_shared_25k"),
+        "items",
+    )
+    .await;
+    let transaction_id = service
+        .begin_transaction(session_id)
+        .await
+        .expect("begin")
+        .expect("transaction id");
+    service
+        .execute_insert(InsertRequest {
+            table_id: committed.clone(),
+            table_type: TableType::Shared,
+            session_id: Some(session_id.to_string()),
+            user_id: Some(user_id.clone()),
+            rows: wide_rows(false),
+        })
+        .await
+        .expect("stage 25000 shared rows");
+    service
+        .commit_transaction(session_id, &transaction_id)
+        .await
+        .expect("commit 25000 shared rows")
+        .expect("commit returns transaction id");
+    let provider = app_ctx
+        .schema_registry()
+        .get_kalam_provider(&committed)
+        .expect("shared provider");
+    assert_shared_pk(&provider, 1, true).await;
+    assert_shared_pk(&provider, WIDE_COMMIT_ROWS / 2, true).await;
+    assert_shared_pk(&provider, WIDE_COMMIT_ROWS, true).await;
+
+    let rejected = create_shared_table_with_public_policy(
+        &app_ctx,
+        &unique_namespace("tx_shared_25k_fail"),
+        "items",
+    )
+    .await;
+    let failed_id = service
+        .begin_transaction(session_id)
+        .await
+        .expect("begin failure transaction")
+        .expect("transaction id");
+    service
+        .execute_insert(InsertRequest {
+            table_id: rejected.clone(),
+            table_type: TableType::Shared,
+            session_id: Some(session_id.to_string()),
+            user_id: Some(user_id),
+            rows: wide_rows(true),
+        })
+        .await
+        .expect("stage duplicate last row");
+    let error = service
+        .commit_transaction(session_id, &failed_id)
+        .await
+        .expect_err("last-row primary key failure");
+    assert!(error.to_string().contains("Primary key"), "{error}");
+    let rejected_provider = app_ctx
+        .schema_registry()
+        .get_kalam_provider(&rejected)
+        .expect("rejected shared provider");
+    assert_shared_pk(&rejected_provider, 1, false).await;
+    assert_shared_pk(&rejected_provider, WIDE_COMMIT_ROWS - 1, false).await;
 }

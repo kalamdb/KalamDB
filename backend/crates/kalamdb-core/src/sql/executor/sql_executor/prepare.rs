@@ -65,7 +65,9 @@ impl SqlExecutor {
         include_dml_ast: bool,
     ) -> Result<PreparedExecutionStatement, StatementClassificationError> {
         let cache_key = (
-            self.sql_cache_registry.plan_cache().current_key(default_namespace.clone(), role, sql),
+            self.sql_cache_registry
+                .plan_cache()
+                .current_key(default_namespace.clone(), role, sql),
             include_dml_ast,
         );
         if let Some(prepared) = self.prepared_statement_cache.get(&cache_key) {

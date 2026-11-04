@@ -201,12 +201,16 @@ impl RocksDBBackend {
     }
 
     fn get_cf(&self, partition: &Partition) -> Result<Arc<BoundColumnFamily<'_>>> {
-        // New hot partitions own a CF. Existing prefix-based partitions remain
-        // readable in their original CF without an implicit data migration.
-        if let Some(cf) = self.db.cf_handle(partition.name()) {
-            return Ok(cf);
-        }
-        let cf_name = physical_cf_for_partition(partition.name());
+        // Only hot data/index partitions own dedicated physical families.
+        // System metadata, system indexes, and Raft always use their canonical CFs.
+        let physical = physical_cf_for_partition(partition.name());
+        let cf_name = if matches!(physical, "hot_data" | "hot_index")
+            && partition.name() != physical
+        {
+            partition.name()
+        } else {
+            physical
+        };
         self.db
             .cf_handle(cf_name)
             .ok_or_else(|| StorageError::PartitionNotFound(cf_name.to_string()))
@@ -668,19 +672,16 @@ impl StorageBackend for RocksDBBackend {
 
     fn create_partition(&self, partition: &Partition) -> Result<()> {
         let physical = physical_cf_for_partition(partition.name());
-        if self.partition_exists(partition)
-            && (self.db.cf_handle(partition.name()).is_some()
-                || self.db.cf_handle(physical).is_some())
-        {
-            return Ok(());
+        let dedicated_hot = matches!(physical, "hot_data" | "hot_index")
+            && partition.name() != physical;
+        let target = if dedicated_hot { partition.name() } else { physical };
+        if self.partition_exists(partition) {
+            if self.db.cf_handle(target).is_some() {
+                return Ok(());
+            }
+            return Err(StorageError::PartitionNotFound(target.to_string()));
         }
-        let isolated_hot =
-            matches!(physical, "hot_data" | "hot_index") && !self.partition_exists(partition);
-        self.ensure_physical_cf(if isolated_hot {
-            partition.name()
-        } else {
-            physical
-        })?;
+        self.ensure_physical_cf(target)?;
         self.persist_logical_partition(partition.name())?;
         self.track_logical_partition(partition.name());
         Ok(())
@@ -698,11 +699,14 @@ impl StorageBackend for RocksDBBackend {
 
     fn drop_partition(&self, partition: &Partition) -> Result<()> {
         let physical = physical_cf_for_partition(partition.name());
-        let has_isolated_cf =
-            self.db.cf_handle(partition.name()).is_some() && partition.name() != physical;
+        let dedicated_hot = matches!(physical, "hot_data" | "hot_index")
+            && partition.name() != physical;
         let was_tracked = self.partition_exists(partition);
 
-        if has_isolated_cf {
+        if dedicated_hot && !was_tracked {
+            return Ok(());
+        }
+        if dedicated_hot {
             self.db
                 .drop_cf(partition.name())
                 .map_err(|e| StorageError::IoError(e.to_string()))?;
@@ -716,10 +720,6 @@ impl StorageBackend for RocksDBBackend {
             if was_tracked {
                 self.remove_logical_partition(partition.name())?;
             }
-            return Ok(());
-        }
-
-        if !was_tracked && matches!(physical, "hot_data" | "hot_index") {
             return Ok(());
         }
 
@@ -970,6 +970,46 @@ mod tests {
     }
 
     #[test]
+    fn all_system_tables_share_one_physical_meta_cf() {
+        use kalamdb_commons::system_tables::SystemTable;
+
+        let temp = TempDir::new().unwrap();
+        let init = RocksDbInit::with_defaults(temp.path().to_string_lossy());
+        let db = init.open().unwrap();
+        let backend = RocksDBBackend::new(Arc::clone(&db));
+
+        for (index, table) in SystemTable::all_tables().iter().enumerate() {
+            let partition = table.partition().expect("persisted system table has partition");
+            backend.create_partition(partition).unwrap();
+            assert_eq!(physical_cf_for_partition(partition.name()), SYSTEM_META_CF);
+            assert!(db.cf_handle(partition.name()).is_none(), "dedicated system CF: {}", partition.name());
+            backend.put(partition, b"key", index.to_string().as_bytes()).unwrap();
+        }
+
+        for (index, table) in SystemTable::all_tables().iter().enumerate() {
+            let partition = table.partition().unwrap();
+            assert_eq!(
+                backend.get(partition, b"key").unwrap(),
+                Some(index.to_string().into_bytes()),
+                "system partition isolation: {}",
+                partition.name()
+            );
+        }
+    }
+
+    #[test]
+    fn missing_dedicated_hot_cf_does_not_fall_back_to_shared_hot_cf() {
+        let temp = TempDir::new().unwrap();
+        let init = RocksDbInit::with_defaults(temp.path().to_string_lossy());
+        let db = init.open().unwrap();
+        let backend = RocksDBBackend::new(Arc::clone(&db));
+        let partition = Partition::new("shared_gc:missing_hot");
+        assert!(backend.get(&partition, b"key").is_err());
+        backend.create_partition(&partition).unwrap();
+        assert!(db.cf_handle(partition.name()).is_some());
+    }
+
+    #[test]
     fn hot_partitions_have_independent_column_families() {
         let temp = TempDir::new().unwrap();
         let init = RocksDbInit::with_defaults(temp.path().to_string_lossy());
@@ -984,21 +1024,6 @@ mod tests {
         }
         backend.drop_partition(&orders).unwrap();
         assert_eq!(backend.get(&inbox, b"key").unwrap(), Some(b"value".to_vec()));
-    }
-
-    #[test]
-    fn legacy_hot_partition_stays_in_shared_cf() {
-        let temp = TempDir::new().unwrap();
-        let init = RocksDbInit::with_defaults(temp.path().to_string_lossy());
-        let db = init.open().unwrap();
-        let backend = RocksDBBackend::new(Arc::clone(&db));
-        let partition = Partition::new("shared_gc:legacy");
-        backend.persist_logical_partition(partition.name()).unwrap();
-        backend.track_logical_partition(partition.name());
-        backend.put(&partition, b"key", b"legacy").unwrap();
-        backend.create_partition(&partition).unwrap();
-        assert!(db.cf_handle(partition.name()).is_none());
-        assert_eq!(backend.get(&partition, b"key").unwrap(), Some(b"legacy".to_vec()));
     }
 
     #[test]

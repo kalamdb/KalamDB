@@ -5,7 +5,7 @@
 
 use kalamdb_commons::{SchemaId, TableId};
 use sqlparser::{
-    ast::{Expr, ObjectName, ObjectNamePart, Statement, TableFactor, TableObject},
+    ast::{Expr, ObjectName, ObjectNamePart, SetExpr, Statement, TableFactor, TableObject},
     dialect::Dialect,
     parser::{Parser, ParserError, ParserOptions},
     tokenizer::{Span, Token},
@@ -231,6 +231,52 @@ pub fn extract_dml_table_id_from_statement(
                 })
                 .collect();
             table_id_from_parts(&parts, default_namespace)
+        },
+        _ => None,
+    }
+}
+
+/// Extract the first `FROM` table of a parsed `SELECT`.
+pub fn extract_query_table_id_from_statement(
+    statement: &Statement,
+    default_namespace: &SchemaId,
+) -> Option<TableId> {
+    let Statement::Query(query) = statement else {
+        return None;
+    };
+    table_id_from_set_expr(query.body.as_ref(), default_namespace)
+}
+
+fn table_id_from_set_expr(expr: &SetExpr, default_namespace: &SchemaId) -> Option<TableId> {
+    match expr {
+        SetExpr::Select(select) => select
+            .from
+            .first()
+            .and_then(|from| table_id_from_factor(&from.relation, default_namespace)),
+        SetExpr::Query(query) => table_id_from_set_expr(query.body.as_ref(), default_namespace),
+        SetExpr::SetOperation { left, .. } => table_id_from_set_expr(left, default_namespace),
+        _ => None,
+    }
+}
+
+fn table_id_from_factor(factor: &TableFactor, default_namespace: &SchemaId) -> Option<TableId> {
+    match factor {
+        TableFactor::Table { name, .. } => {
+            let parts: Vec<String> = name
+                .0
+                .iter()
+                .filter_map(|part| match part {
+                    ObjectNamePart::Identifier(ident) => Some(ident.value.clone()),
+                    _ => None,
+                })
+                .collect();
+            table_id_from_parts(&parts, default_namespace)
+        },
+        TableFactor::NestedJoin { table_with_joins, .. } => {
+            table_id_from_factor(&table_with_joins.relation, default_namespace)
+        },
+        TableFactor::Derived { subquery, .. } => {
+            table_id_from_set_expr(subquery.body.as_ref(), default_namespace)
         },
         _ => None,
     }
@@ -611,6 +657,19 @@ mod tests {
         let lower = sql.to_ascii_lowercase();
         assert!(lower.contains("date_part('day'"), "{sql}");
         assert!(!lower.contains("extract("), "{sql}");
+    }
+
+    #[test]
+    fn extract_query_table_id_reads_the_from_clause() {
+        let statement = crate::parser::KalamParser::parse_one("SELECT a FROM app.events WHERE a > 1")
+            .expect("parse");
+        let table_id = extract_query_table_id_from_statement(
+            &statement,
+            &SchemaId::new("public"),
+        )
+        .expect("table");
+        assert_eq!(table_id.namespace_id().as_str(), "app");
+        assert_eq!(table_id.table_name().as_str(), "events");
     }
 
     #[test]

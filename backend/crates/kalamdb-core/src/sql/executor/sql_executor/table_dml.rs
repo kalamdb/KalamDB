@@ -322,8 +322,10 @@ impl SqlExecutor {
                         error
                     );
 
-                    self.execute_replanned_dml_erased(cache_key, pre_parsed, cache_sql, exec_ctx, params)
-                        .await
+                    self.execute_replanned_dml_erased(
+                        cache_key, pre_parsed, cache_sql, exec_ctx, params,
+                    )
+                    .await
                 },
             }
         } else {

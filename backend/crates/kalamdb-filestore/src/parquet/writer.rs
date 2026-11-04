@@ -7,7 +7,6 @@ use arrow::{
     datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
-use bytes::Bytes;
 use datafusion::arrow::compute::{self, SortOptions};
 use kalamdb_commons::{constants::SystemColumnNames, schemas::TableCompression};
 use parquet::{
@@ -19,7 +18,6 @@ use parquet::{
 use crate::error::{FilestoreError, Result};
 
 const MIN_ROWS_FOR_BLOOM_FILTERS: u64 = 1024;
-const PARQUET_INITIAL_BUFFER_BYTES: usize = 1024 * 1024;
 
 /// Parquet writer tuning for a single write.
 #[derive(Debug, Clone, Copy)]
@@ -56,108 +54,6 @@ impl ParquetWriterOptions {
 pub struct ParquetWriteResult {
     /// Size of the written data in bytes.
     pub size_bytes: u64,
-}
-
-pub(crate) fn serialize_to_parquet_with_compression(
-    schema: SchemaRef,
-    batches: Vec<RecordBatch>,
-    bloom_filter_columns: Option<Vec<String>>,
-    options: ParquetWriterOptions,
-) -> Result<Bytes> {
-    let _span_guard = kalamdb_observability::kdb_debug_span_entered!(
-        "parquet.serialize",
-        row_count = batches.iter().map(|batch| batch.num_rows() as u64).sum::<u64>(),
-        bloom_filter_count = bloom_filter_columns.as_ref().map_or(0, Vec::len),
-        content_defined_chunking = options.content_defined_chunking
-    );
-
-    let batches = prepare_version_order(batches, options)?;
-    let total_rows: u64 = batches.iter().map(|b| b.num_rows() as u64).sum();
-    let props = writer_properties(total_rows, bloom_filter_columns, options);
-
-    // Write to in-memory buffer
-    let mut buffer = Vec::with_capacity(PARQUET_INITIAL_BUFFER_BYTES);
-    {
-        let mut writer = ArrowWriter::try_new(&mut buffer, schema, Some(props))
-            .map_err(|e| FilestoreError::Parquet(e.to_string()))?;
-
-        for batch in batches {
-            writer.write(&batch).map_err(|e| FilestoreError::Parquet(e.to_string()))?;
-        }
-
-        writer.close().map_err(|e| FilestoreError::Parquet(e.to_string()))?;
-    }
-
-    kalamdb_observability::kdb_debug!(size_bytes = buffer.len(), "Parquet serialization completed");
-    Ok(Bytes::from(buffer))
-}
-
-/// Serialize batches produced by a bounded receiver to Parquet.
-///
-/// The caller can stream input batches into the receiver while this runs on a blocking worker,
-/// keeping row materialization bounded to the channel capacity plus one Arrow batch.
-pub fn serialize_record_batch_receiver_to_parquet(
-    schema: SchemaRef,
-    receiver: tokio::sync::mpsc::Receiver<Result<RecordBatch>>,
-    bloom_filter_columns: Option<Vec<String>>,
-    estimated_rows: u64,
-) -> Result<Bytes> {
-    serialize_record_batch_receiver_to_parquet_with_options(
-        schema,
-        receiver,
-        bloom_filter_columns,
-        estimated_rows,
-        ParquetWriterOptions::new(TableCompression::default()),
-    )
-}
-
-pub fn serialize_record_batch_receiver_to_parquet_with_compression(
-    schema: SchemaRef,
-    receiver: tokio::sync::mpsc::Receiver<Result<RecordBatch>>,
-    bloom_filter_columns: Option<Vec<String>>,
-    estimated_rows: u64,
-    compression: TableCompression,
-) -> Result<Bytes> {
-    serialize_record_batch_receiver_to_parquet_with_options(
-        schema,
-        receiver,
-        bloom_filter_columns,
-        estimated_rows,
-        ParquetWriterOptions::new(compression),
-    )
-}
-
-pub fn serialize_record_batch_receiver_to_parquet_with_options(
-    schema: SchemaRef,
-    mut receiver: tokio::sync::mpsc::Receiver<Result<RecordBatch>>,
-    bloom_filter_columns: Option<Vec<String>>,
-    estimated_rows: u64,
-    options: ParquetWriterOptions,
-) -> Result<Bytes> {
-    let props = writer_properties(estimated_rows, bloom_filter_columns, options);
-    let mut buffer = Vec::with_capacity(PARQUET_INITIAL_BUFFER_BYTES);
-    let mut rows_written = 0u64;
-
-    {
-        let mut writer = ArrowWriter::try_new(&mut buffer, schema, Some(props))
-            .map_err(|e| FilestoreError::Parquet(e.to_string()))?;
-
-        while let Some(batch_result) = receiver.blocking_recv() {
-            let batch = batch_result?;
-            rows_written = rows_written.saturating_add(batch.num_rows() as u64);
-            writer.write(&batch).map_err(|e| FilestoreError::Parquet(e.to_string()))?;
-        }
-
-        writer.close().map_err(|e| FilestoreError::Parquet(e.to_string()))?;
-    }
-
-    kalamdb_observability::kdb_debug!(
-        row_count = rows_written,
-        size_bytes = buffer.len(),
-        content_defined_chunking = options.content_defined_chunking,
-        "Streaming Parquet serialization completed"
-    );
-    Ok(Bytes::from(buffer))
 }
 
 fn prepare_version_order(
@@ -389,7 +285,10 @@ fn is_sorted_by_version(batch: &RecordBatch, seq_idx: usize) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, sync::Arc};
+    use std::{
+        io::{Read, Seek, SeekFrom},
+        sync::Arc,
+    };
 
     use arrow::array::StringArray;
     use kalamdb_commons::arrow_utils::{field_utf8, schema};
@@ -410,18 +309,31 @@ mod tests {
         (schema, vec![batch])
     }
 
+    fn write_temp(
+        schema: SchemaRef,
+        batches: Vec<RecordBatch>,
+        options: ParquetWriterOptions,
+    ) -> TempParquetFile {
+        serialize_to_temp_parquet(schema, batches, None, options).unwrap()
+    }
+
+    fn read_bytes(mut file: TempParquetFile) -> Vec<u8> {
+        let handle = file.as_file_mut();
+        handle.seek(SeekFrom::Start(0)).unwrap();
+        let mut bytes = Vec::new();
+        handle.read_to_end(&mut bytes).unwrap();
+        bytes
+    }
+
     #[test]
     fn test_serialize_to_parquet() {
         let (schema, batches) = make_test_batch();
-        let bytes = serialize_to_parquet_with_compression(
+        let bytes = read_bytes(write_temp(
             schema,
             batches,
-            None,
             ParquetWriterOptions::new(TableCompression::Snappy),
-        )
-        .unwrap();
+        ));
         assert!(!bytes.is_empty());
-        // Parquet magic number at start
         assert_eq!(&bytes[0..4], b"PAR1");
     }
 
@@ -433,17 +345,10 @@ mod tests {
             (TableCompression::Zstd, Compression::ZSTD(zstd_level())),
         ] {
             let (schema, batches) = make_test_batch();
-            let bytes = serialize_to_parquet_with_compression(
-                schema,
-                batches,
-                None,
-                ParquetWriterOptions::new(table_compression),
-            )
-            .unwrap();
-            let temp_file = tempfile::NamedTempFile::new().unwrap();
-            fs::write(temp_file.path(), bytes).unwrap();
-
-            let file = fs::File::open(temp_file.path()).unwrap();
+            let mut written =
+                write_temp(schema, batches, ParquetWriterOptions::new(table_compression));
+            written.as_file_mut().seek(SeekFrom::Start(0)).unwrap();
+            let file = written.as_file().try_clone().unwrap();
             let reader = SerializedFileReader::new(file).unwrap();
             let column = reader.metadata().row_group(0).column(0);
             assert_eq!(column.compression(), expected);
@@ -453,15 +358,16 @@ mod tests {
     #[test]
     fn content_defined_chunking_roundtrips() {
         let (schema, batches) = make_test_batch();
-        let bytes = serialize_to_parquet_with_compression(
-            schema.clone(),
+        let bytes = read_bytes(write_temp(
+            schema,
             batches,
-            None,
             ParquetWriterOptions::new(TableCompression::Snappy).with_content_defined_chunking(true),
-        )
-        .unwrap();
+        ));
 
-        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes).unwrap().build().unwrap();
+        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(bytes))
+            .unwrap()
+            .build()
+            .unwrap();
         let read_batches: Vec<RecordBatch> = reader.map(|batch| batch.unwrap()).collect();
         assert_eq!(read_batches.len(), 1);
         assert_eq!(read_batches[0].num_rows(), 3);
@@ -478,20 +384,17 @@ mod tests {
             vec![Arc::new(Int64Array::from(vec![30_i64, 10, 20]))],
         )
         .unwrap();
-        let bytes = serialize_to_parquet_with_compression(
+        let bytes = read_bytes(write_temp(
             Arc::clone(&schema),
             vec![descending],
-            None,
             ParquetWriterOptions::new(TableCompression::None).with_verified_version_order(true),
-        )
-        .unwrap();
-        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes).unwrap().build().unwrap();
-        let batch = reader.map(|batch| batch.unwrap()).next().unwrap();
-        let versions = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<Int64Array>()
+        ));
+        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(bytes))
+            .unwrap()
+            .build()
             .unwrap();
+        let batch = reader.map(|batch| batch.unwrap()).next().unwrap();
+        let versions = batch.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
         assert_eq!(versions.value(0), 30);
 
         let unsorted = RecordBatch::try_new(
@@ -499,20 +402,17 @@ mod tests {
             vec![Arc::new(Int64Array::from(vec![30_i64, 10, 20]))],
         )
         .unwrap();
-        let bytes = serialize_to_parquet_with_compression(
+        let bytes = read_bytes(write_temp(
             schema,
             vec![unsorted],
-            None,
             ParquetWriterOptions::new(TableCompression::None),
-        )
-        .unwrap();
-        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes).unwrap().build().unwrap();
-        let batch = reader.map(|batch| batch.unwrap()).next().unwrap();
-        let versions = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<Int64Array>()
+        ));
+        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(bytes))
+            .unwrap()
+            .build()
             .unwrap();
+        let batch = reader.map(|batch| batch.unwrap()).next().unwrap();
+        let versions = batch.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
         assert_eq!(versions.values(), &[10, 20, 30]);
     }
 }

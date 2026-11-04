@@ -9,7 +9,7 @@ use std::{collections::HashMap, fs, time::Duration};
 use async_trait::async_trait;
 use bytes::Bytes;
 use kalamdb_commons::{models::UserId, schemas::TableType, JobId, TableId};
-use kalamdb_core::{error::KalamDbError, providers::UserTableProvider};
+use kalamdb_core::error::KalamDbError;
 use kalamdb_store::EntityStore;
 use kalamdb_system::{
     providers::jobs::models::JobFilter, JobStatus, JobType, Manifest, SegmentStatus,
@@ -42,7 +42,8 @@ pub struct TableExportParams {
 
 impl JobParams for TableExportParams {
     fn validate(&self) -> Result<(), KalamDbError> {
-        validate_table_transfer_scope(self.table_type, self.user_id.as_deref())?;
+        validate_table_transfer_scope(self.table_type, self.user_id.as_deref())
+            .map_err(super::transfer_error)?;
         if self.export_id.is_empty() {
             return Err(KalamDbError::InvalidOperation("export_id cannot be empty".to_string()));
         }
@@ -67,7 +68,8 @@ pub struct TableImportParams {
 
 impl JobParams for TableImportParams {
     fn validate(&self) -> Result<(), KalamDbError> {
-        validate_table_transfer_scope(self.table_type, self.user_id.as_deref())?;
+        validate_table_transfer_scope(self.table_type, self.user_id.as_deref())
+            .map_err(super::transfer_error)?;
         if self.import_id.is_empty() {
             return Err(KalamDbError::InvalidOperation("import_id cannot be empty".to_string()));
         }
@@ -110,7 +112,8 @@ impl JobExecutor for TableExportExecutor {
 
     async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
         let params = ctx.params();
-        let target_user_id = parse_transfer_user_id(params.table_type, params.user_id.as_deref())?;
+        let target_user_id = parse_transfer_user_id(params.table_type, params.user_id.as_deref())
+            .map_err(super::transfer_error)?;
         let table_label = params.table_id.full_name();
 
         ctx.log_info(&format!(
@@ -202,7 +205,7 @@ impl JobExecutor for TableExportExecutor {
             export_manifest,
         );
 
-        let zip = write_table_export_zip(metadata, segments)?;
+        let zip = write_table_export_zip(metadata, segments).map_err(super::transfer_error)?;
         let zip_size = zip.bytes.len();
 
         let exports_dir = ctx.app_ctx.config().storage.exports_dir().join("tables");
@@ -260,7 +263,8 @@ impl JobExecutor for TableImportExecutor {
 
     async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
         let params = ctx.params();
-        let target_user_id = parse_transfer_user_id(params.table_type, params.user_id.as_deref())?;
+        let target_user_id = parse_transfer_user_id(params.table_type, params.user_id.as_deref())
+            .map_err(super::transfer_error)?;
         let table_label = params.table_id.full_name();
 
         ctx.log_info(&format!(
@@ -296,7 +300,8 @@ impl JobExecutor for TableImportExecutor {
             ))
         })?;
 
-        let TableExportArchive { metadata, files } = read_table_export_archive(zip_bytes)?;
+        let TableExportArchive { metadata, files } =
+            read_table_export_archive(zip_bytes).map_err(super::transfer_error)?;
 
         if metadata.source_table_type != params.table_type {
             return Err(KalamDbError::InvalidOperation(format!(
@@ -555,16 +560,12 @@ fn user_table_has_hot_rows(
     table_id: &TableId,
     user_id: &UserId,
 ) -> bool {
-    let Some(provider_arc) = ctx.app_ctx.schema_registry().get_provider(table_id) else {
+    let Some(provider_arc) = ctx.app_ctx.schema_registry().get_kalam_provider(table_id) else {
         return false;
     };
-    let Some(provider) =
-        (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
-    else {
+    let Some(store) = provider_arc.user_store() else {
         return true;
     };
-
-    let store = provider.store();
     let user_prefix = kalamdb_commons::ids::UserTableRowId::user_prefix(user_id);
     let partition = store.partition();
     store

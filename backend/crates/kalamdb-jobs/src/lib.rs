@@ -17,21 +17,12 @@ pub(crate) mod scheduler_common;
 pub mod stream_eviction;
 pub mod topic_retention;
 
-// ============================================================================
-// PHASE 16: LEADER-ONLY JOB EXECUTION (CLUSTER MODE)
-// ============================================================================
-pub mod leader_failover;
-pub mod leader_guard;
-
 // Phase 9 exports (production API)
 pub use executors::{JobContext, JobDecision, JobExecutor as JobExecutorTrait, JobRegistry};
 pub use flush_scheduler::FlushScheduler;
 pub use health_monitor::HealthMonitor;
 pub use job_cleanup::JobCleanupScheduler;
 pub use jobs_manager::{JobsManager, JobsManagerRuntime, JobsShutdownStatus};
-// Phase 16 exports (cluster mode)
-pub use leader_failover::{JobRecoveryAction, LeaderFailoverHandler, RecoveryReport};
-pub use leader_guard::{LeaderOnlyJobGuard, LeadershipStatus};
 pub use stream_eviction::StreamEvictionScheduler;
 pub use topic_retention::TopicRetentionScheduler;
 

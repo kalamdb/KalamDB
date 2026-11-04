@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use columns::ExtendedInformationSchemaColumnsProvider;
 use datafusion::{
     catalog::{information_schema::InformationSchemaProvider, CatalogProviderList, SchemaProvider},
     datasource::TableProvider,
@@ -11,18 +10,23 @@ use datafusion::{
     logical_expr::TableType,
 };
 use kalamdb_system::SystemTablesRegistry;
-use parameters::ExtendedInformationSchemaParametersProvider;
-use tables::ExtendedInformationSchemaTablesProvider;
-use views::InformationSchemaViewsProvider;
+
+use crate::information_schema::relation::InfoSchemaSource;
 
 pub mod catalog_metadata;
 pub mod columns;
 pub(crate) mod extend;
 pub mod parameters;
+pub mod relation;
 pub mod routines;
 pub mod tables;
 pub mod triggers;
 pub mod views;
+
+/// Kalam columns appended to `information_schema.columns`, in `#[table]` order.
+pub fn columns_extension_order() -> &'static [&'static str] {
+    columns::extension_column_order()
+}
 
 /// `information_schema` provider that delegates to DataFusion for standard tables
 /// and serves an extended `columns` view with SQL/PG types from `KalamDataType`.
@@ -30,7 +34,7 @@ pub mod views;
 pub struct KalamInformationSchemaProvider {
     inner: InformationSchemaProvider,
     columns: Arc<dyn TableProvider>,
-    tables: Arc<ExtendedInformationSchemaTablesProvider>,
+    tables: Arc<dyn TableProvider>,
     parameters: Arc<dyn TableProvider>,
     routines: Arc<dyn TableProvider>,
     views: Arc<dyn TableProvider>,
@@ -38,31 +42,55 @@ pub struct KalamInformationSchemaProvider {
 }
 
 impl KalamInformationSchemaProvider {
+    /// Stock DataFusion relations plus the Kalam extensions.
     pub fn new(
         catalog_list: Arc<dyn CatalogProviderList>,
         system_tables: Arc<SystemTablesRegistry>,
     ) -> Self {
-        let tables = Arc::new(ExtendedInformationSchemaTablesProvider::new(
-            Arc::clone(&catalog_list),
-            Arc::clone(&system_tables),
-        ));
+        let relations: Vec<(&str, Arc<dyn TableProvider>)> = vec![
+            (
+                "tables",
+                InfoSchemaSource::provider(tables::TablesRelation::new(
+                    Arc::clone(&catalog_list),
+                    Arc::clone(&system_tables),
+                )),
+            ),
+            (
+                "columns",
+                InfoSchemaSource::provider(columns::ColumnsRelation::new(
+                    Arc::clone(&catalog_list),
+                    Arc::clone(&system_tables),
+                )),
+            ),
+            (
+                "parameters",
+                InfoSchemaSource::provider(parameters::ParametersRelation::new(
+                    Arc::clone(&catalog_list),
+                    Arc::clone(&system_tables),
+                )),
+            ),
+            (
+                "routines",
+                InfoSchemaSource::provider(routines::RoutinesRelation::new(
+                    Arc::clone(&catalog_list),
+                    system_tables,
+                )),
+            ),
+            (
+                "views",
+                InfoSchemaSource::provider(views::ViewsRelation::new(Arc::clone(&catalog_list))),
+            ),
+            ("triggers", triggers::empty_triggers_provider()),
+        ];
+        let mut relations = relations.into_iter();
         Self {
-            inner: InformationSchemaProvider::new(Arc::clone(&catalog_list)),
-            columns: Arc::new(ExtendedInformationSchemaColumnsProvider::new(
-                Arc::clone(&catalog_list),
-                Arc::clone(&system_tables),
-            )),
-            tables: Arc::clone(&tables),
-            parameters: Arc::new(ExtendedInformationSchemaParametersProvider::new(
-                Arc::clone(&catalog_list),
-                Arc::clone(&system_tables),
-            )),
-            routines: Arc::new(routines::ExtendedInformationSchemaRoutinesProvider::new(
-                Arc::clone(&catalog_list),
-                system_tables,
-            )),
-            views: Arc::new(InformationSchemaViewsProvider::new(tables.inner())),
-            triggers: triggers::empty_triggers_provider(),
+            inner: InformationSchemaProvider::new(catalog_list),
+            tables: relations.next().expect("tables").1,
+            columns: relations.next().expect("columns").1,
+            parameters: relations.next().expect("parameters").1,
+            routines: relations.next().expect("routines").1,
+            views: relations.next().expect("views").1,
+            triggers: relations.next().expect("triggers").1,
         }
     }
 }
@@ -104,7 +132,7 @@ impl SchemaProvider for KalamInformationSchemaProvider {
             return Ok(Some(Arc::clone(&self.columns)));
         }
         if name.eq_ignore_ascii_case("tables") {
-            return Ok(Some(Arc::clone(&self.tables) as Arc<dyn TableProvider>));
+            return Ok(Some(Arc::clone(&self.tables)));
         }
         if name.eq_ignore_ascii_case("parameters") {
             return Ok(Some(Arc::clone(&self.parameters)));

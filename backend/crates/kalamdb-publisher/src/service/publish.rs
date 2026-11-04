@@ -216,7 +216,7 @@ impl TopicPublisherService {
                     let value_encoded = kalamdb_store::encode_entity(&message).map_err(|e| {
                         CommonError::Internal(format!("Failed to serialize topic message: {}", e))
                     })?;
-                    let retention_entry = kalamdb_tables::TopicRetentionIndexEntry::new_raw(
+                    let retention_entry = crate::TopicRetentionIndexEntry::new_raw(
                         entry.topic_id().clone(),
                         *partition_id,
                         timestamp_ms,

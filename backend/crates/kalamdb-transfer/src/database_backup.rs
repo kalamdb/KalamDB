@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use kalamdb_core::error::KalamDbError;
+use crate::error::TransferError;
 
 use crate::{create_archive_staging_dir, create_tar_gz_archive, is_tar_gz_path};
 
@@ -34,7 +34,7 @@ impl DatabaseBackupPlan {
     }
 }
 
-pub fn prepare_database_backup(backup_target: &Path) -> Result<DatabaseBackupPlan, KalamDbError> {
+pub fn prepare_database_backup(backup_target: &Path) -> Result<DatabaseBackupPlan, TransferError> {
     let archive_output = is_tar_gz_path(backup_target);
     let backup_root = if archive_output {
         create_archive_staging_dir(backup_target, "staging")?
@@ -43,7 +43,7 @@ pub fn prepare_database_backup(backup_target: &Path) -> Result<DatabaseBackupPla
     };
 
     fs::create_dir_all(&backup_root).map_err(|error| {
-        KalamDbError::InvalidOperation(format!(
+        TransferError::InvalidOperation(format!(
             "Failed to create backup root '{}': {}",
             backup_root.display(),
             error
@@ -60,12 +60,12 @@ pub fn finalize_database_backup(
     plan: DatabaseBackupPlan,
     backup_target: &Path,
     total_bytes: u64,
-) -> Result<u64, KalamDbError> {
+) -> Result<u64, TransferError> {
     if plan.archive_output {
         create_tar_gz_archive(&plan.backup_root, backup_target)?;
         let archive_size =
             backup_target.metadata().map(|metadata| metadata.len()).map_err(|error| {
-                KalamDbError::InvalidOperation(format!(
+                TransferError::InvalidOperation(format!(
                     "Failed to inspect archive '{}': {}",
                     backup_target.display(),
                     error

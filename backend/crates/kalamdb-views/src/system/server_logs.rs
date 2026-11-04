@@ -20,13 +20,11 @@ use datafusion::arrow::{
     datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
-use kalamdb_commons::{
-    datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
-};
+use kalamdb_commons::schemas::TableDefinition;
+use kalamdb_macros::table;
 use kalamdb_system::SystemTable;
 
-use super::common::{system_view_definition, view_provider_with, SystemViewProvider};
+use super::common::{view_provider_with, SystemViewProvider};
 use crate::{
     error::RegistryError,
     jsonl_tail::{parse_json_log_line, read_jsonl_tail, JsonlTailLimits},
@@ -86,6 +84,27 @@ impl RawJsonLogEntry {
     }
 }
 
+#[table(
+    name = "server_logs",
+    view = true,
+    comment = "Latest JSON server log lines from the file tail (read-only view)"
+)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServerLogRow {
+    /// Log entry timestamp (ISO 8601 format)
+    pub timestamp: String,
+    /// Log level (DEBUG, INFO, WARN, ERROR)
+    pub level: String,
+    /// Thread name that generated the log
+    pub thread: Option<String>,
+    /// Module or target that generated the log
+    pub target: Option<String>,
+    /// Source code line number
+    pub line: Option<i64>,
+    /// Log message content
+    pub message: String,
+}
+
 /// ServerLogsView - Reads server log files dynamically
 #[derive(Debug)]
 pub struct ServerLogsView {
@@ -103,80 +122,7 @@ impl ServerLogsView {
     /// - line BIGINT (nullable - source line number)
     /// - message TEXT NOT NULL (log message content)
     pub fn definition() -> TableDefinition {
-        let columns = vec![
-            ColumnDefinition::new(
-                1,
-                "timestamp",
-                1,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Log entry timestamp (ISO 8601 format)".to_string()),
-            ),
-            ColumnDefinition::new(
-                2,
-                "level",
-                2,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Log level (DEBUG, INFO, WARN, ERROR)".to_string()),
-            ),
-            ColumnDefinition::new(
-                3,
-                "thread",
-                3,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Thread name that generated the log".to_string()),
-            ),
-            ColumnDefinition::new(
-                4,
-                "target",
-                4,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Module or target that generated the log".to_string()),
-            ),
-            ColumnDefinition::new(
-                5,
-                "line",
-                5,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Source code line number".to_string()),
-            ),
-            ColumnDefinition::new(
-                6,
-                "message",
-                6,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Log message content".to_string()),
-            ),
-        ];
-
-        system_view_definition(
-            SystemTable::ServerLogs,
-            columns,
-            "Latest JSON server log lines from the file tail (read-only view)",
-        )
+        ServerLogRow::definition()
     }
 
     /// Create a new server logs view

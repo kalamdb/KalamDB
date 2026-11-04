@@ -22,7 +22,6 @@ use kalamdb_core::{
 };
 use kalamdb_pg::OperationExecutor;
 use kalamdb_session_datafusion::{install_extension, SessionUserContext};
-use kalamdb_tables::SharedTableProvider;
 use kalamdb_transactions::{
     build_insert_staged_mutations, primary_key_claims, TransactionQueryContext,
     TransactionQueryExtension,
@@ -140,15 +139,13 @@ impl OperationService {
         let provider = self
             .app_context
             .schema_registry()
-            .get_provider(table_id)
+            .get_kalam_provider(table_id)
             .ok_or_else(|| Status::not_found(format!("shared table {table_id} not found")))?;
-        let shared = (provider.as_ref() as &dyn std::any::Any)
-            .downcast_ref::<SharedTableProvider>()
-            .ok_or_else(|| {
-                Status::failed_precondition(format!("{table_id} is not a shared table"))
-            })?;
-        shared
-            .check_rows_authorized(user_id, role, command, check, rows, None)
+        if !provider.is_shared() {
+            return Err(Status::failed_precondition(format!("{table_id} is not a shared table")));
+        }
+        provider
+            .check_shared_rows_authorized(user_id, role, command, check, rows, None)
             .await
             .map_err(|error| Status::permission_denied(error.to_string()))
     }
@@ -172,15 +169,13 @@ impl OperationService {
         let provider = self
             .app_context
             .schema_registry()
-            .get_provider(table_id)
+            .get_kalam_provider(table_id)
             .ok_or_else(|| Status::not_found(format!("shared table {table_id} not found")))?;
-        let shared = (provider.as_ref() as &dyn std::any::Any)
-            .downcast_ref::<SharedTableProvider>()
-            .ok_or_else(|| {
-                Status::failed_precondition(format!("{table_id} is not a shared table"))
-            })?;
-        shared
-            .row_by_pk_value(pk_value)
+        if !provider.is_shared() {
+            return Err(Status::failed_precondition(format!("{table_id} is not a shared table")));
+        }
+        provider
+            .shared_row_by_pk_value(pk_value)
             .await
             .map_err(|error| Status::internal(error.to_string()))
     }

@@ -327,6 +327,8 @@ impl AppContext {
 
             // Create system schema provider (views created lazily on first access,
             // stored in SchemaRegistry's CachedTableData)
+            debug_assert!(kalamdb_views::catalog_provider::computed_catalog_provider_name()
+                .contains("ComputedCatalogProvider"));
             let system_schema = Arc::new(SystemSchemaProvider::new(
                 Arc::clone(&schema_registry),
                 Arc::clone(&system_tables),
@@ -1118,13 +1120,14 @@ impl AppContext {
         let Some(provider) = self.schema_registry().get_provider(table_id) else {
             return Ok(false);
         };
-        let Some(shared) = (provider.as_ref() as &dyn std::any::Any)
-            .downcast_ref::<kalamdb_tables::SharedTableProvider>()
-        else {
+        let Some(shared) = kalamdb_tables::as_kalam_table(provider.as_ref()) else {
             return Ok(false);
         };
+        if !shared.is_shared() {
+            return Ok(false);
+        }
         shared
-            .select_authorizes_file_path(user_id, role, subfolder, stored_name)
+            .shared_select_authorizes_file_path(user_id, role, subfolder, stored_name)
             .await
             .map_err(KalamDbError::from)
     }

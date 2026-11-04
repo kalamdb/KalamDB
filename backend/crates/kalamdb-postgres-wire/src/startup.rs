@@ -234,16 +234,6 @@ where
     }
 }
 
-pub async fn close_wire_session(
-    manager: &BackendSessionManager,
-    state: &WireConnectionState,
-) -> PgWireResult<()> {
-    manager
-        .close_session(state.session_id())
-        .await
-        .map_err(|error| pg_error("ERROR", CONNECTION_FAILURE_CODE, error.to_string()))
-}
-
 fn current_timestamp_ms() -> i64 {
     unix_time_millis()
 }

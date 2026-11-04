@@ -302,6 +302,22 @@ impl SqlExecutor {
             .map_err(Self::datafusion_to_execution_error)
     }
 
+    /// Plan an already parsed statement in the caller's session.
+    pub async fn logical_plan_for_statement(
+        &self,
+        statement: &Statement,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<LogicalPlan, KalamDbError> {
+        let session = self.create_session_with_transaction_context(exec_ctx)?;
+        let mut statement = statement.clone();
+        hide_storage_columns_from_star(&session, &mut statement).await;
+        session
+            .state()
+            .statement_to_plan(DfStatement::Statement(Box::new(statement)))
+            .await
+            .map_err(Self::datafusion_to_execution_error)
+    }
+
     /// Plan `sql` in the caller's session so search_path matches the wire connection.
     pub async fn logical_plan_for_session(
         &self,

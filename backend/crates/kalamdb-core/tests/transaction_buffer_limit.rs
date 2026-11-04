@@ -1,5 +1,9 @@
 use std::sync::Arc;
 
+use crate::support::{
+    create_cluster_app_context_with_config, create_executor,
+    create_shared_table_with_public_policy, observer_exec_ctx, row, select_names, unique_namespace,
+};
 use kalamdb_commons::{
     models::{pg_operations::InsertRequest, UserId},
     TableType,
@@ -7,10 +11,6 @@ use kalamdb_commons::{
 use kalamdb_configs::ServerConfig;
 use kalamdb_pg::OperationExecutor;
 use kalamdb_pg_bridge::OperationService;
-use crate::support::{
-    create_cluster_app_context_with_config, create_executor,
-    create_shared_table_with_public_policy, observer_exec_ctx, row, select_names, unique_namespace,
-};
 
 #[tokio::test]
 #[ntest::timeout(4000)]

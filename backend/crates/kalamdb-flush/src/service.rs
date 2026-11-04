@@ -787,26 +787,6 @@ impl ManifestService {
         })
     }
 
-    /// Update manifest in cache using a caller-provided mutator.
-    ///
-    /// This is used for metadata updates that are not segment appends
-    /// (for example vector index watermark/snapshot pointers). This updates only the
-    /// cache layers; explicit persist/flush paths should write `manifest.json` when ready.
-    pub fn update_manifest_with<F>(
-        &self,
-        table_id: &TableId,
-        user_id: Option<&UserId>,
-        mutator: F,
-    ) -> Result<Manifest, StorageError>
-    where
-        F: FnOnce(&mut Manifest),
-    {
-        let mut manifest = self.ensure_manifest_initialized(table_id, user_id)?;
-        mutator(&mut manifest);
-        self.upsert_cache_entry(table_id, user_id, &manifest, None, SyncState::PendingWrite)?;
-        Ok(manifest)
-    }
-
     /// Persist a manifest to cold storage and mark cache state as in-sync.
     pub fn persist_manifest(
         &self,
@@ -912,18 +892,6 @@ impl ManifestService {
     /// Validate manifest structure. File existence is checked while rebuilding.
     pub fn validate_manifest(&self, manifest: &Manifest) -> Result<(), StorageError> {
         validate_manifest_structure(manifest)
-    }
-
-    /// Public helper for consumers that need the resolved manifest.json path.
-    pub fn manifest_path(
-        &self,
-        table_id: &TableId,
-        user_id: Option<&UserId>,
-    ) -> Result<String, StorageError> {
-        let (table_type, storage_cached) = self.storage_cached_for_table(table_id)?;
-        let manifest_path_result = storage_cached.get_manifest_path(table_type, table_id, user_id);
-
-        Ok(manifest_path_result.full_path)
     }
 
     pub fn get_manifest_user_ids(&self, table_id: &TableId) -> Result<Vec<UserId>, StorageError> {

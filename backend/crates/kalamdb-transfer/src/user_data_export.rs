@@ -1,6 +1,6 @@
 use std::io::{Cursor, Write};
 
-use kalamdb_core::error::KalamDbError;
+use crate::error::TransferError;
 use zip::{write::SimpleFileOptions, ZipWriter};
 
 pub struct UserDataExportZip {
@@ -34,17 +34,17 @@ impl UserDataExportZipBuilder {
         table_name: &str,
         file_name: &str,
         data: &[u8],
-    ) -> Result<(), KalamDbError> {
+    ) -> Result<(), TransferError> {
         let zip_entry = format!("{}/{}/{}", namespace_id, table_name, file_name);
 
         self.zip_writer.start_file(&zip_entry, self.zip_options).map_err(|error| {
-            KalamDbError::InvalidOperation(format!(
+            TransferError::InvalidOperation(format!(
                 "Failed to add '{}' to ZIP: {}",
                 zip_entry, error
             ))
         })?;
         self.zip_writer.write_all(data).map_err(|error| {
-            KalamDbError::InvalidOperation(format!(
+            TransferError::InvalidOperation(format!(
                 "Failed to write '{}' to ZIP: {}",
                 zip_entry, error
             ))
@@ -55,9 +55,9 @@ impl UserDataExportZipBuilder {
         Ok(())
     }
 
-    pub fn finish(self) -> Result<UserDataExportZip, KalamDbError> {
+    pub fn finish(self) -> Result<UserDataExportZip, TransferError> {
         let finished = self.zip_writer.finish().map_err(|error| {
-            KalamDbError::InvalidOperation(format!("Failed to finalize ZIP archive: {}", error))
+            TransferError::InvalidOperation(format!("Failed to finalize ZIP archive: {}", error))
         })?;
 
         Ok(UserDataExportZip {

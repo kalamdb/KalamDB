@@ -7,6 +7,7 @@
 pub mod archive;
 pub mod database_backup;
 pub mod database_restore;
+pub mod error;
 pub mod naming;
 pub mod table;
 pub mod table_export;
@@ -21,6 +22,7 @@ pub use database_backup::{finalize_database_backup, prepare_database_backup, Dat
 pub use database_restore::{
     finalize_database_restore, prepare_database_restore, DatabaseRestorePlan,
 };
+pub use error::TransferError;
 pub use naming::{
     build_table_export_download_url, build_user_export_download_url, generate_table_export_id,
     generate_table_import_id, generate_user_export_id, table_export_zip_path,

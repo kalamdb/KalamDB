@@ -10,6 +10,16 @@
 //! - Concrete executors: Flush, Cleanup, JobCleanup, StreamEviction, Compact, Backup, Restore,
 //!   ManifestEviction, TopicRetention, UserExport, VectorIndex
 
+use kalamdb_core::error::KalamDbError;
+use kalamdb_transfer::TransferError;
+
+/// Map a transfer-archive failure onto the job error the executors already return.
+pub(crate) fn transfer_error(error: TransferError) -> KalamDbError {
+    match error {
+        TransferError::InvalidOperation(message) => KalamDbError::InvalidOperation(message),
+    }
+}
+
 pub mod executor_trait;
 pub mod registry;
 

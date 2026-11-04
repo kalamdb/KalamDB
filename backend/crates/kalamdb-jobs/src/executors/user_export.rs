@@ -24,7 +24,7 @@ use kalamdb_commons::{
     schemas::{TableOptions, TableType},
     JobId, TableId,
 };
-use kalamdb_core::{error::KalamDbError, providers::UserTableProvider};
+use kalamdb_core::error::KalamDbError;
 use kalamdb_store::EntityStore;
 use kalamdb_system::{JobStatus, JobType};
 use kalamdb_transfer::{
@@ -149,12 +149,9 @@ impl JobExecutor for UserExportExecutor {
             // If not, skip the flush job entirely. The Parquet files (if any) will
             // still be copied in Phase 4.
             let has_rocksdb_data = {
-                let provider_opt = schema_registry.get_provider(&table_id);
+                let provider_opt = schema_registry.get_kalam_provider(&table_id);
                 if let Some(provider_arc) = provider_opt {
-                    if let Some(provider) = (provider_arc.as_ref() as &dyn std::any::Any)
-                        .downcast_ref::<UserTableProvider>()
-                    {
-                        let store = provider.store();
+                    if let Some(store) = provider_arc.user_store() {
                         // Scan with the user-specific prefix to check only this user's data
                         let user_prefix = UserTableRowId::user_prefix(&user_id);
                         let partition = store.partition();
@@ -351,12 +348,14 @@ impl JobExecutor for UserExportExecutor {
                     },
                 };
 
-                zip_builder.add_file(
-                    table_def.namespace_id.as_str(),
-                    table_def.table_name.as_str(),
-                    filename,
-                    &get_result.data,
-                )?;
+                zip_builder
+                    .add_file(
+                        table_def.namespace_id.as_str(),
+                        table_def.table_name.as_str(),
+                        filename,
+                        &get_result.data,
+                    )
+                    .map_err(super::transfer_error)?;
             }
         }
 
@@ -364,7 +363,7 @@ impl JobExecutor for UserExportExecutor {
             bytes: zip_bytes,
             raw_bytes: total_bytes,
             file_count: total_files,
-        } = zip_builder.finish()?;
+        } = zip_builder.finish().map_err(super::transfer_error)?;
 
         if total_files == 0 {
             return Ok(JobDecision::Completed {

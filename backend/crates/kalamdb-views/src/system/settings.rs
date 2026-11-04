@@ -20,15 +20,13 @@ use datafusion::arrow::{
     datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
-use kalamdb_commons::{
-    datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
-};
+use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_configs::ServerConfig;
+use kalamdb_macros::table;
 use kalamdb_system::SystemTable;
 use parking_lot::RwLock;
 
-use super::common::{system_view_definition, SystemViewProvider};
+use super::common::SystemViewProvider;
 use crate::view_base::VirtualView;
 
 crate::memoized_view_schema!(settings_schema, SettingsView);
@@ -44,6 +42,23 @@ macro_rules! add_settings {
             $cats.append_value($c);
         )*
     };
+}
+
+#[table(
+    name = "settings",
+    view = true,
+    comment = "Server configuration settings (read-only view)"
+)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SettingRow {
+    /// Setting name (e.g., server.host, storage.data_path)
+    pub name: String,
+    /// Current setting value
+    pub value: String,
+    /// Human-readable description of the setting
+    pub description: String,
+    /// Setting category (server, storage, limits, etc.)
+    pub category: String,
 }
 
 /// Virtual view that displays server configuration settings
@@ -66,58 +81,7 @@ impl SettingsView {
     /// - description TEXT NOT NULL (human-readable description)
     /// - category TEXT NOT NULL (setting category)
     pub fn definition() -> TableDefinition {
-        let columns = vec![
-            ColumnDefinition::new(
-                1,
-                "name",
-                1,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Setting name (e.g., server.host, storage.data_path)".to_string()),
-            ),
-            ColumnDefinition::new(
-                2,
-                "value",
-                2,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Current setting value".to_string()),
-            ),
-            ColumnDefinition::new(
-                3,
-                "description",
-                3,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Human-readable description of the setting".to_string()),
-            ),
-            ColumnDefinition::new(
-                4,
-                "category",
-                4,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Setting category (server, storage, limits, etc.)".to_string()),
-            ),
-        ];
-
-        system_view_definition(
-            SystemTable::Settings,
-            columns,
-            "Server configuration settings (read-only view)",
-        )
+        SettingRow::definition()
     }
 
     /// Create a new settings view

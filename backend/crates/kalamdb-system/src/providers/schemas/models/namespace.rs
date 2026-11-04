@@ -43,52 +43,26 @@ pub struct Namespace {
         id = 3,
         ordinal = 3,
         data_type(KalamDataType::Timestamp),
-        nullable = false,
-        primary_key = false,
-        default = "None",
         comment = "Namespace creation timestamp"
     )]
     pub created_at: i64, // Unix timestamp in milliseconds
     #[column(
         id = 1,
         ordinal = 1,
-        data_type(KalamDataType::Text),
-        nullable = false,
         primary_key = true,
-        default = "None",
         comment = "Namespace identifier"
     )]
     pub namespace_id: SchemaId,
-    #[column(
-        id = 2,
-        ordinal = 2,
-        data_type(KalamDataType::Text),
-        nullable = false,
-        primary_key = false,
-        default = "None",
-        comment = "Namespace name"
-    )]
+    #[column(id = 2, ordinal = 2, comment = "Namespace name")]
     pub name: String,
     #[column(
         id = 4,
         ordinal = 4,
-        data_type(KalamDataType::Json),
-        nullable = true,
-        primary_key = false,
-        default = "None",
         comment = "Namespace configuration options (JSON)"
     )]
     #[serde(default)]
     pub options: Option<Value>,
-    #[column(
-        id = 5,
-        ordinal = 5,
-        data_type(KalamDataType::Int),
-        nullable = false,
-        primary_key = false,
-        default = "None",
-        comment = "Number of tables in this namespace"
-    )]
+    #[column(id = 5, ordinal = 5, comment = "Number of tables in this namespace")]
     pub table_count: i32, // TODO: Remove this field and calculate on the fly
 }
 

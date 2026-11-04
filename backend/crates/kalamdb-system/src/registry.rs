@@ -26,7 +26,10 @@ use super::providers::{
         FunctionArtifactsTableProvider, FunctionModulesTableProvider,
         FunctionRevisionsTableProvider, RoutineGrantsTableProvider, RoutineParametersTableProvider,
         RoutinesTableProvider, SchedulesTableProvider, TriggerAttemptsTableProvider,
-        TriggersTableProvider, TypeFieldsTableProvider, TypesTableProvider,
+        TriggersTableProvider, TypeFieldsTableProvider, TypesTableProvider, function_artifacts_provider,
+        function_modules_provider, function_revisions_provider, routine_grants_provider,
+        routine_parameters_provider, routines_provider, schedules_provider,
+        trigger_attempts_provider, triggers_provider, type_fields_provider, types_provider,
     },
     job_nodes::models::JobNode,
     jobs::models::Job,
@@ -66,6 +69,7 @@ pub struct SystemTablesRegistry {
     topic_offsets: Arc<TopicOffsetsTableProvider>,
     migrations: Arc<MigrationsTableProvider>,
     table_policies: Arc<TablePoliciesTableProvider>,
+    catalog_stores: CatalogStores,
     types: Arc<TypesTableProvider>,
     type_fields: Arc<TypeFieldsTableProvider>,
     routines: Arc<RoutinesTableProvider>,
@@ -145,27 +149,18 @@ impl SystemTablesRegistry {
             topic_offsets: Arc::new(TopicOffsetsTableProvider::new(storage_backend.clone())),
             migrations: Arc::new(MigrationsTableProvider::new(storage_backend.clone())),
             table_policies: Arc::new(TablePoliciesTableProvider::new(storage_backend.clone())),
-            types: Arc::new(TypesTableProvider::from_stores(catalog_stores.clone())),
-            type_fields: Arc::new(TypeFieldsTableProvider::from_stores(catalog_stores.clone())),
-            routines: Arc::new(RoutinesTableProvider::from_stores(catalog_stores.clone())),
-            routine_parameters: Arc::new(RoutineParametersTableProvider::from_stores(
-                catalog_stores.clone(),
-            )),
-            routine_grants: Arc::new(RoutineGrantsTableProvider::from_stores(
-                catalog_stores.clone(),
-            )),
-            function_modules: Arc::new(FunctionModulesTableProvider::from_stores(
-                catalog_stores.clone(),
-            )),
-            function_revisions: Arc::new(FunctionRevisionsTableProvider::from_stores(
-                catalog_stores.clone(),
-            )),
-            function_artifacts: Arc::new(FunctionArtifactsTableProvider::from_stores(
-                catalog_stores.clone(),
-            )),
-            schedules: Arc::new(SchedulesTableProvider::from_stores(catalog_stores.clone())),
-            triggers: Arc::new(TriggersTableProvider::from_stores(catalog_stores.clone())),
-            trigger_attempts: Arc::new(TriggerAttemptsTableProvider::from_stores(catalog_stores)),
+            catalog_stores: catalog_stores.clone(),
+            types: Arc::new(types_provider(&catalog_stores)),
+            type_fields: Arc::new(type_fields_provider(&catalog_stores)),
+            routines: Arc::new(routines_provider(&catalog_stores)),
+            routine_parameters: Arc::new(routine_parameters_provider(&catalog_stores)),
+            routine_grants: Arc::new(routine_grants_provider(&catalog_stores)),
+            function_modules: Arc::new(function_modules_provider(&catalog_stores)),
+            function_revisions: Arc::new(function_revisions_provider(&catalog_stores)),
+            function_artifacts: Arc::new(function_artifacts_provider(&catalog_stores)),
+            schedules: Arc::new(schedules_provider(&catalog_stores)),
+            triggers: Arc::new(triggers_provider(&catalog_stores)),
+            trigger_attempts: Arc::new(trigger_attempts_provider(&catalog_stores)),
 
             // Manifest cache provider
             manifest: Arc::new(ManifestTableProvider::new(storage_backend)),
@@ -292,7 +287,7 @@ impl SystemTablesRegistry {
 
     /// Shared catalog stores (types, routines, function revisions).
     pub fn catalog_stores(&self) -> CatalogStores {
-        self.types.stores().clone()
+        self.catalog_stores.clone()
     }
 
     /// Get the system.manifest provider

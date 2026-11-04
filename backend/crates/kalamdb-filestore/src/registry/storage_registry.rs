@@ -149,11 +149,6 @@ impl StorageRegistry {
         self.cache.clear();
     }
 
-    /// Get the number of cached storage entries (for metrics/debugging)
-    pub fn cache_size(&self) -> usize {
-        self.cache.len()
-    }
-
     /// List all storage configurations
     ///
     /// Returns storages ordered with 'local' first, then alphabetically by storage_id.
