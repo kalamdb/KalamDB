@@ -8,7 +8,6 @@ import 'actions/kalam_action_definition.dart';
 import 'actions/kalam_action_registry.dart';
 import 'actions/kalam_action_runner.dart';
 import 'actions/kalam_dml_action.dart';
-import 'database/kalam_sync_database.dart';
 import 'flutter/kalam_database_factory.dart';
 import 'models/kalam_account_identity.dart';
 import 'models/kalam_catch_up_result.dart';

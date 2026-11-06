@@ -221,8 +221,9 @@ final class KalamSyncCoordinator {
         apply: () async {
           var appliedThrough = committed?.seq;
           for (final change in changes) {
-            if (appliedThrough != null && change.seq <= appliedThrough)
+            if (appliedThrough != null && change.seq <= appliedThrough) {
               continue;
+            }
             await consumer.handle(change, context);
             appliedThrough = change.seq;
           }
