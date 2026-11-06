@@ -1,3 +1,9 @@
+# .pubignore replaces .gitignore for packaging — keep build artifacts out.
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+
 # Keep the published archive on the public package surface.
 pubspec_overrides.yaml
 example/pubspec_overrides.yaml
