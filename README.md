@@ -19,7 +19,7 @@ Use it as a **Postgres alternative** behind your existing backend, or connect yo
 | --- | --- |
 | **PostgreSQL syntax + PGWire** | Use familiar SQL, `psql`, DBeaver, and PostgreSQL drivers, including prepared queries and transactions. |
 | **Live queries** | Subscribe to SQL results over WebSocket and keep your UI current as matching rows change. |
-| **Server functions** | Run JavaScript and compiled TypeScript inside the embedded V8 runtime. Invoke backend logic through SQL, HTTP, or generated clients. |
+| **Server functions** | Run JavaScript and compiled TypeScript inside the embedded V8 runtime. Invoke backend logic through SQL, HTTP, or generated clients and inside a DB Trasaction with commit and rollback |
 | **Durable pub/sub** | Turn table changes into events for workers, integrations, and agents, with consumer groups, acknowledgements, and retries. |
 | **Auth + access control** | Use authentication and row-level policies for shared data. Manage your backend through the included admin UI. |
 | **Tables partitioned by user** | Create `USER` tables so each person's rows live in their own partition. Use `SHARED` tables for data everyone reads, and `STREAM` tables for events that expire. |

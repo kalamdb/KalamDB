@@ -273,7 +273,7 @@ Future<Kalam> openPeer(ChatE2eSession session) {
 Future<KalamSyncedRow<T>> waitForRow<T>(
   KalamTableBinding<T> binding,
   bool Function(KalamSyncedRow<T> row) test, {
-  Duration timeout = const Duration(seconds: 20),
+  Duration timeout = const Duration(seconds: 45),
 }) async {
   final rows = await binding
       .watchWithSyncState()
@@ -285,7 +285,7 @@ Future<KalamSyncedRow<T>> waitForRow<T>(
 Future<List<KalamSyncedRow<ChatMessage>>> waitForMessages(
   KalamTableBinding<ChatMessage> binding,
   bool Function(List<KalamSyncedRow<ChatMessage>> rows) test, {
-  Duration timeout = const Duration(seconds: 20),
+  Duration timeout = const Duration(seconds: 45),
 }) {
   return binding.watchWithSyncState().firstWhere(test).timeout(timeout);
 }

@@ -14,6 +14,7 @@ export interface LiveQueryControllerSnapshot<TRow> {
   status: LiveQueryControllerStatus;
   error?: Error;
   lastVersionId?: VersionId;
+  versionDomain?: LiveCheckpoint['versionDomain'];
 }
 
 export type LiveQueryControllerListener<TRow> = (snapshot: LiveQueryControllerSnapshot<TRow>) => void;
@@ -151,7 +152,12 @@ export class LiveQueryController<TRow = RowData> {
       },
       onCheckpoint: (checkpoint) => {
         if (this.startToken !== token) return;
-        this.setSnapshot({ lastVersionId: checkpoint.lastVersionId });
+        this.setSnapshot({
+          lastVersionId: checkpoint.lastVersionId,
+          ...(checkpoint.versionDomain !== undefined
+            ? { versionDomain: checkpoint.versionDomain }
+            : {}),
+        });
         this.options.onCheckpoint?.(checkpoint);
       },
     };

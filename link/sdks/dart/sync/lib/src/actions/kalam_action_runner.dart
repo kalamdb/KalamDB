@@ -33,6 +33,10 @@ final class KalamActionRunner {
   bool _disposed = false;
   static const _maxConcurrentActions = 8;
 
+  /// Set when [enqueue] finishes writing. Cleared when a flush observes an
+  /// empty eligible outbox. Lets resume drain work before watchActions catches up.
+  bool outboxDirty = false;
+
   Future<KalamActionRecord> enqueue({
     required String actionKey,
     required String actionId,
@@ -50,18 +54,23 @@ final class KalamActionRunner {
       );
     }
     final definition = registry[actionKey];
-    return store.enqueue(
-      KalamActionDraft(
-        id: actionId,
-        accountKey: accountKey,
-        actionKey: actionKey,
-        version: definition.version,
-        payloadJson: jsonEncode(definition.encodePayload(payload)),
-        orderingKey: orderingKey,
-      ),
-      optimisticRow: optimistic?.row ?? optimisticRow,
-      applyOptimistic: optimistic?.apply ?? applyOptimistic,
-    );
+    return store
+        .enqueue(
+          KalamActionDraft(
+            id: actionId,
+            accountKey: accountKey,
+            actionKey: actionKey,
+            version: definition.version,
+            payloadJson: jsonEncode(definition.encodePayload(payload)),
+            orderingKey: orderingKey,
+          ),
+          optimisticRow: optimistic?.row ?? optimisticRow,
+          applyOptimistic: optimistic?.apply ?? applyOptimistic,
+        )
+        .then((record) {
+          outboxDirty = true;
+          return record;
+        });
   }
 
   /// Flushes currently eligible work. Concurrent calls share the active flush.
@@ -102,7 +111,10 @@ final class KalamActionRunner {
         blockedOrderingKeys: inFlight.keys.toSet(),
       );
       if (action == null) {
-        if (inFlight.isEmpty) return completed;
+        if (inFlight.isEmpty) {
+          outboxDirty = false;
+          return completed;
+        }
         await Future.any(inFlight.values);
         continue;
       }

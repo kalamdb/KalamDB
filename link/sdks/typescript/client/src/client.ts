@@ -30,9 +30,12 @@ import {
   normalizeLiveRowsWasmEvent,
   normalizeSubscriptionEvent,
   readSubscriptionInfos,
+  rememberLearnedVersionDomain,
   removeMaterializedRows,
   trackSubscriptionMetadata,
   upsertLimited,
+  versionDomainFromSubscriptionEvent,
+  withLearnedVersionDomain,
 } from './helpers/subscription_helpers.js';
 
 import type {
@@ -48,6 +51,7 @@ import type {
   LoginResponse,
   OnConnectCallback,
   OnDisconnectCallback,
+  VersionDomain,
   OnErrorCallback,
   OnReceiveCallback,
   OnSendCallback,
@@ -249,6 +253,11 @@ export class KalamDBClient {
 
   /** Local metadata only; WASM remains the source of truth for live subscription state. */
   private subscriptionMetadata = new Map<string, { tableName: string; createdAtMs: number }>();
+  /**
+   * SHARED-table resume domains keyed by SQL.
+   * Survives `login()` / `replaceWasmClient()` which recreate the WASM client.
+   */
+  private learnedVersionDomains = new Map<string, VersionDomain>();
 
   /** Connection lifecycle event handlers */
   private _onConnect?: OnConnectCallback;
@@ -564,6 +573,7 @@ export class KalamDBClient {
     this.initialized = false;
     this.connecting = null;
     this.clearSubscriptionMetadata();
+    this.learnedVersionDomains.clear();
 
     if (!wasmClient) {
       return;
@@ -1355,13 +1365,15 @@ export class KalamDBClient {
     options: LiveEventsOptions = {},
   ): Promise<Unsubscribe> {
     this.log(LogLevel.Debug, 'subscription', `Opening live events: ${sql.substring(0, 120)}`);
-    const optionsJson = this.stringifyOptions(normalizeLiveEventsOptions(options));
+    const resolvedOptions = withLearnedVersionDomain(options, sql, this.learnedVersionDomains) ?? options;
+    rememberLearnedVersionDomain(this.learnedVersionDomains, sql, resolvedOptions.versionDomain);
+    const optionsJson = this.stringifyOptions(normalizeLiveEventsOptions(resolvedOptions));
     const subscriptionId = await this.startTrackedSubscription(
       sql,
       (wasmClient) => wasmClient.liveEvents(
         sql,
         optionsJson,
-        this.createLiveEventsCallback(callback, options.onError, options.onCheckpoint) as unknown as Function,
+        this.createLiveEventsCallback(sql, callback, resolvedOptions.onError, resolvedOptions.onCheckpoint) as unknown as Function,
       ),
     );
 
@@ -1399,14 +1411,16 @@ export class KalamDBClient {
     }
 
     const mapRow = options.mapRow ?? ((row: RowData) => row as unknown as T);
-    const normalizedOptions = normalizeLiveOptions(options);
+    const resolvedOptions = withLearnedVersionDomain(options, sql, this.learnedVersionDomains) ?? options;
+    rememberLearnedVersionDomain(this.learnedVersionDomains, sql, resolvedOptions.versionDomain);
+    const normalizedOptions = normalizeLiveOptions(resolvedOptions);
     const optionsJson = this.stringifyOptions(normalizedOptions);
     const subscriptionId = await this.startTrackedSubscription(
       sql,
       (wasmClient) => wasmClient.live(
         sql,
         optionsJson,
-        this.createLiveRowsCallback(callback, mapRow, options.onError, options.onCheckpoint) as unknown as Function,
+        this.createLiveRowsCallback(sql, callback, mapRow, resolvedOptions.onError, resolvedOptions.onCheckpoint) as unknown as Function,
       ),
     );
 
@@ -1434,7 +1448,12 @@ export class KalamDBClient {
         if (normalizedEvent.type === 'subscription_ack') {
           if (normalizedEvent.total_rows === 0 || normalizedEvent.batch_control.status === 'ready') {
             callback([...rows]);
-            this.emitLiveCheckpoint(options.onCheckpoint, normalizedEvent.subscription_id);
+            this.emitLiveCheckpoint(
+              options.onCheckpoint,
+              normalizedEvent.subscription_id,
+              undefined,
+              this.learnedVersionDomains.get(sql),
+            );
           }
           return;
         }
@@ -1447,7 +1466,12 @@ export class KalamDBClient {
         if (normalizedEvent.type === 'initial_data_batch') {
           rows = upsertLimited(rows, (normalizedEvent.rows ?? []).map(mapRow), getKey, options.limit);
           callback([...rows]);
-          this.emitLiveCheckpoint(options.onCheckpoint, normalizedEvent.subscription_id);
+          this.emitLiveCheckpoint(
+            options.onCheckpoint,
+            normalizedEvent.subscription_id,
+            undefined,
+            this.learnedVersionDomains.get(sql),
+          );
           return;
         }
 
@@ -1458,13 +1482,23 @@ export class KalamDBClient {
         if (normalizedEvent.change_type === 'delete') {
           rows = removeMaterializedRows(rows, (normalizedEvent.old_values ?? []).map(mapRow), getKey);
           callback([...rows]);
-          this.emitLiveCheckpoint(options.onCheckpoint, normalizedEvent.subscription_id);
+          this.emitLiveCheckpoint(
+            options.onCheckpoint,
+            normalizedEvent.subscription_id,
+            undefined,
+            this.learnedVersionDomains.get(sql),
+          );
           return;
         }
 
         rows = upsertLimited(rows, (normalizedEvent.rows ?? []).map(mapRow), getKey, options.limit);
         callback([...rows]);
-        this.emitLiveCheckpoint(options.onCheckpoint, normalizedEvent.subscription_id);
+        this.emitLiveCheckpoint(
+          options.onCheckpoint,
+          normalizedEvent.subscription_id,
+          undefined,
+          this.learnedVersionDomains.get(sql),
+        );
       },
       this.liveEventsOptionsFromLiveOptions(options),
     );
@@ -1511,10 +1545,14 @@ export class KalamDBClient {
   /** Info about active subscriptions, using Rust/WASM state as the source of truth. */
   getSubscriptions(): SubscriptionInfo[] {
     if (!this.wasmClient) {
-      return readSubscriptionInfos(undefined, this.subscriptionMetadata);
+      return readSubscriptionInfos(undefined, this.subscriptionMetadata, this.learnedVersionDomains);
     }
 
-    return readSubscriptionInfos(this.wasmClient.getSubscriptions(), this.subscriptionMetadata);
+    return readSubscriptionInfos(
+      this.wasmClient.getSubscriptions(),
+      this.subscriptionMetadata,
+      this.learnedVersionDomains,
+    );
   }
 
   /** Whether there is an active subscription for the given table/SQL */
@@ -1562,11 +1600,14 @@ export class KalamDBClient {
       subscriptionId = await this.serializeWasmCall(() => register(wasmClient));
     }
     this.trackSubscriptionMetadata(subscriptionId, tableName);
+    // Harvest SHARED resume domains from WASM while this socket still knows them.
+    this.getSubscriptions();
     this.log(LogLevel.Info, 'subscription', `Subscribed: id=${subscriptionId}`);
     return subscriptionId;
   }
 
   private createLiveEventsCallback(
+    sql: string,
     callback: LiveEventsCallback,
     onError?: (event: SubscriptionErrorEvent) => void,
     onCheckpoint?: (checkpoint: LiveCheckpoint) => void,
@@ -1576,18 +1617,26 @@ export class KalamDBClient {
       (eventJson) => normalizeSubscriptionEvent(JSON.parse(eventJson) as ServerMessage),
       (event) => {
         this.log(LogLevel.Verbose, 'subscription', `Event: type=${event.type}`);
+        const versionDomain = versionDomainFromSubscriptionEvent(event);
+        rememberLearnedVersionDomain(this.learnedVersionDomains, sql, versionDomain);
         if (event.type === 'error') {
           onError?.(event as SubscriptionErrorEvent);
         }
         callback(event);
         if ('subscription_id' in event) {
-          this.emitLiveCheckpoint(onCheckpoint, event.subscription_id, lastVersionIdFromSubscriptionEvent(event));
+          this.emitLiveCheckpoint(
+            onCheckpoint,
+            event.subscription_id,
+            lastVersionIdFromSubscriptionEvent(event),
+            versionDomain ?? this.learnedVersionDomains.get(sql),
+          );
         }
       },
     );
   }
 
   private createLiveRowsCallback<T>(
+    sql: string,
     callback: LiveCallback<T>,
     mapRow: (row: RowData) => T,
     onError?: (event: SubscriptionErrorEvent) => void,
@@ -1615,7 +1664,12 @@ export class KalamDBClient {
         }
 
         callback((event.rows ?? []).map(mapRow));
-        this.emitLiveCheckpoint(onCheckpoint, event.subscription_id, event.last_seq_id);
+        this.emitLiveCheckpoint(
+          onCheckpoint,
+          event.subscription_id,
+          event.last_seq_id,
+          this.learnedVersionDomains.get(sql),
+        );
       },
     );
   }
@@ -1624,6 +1678,7 @@ export class KalamDBClient {
     onCheckpoint: ((checkpoint: LiveCheckpoint) => void) | undefined,
     subscriptionId: string,
     lastVersionId?: VersionId,
+    versionDomain?: VersionDomain,
   ): void {
     if (!onCheckpoint) {
       return;
@@ -1637,6 +1692,7 @@ export class KalamDBClient {
     onCheckpoint({
       subscriptionId,
       lastVersionId: checkpoint,
+      ...(versionDomain !== undefined ? { versionDomain } : {}),
     });
   }
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { normalizeQueryResponse, sortColumns, SYSTEM_TABLES_ORDER } from '../dist/src/helpers/query_helpers.js';
-import { normalizeLiveStreamOptions } from '../dist/src/helpers/subscription_helpers.js';
+import { normalizeLiveStreamOptions, withLearnedVersionDomain } from '../dist/src/helpers/subscription_helpers.js';
 
 // Helper: build a minimal QueryResponse using the current schema format
 function makeResp(columnNames, rows) {
@@ -95,4 +95,22 @@ console.log('normalize.test.mjs passed');
 {
   const domain = { history_incarnation: 'history-a', table_id: 'app.events', scope_id: 3, partition_id: null };
   assert.deepEqual(normalizeLiveStreamOptions({ from: '65536', versionDomain: domain }), { from: '65536', version_domain: domain });
+}
+
+// Learned domains re-attach after login() replaces the WASM client.
+{
+  const domain = { history_incarnation: 'history-a', table_id: 'app.events', scope_id: 3, partition_id: null };
+  const learned = new Map([['SELECT 1', domain]]);
+  assert.deepEqual(
+    withLearnedVersionDomain({ from: '65536', lastRows: 0 }, 'SELECT 1', learned),
+    { from: '65536', lastRows: 0, versionDomain: domain },
+  );
+  assert.deepEqual(
+    withLearnedVersionDomain({ from: '65536', versionDomain: { ...domain, scope_id: 9 } }, 'SELECT 1', learned),
+    { from: '65536', versionDomain: { ...domain, scope_id: 9 } },
+  );
+  assert.deepEqual(
+    withLearnedVersionDomain({ lastRows: 0 }, 'SELECT 1', learned),
+    { lastRows: 0 },
+  );
 }

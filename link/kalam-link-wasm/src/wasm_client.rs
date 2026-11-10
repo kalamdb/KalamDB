@@ -2292,6 +2292,7 @@ impl KalamClient {
                     "id": id,
                     "query": entry.sql,
                     "lastSeqId": entry.last_seq_id.map(|s| s.as_i64().to_string()),
+                    "versionDomain": entry.options.version_domain,
                     "closed": false,
                 })
             })

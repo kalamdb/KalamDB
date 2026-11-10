@@ -89,16 +89,34 @@ final class KalamSyncCoordinator {
     _paused = false;
     await transport.resume();
     if (generation != _lifecycleGeneration || _disposed || _paused) return;
+    // Mirror transport resume into coordinator state. Connection-stream
+    // handlers can race pause/resume and leave pending outbox work stranded.
+    _connected = true;
     for (final active in _consumers.values) {
       await _open(active);
     }
     if (generation != _lifecycleGeneration || _disposed || _paused) return;
+    if (actions.outboxDirty || _state.pendingActions > 0) {
+      await _flushWhenIdle(generation);
+      if (generation != _lifecycleGeneration || _disposed || _paused) return;
+    }
     _emit(
       _state.copyWith(
-        phase: _connected ? KalamSyncPhase.catchingUp : KalamSyncPhase.offline,
+        phase: KalamSyncPhase.catchingUp,
         clearError: true,
       ),
     );
+  }
+
+  Future<void> _flushWhenIdle(int generation) async {
+    while ((_flushInProgress || _inFlightApplies > 0) &&
+        !_disposed &&
+        !_paused &&
+        generation == _lifecycleGeneration) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    if (generation != _lifecycleGeneration || _disposed || _paused) return;
+    await _flushActions();
   }
 
   Future<void> dispose() async {
@@ -154,7 +172,7 @@ final class KalamSyncCoordinator {
         .asyncMap((batch) => _applyBatch(active.consumer, batch))
         .listen(
           (_) {
-            if (_connected) {
+            if (_connected && !_paused) {
               _emit(
                 _state.copyWith(
                   phase: KalamSyncPhase.live,

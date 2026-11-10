@@ -49,10 +49,18 @@ final class FakeTransport implements KalamSyncTransport {
   }
 
   @override
-  Future<void> pause() async => pauseCount++;
+  Future<void> pause() async {
+    pauseCount++;
+    connections.add(KalamTransportConnection.disconnected);
+  }
 
   @override
-  Future<void> resume() async => resumeCount++;
+  Future<void> resume() async {
+    resumeCount++;
+    // Match KalamLinkTransport: resume always emits connected so the
+    // coordinator flushes the outbox even when already marked connected.
+    connections.add(KalamTransportConnection.connected);
+  }
 
   Future<void> close() async {
     await connections.close();
@@ -652,6 +660,52 @@ void main() {
 
     expect(transport.pauseCount, 0);
     expect(coordinator.state.phase, isNot(KalamSyncPhase.paused));
+  });
+
+  test('resume flushes actions that were queued while paused', () async {
+    var executed = 0;
+    await coordinator.dispose();
+    coordinator = KalamSyncCoordinator(
+      accountKey: 'server/user-a',
+      store: store,
+      transport: transport,
+      actions: KalamActionRunner(
+        accountKey: 'server/user-a',
+        store: store,
+        registry: KalamActionRegistry([
+          KalamActionDefinition<Map<String, Object?>>(
+            key: 'messages.markRead',
+            codec: KalamActionCodec(
+              encode: (payload) => payload,
+              decode: (json) => json,
+            ),
+            execute: (_, _) async {
+              executed++;
+            },
+          ),
+        ]),
+        clock: () => now,
+      ),
+    );
+
+    transport.connections.add(KalamTransportConnection.connected);
+    await coordinator.states.firstWhere(
+      (state) => state.phase == KalamSyncPhase.live,
+    );
+    await coordinator.pause();
+    expect(coordinator.state.phase, KalamSyncPhase.paused);
+
+    await coordinator.actions.enqueue(
+      actionKey: 'messages.markRead',
+      actionId: 'action-offline-1',
+      payload: <String, Object?>{'messageId': 'm1'},
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(executed, 0, reason: 'paused sessions must not flush the outbox');
+
+    await coordinator.resume();
+    await _eventually(() => executed == 1);
+    expect(executed, 1);
   });
 }
 

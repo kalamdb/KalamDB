@@ -52,7 +52,7 @@ void main() {
       accountKey: 'account',
       registry: KalamActionRegistry([
         definition(
-          execute: (_, __) async {
+          execute: (_, _) async {
             count++;
             if (count == 8) started.complete();
             await release.future;
