@@ -11,7 +11,7 @@ use once_cell::sync::Lazy;
 /// and prevents typos in table/view names.
 ///
 /// ## Tables vs Views
-/// - **Tables**: Persisted in RocksDB, have a column family
+/// - **Tables**: Persisted in logical partitions sharing the physical `system_meta` CF
 /// - **Views**: Computed on-demand, no storage backing
 use crate::constants::ColumnFamilyNames;
 use crate::{models::TableId, storage::Partition};
@@ -324,7 +324,7 @@ fn system_table_metadata(table: SystemTable) -> &'static SystemTableMetadata {
 /// Memory/performance profile applied to a storage partition or physical RocksDB CF.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ColumnFamilyProfile {
-    /// System metadata tables and compatibility partitions.
+    /// System metadata tables and their logical partitions.
     SystemMeta,
     /// System-maintained secondary indexes.
     SystemIndex,
