@@ -149,8 +149,8 @@ actix-cors = "0.7.2"
 # Pin net+signal here and depend on this crate from kalamdb-api so unification
 # enables TcpStream and Unix signal handlers.
 actix-rt = { version = "2.15.0", features = ["macros", "net", "signal"] }
-actix-files = "0.7.2"
-actix-multipart = "0.8.5"
+actix-files = "0.7.4"
+actix-multipart = "0.8.8"
 
 # UUID generation 
 uuid = { version = "1.29.0", features = ["v4", "v7", "serde"] }
