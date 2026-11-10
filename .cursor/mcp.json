@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "serena": {
+      "command": "/Users/jamal/.local/bin/serena",
+      "args": [
+        "start-mcp-server",
+        "--context",
+        "ide",
+        "--project",
+        "/Users/jamal/git/KalamDB",
+        "--open-web-dashboard",
+        "false"
+      ],
+      "env": {
+        "PATH": "/Users/jamal/.local/bin:/Users/jamal/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+      }
+    }
+  }
+}
