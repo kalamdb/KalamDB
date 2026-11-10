@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::support::{
-    create_cluster_app_context, create_shared_table_with_public_policy, create_user_table, row,
-    unique_namespace,
+    create_cluster_app_context, create_counting_cluster_app_context,
+    create_shared_table_with_public_policy, create_user_table, row, unique_namespace,
 };
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
@@ -13,6 +13,7 @@ use kalamdb_core::transactions::{ExecutionOwnerKey, StagedMutation};
 use kalamdb_pg::OperationExecutor;
 use kalamdb_pg_bridge::OperationService;
 use kalamdb_sharding::ShardRouter;
+use kalamdb_store::EntityStore;
 use kalamdb_tables::KalamTableProvider;
 
 fn insert_mutation(
@@ -313,7 +314,7 @@ fn wide_rows(duplicate_last: bool) -> Vec<Row> {
 #[tokio::test]
 #[ntest::timeout(6_000)]
 async fn explicit_commit_of_25000_user_rows_is_all_or_nothing() {
-    let (app_ctx, _test_db) = create_cluster_app_context().await;
+    let (app_ctx, _test_db, batches) = create_counting_cluster_app_context().await;
     let service = OperationService::new(Arc::clone(&app_ctx));
     let session_id = "pg-25000-c0ffee";
     let user_id = UserId::new("tx-25k-user");
@@ -334,12 +335,19 @@ async fn explicit_commit_of_25000_user_rows_is_all_or_nothing() {
         })
         .await
         .expect("stage 25000 user rows");
+    let provider = app_ctx.schema_registry().get_kalam_provider(&committed).expect("user provider");
+    let partition = provider.user_store().expect("user store").partition().name().to_string();
+    let batches_before = batches.batches_touching(&partition);
     service
         .commit_transaction(session_id, &transaction_id)
         .await
         .expect("commit 25000 user rows")
         .expect("commit returns transaction id");
-    let provider = app_ctx.schema_registry().get_kalam_provider(&committed).expect("user provider");
+    assert_eq!(
+        batches.batches_touching(&partition) - batches_before,
+        1,
+        "one user commit submits one storage batch"
+    );
     assert_user_pk(&provider, &user_id, 1, true).await;
     assert_user_pk(&provider, &user_id, WIDE_COMMIT_ROWS / 2, true).await;
     assert_user_pk(&provider, &user_id, WIDE_COMMIT_ROWS, true).await;
@@ -361,15 +369,27 @@ async fn explicit_commit_of_25000_user_rows_is_all_or_nothing() {
         })
         .await
         .expect("stage duplicate last row");
-    let error = service
-        .commit_transaction(session_id, &failed_id)
-        .await
-        .expect_err("last-row primary key failure");
-    assert!(error.to_string().contains("Primary key"), "{error}");
     let rejected_provider = app_ctx
         .schema_registry()
         .get_kalam_provider(&rejected)
         .expect("rejected user provider");
+    let rejected_partition = rejected_provider
+        .user_store()
+        .expect("user store")
+        .partition()
+        .name()
+        .to_string();
+    let rejected_before = batches.batches_touching(&rejected_partition);
+    let error = service
+        .commit_transaction(session_id, &failed_id)
+        .await
+        .expect_err("last-row primary key failure");
+    assert!(error.to_string().to_ascii_lowercase().contains("primary key"), "{error}");
+    assert_eq!(
+        batches.batches_touching(&rejected_partition),
+        rejected_before,
+        "a failed user commit submits no storage batch"
+    );
     assert_user_pk(&rejected_provider, &user_id, 1, false).await;
     assert_user_pk(&rejected_provider, &user_id, WIDE_COMMIT_ROWS - 1, false).await;
 }
@@ -377,7 +397,7 @@ async fn explicit_commit_of_25000_user_rows_is_all_or_nothing() {
 #[tokio::test]
 #[ntest::timeout(12_000)]
 async fn explicit_commit_of_25000_shared_rows_is_all_or_nothing() {
-    let (app_ctx, _test_db) = create_cluster_app_context().await;
+    let (app_ctx, _test_db, batches) = create_counting_cluster_app_context().await;
     let service = OperationService::new(Arc::clone(&app_ctx));
     let session_id = "pg-25001-c0ffee";
     let user_id = UserId::new("tx-25k-shared");
@@ -403,15 +423,22 @@ async fn explicit_commit_of_25000_shared_rows_is_all_or_nothing() {
         })
         .await
         .expect("stage 25000 shared rows");
+    let provider = app_ctx
+        .schema_registry()
+        .get_kalam_provider(&committed)
+        .expect("shared provider");
+    let partition = provider.shared_store().expect("shared store").partition().name().to_string();
+    let batches_before = batches.batches_touching(&partition);
     service
         .commit_transaction(session_id, &transaction_id)
         .await
         .expect("commit 25000 shared rows")
         .expect("commit returns transaction id");
-    let provider = app_ctx
-        .schema_registry()
-        .get_kalam_provider(&committed)
-        .expect("shared provider");
+    assert_eq!(
+        batches.batches_touching(&partition) - batches_before,
+        1,
+        "one shared commit submits one storage batch"
+    );
     assert_shared_pk(&provider, 1, true).await;
     assert_shared_pk(&provider, WIDE_COMMIT_ROWS / 2, true).await;
     assert_shared_pk(&provider, WIDE_COMMIT_ROWS, true).await;
@@ -437,15 +464,27 @@ async fn explicit_commit_of_25000_shared_rows_is_all_or_nothing() {
         })
         .await
         .expect("stage duplicate last row");
-    let error = service
-        .commit_transaction(session_id, &failed_id)
-        .await
-        .expect_err("last-row primary key failure");
-    assert!(error.to_string().contains("Primary key"), "{error}");
     let rejected_provider = app_ctx
         .schema_registry()
         .get_kalam_provider(&rejected)
         .expect("rejected shared provider");
+    let rejected_partition = rejected_provider
+        .shared_store()
+        .expect("shared store")
+        .partition()
+        .name()
+        .to_string();
+    let rejected_before = batches.batches_touching(&rejected_partition);
+    let error = service
+        .commit_transaction(session_id, &failed_id)
+        .await
+        .expect_err("last-row primary key failure");
+    assert!(error.to_string().to_ascii_lowercase().contains("primary key"), "{error}");
+    assert_eq!(
+        batches.batches_touching(&rejected_partition),
+        rejected_before,
+        "a failed shared commit submits no storage batch"
+    );
     assert_shared_pk(&rejected_provider, 1, false).await;
     assert_shared_pk(&rejected_provider, WIDE_COMMIT_ROWS - 1, false).await;
 }

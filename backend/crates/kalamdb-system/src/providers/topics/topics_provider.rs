@@ -102,26 +102,7 @@ impl TopicsTableProvider {
         row.map(|value| Self::decode_topic_row(&value)).transpose()
     }
 
-    /// Update an existing topic entry.
-    ///
-    /// Indexes are automatically maintained via `IndexedEntityStore`.
-    pub fn update_topic(&self, topic: Topic) -> Result<(), SystemError> {
-        // Check if topic exists
-        let old_topic = self.sql.store().get(&topic.topic_id)?;
-        if old_topic.is_none() {
-            return Err(SystemError::NotFound(format!("Topic not found: {}", topic.topic_id)));
-        }
-        let old_topic = Self::decode_topic_row(&old_topic.unwrap())?;
-        let row = Self::encode_topic_row(&topic)?;
-
-        // No secondary indexes configured for topics in this phase.
-        self.sql
-            .store()
-            .update_with_old(&topic.topic_id, Some(&Self::encode_topic_row(&old_topic)?), &row)
-            .into_system_error("update topic error")
-    }
-
-    /// Async version of `update_topic()`.
+    /// Replace an existing topic entry.
     pub async fn update_topic_async(&self, topic: Topic) -> Result<(), SystemError> {
         // Check if topic exists
         let old_topic = self
@@ -199,20 +180,17 @@ mod tests {
         assert_eq!(retrieved.unwrap().name, "app.notifications");
     }
 
-    #[test]
-    fn test_update_topic() {
+    #[tokio::test]
+    async fn test_update_topic() {
         let backend = Arc::new(InMemoryBackend::new());
         let provider = TopicsTableProvider::new(backend);
 
         let mut topic = Topic::new(TopicId::new("topic_456"), "test.topic".to_string());
         provider.create_topic(topic.clone()).unwrap();
 
-        // Update topic
         topic.partitions = 4;
-        let result = provider.update_topic(topic.clone());
-        assert!(result.is_ok());
+        provider.update_topic_async(topic.clone()).await.unwrap();
 
-        // Verify update
         let retrieved = provider.get_topic_by_id(&topic.topic_id).unwrap().unwrap();
         assert_eq!(retrieved.partitions, 4);
     }

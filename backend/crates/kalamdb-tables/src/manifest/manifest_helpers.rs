@@ -8,7 +8,7 @@ use crate::{
     error::KalamDbError,
     utils::{
         core::TableProviderCore,
-        parquet::scan_provider_parquet_batch,
+        parquet::scan_provider_parquet_result,
         version_resolution::{parquet_batch_to_rows, ParquetRowData},
     },
 };
@@ -76,14 +76,20 @@ where
     F: FnOnce(ParquetRowData) -> T,
 {
     let filter: Expr = col(SystemColumnNames::VERSION).eq(lit(seq_id.as_i64()));
-    let batch = scan_provider_parquet_batch(core, user_id, Some(&filter), None).await?;
-    let rows = parquet_batch_to_rows(&batch)?;
-
-    for row_data in rows.into_iter() {
-        if row_data.version == seq_id {
-            return Ok(Some(build_row(row_data)));
+    let mut read = scan_provider_parquet_result(core, user_id, Some(&filter), None).await?;
+    let mut found = None;
+    while let Some(batch) = read.next_batch().await {
+        let batch = batch?;
+        if found.is_some() {
+            continue;
+        }
+        for row_data in parquet_batch_to_rows(&batch)? {
+            if row_data.version == seq_id {
+                found = Some(row_data);
+                break;
+            }
         }
     }
-
-    Ok(None)
+    let _stats = read.stats().await;
+    Ok(found.map(build_row))
 }

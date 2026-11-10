@@ -42,8 +42,8 @@ pub use entity_store::{
 pub use index::IndexScanPlan;
 // Export index types
 pub use index::{
-    FunctionExtractor, IndexKeyExtractor, PrefixIndex, PrefixIndexedKey, PrefixIndexedValue,
-    SecondaryIndex,
+    FunctionExtractor, IndexKeyExtractor, IndexRole, PrefixIndex, PrefixIndexedKey,
+    PrefixIndexedValue, SecondaryIndex,
 };
 #[cfg(feature = "datafusion")]
 pub use indexed_store::{extract_i64_equality, extract_string_equality};
@@ -62,7 +62,9 @@ pub use raft_storage::{
 pub use storage_trait::{
     Operation, Partition, StorageBackend, StorageBackendAsync, StorageError, StorageStats,
 };
-pub use write_coalesce::{defer_after_persist, with_write_coalesce, CoalescedBatch};
+pub use write_coalesce::{
+    coalesce_session_active, defer_after_persist, with_write_coalesce, CoalescedBatch,
+};
 
 // Make test_utils available for testing in dependent crates
 pub mod test_utils;

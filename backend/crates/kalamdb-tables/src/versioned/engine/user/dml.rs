@@ -27,23 +27,26 @@ impl UserTableProvider {
         let pk_name = self.primary_key_field_name();
 
         let hot_future = async {
-            if since_seq.is_none() {
-                if let Some(plan) = base::hot_index_seek(self.store.as_ref(), filter, Some(user_id))
-                {
-                    return base::scan_hot_index_resolved(
-                        &self.store,
-                        plan,
-                        scan_limit,
-                        pk_name,
-                        Some(user_id),
-                        storage_ordinals,
-                    )
-                    .await
-                    .and_then(|rows| {
-                        base::reject_truncated_unbounded_scan(limit, rows.len())?;
-                        Ok(rows)
-                    });
-                }
+            if let Some(plan) = base::authoritative_hot_index_plan(
+                self.store.as_ref(),
+                filter,
+                Some(user_id),
+                keep_deleted,
+                since_seq,
+            ) {
+                return base::scan_hot_index_resolved(
+                    &self.store,
+                    plan,
+                    scan_limit,
+                    pk_name,
+                    Some(user_id),
+                    storage_ordinals,
+                )
+                .await
+                .and_then(|rows| {
+                    base::reject_truncated_unbounded_scan(limit, rows.len())?;
+                    Ok(rows)
+                });
             }
             let scanned = if let Some(ordinals) = storage_ordinals {
                 self.store
@@ -84,6 +87,23 @@ impl UserTableProvider {
                     .await
             }
         };
+        let mask_secondary = base::masks_secondary_index_deletes(
+            self.store.as_ref(),
+            filter,
+            Some(user_id),
+            keep_deleted,
+            since_seq,
+        );
+        let user_for_prefix = user_id.clone();
+        let user_prefix_for_pk = |pk: &datafusion::scalar::ScalarValue| {
+            self.pk_index.build_user_pk_prefix(&user_for_prefix, pk)
+        };
+        let mask = mask_secondary.then(|| base::SecondaryDeleteMask {
+            store: self.store.as_ref(),
+            schema: self.schema_ref(),
+            pk_name,
+            prefix_for_pk: &user_prefix_for_pk,
+        });
         let resolved = base::resolve_latest_scan_from_futures(
             pk_name,
             limit,
@@ -92,6 +112,7 @@ impl UserTableProvider {
             hot_future,
             cold_future,
             |row_data| self.construct_mvcc_row_from_parquet_data(user_id, row_data),
+            mask,
         )
         .await?;
 
@@ -115,6 +136,16 @@ impl UserTableProvider {
                 cold_files_skipped: Some(resolved.cold_files_skipped),
                 cold_files_scanned: Some(resolved.cold_files_scanned),
                 cold_files: resolved.cold_files,
+                access_path: Some(ScanAccess::from_index_chosen(
+                    base::authoritative_hot_index_plan(
+                        self.store.as_ref(),
+                        filter,
+                        Some(user_id),
+                        keep_deleted,
+                        since_seq,
+                    )
+                    .is_some(),
+                )),
             }
         } else {
             DeferredScanDiagnostics::default()
@@ -171,7 +202,7 @@ impl UserTableProvider {
 
         // Cold storage: project only the PK + MVCC metadata needed for counting.
         let cold_columns = base::compute_metadata_only_cold_columns(&pk_name);
-        let cold_future = base::scan_provider_parquet_batch(
+        let cold_future = base::scan_provider_parquet_result(
             &self.core,
             Some(user_id),
             None,
@@ -193,7 +224,8 @@ impl UserTableProvider {
         row_data: Row,
         version: VersionId,
         hot_predecessor: Option<(UserTableRowId, UserTableRow)>,
-    ) -> Result<(UserTableRowId, Option<ChangeNotification>), KalamDbError> {
+        planned_ops: Option<&mut Vec<kalamdb_store::Operation>>,
+    ) -> Result<(UserTableRowId, Option<ChangeNotification>, Row), KalamDbError> {
         let span = tracing::debug_span!(
             "table.insert",
             table_id = %self.core.table_id(),
@@ -223,59 +255,61 @@ impl UserTableProvider {
             };
 
             let row_key = UserTableRowId::new(user_id.clone(), seq_id);
-            self.write_replaced_row(
-                predecessor,
-                row_key.clone(),
-                entity.clone(),
-                "Failed to insert user table row",
-            )
-            .await?;
+            let stored_fields = entity.fields.clone();
+            if let Some(operations) = planned_ops {
+                crate::versioned::append_replaced_row_ops(
+                    &self.store,
+                    operations,
+                    predecessor,
+                    &row_key,
+                    &entity,
+                    "Failed to insert user table row",
+                )?;
+            } else {
+                self.write_replaced_row(
+                    predecessor,
+                    row_key.clone(),
+                    entity.clone(),
+                    "Failed to insert user table row",
+                )
+                .await?;
 
-            if let Err(error) = self.stage_vector_upsert(user_id, seq_id, &entity.fields).await {
-                crate::versioned::warn_vector_upsert(
-                    self.core.table_id(),
-                    Some(user_id),
-                    seq_id,
-                    &error,
-                );
+                if let Err(error) = self.stage_vector_upsert(user_id, seq_id, &entity.fields).await
+                {
+                    crate::versioned::warn_vector_upsert(
+                        self.core.table_id(),
+                        Some(user_id),
+                        seq_id,
+                        &error,
+                    );
+                }
+
+                crate::versioned::mark_table_pending_write(&self.core, Some(user_id));
             }
-
-            crate::versioned::mark_table_pending_write(&self.core, Some(user_id));
 
             let table_id = self.core.table_id().clone();
             let notification = crate::versioned::insert_notification_when_watched(
                 crate::versioned::table_watch(&self.core, Some(user_id)).any(),
                 table_id,
-                Self::build_notification_row(&entity),
+                || Self::build_notification_row(&entity),
             );
-
-            Ok((row_key, notification))
+            Ok((row_key, notification, stored_fields))
         }
         .instrument(span)
         .await
     }
 
-    pub async fn insert_deferred_prevalidated(
+    /// Append one prevalidated insert without writing or staging vectors.
+    pub(crate) async fn plan_insert_deferred(
         &self,
         user_id: &UserId,
         row_data: Row,
         version: VersionId,
-    ) -> Result<(UserTableRowId, Option<ChangeNotification>), KalamDbError> {
-        self.insert_deferred_internal(user_id, row_data, version, None).await
-    }
-
-    /// Insert over a hot row already staged in this commit.
-    ///
-    /// Raft apply buffers writes until the entry finishes, so a delete earlier
-    /// in the same transaction is invisible to a storage lookup.
-    pub async fn insert_over_hot_deferred(
-        &self,
-        user_id: &UserId,
-        row_data: Row,
-        version: VersionId,
-        previous: (UserTableRowId, UserTableRow),
-    ) -> Result<(UserTableRowId, Option<ChangeNotification>), KalamDbError> {
-        self.insert_deferred_internal(user_id, row_data, version, Some(previous)).await
+        hot_predecessor: Option<(UserTableRowId, UserTableRow)>,
+        operations: &mut Vec<kalamdb_store::Operation>,
+    ) -> Result<(UserTableRowId, Option<ChangeNotification>, Row), KalamDbError> {
+        self.insert_deferred_internal(user_id, row_data, version, hot_predecessor, Some(operations))
+            .await
     }
 
     pub async fn insert_batch_with_versions(
@@ -341,7 +375,7 @@ impl UserTableProvider {
                     let notification = crate::versioned::insert_notification_when_watched(
                         watched,
                         table_id.clone(),
-                        Self::build_notification_row(&entity),
+                        || Self::build_notification_row(&entity),
                     );
                     (row_key, notification)
                 })
@@ -351,16 +385,67 @@ impl UserTableProvider {
         .await
     }
 
-    /// Update `pk_value`, using `known_hot` when this commit already wrote that key.
-    ///
-    /// The returned row is the value stored under the new version.
-    pub async fn update_by_pk_value_deferred_with_hot(
+    /// Validate and encode a prevalidated insert batch without writing it.
+    pub(crate) async fn plan_insert_batch_prevalidated(
+        &self,
+        user_id: &UserId,
+        rows: Vec<Row>,
+        versions: &[VersionId],
+    ) -> Result<
+        (
+            Vec<kalamdb_store::Operation>,
+            Vec<(UserTableRowId, Option<ChangeNotification>)>,
+            Vec<(UserTableRowId, UserTableRow)>,
+        ),
+        KalamDbError,
+    > {
+        let (entries, operations) =
+            self.collect_insert_batch_rows(user_id, rows, versions, false).await?;
+        let table_id = self.core.table_id().clone();
+        let watched = crate::versioned::table_watch(&self.core, Some(user_id)).any();
+        let applied = entries
+            .iter()
+            .map(|(row_key, entity)| {
+                let notification = crate::versioned::insert_notification_when_watched(
+                    watched,
+                    table_id.clone(),
+                    || Self::build_notification_row(entity),
+                );
+                (row_key.clone(), notification)
+            })
+            .collect();
+        Ok((operations, applied, entries))
+    }
+
+    pub(crate) async fn plan_update_by_pk_value_deferred_with_hot(
         &self,
         user_id: &UserId,
         pk_value: &str,
         updates: Row,
         version: VersionId,
-        known_hot: Option<(UserTableRowId, UserTableRow)>,
+        known: Option<crate::versioned::AuthoritativeBaseline<UserTableRowId, UserTableRow>>,
+        operations: &mut Vec<kalamdb_store::Operation>,
+    ) -> Result<Option<(UserTableRowId, UserTableRow, Option<ChangeNotification>)>, KalamDbError>
+    {
+        self.update_by_pk_value_deferred_with_hot_ops(
+            user_id,
+            pk_value,
+            updates,
+            version,
+            known,
+            Some(operations),
+        )
+        .await
+    }
+
+    async fn update_by_pk_value_deferred_with_hot_ops(
+        &self,
+        user_id: &UserId,
+        pk_value: &str,
+        updates: Row,
+        version: VersionId,
+        known: Option<crate::versioned::AuthoritativeBaseline<UserTableRowId, UserTableRow>>,
+        planned_ops: Option<&mut Vec<kalamdb_store::Operation>>,
     ) -> Result<Option<(UserTableRowId, UserTableRow, Option<ChangeNotification>)>, KalamDbError>
     {
         let span = tracing::debug_span!(
@@ -375,24 +460,29 @@ impl UserTableProvider {
             let updates = crate::versioned::coerce_update_row(updates, &schema)?;
 
             let pk_name = self.primary_key_field_name().to_string();
-            let (previous, latest_row) = if let Some((key, row)) = known_hot {
-                if row._deleted {
-                    return Err(KalamDbError::NotFound(format!(
-                        "Row with {}={} was deleted",
-                        pk_name, pk_value
-                    )));
-                }
-                (Some((key, row.clone())), row)
-            } else {
-                crate::versioned::require_live_row(
-                    self.load_mutation_target(user_id, pk_value).await?,
+            let loaded = match known {
+                Some(baseline) => crate::versioned::take_update_baseline(
+                    baseline,
+                    |row| row._deleted,
                     &pk_name,
                     pk_value,
-                )?
+                )?,
+                None => crate::versioned::take_update_baseline(
+                    crate::versioned::authoritative_baseline(
+                        self.load_mutation_target(user_id, pk_value).await?,
+                    ),
+                    |row| row._deleted,
+                    &pk_name,
+                    pk_value,
+                )?,
+            };
+            let (hot_key, row) = match loaded {
+                crate::versioned::LoadedBaseline::Hot(key, row) => (Some(key), row),
+                crate::versioned::LoadedBaseline::Cold(row) => (None, row),
             };
 
             let Some(new_fields) = crate::versioned::changed_update_fields(
-                &latest_row.fields,
+                &row.fields,
                 updates,
                 self.core.non_null_columns(),
             )?
@@ -406,6 +496,13 @@ impl UserTableProvider {
                 return Ok(None);
             };
 
+            let watched = crate::versioned::table_watch(&self.core, Some(user_id)).any();
+            let old_notification = if watched {
+                Some(Self::build_notification_row(&row))
+            } else {
+                None
+            };
+            let previous = hot_key.map(|key| (key, row));
             let seq_id = version;
 
             let entity = UserTableRow {
@@ -415,32 +512,45 @@ impl UserTableProvider {
                 fields: new_fields,
             };
             let row_key = UserTableRowId::new(user_id.clone(), seq_id);
-            self.write_replaced_row(
-                previous,
-                row_key.clone(),
-                entity.clone(),
-                "Failed to update user table row",
-            )
-            .await?;
+            if let Some(operations) = planned_ops {
+                crate::versioned::append_replaced_row_ops(
+                    &self.store,
+                    operations,
+                    previous,
+                    &row_key,
+                    &entity,
+                    "Failed to update user table row",
+                )?;
+            } else {
+                self.write_replaced_row(
+                    previous,
+                    row_key.clone(),
+                    entity.clone(),
+                    "Failed to update user table row",
+                )
+                .await?;
 
-            if let Err(error) = self.stage_vector_upsert(user_id, seq_id, &entity.fields).await {
-                crate::versioned::warn_vector_upsert(
-                    self.core.table_id(),
-                    Some(user_id),
-                    seq_id,
-                    &error,
-                );
+                if let Err(error) = self.stage_vector_upsert(user_id, seq_id, &entity.fields).await
+                {
+                    crate::versioned::warn_vector_upsert(
+                        self.core.table_id(),
+                        Some(user_id),
+                        seq_id,
+                        &error,
+                    );
+                }
+
+                crate::versioned::mark_table_pending_write(&self.core, Some(user_id));
             }
 
-            crate::versioned::mark_table_pending_write(&self.core, Some(user_id));
-
-            let notification = crate::versioned::update_notification_when_watched(
-                crate::versioned::table_watch(&self.core, Some(user_id)).any(),
-                self.core.table_id().clone(),
-                Self::build_notification_row(&latest_row),
-                Self::build_notification_row(&entity),
-                self.primary_key_field_name().to_string(),
-            );
+            let notification = old_notification.map(|old_row| {
+                crate::versioned::update_notification(
+                    self.core.table_id().clone(),
+                    old_row,
+                    Self::build_notification_row(&entity),
+                    self.primary_key_field_name().to_string(),
+                )
+            });
 
             Ok(Some((row_key, entity, notification)))
         }
@@ -469,6 +579,44 @@ impl UserTableProvider {
         known_hot: Option<(UserTableRowId, UserTableRow)>,
     ) -> Result<Option<(UserTableRowId, UserTableRow, Option<ChangeNotification>)>, KalamDbError>
     {
+        self.delete_by_pk_value_deferred_with_hot_ops(
+            user_id,
+            pk_value,
+            version,
+            known_hot.map(|(key, row)| crate::versioned::AuthoritativeBaseline::Hot { key, row }),
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn plan_delete_by_pk_value_deferred_with_hot(
+        &self,
+        user_id: &UserId,
+        pk_value: &str,
+        version: VersionId,
+        known: Option<crate::versioned::AuthoritativeBaseline<UserTableRowId, UserTableRow>>,
+        operations: &mut Vec<kalamdb_store::Operation>,
+    ) -> Result<Option<(UserTableRowId, UserTableRow, Option<ChangeNotification>)>, KalamDbError>
+    {
+        self.delete_by_pk_value_deferred_with_hot_ops(
+            user_id,
+            pk_value,
+            version,
+            known,
+            Some(operations),
+        )
+        .await
+    }
+
+    async fn delete_by_pk_value_deferred_with_hot_ops(
+        &self,
+        user_id: &UserId,
+        pk_value: &str,
+        version: VersionId,
+        known: Option<crate::versioned::AuthoritativeBaseline<UserTableRowId, UserTableRow>>,
+        planned_ops: Option<&mut Vec<kalamdb_store::Operation>>,
+    ) -> Result<Option<(UserTableRowId, UserTableRow, Option<ChangeNotification>)>, KalamDbError>
+    {
         let span = tracing::debug_span!(
             "table.delete",
             table_id = %self.core.table_id(),
@@ -477,18 +625,23 @@ impl UserTableProvider {
             deferred_side_effects = true
         );
         async move {
-            let (previous, latest_row) = if let Some((key, row)) = known_hot {
-                if row._deleted {
-                    return Ok(None);
-                }
-                (Some((key, row.clone())), row)
-            } else {
-                let Some(loaded) = crate::versioned::optional_live_row(
-                    self.load_mutation_target(user_id, pk_value).await?,
-                ) else {
-                    return Ok(None);
-                };
-                loaded
+            let loaded = match known {
+                Some(baseline) => {
+                    crate::versioned::take_delete_baseline(baseline, |row| row._deleted)
+                },
+                None => crate::versioned::take_delete_baseline(
+                    crate::versioned::authoritative_baseline(
+                        self.load_mutation_target(user_id, pk_value).await?,
+                    ),
+                    |row| row._deleted,
+                ),
+            };
+            let Some(loaded) = loaded else {
+                return Ok(None);
+            };
+            let (previous, latest_row) = match loaded {
+                crate::versioned::LoadedBaseline::Hot(key, row) => (Some((key, row.clone())), row),
+                crate::versioned::LoadedBaseline::Cold(row) => (None, row),
             };
 
             let seq_id = version;
@@ -500,25 +653,36 @@ impl UserTableProvider {
                 fields: latest_row.fields,
             };
             let row_key = UserTableRowId::new(user_id.clone(), seq_id);
-            self.write_replaced_row(
-                previous,
-                row_key.clone(),
-                entity.clone(),
-                "Failed to delete user table row",
-            )
-            .await?;
+            if let Some(operations) = planned_ops {
+                crate::versioned::append_replaced_row_ops(
+                    &self.store,
+                    operations,
+                    previous,
+                    &row_key,
+                    &entity,
+                    "Failed to delete user table row",
+                )?;
+            } else {
+                self.write_replaced_row(
+                    previous,
+                    row_key.clone(),
+                    entity.clone(),
+                    "Failed to delete user table row",
+                )
+                .await?;
 
-            if let Err(error) = self.stage_vector_delete(user_id, seq_id, pk_value).await {
-                crate::versioned::warn_vector_delete(
-                    self.core.table_id(),
-                    Some(user_id),
-                    seq_id,
-                    pk_value,
-                    &error,
-                );
+                if let Err(error) = self.stage_vector_delete(user_id, seq_id, pk_value).await {
+                    crate::versioned::warn_vector_delete(
+                        self.core.table_id(),
+                        Some(user_id),
+                        seq_id,
+                        pk_value,
+                        &error,
+                    );
+                }
+
+                crate::versioned::mark_table_pending_write(&self.core, Some(user_id));
             }
-
-            crate::versioned::mark_table_pending_write(&self.core, Some(user_id));
 
             let table_id = self.core.table_id().clone();
             let notification = if crate::versioned::table_watch(&self.core, Some(user_id)).any() {
@@ -536,6 +700,11 @@ impl UserTableProvider {
         .await
     }
 
+    /// One `load_mutation_target` per key, then one `replace_batch`.
+    ///
+    /// That is the same authoritative decode the mixed commit uses. Update
+    /// batches keep this load and do not add a second payload read to recheck
+    /// a version.
     pub async fn delete_batch_by_pk_values_deferred(
         &self,
         user_id: &UserId,
@@ -635,8 +804,8 @@ impl UserTableProvider {
             let notification = crate::versioned::update_notification_when_watched(
                 watched,
                 table_id.clone(),
-                Self::build_notification_row(&latest_row),
-                Self::build_notification_row(&entity),
+                || Self::build_notification_row(&latest_row),
+                || Self::build_notification_row(&entity),
                 pk_column.clone(),
             );
             if let Err(error) = self.stage_vector_upsert(user_id, *version, &entity.fields).await {

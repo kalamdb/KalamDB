@@ -87,7 +87,10 @@ pub fn returning_describe_statement(statement: &Statement) -> Option<Statement> 
             projection: returning.to_vec(),
             exclude: None,
             into: None,
-            from: vec![TableWithJoins { relation, joins: Vec::new() }],
+            from: vec![TableWithJoins {
+                relation,
+                joins: Vec::new(),
+            }],
             lateral_views: Vec::new(),
             prewhere: None,
             selection: Some(Expr::Value(Value::Boolean(false).into())),

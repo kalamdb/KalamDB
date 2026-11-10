@@ -707,6 +707,12 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         let mut last = self.last_applied.write();
         *last = Some(log_id);
     }
+
+    fn rewind_unpersisted_apply(&self, index: u64, term: u64, applied: Option<LogId<u64>>) {
+        log::warn!("durable apply batch failed; rewinding applied index to {index} term {term}");
+        self.state_machine.rewind_applied_index(index, term);
+        *self.last_applied.write() = applied;
+    }
 }
 
 /// Log reader implementation that shares access to the storage
@@ -1116,17 +1122,38 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         if entries.len() == 1 {
             if let Some(store) = self.persistent_store.as_ref() {
                 let backend = store.backend();
+                let prior_index = self.state_machine.last_applied_index();
+                let prior_term = self.state_machine.last_applied_term();
+                let prior_applied = *self.last_applied.read();
                 let (result, batch) =
                     with_write_coalesce(self.apply_entries_to_state_machine(entries)).await;
-                if result.is_ok() {
-                    if !batch.ops.is_empty() {
-                        backend.batch(batch.ops).map_err(|e| StorageIOError::<u64>::write(&e))?;
-                    }
-                    for hook in batch.after_persist {
-                        hook();
-                    }
+                match result {
+                    Ok(responses) => {
+                        if !batch.ops.is_empty() {
+                            if let Err(error) = backend.batch(batch.ops) {
+                                self.rewind_unpersisted_apply(
+                                    prior_index,
+                                    prior_term,
+                                    prior_applied,
+                                );
+                                return Err(StorageIOError::<u64>::write(&error).into());
+                            }
+                        }
+                        for hook in batch.after_persist {
+                            hook();
+                        }
+                        return Ok(responses);
+                    },
+                    Err(error) => {
+                        if self.state_machine.last_applied_index() != prior_index
+                            || self.state_machine.last_applied_term() != prior_term
+                            || *self.last_applied.read() != prior_applied
+                        {
+                            self.rewind_unpersisted_apply(prior_index, prior_term, prior_applied);
+                        }
+                        return Err(error);
+                    },
                 }
-                return result;
             }
         }
         self.apply_entries_to_state_machine(entries).await

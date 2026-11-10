@@ -38,7 +38,23 @@ numbers, and they are not the `kalam-vs-pg` single-row prepared-statement suite.
 ./run.sh
 ```
 
-The script downloads the SQL from the PGlite repo on first use, builds this
-client, starts a throwaway PostgreSQL 18 cluster, then starts one release
-`kalamdb-server`. Ports: Postgres `25435`, KalamDB HTTP `2921`, KalamDB pgwire
-`25436`.
+The default profile is `dev`. `KALAM_CARGO_PROFILE=release ./run.sh` is the
+old release path. Do not compare a `dev` run with the October release timings.
+
+Each invocation writes a new directory under `results/runs/` and leaves older
+files in place. The directory records the source commit, dirty-diff
+fingerprint, binary hashes, toolchain, profile, SQL hashes, server settings,
+and the UTC timestamp.
+
+`KALAM_BASELINE=1 ./run.sh` discards one warm-up suite and records five
+complete suites. Each suite resets both databases and runs the 16 scripts in
+order. Odd suites run PostgreSQL first. Even suites run KalamDB first. The
+summary is `summary.txt` in that run directory, with the median and the range
+per script and for the total, in seconds.
+
+Leave `KALAMDB_DML_STAGE_TRACE` unset for those timing suites. A separate
+profiling run sets `KALAMDB_DML_STAGE_TRACE=1`. The server prints one
+`dml-stage` line at shutdown. That line is not part of the SQL timings.
+
+Ports: Postgres `25435`, KalamDB HTTP `2921`, KalamDB pgwire `25436`. The
+script downloads the SQL from the PGlite repo on first use.

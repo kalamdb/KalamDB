@@ -4,9 +4,7 @@
 //! module's keys and writes.
 
 pub mod pk_index {
-    pub use crate::versioned::pk_index::{
-        new_user_pk_index, VersionedPkIndex,
-    };
+    pub use crate::versioned::pk_index::{new_user_pk_index, VersionedPkIndex};
 }
 #[path = "../versioned/engine/user/mod.rs"]
 pub mod user_table_provider;

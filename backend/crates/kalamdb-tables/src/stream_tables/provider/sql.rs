@@ -133,26 +133,20 @@ impl TableProvider for StreamTableEngine {
             &[],
             &[&pk_column],
         )?;
-        let rows = crate::utils::datafusion_dml::collect_matching_rows_with_projection(
+        let pk_values = crate::utils::datafusion_dml::collect_matching_primary_keys(
             self,
             state,
             &filters,
             projection.as_ref(),
+            &pk_column,
         )
         .await?;
-        if rows.is_empty() {
+        if pk_values.is_empty() {
             return kalamdb_datafusion_sources::dml::rows_affected_plan(state, 0).await;
         }
 
-        let mut seen = HashSet::new();
         let mut deleted: u64 = 0;
-
-        for row in rows {
-            let pk_value = crate::utils::datafusion_dml::extract_pk_value(&row, &pk_column)?;
-            if !seen.insert(pk_value.clone()) {
-                continue;
-            }
-
+        for pk_value in pk_values {
             if self
                 .delete_by_pk_value(
                     user_id,

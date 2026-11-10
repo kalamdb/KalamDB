@@ -53,7 +53,7 @@ impl TransactionEngine for FakeTransactionEngine {
             owner_key,
             owner_id,
             origin,
-            TransactionRaftBinding::LocalSingleNode,
+            TransactionRaftBinding::LocalSingleNode { group_id: None },
             Instant::now(),
         );
         self.handles.insert(transaction_id.clone(), handle);

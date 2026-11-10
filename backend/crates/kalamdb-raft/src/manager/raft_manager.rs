@@ -1508,6 +1508,13 @@ impl RaftManager {
         self.user_shards_count
     }
 
+    /// User-data state machine for one shard, used to replay an applied index.
+    pub fn user_data_state_machine(&self, shard: u32) -> Option<Arc<UserDataStateMachine>> {
+        self.user_data_shards
+            .get(shard as usize)
+            .map(|group| Arc::clone(group.storage().state_machine()))
+    }
+
     /// Get the number of shared data shards
     pub fn shared_shards(&self) -> u32 {
         self.shared_shards_count

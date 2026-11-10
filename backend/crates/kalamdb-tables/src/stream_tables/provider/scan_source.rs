@@ -93,6 +93,7 @@ impl StreamScanSource {
                 cold_files_skipped: Some(0),
                 cold_files_scanned: Some(0),
                 cold_files: Vec::new(),
+                access_path: Some(ScanAccess::Sequential),
             });
         }
         Ok(output)

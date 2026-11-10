@@ -19,8 +19,8 @@ use kalamdb_commons::{
     UserId,
 };
 use kalamdb_datafusion_sources::exec::{
-    finalize_deferred_batch, prefers_version, DeferredBatchOutput, DeferredBatchSource,
-    DeferredScanDiagnostics,
+    finalize_deferred_batches, flatten_deferred_output, prefers_version, DeferredBatchOutput,
+    DeferredBatchSource, DeferredScanDiagnostics, ScanAccess,
 };
 use kalamdb_session_datafusion::ScanDiagnosticsContext;
 use kalamdb_system::ManifestCacheEntry;
@@ -33,7 +33,8 @@ use super::{
 use crate::{
     error::KalamDbError,
     utils::row_utils::{
-        extract_seq_bounds_from_filter, materialize_scan_rows, rows_to_arrow_batch, ScanRow,
+        extract_seq_bounds_from_filter, materialize_scan_rows, rows_to_arrow_batch,
+        rows_to_arrow_batches, ScanRow,
     },
 };
 
@@ -108,7 +109,8 @@ where
         _filter: Option<&Expr>,
         _limit: Option<usize>,
         _keep_deleted: bool,
-    ) -> Result<Option<(RecordBatch, usize)>, KalamDbError> {
+        _chunk_rows: usize,
+    ) -> Result<Option<(Vec<RecordBatch>, usize)>, KalamDbError> {
         Ok(None)
     }
 
@@ -198,6 +200,7 @@ where
         authorization_filter: Option<&Expr>,
         limit: Option<usize>,
         include_diagnostics: bool,
+        chunk_rows: usize,
     ) -> Result<DeferredBatchOutput, KalamDbError> {
         let schema = self.schema_ref();
         let pk_name = self.primary_key_field_name();
@@ -256,11 +259,19 @@ where
             && since_seq.is_none()
             && !self.requires_row_authorization(scan_context)
         {
-            if let Some((batch, hot_rows_scanned)) = self
-                .try_columnar_hot_scan(scan_context, projection, filter, limit, keep_deleted)
+            if let Some((mut batches, hot_rows_scanned)) = self
+                .try_columnar_hot_scan(
+                    scan_context,
+                    projection,
+                    filter,
+                    limit,
+                    keep_deleted,
+                    chunk_rows,
+                )
                 .await?
             {
-                return Ok(DeferredBatchOutput::new(batch).with_diagnostics(
+                let batch = batches.remove(0);
+                return Ok(DeferredBatchOutput::new(batch).with_follow(batches).with_diagnostics(
                     DeferredScanDiagnostics {
                         hot_rows_scanned: Some(hot_rows_scanned),
                         cold_rows_scanned: Some(0),
@@ -268,6 +279,7 @@ where
                         cold_files_skipped: Some(0),
                         cold_files_scanned: Some(0),
                         cold_files: Vec::new(),
+                        access_path: Some(ScanAccess::Sequential),
                     },
                 ));
             }
@@ -318,8 +330,12 @@ where
         if let Some(pk_scalar) = unanswered_pk.as_ref() {
             retain_rows_for_unanswered_pk(&mut authorized_rows, pk_name, pk_scalar);
         }
-        let batch = rows_to_arrow_batch(&schema, authorized_rows, projection, |_, _| {})?;
-        Ok(DeferredBatchOutput::new(batch).with_diagnostics(scan_result.diagnostics))
+        let mut batches =
+            rows_to_arrow_batches(&schema, authorized_rows, projection, chunk_rows, |_, _| {})?;
+        let batch = batches.remove(0);
+        Ok(DeferredBatchOutput::new(batch)
+            .with_follow(batches)
+            .with_diagnostics(scan_result.diagnostics))
     }
 
     /// Materialize projected [`Row`] maps without building Arrow.
@@ -461,6 +477,7 @@ where
     pub(super) physical_filter: Option<Arc<dyn PhysicalExpr>>,
     pub(super) output_projection: Option<Vec<usize>>,
     pub(super) limit: Option<usize>,
+    pub(super) batch_rows: usize,
     pub(super) output_schema: SchemaRef,
     pub(super) _marker: std::marker::PhantomData<(K, V)>,
 }
@@ -513,6 +530,7 @@ where
                 self.authorization_filter.as_ref(),
                 source_limit,
                 include_diagnostics,
+                self.batch_rows,
             )
             .await
             .map_err(|error| {
@@ -523,14 +541,20 @@ where
                 ))
             })?;
 
-        let batch = finalize_deferred_batch(
-            output.batch,
+        let mut incoming = Vec::with_capacity(output.output_batch_count());
+        incoming.push(output.batch);
+        incoming.extend(output.follow_batches);
+        let mut batches = finalize_deferred_batches(
+            incoming,
             self.physical_filter.as_ref(),
             self.output_projection.as_deref(),
             self.limit,
             self.provider.scan_source_name(),
         )?;
-        Ok(DeferredBatchOutput::new(batch).with_diagnostics(output.diagnostics))
+        let batch = batches.remove(0);
+        Ok(DeferredBatchOutput::new(batch)
+            .with_follow(batches)
+            .with_diagnostics(output.diagnostics))
     }
 }
 
@@ -562,7 +586,11 @@ where
     }
 
     async fn produce_batch(&self) -> DataFusionResult<RecordBatch> {
-        Ok(self.produce_output(false).await?.batch)
+        flatten_deferred_output(self.produce_output(false).await?)
+    }
+
+    async fn load_batch_output(&self) -> DataFusionResult<DeferredBatchOutput> {
+        self.produce_output(false).await
     }
 
     async fn produce_batch_with_diagnostics(&self) -> DataFusionResult<DeferredBatchOutput> {

@@ -225,6 +225,8 @@ mod tests {
         execution::{memory_pool::GreedyMemoryPool, runtime_env::RuntimeEnvBuilder},
         prelude::{SessionConfig, SessionContext},
     };
+    use kalamdb_commons::models::{ReadContext, Role, UserId};
+    use kalamdb_session_datafusion::SessionUserContext;
     use tempfile::tempdir;
 
     use super::*;
@@ -423,7 +425,14 @@ mod tests {
                 .with_memory_pool(memory_pool)
                 .build_arc()
                 .expect("runtime env");
-            let ctx = SessionContext::new_with_config_rt(SessionConfig::new(), runtime_env);
+            let mut state =
+                SessionContext::new_with_config_rt(SessionConfig::new(), runtime_env).state();
+            state.config_mut().options_mut().extensions.insert(SessionUserContext::new(
+                UserId::new("log-reader"),
+                Role::System,
+                ReadContext::Internal,
+            ));
+            let ctx = SessionContext::new_with_state(state);
             ctx.register_table("server_logs", Arc::new(create_server_logs_provider(dir.path())))
                 .expect("register table");
             let batches = ctx

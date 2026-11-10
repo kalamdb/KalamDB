@@ -109,7 +109,11 @@ impl CommitSequenceTracker {
     /// Pin `snapshot_cell` and hold that snapshot until the guard drops.
     ///
     /// Commit, rollback, and timeout all drop the guard, which releases the pin.
-    pub fn pin_guard(self: &Arc<Self>, group_id: GroupId, snapshot_cell: &AtomicU64) -> SnapshotPin {
+    pub fn pin_guard(
+        self: &Arc<Self>,
+        group_id: GroupId,
+        snapshot_cell: &AtomicU64,
+    ) -> SnapshotPin {
         let snapshot = self.pin_snapshot(group_id, snapshot_cell);
         if snapshot != 0 {
             let mut pins = self.pins.write().unwrap_or_else(|poisoned| poisoned.into_inner());

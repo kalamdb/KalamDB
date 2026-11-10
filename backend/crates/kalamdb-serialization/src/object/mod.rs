@@ -4,12 +4,19 @@ mod envelope;
 mod generic;
 mod payload;
 
+#[cfg(test)]
+pub(crate) use envelope::{
+    acquire_row_format_encode_lock, row_format_test_lock_held_by_this_thread,
+};
 pub(crate) use envelope::{
     begin_envelope, decode_envelope, encode_envelope, finish_envelope, HEADER_LEN,
 };
 pub use envelope::{
-    has_object_magic, is_row_v2_writer_enabled, set_row_v2_writer_enabled, EncodedObject,
-    ObjectKind, FLAG_ROW_BODY_V2, FLAG_TOMBSTONE_ONLY, SUPPORTED_ROW_FLAGS,
+    format_compatibility_floor, has_object_magic, install_format_compatibility_floor,
+    is_row_v2_writer_enabled, load_format_compatibility_floor, set_row_v2_writer_enabled,
+    EncodedObject, FormatCompatibilityFloor, ObjectKind, ReplicaFormatCapability,
+    RowFormatActivationError, FLAG_ROW_BODY_V2, FLAG_TOMBSTONE_ONLY, ROW_FORMAT_V1, ROW_FORMAT_V2,
+    SUPPORTED_ROW_FLAGS,
 };
 #[cfg(feature = "backend-adapters")]
 pub(crate) use envelope::{FLAG_COLUMN_OFFSETS, FLAG_VERSION_IN_KEY};

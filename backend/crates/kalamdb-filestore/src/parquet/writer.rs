@@ -78,10 +78,8 @@ impl TempParquetFile {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "kalam-parquet-{}-{id}.parquet",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("kalam-parquet-{}-{id}.parquet", std::process::id()));
         let file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -160,7 +158,9 @@ where
     let mut writer = ArrowWriter::try_new(sink, schema, Some(props))
         .map_err(|error| FilestoreError::Parquet(error.to_string()))?;
     for batch in batches {
-        writer.write(batch).map_err(|error| FilestoreError::Parquet(error.to_string()))?;
+        writer
+            .write(batch)
+            .map_err(|error| FilestoreError::Parquet(error.to_string()))?;
     }
     writer.close().map_err(|error| FilestoreError::Parquet(error.to_string()))?;
     Ok(())

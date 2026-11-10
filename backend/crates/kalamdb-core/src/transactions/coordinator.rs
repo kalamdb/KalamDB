@@ -7,11 +7,11 @@ use std::{
 use dashmap::{mapref::entry::Entry, DashMap};
 use kalamdb_commons::{
     models::{NodeId, TableId, TransactionId, TransactionOrigin, TransactionState, UserId},
-    TableType,
+    MemoryBudgets, MemoryLedger, TableType,
 };
 use kalamdb_raft::RaftExecutor;
-use kalamdb_sharding::{GroupId, ShardRouter};
-use kalamdb_transactions::primary_key_claims;
+use kalamdb_sharding::GroupId;
+use kalamdb_transactions::{admit_versioned_commit, primary_key_claims};
 use tokio::{runtime::Handle, time::MissedTickBehavior};
 use uuid::Uuid;
 
@@ -30,6 +30,7 @@ pub struct TransactionCoordinator {
     active_by_owner: DashMap<ExecutionOwnerKey, TransactionId>,
     active_by_id: DashMap<TransactionId, TransactionHandle>,
     write_sets: DashMap<TransactionId, TransactionWriteSet>,
+    memory_ledger: Arc<MemoryLedger>,
 }
 
 impl TransactionCoordinator {
@@ -37,13 +38,23 @@ impl TransactionCoordinator {
         app_context: Arc<AppContext>,
         commit_sequence_tracker: Arc<CommitSequenceTracker>,
     ) -> Self {
+        let config = app_context.config();
+        let memory_ledger = Arc::new(MemoryLedger::new(MemoryBudgets::from_existing(
+            config.max_transaction_buffer_bytes,
+            config.datafusion.memory_limit,
+        )));
         Self {
             app_context,
             commit_sequence_tracker,
             active_by_owner: DashMap::new(),
             active_by_id: DashMap::new(),
             write_sets: DashMap::new(),
+            memory_ledger,
         }
+    }
+
+    pub fn memory_ledger(&self) -> Arc<MemoryLedger> {
+        Arc::clone(&self.memory_ledger)
     }
 
     pub fn start_timeout_sweeper(self: &Arc<Self>) {
@@ -165,22 +176,16 @@ impl TransactionCoordinator {
         let projected_buffer_bytes = handle.write_bytes.saturating_add(estimated_bytes);
         let max_transaction_buffer_bytes = self.app_context.config().max_transaction_buffer_bytes;
         if projected_buffer_bytes > max_transaction_buffer_bytes {
-            handle.mark_state(TransactionState::Aborted);
             drop(handle);
-            self.write_sets.remove(transaction_id);
-            self.release_primary_key_claims(transaction_id);
-
-            tracing::warn!(
-                transaction_id = %transaction_id,
+            return Err(self.abort_for_buffer_limit(
+                transaction_id,
                 projected_buffer_bytes,
                 max_transaction_buffer_bytes,
-                "transaction buffer limit exceeded"
-            );
-
-            return Err(KalamDbError::InvalidOperation(format!(
-                "transaction '{}' exceeded buffer limit of {} bytes and was aborted",
-                transaction_id, max_transaction_buffer_bytes
-            )));
+            ));
+        }
+        if let Err(error) = self.memory_ledger.try_reserve_staged(estimated_bytes, 1) {
+            drop(handle);
+            return Err(self.abort_for_process_budget(transaction_id, &error));
         }
 
         let mut write_set = self
@@ -188,7 +193,6 @@ impl TransactionCoordinator {
             .entry(transaction_id.clone())
             .or_insert_with(|| TransactionWriteSet::new(transaction_id.clone()));
         write_set.stage_with_estimated_size(mutation, estimated_bytes);
-
         handle.record_staged_write(table_id, write_set.affected_rows(), write_set.buffer_bytes);
         Ok(())
     }
@@ -260,22 +264,18 @@ impl TransactionCoordinator {
         let projected_buffer_bytes = handle.write_bytes.saturating_add(total_estimated_bytes);
         let max_transaction_buffer_bytes = self.app_context.config().max_transaction_buffer_bytes;
         if projected_buffer_bytes > max_transaction_buffer_bytes {
-            handle.mark_state(TransactionState::Aborted);
             drop(handle);
-            self.write_sets.remove(transaction_id);
-            self.release_primary_key_claims(transaction_id);
-
-            tracing::warn!(
-                transaction_id = %transaction_id,
+            return Err(self.abort_for_buffer_limit(
+                transaction_id,
                 projected_buffer_bytes,
                 max_transaction_buffer_bytes,
-                "transaction buffer limit exceeded"
-            );
-
-            return Err(KalamDbError::InvalidOperation(format!(
-                "transaction '{}' exceeded buffer limit of {} bytes and was aborted",
-                transaction_id, max_transaction_buffer_bytes
-            )));
+            ));
+        }
+        if let Err(error) =
+            self.memory_ledger.try_reserve_staged(total_estimated_bytes, mutations.len())
+        {
+            drop(handle);
+            return Err(self.abort_for_process_budget(transaction_id, &error));
         }
 
         let mut write_set = self
@@ -322,29 +322,37 @@ impl TransactionCoordinator {
         let write_set = self.write_sets.remove(transaction_id).map(|(_, write_set)| write_set);
 
         let Some(write_set) = write_set.filter(|ws| !ws.ordered_mutations.is_empty()) else {
-            self.active_by_owner.remove(&owner_key);
-
-            let Some((_, mut sealed_handle)) = self.active_by_id.remove(transaction_id) else {
-                crate::functions::drop_staged_publishes(self.app_context.as_ref(), transaction_id);
-                return Err(KalamDbError::NotFound(format!(
-                    "transaction '{}' not found during commit",
-                    transaction_id
-                )));
-            };
-            sealed_handle.mark_state(TransactionState::Committed);
-            self.release_primary_key_claims(transaction_id);
-            crate::functions::flush_staged_publishes(self.app_context.as_ref(), transaction_id)?;
-
-            return Ok(TransactionCommitResult::committed(
-                transaction_id.clone(),
-                0,
-                None,
-                super::TransactionSideEffects::default(),
-            ));
+            return self.seal_committed_without_propose(&owner_key, transaction_id, 0);
         };
 
         let affected_rows = write_set.affected_rows();
-        let mutations = write_set.ordered_mutations;
+        let sealed = {
+            let _fold = kalamdb_observability::dml_stage::stage_guard(
+                kalamdb_observability::dml_stage::DmlStage::StagingFold,
+            );
+            match write_set.fold_commit_owned() {
+                Ok(sealed) => sealed,
+                Err(error) => {
+                    self.abort_open_commit(&owner_key, transaction_id);
+                    return Err(KalamDbError::InvalidOperation(error.to_string()));
+                },
+            }
+        };
+        if sealed.folded.is_empty() {
+            if let Err(error) = self
+                .admit_staged_commit_accounted(&sealed.admission_history, sealed.accounted_bytes)
+            {
+                self.abort_open_commit(&owner_key, transaction_id);
+                return Err(error);
+            }
+            return self.seal_committed_without_propose(&owner_key, transaction_id, affected_rows);
+        }
+        if let Err(error) = self.admit_staged_commit(&sealed.folded) {
+            self.abort_open_commit(&owner_key, transaction_id);
+            return Err(error);
+        }
+        let mutations = sealed.folded;
+        drop(sealed.admission_history);
 
         let response = match self
             .app_context
@@ -357,12 +365,7 @@ impl TransactionCoordinator {
                 response
             },
             Err(error) => {
-                self.active_by_owner.remove(&owner_key);
-                if let Some((_, mut sealed_handle)) = self.active_by_id.remove(transaction_id) {
-                    sealed_handle.mark_state(TransactionState::Aborted);
-                }
-                self.release_primary_key_claims(transaction_id);
-                crate::functions::drop_staged_publishes(self.app_context.as_ref(), transaction_id);
+                self.abort_open_commit(&owner_key, transaction_id);
                 let source = error.into_coded();
                 return Err(KalamDbError::Coded(source.with_context(
                     kalamdb_commons::ErrorCode::CommitFailed,
@@ -371,16 +374,18 @@ impl TransactionCoordinator {
             },
         };
 
-        let committed_commit_seq = response.committed_commit_seq().ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!(
+        let Some(committed_commit_seq) = response.committed_commit_seq() else {
+            self.release_held(transaction_id);
+            return Err(KalamDbError::InvalidOperation(format!(
                 "transaction '{}' commit response missing commit_seq",
                 transaction_id
-            ))
-        })?;
+            )));
+        };
         let (notifications_sent, manifest_updates, publisher_events) =
             response.committed_side_effect_counts().unwrap_or((0, 0, 0));
 
         self.active_by_owner.remove(&owner_key);
+        self.release_held(transaction_id);
 
         let Some((_, mut sealed_handle)) = self.active_by_id.remove(transaction_id) else {
             return Err(KalamDbError::NotFound(format!(
@@ -420,6 +425,7 @@ impl TransactionCoordinator {
             ) {
                 let owner_key = handle.owner_key;
                 drop(handle);
+                self.release_held(transaction_id);
                 self.write_sets.remove(transaction_id);
                 self.release_primary_key_claims(transaction_id);
                 crate::functions::drop_staged_publishes(self.app_context.as_ref(), transaction_id);
@@ -436,6 +442,7 @@ impl TransactionCoordinator {
             handle.owner_key
         };
 
+        self.release_held(transaction_id);
         self.write_sets.remove(transaction_id);
         self.release_primary_key_claims(transaction_id);
         crate::functions::drop_staged_publishes(self.app_context.as_ref(), transaction_id);
@@ -504,7 +511,25 @@ impl TransactionCoordinator {
         };
 
         let result = match handle.raft_binding {
-            TransactionRaftBinding::LocalSingleNode => Ok(()),
+            TransactionRaftBinding::LocalSingleNode {
+                group_id: bound_group_id,
+            } => match bound_group_id {
+                Some(bound_group_id) if bound_group_id != group_id => {
+                    Err(Self::cross_group_access_error(
+                        transaction_id,
+                        bound_group_id,
+                        table_id,
+                        group_id,
+                    ))
+                },
+                Some(_) => Ok(()),
+                None => {
+                    handle.raft_binding = TransactionRaftBinding::LocalSingleNode {
+                        group_id: Some(group_id),
+                    };
+                    Ok(())
+                },
+            },
             TransactionRaftBinding::UnboundCluster => {
                 // Procedure calls execute on the meta leader. That node is often
                 // a follower of the data shard that owns the table. Bind to the
@@ -526,11 +551,12 @@ impl TransactionCoordinator {
                 ..
             } => {
                 if bound_group_id != group_id {
-                    Err(KalamDbError::InvalidOperation(format!(
-                        "explicit transaction '{}' is already bound to data raft group '{}' and \
-                         cannot access table '{}' in group '{}'",
-                        transaction_id, bound_group_id, table_id, group_id
-                    )))
+                    Err(Self::cross_group_access_error(
+                        transaction_id,
+                        bound_group_id,
+                        table_id,
+                        group_id,
+                    ))
                 } else {
                     Ok(())
                 }
@@ -647,6 +673,42 @@ impl TransactionCoordinator {
         Duration::from_secs((timeout_secs / 2).clamp(1, 5))
     }
 
+    fn seal_committed_without_propose(
+        &self,
+        owner_key: &ExecutionOwnerKey,
+        transaction_id: &TransactionId,
+        affected_rows: usize,
+    ) -> Result<TransactionCommitResult, KalamDbError> {
+        self.active_by_owner.remove(owner_key);
+        self.release_held(transaction_id);
+        let Some((_, mut sealed_handle)) = self.active_by_id.remove(transaction_id) else {
+            crate::functions::drop_staged_publishes(self.app_context.as_ref(), transaction_id);
+            return Err(KalamDbError::NotFound(format!(
+                "transaction '{}' not found during commit",
+                transaction_id
+            )));
+        };
+        sealed_handle.mark_state(TransactionState::Committed);
+        self.release_primary_key_claims(transaction_id);
+        crate::functions::flush_staged_publishes(self.app_context.as_ref(), transaction_id)?;
+        Ok(TransactionCommitResult::committed(
+            transaction_id.clone(),
+            affected_rows,
+            None,
+            super::TransactionSideEffects::default(),
+        ))
+    }
+
+    fn abort_open_commit(&self, owner_key: &ExecutionOwnerKey, transaction_id: &TransactionId) {
+        self.active_by_owner.remove(owner_key);
+        self.release_held(transaction_id);
+        if let Some((_, mut sealed_handle)) = self.active_by_id.remove(transaction_id) {
+            sealed_handle.mark_state(TransactionState::Aborted);
+        }
+        self.release_primary_key_claims(transaction_id);
+        crate::functions::drop_staged_publishes(self.app_context.as_ref(), transaction_id);
+    }
+
     pub fn mark_transaction_aborted(&self, transaction_id: &TransactionId) {
         if let Some(mut handle) = self.active_by_id.get_mut(transaction_id) {
             handle.mark_state(TransactionState::Aborted);
@@ -723,6 +785,8 @@ impl TransactionCoordinator {
             return Err(Self::state_error(transaction_id, handle.state, "rollback to savepoint"));
         }
 
+        let previous_bytes = handle.write_bytes;
+        let previous_count = handle.write_count;
         let Some((write_count, write_bytes)) = self
             .write_sets
             .get_mut(transaction_id)
@@ -736,6 +800,10 @@ impl TransactionCoordinator {
 
         handle.write_count = write_count;
         handle.write_bytes = write_bytes;
+        self.memory_ledger.release_staged(
+            previous_bytes.saturating_sub(write_bytes),
+            previous_count.saturating_sub(write_count),
+        );
         handle.has_write_set = write_count > 0;
         handle.mark_state(if write_count > 0 {
             TransactionState::OpenWrite
@@ -797,6 +865,7 @@ impl TransactionCoordinator {
 
         handle.mark_state(TransactionState::TimedOut);
         drop(handle);
+        self.release_held(transaction_id);
         self.write_sets.remove(transaction_id);
         self.release_primary_key_claims(transaction_id);
 
@@ -810,6 +879,63 @@ impl TransactionCoordinator {
 
     fn release_primary_key_claims(&self, transaction_id: &TransactionId) {
         primary_key_claims().release_owner(transaction_id);
+    }
+
+    /// Return this transaction's staged payload and overlay charge. A second call is a no-op.
+    fn release_held(&self, transaction_id: &TransactionId) {
+        let Some(mut handle) = self.active_by_id.get_mut(transaction_id) else {
+            return;
+        };
+        let bytes = std::mem::take(&mut handle.write_bytes);
+        let mutations = std::mem::take(&mut handle.write_count);
+        drop(handle);
+        self.memory_ledger.release_staged(bytes, mutations);
+    }
+
+    fn discard_staged_transaction(&self, transaction_id: &TransactionId) {
+        if let Some(mut handle) = self.active_by_id.get_mut(transaction_id) {
+            handle.mark_state(TransactionState::Aborted);
+        }
+        self.write_sets.remove(transaction_id);
+        self.release_primary_key_claims(transaction_id);
+    }
+
+    fn abort_for_buffer_limit(
+        &self,
+        transaction_id: &TransactionId,
+        projected_buffer_bytes: usize,
+        max_transaction_buffer_bytes: usize,
+    ) -> KalamDbError {
+        self.release_held(transaction_id);
+        self.discard_staged_transaction(transaction_id);
+        tracing::warn!(
+            transaction_id = %transaction_id,
+            projected_buffer_bytes,
+            max_transaction_buffer_bytes,
+            "transaction buffer limit exceeded"
+        );
+        KalamDbError::InvalidOperation(format!(
+            "transaction '{}' exceeded buffer limit of {} bytes and was aborted",
+            transaction_id, max_transaction_buffer_bytes
+        ))
+    }
+
+    fn abort_for_process_budget(
+        &self,
+        transaction_id: &TransactionId,
+        error: &kalamdb_commons::MemoryBudgetError,
+    ) -> KalamDbError {
+        self.release_held(transaction_id);
+        self.discard_staged_transaction(transaction_id);
+        tracing::warn!(
+            transaction_id = %transaction_id,
+            error = %error,
+            "process memory budget exceeded"
+        );
+        KalamDbError::InvalidOperation(format!(
+            "transaction '{}' exceeded process memory budget and was aborted: {error}",
+            transaction_id
+        ))
     }
 
     fn state_error(
@@ -837,8 +963,52 @@ impl TransactionCoordinator {
         if self.app_context.is_cluster_mode() {
             TransactionRaftBinding::UnboundCluster
         } else {
-            TransactionRaftBinding::LocalSingleNode
+            TransactionRaftBinding::LocalSingleNode { group_id: None }
         }
+    }
+
+    fn cross_group_access_error(
+        transaction_id: &TransactionId,
+        bound_group_id: GroupId,
+        table_id: &TableId,
+        group_id: GroupId,
+    ) -> KalamDbError {
+        KalamDbError::InvalidOperation(format!(
+            "explicit transaction '{}' is already bound to data raft group '{}' and \
+             cannot access table '{}' in group '{}'",
+            transaction_id, bound_group_id, table_id, group_id
+        ))
+    }
+
+    fn admit_staged_commit(&self, mutations: &[StagedMutation]) -> Result<(), KalamDbError> {
+        self.admit_staged_commit_accounted(
+            mutations,
+            mutations.iter().map(StagedMutation::approximate_size_bytes).sum(),
+        )
+    }
+
+    fn admit_staged_commit_accounted(
+        &self,
+        mutations: &[StagedMutation],
+        accounted_bytes: usize,
+    ) -> Result<(), KalamDbError> {
+        let mut groups = Vec::with_capacity(mutations.len());
+        for mutation in mutations {
+            groups.push(self.resolve_group_id(
+                &mutation.table_id,
+                mutation.table_type,
+                mutation.user_id.as_ref(),
+            )?);
+        }
+        let max_bytes = self.app_context.config().max_transaction_buffer_bytes;
+        admit_versioned_commit(mutations, &groups, max_bytes, mutations.len() as u64)
+            .map_err(|error| KalamDbError::InvalidOperation(error.to_string()))?;
+        if accounted_bytes > max_bytes {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "transaction buffer of {accounted_bytes} bytes exceeds max_transaction_buffer_bytes {max_bytes}"
+            )));
+        }
+        Ok(())
     }
 
     fn resolve_group_id(
@@ -847,8 +1017,7 @@ impl TransactionCoordinator {
         table_type: TableType,
         user_id: Option<&UserId>,
     ) -> Result<Option<GroupId>, KalamDbError> {
-        let router =
-            ShardRouter::from_optional_cluster_config(self.app_context.config().cluster.as_ref());
+        let router = self.app_context.shard_router();
         let group_id = match table_type {
             TableType::User => router.user_group_id(user_id.ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(

@@ -113,6 +113,12 @@ fn encode_row_body(
     fields: RowValues<'_>,
     schema: &StorageSchema,
 ) -> Result<EncodedObject> {
+    #[cfg(test)]
+    let _row_format_lock = if crate::object::row_format_test_lock_held_by_this_thread() {
+        None
+    } else {
+        Some(crate::object::acquire_row_format_encode_lock())
+    };
     if is_row_v2_writer_enabled() {
         return encode_row_body_v2(deleted, fields, schema);
     }
@@ -169,11 +175,7 @@ fn encode_row_body_v2(
         }
         let val = val_opt.unwrap();
         if let Some((offset, width)) = layout.fixed_offsets[ordinal] {
-            encode_fixed_value(
-                &mut scratch.fixed[offset..offset + width],
-                val,
-                &field.data_type,
-            )?;
+            encode_fixed_value(&mut scratch.fixed[offset..offset + width], val, &field.data_type)?;
         }
     }
 

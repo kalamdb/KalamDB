@@ -33,7 +33,10 @@ impl VersionedRowCodec {
         key: &ScopedRowKey,
         row: &VersionedTableRow,
     ) -> StoreResult<Vec<u8>> {
-        match (key, row) {
+        let _encode = kalamdb_observability::dml_stage::stage_guard(
+            kalamdb_observability::dml_stage::DmlStage::RowEncode,
+        );
+        let encoded = match (key, row) {
             (ScopedRowKey::User(_), VersionedTableRow::User(row)) => {
                 encode_user_row(row, &self.schema)
                     .map(|encoded| encoded.into_bytes())
@@ -47,15 +50,14 @@ impl VersionedRowCodec {
             _ => Err(StorageError::SerializationError(
                 "row scope does not match key scope".to_string(),
             )),
+        };
+        if let Ok(encoded) = encoded.as_ref() {
+            kalamdb_observability::dml_stage::add_units(
+                kalamdb_observability::dml_stage::DmlStage::RowEncode,
+                encoded.len() as u64,
+            );
         }
-    }
-
-    pub(crate) fn decode_with_schema_history(
-        &self,
-        key: &ScopedRowKey,
-        bytes: &[u8],
-    ) -> StoreResult<VersionedTableRow> {
-        self.decode(key, bytes)
+        encoded
     }
 
     pub(crate) fn decode(
@@ -63,7 +65,7 @@ impl VersionedRowCodec {
         key: &ScopedRowKey,
         bytes: &[u8],
     ) -> StoreResult<VersionedTableRow> {
-        match key {
+        let decoded = match key {
             ScopedRowKey::User(key) => {
                 decode_user_row(bytes, &self.schema, key.user_id.clone(), key.version)
                     .map(VersionedTableRow::User)
@@ -72,7 +74,18 @@ impl VersionedRowCodec {
             ScopedRowKey::Shared(key) => decode_shared_row(bytes, &self.schema, *key)
                 .map(VersionedTableRow::Shared)
                 .map_err(map_ser),
+        };
+        if decoded.is_ok() {
+            kalamdb_observability::dml_stage::add_count(
+                kalamdb_observability::dml_stage::DmlCount::DecodedRows,
+                1,
+            );
+            kalamdb_observability::dml_stage::add_count(
+                kalamdb_observability::dml_stage::DmlCount::DecodedBytes,
+                bytes.len() as u64,
+            );
         }
+        decoded
     }
 }
 
@@ -222,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn historical_layout_decodes_through_the_engine() {
+    fn historical_layout_decodes_through_the_codec() {
         use kalamdb_serialization::{StorageField, StorageSchema};
 
         let v1_fields = vec![StorageField::new("id", StorageDataType::Int64)];
@@ -244,15 +257,8 @@ mod tests {
             fields: Row::new(BTreeMap::from([("id".to_string(), ScalarValue::Int64(Some(7)))])),
         };
         let key = ScopedRowKey::User(UserTableRowId::new(user_id, version));
-        let bytes = crate::table_engine::VersionedTableEngine::encode_row(
-            v1,
-            &key,
-            &VersionedTableRow::User(row),
-        )
-        .unwrap();
-        let decoded =
-            crate::table_engine::VersionedTableEngine::decode_row(Arc::new(current), &key, &bytes)
-                .unwrap();
+        let bytes = VersionedRowCodec::new(v1).encode(&key, &VersionedTableRow::User(row)).unwrap();
+        let decoded = VersionedRowCodec::new(Arc::new(current)).decode(&key, &bytes).unwrap();
         let VersionedTableRow::User(decoded) = decoded else {
             panic!("expected a user row");
         };

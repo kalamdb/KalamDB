@@ -53,6 +53,7 @@ pub mod conversions; // Centralized datatype and value conversion utilities (see
 pub mod errors;
 pub mod helpers;
 pub mod ids;
+pub mod memory_ledger;
 pub mod models;
 #[cfg(feature = "serialization")]
 pub mod serialization; // KSerializable trait for entity storage
@@ -101,6 +102,10 @@ pub use helpers::{
     },
     process_shutdown, security,
     time::unix_time_millis,
+};
+pub use memory_ledger::{
+    MemoryBudgetError, MemoryBudgets, MemoryClass, MemoryLedger, Reservation, OVERLAY_ENTRY_BYTES,
+    PROCESS_TRANSACTION_SLOTS,
 };
 pub use models::{
     assert_finite_type_graph,

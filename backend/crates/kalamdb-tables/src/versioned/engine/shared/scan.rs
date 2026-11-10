@@ -49,13 +49,19 @@ impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableP
         filter: Option<&Expr>,
         limit: Option<usize>,
         keep_deleted: bool,
-    ) -> Result<Option<(RecordBatch, usize)>, KalamDbError> {
-        self.columnar_hot_scan(
+        chunk_rows: usize,
+    ) -> Result<Option<(Vec<RecordBatch>, usize)>, KalamDbError> {
+        crate::versioned::columnar::run_columnar_hot_scan(
+            &self.core,
+            &self.store,
+            None,
             scan_context.snapshot_commit_seq,
             projection,
             filter,
             limit,
             keep_deleted,
+            chunk_rows,
+            crate::versioned::columnar::decode_shared_version,
         )
         .await
     }
@@ -388,9 +394,13 @@ impl SharedTableProvider {
             filter,
             limit,
             keep_deleted,
+            usize::MAX,
             crate::versioned::columnar::decode_shared_version,
         )
         .await
+        .and_then(|scanned| {
+            Ok(scanned.map(|(mut batches, visited)| (batches.remove(0), visited)))
+        })
     }
 
     pub async fn sum_hot_covering_integers(
@@ -541,20 +551,24 @@ impl SharedTableProvider {
         let scan_limit = base::calculate_scan_limit(limit);
         let pk_name = self.primary_key_field_name();
         let hot_future = async {
-            if since_seq.is_none() {
-                if let Some(plan) = base::hot_index_seek(self.store.as_ref(), filter, None) {
-                    let rows = base::scan_hot_index_resolved(
-                        &self.store,
-                        plan,
-                        scan_limit,
-                        pk_name,
-                        None,
-                        storage_ordinals,
-                    )
-                    .await?;
-                    base::reject_truncated_unbounded_scan(limit, rows.len())?;
-                    return Ok(rows);
-                }
+            if let Some(plan) = base::authoritative_hot_index_plan(
+                self.store.as_ref(),
+                filter,
+                None,
+                keep_deleted,
+                since_seq,
+            ) {
+                let rows = base::scan_hot_index_resolved(
+                    &self.store,
+                    plan,
+                    scan_limit,
+                    pk_name,
+                    None,
+                    storage_ordinals,
+                )
+                .await?;
+                base::reject_truncated_unbounded_scan(limit, rows.len())?;
+                return Ok(rows);
             }
             let scanned = if let Some(ordinals) = storage_ordinals {
                 self.store
@@ -589,6 +603,22 @@ impl SharedTableProvider {
                 base::scan_provider_parquet_result(&self.core, None, filter, cold_columns).await
             }
         };
+        let mask_secondary = base::masks_secondary_index_deletes(
+            self.store.as_ref(),
+            filter,
+            None,
+            keep_deleted,
+            since_seq,
+        );
+        let shared_prefix = |pk: &datafusion::scalar::ScalarValue| {
+            self.pk_index.build_shared_pk_prefix(pk)
+        };
+        let mask = mask_secondary.then(|| base::SecondaryDeleteMask {
+            store: self.store.as_ref(),
+            schema: self.schema_ref(),
+            pk_name,
+            prefix_for_pk: &shared_prefix,
+        });
         let resolved = base::resolve_latest_scan_from_futures(
             pk_name,
             limit,
@@ -597,6 +627,7 @@ impl SharedTableProvider {
             hot_future,
             cold_future,
             |row_data| self.construct_shared_row_from_parquet_data(row_data),
+            mask,
         )
         .await?;
 
@@ -618,6 +649,16 @@ impl SharedTableProvider {
                 cold_files_skipped: Some(resolved.cold_files_skipped),
                 cold_files_scanned: Some(resolved.cold_files_scanned),
                 cold_files: resolved.cold_files,
+                access_path: Some(ScanAccess::from_index_chosen(
+                    base::authoritative_hot_index_plan(
+                        self.store.as_ref(),
+                        filter,
+                        None,
+                        keep_deleted,
+                        since_seq,
+                    )
+                    .is_some(),
+                )),
             }
         } else {
             DeferredScanDiagnostics::default()

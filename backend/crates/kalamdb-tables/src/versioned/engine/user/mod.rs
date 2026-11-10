@@ -31,9 +31,12 @@ use kalamdb_commons::{
     websocket::ChangeNotification,
     StorageKey, TableType,
 };
-use kalamdb_datafusion_sources::dml::PreparedUpdateAssignments;
 use kalamdb_datafusion_sources::{
-    exec::{pk_bucket_key_from_row, resolve_latest_kvs_from_cold_batch, DeferredScanDiagnostics},
+    dml::PreparedUpdateAssignments,
+    exec::{
+        pk_bucket_key_from_row, resolve_latest_kvs_from_cold_batch, DeferredScanDiagnostics,
+        ScanAccess,
+    },
     provider::{
         merged_projection_scan_descriptor, mvcc_filter_capability, FilterCapability,
         ScanDescriptor, SourceProvider,
@@ -55,6 +58,7 @@ use crate::{
     user_tables::{UserTableIndexedStore, UserTableRow},
     utils::{
         base::{self, BaseTableProvider, DeferredMvccScanProvider, TableProviderCore},
+        datafusion_dml::UpdateChange,
         row_utils::extract_user_context,
     },
     versioned::pk_index::{new_user_pk_index, PkPrefix, VersionedPkIndex},

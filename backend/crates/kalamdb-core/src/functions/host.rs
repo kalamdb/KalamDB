@@ -248,9 +248,9 @@ impl CoreFunctionHost {
         )?;
         let _span = kalamdb_observability::kdb_info_span_entered!("func.host.convert_result");
         if rows {
-            super::convert::execution_result_to_rows(result).map_err(map_core)
+            super::convert::execution_result_to_rows(result).await.map_err(map_core)
         } else {
-            super::convert::execution_result_to_routine(result).map_err(map_core)
+            super::convert::execution_result_to_routine(result).await.map_err(map_core)
         }
     }
 

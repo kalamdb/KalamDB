@@ -201,9 +201,8 @@ impl WireConnectionState {
         &self,
         sql: &str,
     ) -> Result<(), WireConnectionStateError> {
-        let limit = self
-            .statement_sql_bytes_limit
-            .saturating_mul(SIMPLE_QUERY_MESSAGE_LIMIT_FACTOR);
+        let limit =
+            self.statement_sql_bytes_limit.saturating_mul(SIMPLE_QUERY_MESSAGE_LIMIT_FACTOR);
         if sql.len() > limit {
             return Err(WireConnectionStateError::SimpleQueryMessageBytesExceeded {
                 limit,
@@ -343,7 +342,10 @@ mod tests {
             .expect_err("the ninth chunk exceeds the message cap");
         assert_eq!(
             error,
-            WireConnectionStateError::SimpleQueryMessageBytesExceeded { limit: 80, actual: 90 }
+            WireConnectionStateError::SimpleQueryMessageBytesExceeded {
+                limit: 80,
+                actual: 90
+            }
         );
         assert!(state.ensure_statement_sql_bytes(statement).is_ok());
         assert!(state.ensure_statement_sql_bytes(&statement.repeat(2)).is_err());

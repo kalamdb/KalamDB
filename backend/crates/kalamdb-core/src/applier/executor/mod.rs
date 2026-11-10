@@ -36,6 +36,7 @@
 mod ddl;
 pub(crate) mod dml;
 mod namespace;
+mod prepared_commit;
 mod storage;
 mod user;
 mod utils;

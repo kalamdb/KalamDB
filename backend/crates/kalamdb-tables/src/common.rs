@@ -5,8 +5,8 @@ use kalamdb_commons::{
     KSerializable, StorageKey, TableId,
 };
 use kalamdb_store::{
-    EntityCodec, IndexDefinition, IndexedEntityStore, Partition, PrefixIndex, PrefixIndexedKey,
-    PrefixIndexedValue, StorageBackend,
+    EntityCodec, IndexDefinition, IndexRole, IndexedEntityStore, Partition, PrefixIndex,
+    PrefixIndexedKey, PrefixIndexedValue, StorageBackend,
 };
 
 /// Build the canonical RocksDB partition name for a table scope.
@@ -31,10 +31,11 @@ where
     let kind = if user_scoped { "user" } else { "shared" };
     let mut indexes: Vec<Arc<dyn IndexDefinition<K, V>>> =
         Vec::with_capacity(1 + scalar_indexes.len());
-    indexes.push(Arc::new(PrefixIndex::new(
+    indexes.push(Arc::new(PrefixIndex::with_role(
         format!("{}_{}_pk_idx", kind, table_id),
         vec![pk_field_name.to_string()],
         user_scoped,
+        IndexRole::PrimaryKey,
     )));
     for definition in scalar_indexes {
         let Some(names) = definition.resolved_column_names(columns) else {
@@ -43,10 +44,11 @@ where
         if names.is_empty() {
             continue;
         }
-        indexes.push(Arc::new(PrefixIndex::new(
+        indexes.push(Arc::new(PrefixIndex::with_role(
             scalar_index_partition_name(table_id, &definition.name, user_scoped),
             names.into_iter().map(str::to_string).collect(),
             user_scoped,
+            IndexRole::SecondaryScalar,
         )));
     }
     indexes

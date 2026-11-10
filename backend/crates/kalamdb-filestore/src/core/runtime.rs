@@ -35,10 +35,7 @@ fn acquire_blocking_slot() -> BlockingSlotGuard {
     let slots = blocking_slots();
     let mut available = slots.available.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     while *available == 0 {
-        available = slots
-            .ready
-            .wait(available)
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        available = slots.ready.wait(available).unwrap_or_else(|poisoned| poisoned.into_inner());
     }
     *available -= 1;
     BlockingSlotGuard

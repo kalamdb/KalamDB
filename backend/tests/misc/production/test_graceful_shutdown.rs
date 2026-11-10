@@ -163,12 +163,27 @@ fn kalamdb_server_gracefully_shuts_down_on_sigterm() -> Result<(), Box<dyn std::
     // `<logs_path>/server.log`.
     let log_path = temp_dir.path().join("logs").join("server.log");
 
-    let child = Command::new(env!("CARGO_BIN_EXE_kalamdb-server"))
-        .arg(&config_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
+    let child = {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_kalamdb-server"));
+        command
+            .arg(&config_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        for key in [
+            "KALAMDB_SERVER_HOST",
+            "KALAMDB_SERVER_PORT",
+            "KALAMDB_ENABLE_PGWIRE",
+            "KALAMDB_PGWIRE_HOST",
+            "KALAMDB_PGWIRE_PORT",
+            "KALAMDB_ENABLE_PG_EXTENSION",
+            "KALAMDB_GRPC_HOST",
+            "KALAMDB_GRPC_PORT",
+        ] {
+            command.env_remove(key);
+        }
+        command.spawn()?
+    };
     let mut child = ChildGuard::new(child);
 
     wait_for_healthcheck(port, Duration::from_secs(20))?;

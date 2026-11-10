@@ -369,8 +369,8 @@ mod tests {
         assert!(names.contains(&"stats".to_string()));
         assert!(names.contains(&"settings".to_string()));
         assert!(names.contains(&"datatypes".to_string()));
-        assert!(names.contains(&"tables".to_string()));
-        assert!(names.contains(&"columns".to_string()));
+        assert!(!names.contains(&"tables".to_string()));
+        assert!(!names.contains(&"columns".to_string()));
     }
 
     #[test]
@@ -414,22 +414,6 @@ mod tests {
 
         let datatypes = provider.table("datatypes").await.unwrap();
         assert!(datatypes.is_some());
-    }
-
-    #[tokio::test]
-    async fn test_tables_view_lazy_load() {
-        let provider = create_test_provider();
-
-        let tables = provider.table("tables").await.unwrap();
-        assert!(tables.is_some());
-    }
-
-    #[tokio::test]
-    async fn test_columns_view_lazy_load() {
-        let provider = create_test_provider();
-
-        let columns = provider.table("columns").await.unwrap();
-        assert!(columns.is_some());
     }
 
     #[tokio::test]

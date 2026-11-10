@@ -21,13 +21,13 @@
 use std::{
     collections::VecDeque,
     sync::{
-        Arc,
         atomic::{AtomicBool, Ordering},
+        Arc,
     },
 };
 
 use flutter_rust_bridge::frb;
-use kalam_client::{FileRef, QueryParam, query::models::query_param::params_from_json_values};
+use kalam_client::{query::models::query_param::params_from_json_values, FileRef, QueryParam};
 use tokio::sync::{Mutex, Notify};
 
 use crate::models::{
@@ -293,10 +293,10 @@ mod tests {
     use tokio::sync::Notify;
 
     use super::{
-        DART_CONNECTION_EVENT_QUEUE_CAPACITY, DART_INITIAL_RECONNECT_DELAY_MS,
-        DART_MAX_RECONNECT_DELAY_MS, build_dart_connection_options, dart_file_ref_download_url,
-        dart_file_ref_relative_path, dart_file_ref_relative_url, dart_file_ref_stored_name,
-        push_connection_event, push_debug_connection_event,
+        build_dart_connection_options, dart_file_ref_download_url, dart_file_ref_relative_path,
+        dart_file_ref_relative_url, dart_file_ref_stored_name, push_connection_event,
+        push_debug_connection_event, DART_CONNECTION_EVENT_QUEUE_CAPACITY,
+        DART_INITIAL_RECONNECT_DELAY_MS, DART_MAX_RECONNECT_DELAY_MS,
     };
     use crate::models::DartConnectionEvent;
 

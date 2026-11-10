@@ -739,23 +739,21 @@ mod tests {
         };
         let encoded_v1 = encode_shared_row(&row, &schema).unwrap();
         let mut projected = Vec::new();
-        let deleted =
-            project_row_fields(encoded_v1.as_slice(), &schema, &[0], |_, value| {
-                projected.push(value);
-                Ok(())
-            })
-            .unwrap();
+        let deleted = project_row_fields(encoded_v1.as_slice(), &schema, &[0], |_, value| {
+            projected.push(value);
+            Ok(())
+        })
+        .unwrap();
         assert!(!deleted);
         assert_eq!(projected, vec![ScalarValue::Int64(Some(7))]);
 
         let encoded_v2 = encode_shared_row_v2(&row, &schema).unwrap();
         projected.clear();
-        let deleted =
-            project_row_fields(encoded_v2.as_slice(), &schema, &[0], |_, value| {
-                projected.push(value);
-                Ok(())
-            })
-            .unwrap();
+        let deleted = project_row_fields(encoded_v2.as_slice(), &schema, &[0], |_, value| {
+            projected.push(value);
+            Ok(())
+        })
+        .unwrap();
         assert!(!deleted);
         assert_eq!(projected, vec![ScalarValue::Int64(Some(7))]);
     }

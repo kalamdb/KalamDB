@@ -14,6 +14,8 @@ Two different caller families feed that model today:
 
 The important design rule is that explicit transactions do not create a separate write path. Both caller families eventually use the same server-side transaction coordinator and the same durable commit path into the RocksDB-backed table providers.
 
+User, shared, and stream tables expose one DataFusion `TableProvider`, `KalamTableProvider` (`backend/crates/kalamdb-tables/src/provider/mod.rs`). User and shared mutations go through `VersionedTableEngine`. Stream tables stay on the append-log engine, and explicit stream transactions stay rejected. Persisted `system.*` tables use `KeyedTableProvider` (`backend/crates/kalamdb-system/src/providers/keyed_provider.rs`). Virtual `system.*`, `pg_catalog`, and Kalam `information_schema` relations use `ComputedCatalogProvider` (`backend/crates/kalamdb-views/src/catalog_provider.rs`). Those computed relations are projected in memory. They are not RocksDB tables and they are not flushed. SQL writes against `KeyedTableProvider` stay rejected; typed store methods remain the mutation path. Non-admin sessions cannot read or write `system.*` through that provider, including when the relation is reached from a view.
+
 Autocommit requests are different: they bypass transaction staging and go directly to the unified applier/provider path.
 
 The DataFusion user/shared-table DML callbacks compile UPDATE assignments once per
@@ -232,6 +234,10 @@ Because explicit writes are staged until commit, rollback does not need a compen
 Explicit transaction commit is currently constrained to one data Raft group.
 
 `RaftManager::resolve_transaction_group_id()` rejects a batch that spans multiple data groups, and `RaftApplier` delegates to that Raft-owned boundary before proposing `TransactionCommit`. This keeps the durable apply path single-group and avoids multi-group coordination in the current design.
+
+Both standalone mode and cluster mode (including a cluster with one node) bind an explicit transaction to the first USER or SHARED data group it accesses. A later access to another group is rejected before its write is staged; the transaction remains open and its earlier writes can still be committed or rolled back. USER + SHARED, two USER shards, and two SHARED shards are permitted only when their resolved group IDs are the same. A single RocksDB column family shared by Raft keys does not provide cross-group atomicity. Cross-group commits require a separate durable coordination design and are not currently supported, even on one node.
+
+A default standalone instance starts three Raft groups: metadata, one USER data group, and one SHARED data group. All users map to the same USER group, so one explicit transaction can write rows for multiple users. A configured cluster starts one metadata group plus its configured USER and SHARED shard counts, even when it has only one node. Standalone routing must use the Raft manager's one-shard counts rather than the clustered router defaults.
 
 ### Unsupported table classes
 

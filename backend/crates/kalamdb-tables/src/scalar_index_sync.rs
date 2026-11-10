@@ -161,7 +161,8 @@ fn validate_scalar_index(
     }
     if names.len() > MAX_SCALAR_INDEX_COLUMNS {
         return Err(format!(
-            "scalar index {} on {table_id} has {} columns; at most {MAX_SCALAR_INDEX_COLUMNS} are supported",
+            "scalar index {} on {table_id} has {} columns; at most {MAX_SCALAR_INDEX_COLUMNS} are \
+             supported",
             definition.name,
             names.len()
         ));

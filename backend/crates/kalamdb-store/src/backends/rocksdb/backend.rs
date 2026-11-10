@@ -364,10 +364,22 @@ impl StorageBackend for RocksDBBackend {
             physical_cf = physical_cf_for_partition(partition.name())
         );
         let cf = self.get_cf(partition)?;
+        kalamdb_observability::dml_stage::add_count(
+            kalamdb_observability::dml_stage::DmlCount::BackendLookup,
+            1,
+        );
         let physical_key = physical_key(partition.name(), key);
         self.db
             .get_pinned_cf(&cf, physical_key)
-            .map(|value| value.map(|slice| slice.to_vec()))
+            .map(|value| {
+                value.map(|slice| {
+                    kalamdb_observability::dml_stage::add_count(
+                        kalamdb_observability::dml_stage::DmlCount::FetchedBytes,
+                        slice.len() as u64,
+                    );
+                    slice.to_vec()
+                })
+            })
             .map_err(|e| StorageError::IoError(e.to_string()))
     }
 
@@ -376,13 +388,29 @@ impl StorageBackend for RocksDBBackend {
             return Ok(Vec::new());
         }
         let cf = self.get_cf(partition)?;
+        kalamdb_observability::dml_stage::add_count(
+            kalamdb_observability::dml_stage::DmlCount::BackendLookup,
+            keys.len() as u64,
+        );
         let physical_keys: Vec<Vec<u8>> =
             keys.iter().map(|key| physical_key(partition.name(), key)).collect();
         let lookups = physical_keys.iter().map(|key| (&cf, key.as_slice()));
         self.db
             .multi_get_cf(lookups)
             .into_iter()
-            .map(|value| value.map_err(|error| StorageError::IoError(error.to_string())))
+            .map(|value| {
+                value
+                    .map(|bytes| {
+                        if let Some(bytes) = bytes.as_ref() {
+                            kalamdb_observability::dml_stage::add_count(
+                                kalamdb_observability::dml_stage::DmlCount::FetchedBytes,
+                                bytes.len() as u64,
+                            );
+                        }
+                        bytes
+                    })
+                    .map_err(|error| StorageError::IoError(error.to_string()))
+            })
             .collect()
     }
 
@@ -425,6 +453,26 @@ impl StorageBackend for RocksDBBackend {
         let Some(operations) = crate::write_coalesce::buffer_operations(operations) else {
             return Ok(());
         };
+        let _backend = kalamdb_observability::dml_stage::stage_guard(
+            kalamdb_observability::dml_stage::DmlStage::BackendSubmit,
+        );
+        if kalamdb_observability::dml_stage::tracing_enabled() {
+            let submitted_bytes = operations
+                .iter()
+                .map(|op| match op {
+                    Operation::Put { key, value, .. } => key.len() + value.len(),
+                    Operation::Delete { key, .. } => key.len(),
+                })
+                .sum::<usize>() as u64;
+            kalamdb_observability::dml_stage::add_units(
+                kalamdb_observability::dml_stage::DmlStage::BackendSubmit,
+                operations.len() as u64,
+            );
+            kalamdb_observability::dml_stage::add_count(
+                kalamdb_observability::dml_stage::DmlCount::SubmittedBytes,
+                submitted_bytes,
+            );
+        }
         let _span = kalamdb_observability::kdb_debug_span_entered!(
             "rocksdb.batch",
             op_count = operations.len()
@@ -450,13 +498,16 @@ impl StorageBackend for RocksDBBackend {
             };
 
             let partition_name = partition.name();
-            let cache_entry = match partition_cache.entry(partition_name.to_string()) {
-                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    let cf = self.get_cf(&partition)?;
-                    entry.insert((cf, partition_key_prefix(partition_name)))
-                },
-            };
+            if !partition_cache.contains_key(partition_name) {
+                let cf = self.get_cf(&partition)?;
+                partition_cache.insert(
+                    partition_name.to_string(),
+                    (cf, partition_key_prefix(partition_name)),
+                );
+            }
+            let cache_entry = partition_cache.get(partition_name).expect(
+                "partition handle is inserted before the batch writes that partition",
+            );
             let physical_key = prefixed_physical_key(&cache_entry.1, &key);
 
             match value {
@@ -521,12 +572,17 @@ impl StorageBackend for RocksDBBackend {
             partition_prefix: Vec<u8>,
             user_prefix: Option<Vec<u8>>,
             remaining: Option<usize>,
+            trace: bool,
+            started: Option<std::time::Instant>,
         }
 
         impl<'a, D: rocksdb::DBAccess> Iterator for SnapshotScanIter<'a, D> {
             type Item = (Vec<u8>, Vec<u8>);
 
             fn next(&mut self) -> Option<Self::Item> {
+                if self.trace && self.started.is_none() {
+                    self.started = Some(std::time::Instant::now());
+                }
                 if let Some(0) = self.remaining {
                     return None;
                 }
@@ -547,10 +603,32 @@ impl StorageBackend for RocksDBBackend {
                                 *left -= 1;
                             }
                         }
+                        if self.trace {
+                            kalamdb_observability::dml_stage::add_count(
+                                kalamdb_observability::dml_stage::DmlCount::BackendLookup,
+                                1,
+                            );
+                            kalamdb_observability::dml_stage::add_count(
+                                kalamdb_observability::dml_stage::DmlCount::FetchedBytes,
+                                v.len() as u64,
+                            );
+                        }
                         Some((logical_key.to_vec(), v.to_vec()))
                     },
                     Err(_) => None,
                 }
+            }
+        }
+
+        impl<'a, D: rocksdb::DBAccess> Drop for SnapshotScanIter<'a, D> {
+            fn drop(&mut self) {
+                let Some(start) = self.started else {
+                    return;
+                };
+                kalamdb_observability::dml_stage::record_elapsed(
+                    kalamdb_observability::dml_stage::DmlStage::ScanFilter,
+                    start.elapsed(),
+                );
             }
         }
 
@@ -560,6 +638,8 @@ impl StorageBackend for RocksDBBackend {
             partition_prefix,
             user_prefix,
             remaining: limit,
+            trace: kalamdb_observability::dml_stage::tracing_enabled(),
+            started: None,
         };
 
         Ok(Box::new(iter))

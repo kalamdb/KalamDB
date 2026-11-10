@@ -90,11 +90,6 @@ impl AuditLogsTableProvider {
         row.map(|value| Self::decode_audit_row(&value)).transpose()
     }
 
-    /// Scan all audit log entries and return as RecordBatch
-    pub fn scan_all_entries(&self) -> Result<datafusion::arrow::array::RecordBatch, SystemError> {
-        self.sql.scan_all_to_batch()
-    }
-
     /// Scan all audit log entries and return as Vec<AuditLogEntry>
     /// Useful for testing and internal usage where RecordBatch is not needed
     pub fn scan_all(&self) -> Result<Vec<AuditLogEntry>, SystemError> {
@@ -182,7 +177,7 @@ mod tests {
         }
 
         // Scan all
-        let batch = provider.scan_all_entries().unwrap();
+        let batch = provider.sql.scan_all_to_batch().unwrap();
         assert_eq!(batch.num_rows(), 5);
         assert_eq!(batch.num_columns(), 8);
     }
@@ -203,7 +198,7 @@ mod tests {
             .unwrap();
 
         // Scan all and verify
-        let batch = provider.scan_all_entries().unwrap();
+        let batch = provider.sql.scan_all_to_batch().unwrap();
         assert_eq!(batch.num_rows(), 3);
 
         // Verify actions column
@@ -225,7 +220,7 @@ mod tests {
             .unwrap();
 
         // Scan with all columns
-        let batch = provider.scan_all_entries().unwrap();
+        let batch = provider.sql.scan_all_to_batch().unwrap();
         assert_eq!(batch.num_columns(), 8);
 
         // Verify schema matches
@@ -247,7 +242,7 @@ mod tests {
         }
 
         // Verify all entries
-        let batch = provider.scan_all_entries().unwrap();
+        let batch = provider.sql.scan_all_to_batch().unwrap();
         assert_eq!(batch.num_rows(), 100);
     }
 
@@ -270,7 +265,7 @@ mod tests {
         provider.append(entry).unwrap();
 
         // Verify nullable fields handled correctly
-        let batch = provider.scan_all_entries().unwrap();
+        let batch = provider.sql.scan_all_to_batch().unwrap();
         assert_eq!(batch.num_rows(), 1);
     }
 
@@ -286,7 +281,7 @@ mod tests {
         }
 
         // Scan all
-        let batch = provider.scan_all_entries().unwrap();
+        let batch = provider.sql.scan_all_to_batch().unwrap();
         assert_eq!(batch.num_rows(), 3);
 
         // Verify timestamps column exists
@@ -304,7 +299,7 @@ mod tests {
         provider
             .append(create_test_entry("audit_001", "test.action", 1730000000000))
             .unwrap();
-        let batch = provider.scan_all_entries().unwrap();
+        let batch = provider.sql.scan_all_to_batch().unwrap();
         assert_eq!(batch.num_rows(), 1);
     }
 }

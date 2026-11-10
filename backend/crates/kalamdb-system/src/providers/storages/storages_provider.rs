@@ -61,11 +61,6 @@ impl StoragesTableProvider {
         row.map(|value| Self::decode_storage_row(&value)).transpose()
     }
 
-    /// Alias for get_storage_by_id (for backward compatibility)
-    pub fn get_storage(&self, storage_id: &StorageId) -> Result<Option<Storage>, SystemError> {
-        self.get_storage_by_id(storage_id)
-    }
-
     /// Update an existing storage entry
     pub fn update_storage(&self, storage: Storage) -> Result<(), SystemError> {
         // Check if storage exists
@@ -151,7 +146,7 @@ mod tests {
         provider.create_storage(storage.clone()).unwrap();
 
         let storage_id = StorageId::local();
-        let retrieved = provider.get_storage(&storage_id).unwrap();
+        let retrieved = provider.get_storage_by_id(&storage_id).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.storage_id, storage_id);
@@ -170,7 +165,7 @@ mod tests {
 
         // Verify
         let storage_id = StorageId::local();
-        let retrieved = provider.get_storage(&storage_id).unwrap().unwrap();
+        let retrieved = provider.get_storage_by_id(&storage_id).unwrap().unwrap();
         assert_eq!(retrieved.description, Some("Updated description".to_string()));
     }
 
@@ -184,7 +179,7 @@ mod tests {
         let storage_id = StorageId::local();
         provider.delete_storage(&storage_id).unwrap();
 
-        let retrieved = provider.get_storage(&storage_id).unwrap();
+        let retrieved = provider.get_storage_by_id(&storage_id).unwrap();
         assert!(retrieved.is_none());
     }
 

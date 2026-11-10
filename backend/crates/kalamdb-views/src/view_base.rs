@@ -83,6 +83,10 @@ impl<V: VirtualView + 'static> CatalogSource for VirtualViewSource<V> {
         self.view.schema()
     }
 
+    fn required_system_table(&self) -> Option<SystemTable> {
+        Some(self.view.system_table())
+    }
+
     async fn batch(&self, _ctx: &CatalogScanCtx<'_>) -> DataFusionResult<RecordBatch> {
         self.view.compute_batch().map_err(|error| {
             DataFusionError::Execution(format!(
@@ -156,5 +160,44 @@ impl<V: VirtualView + 'static> TableProvider for ViewTableProvider<V> {
         filters: &[&Expr],
     ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         self.inner.supports_filters_pushdown(filters)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use datafusion::arrow::{
+        datatypes::{Schema, SchemaRef},
+        record_batch::RecordBatch,
+    };
+    use kalamdb_system::SystemTable;
+
+    use super::*;
+    use crate::{catalog_provider::CatalogSource, error::RegistryError};
+
+    #[derive(Debug)]
+    struct JobsView;
+
+    impl VirtualView for JobsView {
+        fn system_table(&self) -> SystemTable {
+            SystemTable::Jobs
+        }
+
+        fn schema(&self) -> SchemaRef {
+            Arc::new(Schema::empty())
+        }
+
+        fn compute_batch(&self) -> Result<RecordBatch, RegistryError> {
+            Ok(RecordBatch::new_empty(self.schema()))
+        }
+    }
+
+    #[test]
+    fn system_view_scan_requires_the_system_table_permission() {
+        let source = VirtualViewSource {
+            view: Arc::new(JobsView),
+        };
+        assert_eq!(CatalogSource::required_system_table(&source), Some(SystemTable::Jobs));
     }
 }

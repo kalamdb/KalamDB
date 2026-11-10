@@ -156,18 +156,14 @@ impl TableProvider for SharedTableProvider {
                 &[&pk_column],
             )?;
             let rls_state = Self::session_state_with_rls_command(state, PolicyCommand::Delete)?;
-            let rows = crate::utils::datafusion_dml::collect_matching_rows_with_projection(
+            crate::utils::datafusion_dml::collect_matching_primary_keys(
                 self,
                 &rls_state,
                 &filters,
                 projection.as_ref(),
+                &pk_column,
             )
-            .await?;
-            let mut pk_values = Vec::with_capacity(rows.len());
-            for row in rows {
-                pk_values.push(crate::utils::datafusion_dml::extract_pk_value(&row, &pk_column)?);
-            }
-            pk_values
+            .await?
         };
         if pk_values.is_empty() {
             return kalamdb_datafusion_sources::dml::rows_affected_plan(state, 0).await;
@@ -289,17 +285,6 @@ impl TableProvider for SharedTableProvider {
             )?
         };
         let rls_state = Self::session_state_with_rls_command(state, PolicyCommand::Update)?;
-        let rows = crate::utils::datafusion_dml::collect_matching_rows_with_projection(
-            self,
-            &rls_state,
-            &filters,
-            projection.as_ref(),
-        )
-        .await?;
-        if rows.is_empty() {
-            return kalamdb_datafusion_sources::dml::rows_affected_plan(state, 0).await;
-        }
-
         let mut seen = HashSet::new();
         let mut updated: u64 = 0;
         let transaction_query_context = extract_transaction_query_context(state);
@@ -311,23 +296,27 @@ impl TableProvider for SharedTableProvider {
             .await
             .map_err(crate::error::into_datafusion)?;
         let mut ordinal = 0u32;
-        let mut staged_mutations =
-            transaction_query_context.map(|_| Vec::with_capacity(rows.len()));
+        let mut staged_mutations = transaction_query_context.map(|_| Vec::new());
         let mut direct_updates = Vec::new();
         let mut pk_moves: Vec<(String, Row)> = Vec::new();
+        let mut matched = false;
 
         let eval_schema =
             kalamdb_datafusion_sources::dml::projected_schema(&schema, projection.as_deref())?;
         let evaluator = PreparedUpdateAssignments::new(state, &eval_schema, &assignments)?;
-        let batch_size = state.config().batch_size().max(1);
-        let mut remaining = rows.into_iter();
-        loop {
-            let batch = remaining.by_ref().take(batch_size).collect::<Vec<_>>();
-            if batch.is_empty() {
-                break;
-            }
-            let evaluated = evaluator.evaluate(&batch)?;
-            for (row, evaluated_updates) in batch.into_iter().zip(evaluated) {
+        crate::utils::datafusion_dml::visit_matching_batches(
+            self,
+            &rls_state,
+            &filters,
+            projection.as_ref(),
+            |batch| {
+                if batch.num_rows() == 0 {
+                    return Ok(());
+                }
+                matched = true;
+                let source_rows = kalamdb_datafusion_sources::dml::record_batch_to_rows(&batch)?;
+                let evaluated = evaluator.evaluate_batch(&batch)?;
+                for (row, evaluated_updates) in source_rows.into_iter().zip(evaluated) {
                 let pk_value = crate::utils::datafusion_dml::extract_pk_value(&row, &pk_column)?;
                 if !seen.insert(pk_value.clone()) {
                     continue;
@@ -343,68 +332,48 @@ impl TableProvider for SharedTableProvider {
                         self.core.table_id()
                     )));
                 }
-                if let Some(_new_pk) = crate::utils::datafusion_dml::relocated_primary_key(
-                    &evaluated_updates,
+                let change = crate::utils::datafusion_dml::classify_update(
+                    &schema,
                     &pk_column,
                     &pk_value,
-                )? {
-                    let inserted_row = crate::utils::datafusion_dml::prepared_primary_key_move(
-                        self.core.is_auto_increment_pk(),
-                        &pk_column,
-                        &row,
-                        &evaluated_updates,
-                        &schema,
-                    )?;
-                    if let Some(staged_mutations) = staged_mutations.as_mut() {
-                        let transaction_id = transaction_query_context
-                            .expect("transaction_query_context must exist when staging UPDATE")
-                            .transaction_id
-                            .clone();
-                        crate::utils::datafusion_dml::stage_primary_key_move(
-                            staged_mutations,
-                            transaction_id,
-                            self.core.table_id(),
-                            TableType::Shared,
-                            user_id.clone(),
-                            &pk_column,
-                            pk_value,
-                            inserted_row,
-                        )?;
-                        updated += 1;
-                        continue;
-                    }
-                    pk_moves.push((pk_value, inserted_row));
-                    updated += 1;
-                    continue;
-                }
-                if crate::utils::datafusion_dml::update_assignments_noop(
-                    &schema,
+                    self.core.is_auto_increment_pk(),
                     &row,
-                    &evaluated_updates,
-                )? {
-                    continue;
-                }
-
+                    evaluated_updates,
+                )?;
                 if let Some(staged_mutations) = staged_mutations.as_mut() {
-                    let transaction_id = transaction_query_context
-                        .expect("transaction_query_context must exist when staging UPDATE")
-                        .transaction_id
-                        .clone();
-                    crate::utils::datafusion_dml::stage_field_update(
+                    let context = transaction_query_context
+                        .expect("transaction_query_context must exist when staging UPDATE");
+                    if crate::utils::datafusion_dml::stage_update_change(
                         staged_mutations,
-                        transaction_id,
+                        context,
                         self.core.table_id(),
                         TableType::Shared,
-                        user_id.clone(),
+                        &user_id,
+                        &pk_column,
                         pk_value,
-                        evaluated_updates,
-                    );
-                    updated += 1;
+                        change,
+                    )? {
+                        updated += 1;
+                    }
                     continue;
                 }
-
-                direct_updates.push((pk_value, evaluated_updates));
-            }
+                match change {
+                    UpdateChange::Unchanged => {},
+                    UpdateChange::PrimaryKeyMove(inserted_row) => {
+                        pk_moves.push((pk_value, inserted_row));
+                        updated += 1;
+                    },
+                    UpdateChange::FieldUpdate(updates) => {
+                        direct_updates.push((pk_value, updates));
+                    },
+                }
+                }
+                Ok(())
+            },
+        )
+        .await?;
+        if !matched {
+            return kalamdb_datafusion_sources::dml::rows_affected_plan(state, 0).await;
         }
 
         if !pk_moves.is_empty() {

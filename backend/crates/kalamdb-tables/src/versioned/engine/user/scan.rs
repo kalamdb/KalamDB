@@ -67,9 +67,13 @@ impl UserTableProvider {
             filter,
             limit,
             keep_deleted,
+            usize::MAX,
             crate::versioned::columnar::decode_user_version,
         )
         .await
+        .and_then(|scanned| {
+            Ok(scanned.map(|(mut batches, visited)| (batches.remove(0), visited)))
+        })
     }
 }
 
@@ -133,7 +137,8 @@ impl DeferredMvccScanProvider<UserTableRowId, UserTableRow> for UserTableProvide
         filter: Option<&Expr>,
         limit: Option<usize>,
         keep_deleted: bool,
-    ) -> Result<Option<(RecordBatch, usize)>, KalamDbError> {
+        chunk_rows: usize,
+    ) -> Result<Option<(Vec<RecordBatch>, usize)>, KalamDbError> {
         if scan_context.allow_all_users {
             return Ok(None);
         }
@@ -146,6 +151,7 @@ impl DeferredMvccScanProvider<UserTableRowId, UserTableRow> for UserTableProvide
             filter,
             limit,
             keep_deleted,
+            chunk_rows,
             crate::versioned::columnar::decode_user_version,
         )
         .await

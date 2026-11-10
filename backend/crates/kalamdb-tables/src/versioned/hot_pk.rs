@@ -6,9 +6,10 @@ use std::{
 
 use datafusion::{arrow::datatypes::SchemaRef, scalar::ScalarValue};
 use kalamdb_commons::{
-    models::rows::Row, websocket::ChangeNotification, KSerializable, StorageKey, TableId, UserId,
+    ids::VersionId, models::rows::Row, websocket::ChangeNotification, KSerializable, StorageKey,
+    TableId, UserId,
 };
-use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore};
+use kalamdb_store::{entity_store::EntityStore, storage_trait::Operation, IndexedEntityStore};
 
 use crate::{
     error::KalamDbError, error_extensions::KalamDbResultExt, utils::core::TableProviderCore,
@@ -55,7 +56,8 @@ where
         .into_kalamdb_error("PK index scan failed")?
     {
         Some((_, false)) => Err(KalamDbError::AlreadyExists(format!(
-            "Primary key violation: value '{pk_str}' already exists in column '{pk_name}' (hot storage)"
+            "Primary key violation: value '{pk_str}' already exists in column '{pk_name}' (hot \
+             storage)"
         ))),
         Some((key, true)) => {
             let row = store.get(&key).into_kalamdb_error("PK tombstone load failed")?.ok_or_else(
@@ -65,6 +67,7 @@ where
                     ))
                 },
             )?;
+            kalamdb_observability::dml_stage::record_baseline_decode();
             Ok(InsertPredecessor::Tombstone(key, row))
         },
         None => Ok(InsertPredecessor::Missing),
@@ -210,7 +213,7 @@ pub(crate) fn mutation_target_from_hot<K, V>(
 ) -> MutationTarget<K, V> {
     match lookup {
         HotPkLookup::Live(key, row) => MutationTarget::Hot(key, row),
-        HotPkLookup::Tombstoned(_, _) => MutationTarget::Tombstoned,
+        HotPkLookup::Tombstoned(key, row) => MutationTarget::Tombstoned(key, row),
         HotPkLookup::Missing => match cold {
             Some(row) => MutationTarget::Cold(row),
             None => MutationTarget::Missing,
@@ -225,7 +228,7 @@ pub(crate) fn optional_live_row<K, V: Clone>(
     match target {
         MutationTarget::Hot(key, row) => Some((Some((key, row.clone())), row)),
         MutationTarget::Cold(row) => Some((None, row)),
-        MutationTarget::Tombstoned | MutationTarget::Missing => None,
+        MutationTarget::Tombstoned(_, _) | MutationTarget::Missing => None,
     }
 }
 
@@ -239,43 +242,80 @@ pub(crate) fn mutation_applied<K>(
     }
 }
 
-pub(crate) fn write_insert_batch<K, V>(
+/// Build insert or tombstone-replacement operations without calling the backend.
+pub(crate) fn append_insert_batch_ops<K, V>(
     store: &IndexedEntityStore<K, V>,
     entries: &[(K, V)],
     mut replaced_tombstones: HashMap<String, (K, V)>,
     pk_name: &str,
     fields_of: impl Fn(&V) -> &Row,
+    operations: &mut Vec<Operation>,
 ) -> Result<(), KalamDbError>
 where
     K: StorageKey + Clone,
     V: KSerializable + Clone + 'static,
 {
-    if replaced_tombstones.is_empty() {
-        store.insert_batch(entries).map_err(|error| {
-            KalamDbError::InvalidOperation(format!("Failed to batch insert table rows: {error}"))
-        })?;
+    if entries.is_empty() {
         return Ok(());
     }
-    let items = entries
-        .iter()
-        .map(|(key, entity)| {
-            let previous =
-                crate::utils::unified_dml::extract_user_pk_value(fields_of(entity), pk_name)
-                    .ok()
-                    .and_then(|pk| replaced_tombstones.remove(&pk));
-            (previous, key.clone(), entity.clone())
-        })
-        .collect::<Vec<_>>();
-    store.replace_batch(&items).map_err(|error| {
-        KalamDbError::InvalidOperation(format!("Failed to batch insert table rows: {error}"))
-    })?;
+    if replaced_tombstones.is_empty() {
+        return store.append_insert_ops(entries, operations).map_err(|error| {
+            KalamDbError::InvalidOperation(format!("Failed to batch insert table rows: {error}"))
+        });
+    }
+    for (key, entity) in entries {
+        let previous = crate::utils::unified_dml::extract_user_pk_value(fields_of(entity), pk_name)
+            .ok()
+            .and_then(|pk| replaced_tombstones.remove(&pk));
+        append_replaced_row_ops(
+            store,
+            operations,
+            previous,
+            key,
+            entity,
+            "Failed to batch insert table rows",
+        )?;
+    }
     Ok(())
+}
+
+pub(crate) fn append_replaced_row_ops<K, V>(
+    store: &IndexedEntityStore<K, V>,
+    operations: &mut Vec<Operation>,
+    previous: Option<(K, V)>,
+    row_key: &K,
+    entity: &V,
+    error_context: &str,
+) -> Result<(), KalamDbError>
+where
+    K: StorageKey + Clone,
+    V: KSerializable + Clone + 'static,
+{
+    store
+        .append_replace_ops(
+            operations,
+            previous.as_ref().map(|(key, row)| (key, row)),
+            row_key,
+            entity,
+            None,
+        )
+        .map_err(|error| KalamDbError::InvalidOperation(format!("{error_context}: {error}")))
 }
 
 pub(crate) fn required_pk_scalar(row: &Row, pk_name: &str) -> Result<ScalarValue, KalamDbError> {
     row.get(pk_name)
         .cloned()
         .ok_or_else(|| KalamDbError::InvalidOperation(format!("Prior row missing PK {pk_name}")))
+}
+
+/// Vector or delete work for one row inside a scope finish.
+///
+/// Absent when the table has no vector columns. The scope still receives one
+/// pending-write mark.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PlannedScopeFinish {
+    Upsert { version: VersionId, row: Row },
+    Delete { version: VersionId, pk: String },
 }
 
 /// One applied hot mutation, including the prior row for file cleanup.
@@ -296,12 +336,72 @@ pub(crate) fn require_live_row<K, V: Clone>(
     match target {
         MutationTarget::Hot(key, row) => Ok((Some((key, row.clone())), row)),
         MutationTarget::Cold(row) => Ok((None, row)),
-        MutationTarget::Tombstoned => {
+        MutationTarget::Tombstoned(_, _) => {
             Err(KalamDbError::NotFound(format!("Row with {pk_name}={pk_value} was deleted")))
         },
         MutationTarget::Missing => Err(KalamDbError::NotFound(format!(
             "Row with {pk_name}={pk_value} not found (checked both hot and cold storage)"
         ))),
+    }
+}
+
+/// One owned baseline row. The hot key is present only when hot storage has it.
+pub(crate) enum LoadedBaseline<K, V> {
+    Hot(K, V),
+    Cold(V),
+}
+
+/// Move a resolved baseline into an update. A tombstone and a miss are errors.
+pub(crate) fn take_update_baseline<K, V>(
+    baseline: super::AuthoritativeBaseline<K, V>,
+    deleted: impl FnOnce(&V) -> bool,
+    pk_name: &str,
+    pk_value: &str,
+) -> Result<LoadedBaseline<K, V>, KalamDbError> {
+    match baseline {
+        super::AuthoritativeBaseline::Hot { key, row } => {
+            if deleted(&row) {
+                return Err(KalamDbError::NotFound(format!(
+                    "Row with {pk_name}={pk_value} was deleted"
+                )));
+            }
+            Ok(LoadedBaseline::Hot(key, row))
+        },
+        super::AuthoritativeBaseline::Cold { row } => Ok(LoadedBaseline::Cold(row)),
+        super::AuthoritativeBaseline::Missing => Err(KalamDbError::NotFound(format!(
+            "Row with {pk_name}={pk_value} not found (checked both hot and cold storage)"
+        ))),
+    }
+}
+
+/// Move a resolved baseline into a delete. A tombstone and a miss delete nothing.
+pub(crate) fn take_delete_baseline<K, V>(
+    baseline: super::AuthoritativeBaseline<K, V>,
+    deleted: impl FnOnce(&V) -> bool,
+) -> Option<LoadedBaseline<K, V>> {
+    match baseline {
+        super::AuthoritativeBaseline::Hot { key, row } => {
+            if deleted(&row) {
+                None
+            } else {
+                Some(LoadedBaseline::Hot(key, row))
+            }
+        },
+        super::AuthoritativeBaseline::Cold { row } => Some(LoadedBaseline::Cold(row)),
+        super::AuthoritativeBaseline::Missing => None,
+    }
+}
+
+/// Keep the tombstone key. Insert replacement and version checks use this row.
+pub(crate) fn authoritative_baseline<K, V>(
+    target: MutationTarget<K, V>,
+) -> super::AuthoritativeBaseline<K, V> {
+    match target {
+        MutationTarget::Hot(key, row) | MutationTarget::Tombstoned(key, row) => {
+            super::AuthoritativeBaseline::Hot { key, row }
+        },
+        MutationTarget::Cold(row) => super::AuthoritativeBaseline::Cold { row },
+        MutationTarget::Missing => super::AuthoritativeBaseline::Missing,
     }
 }
 
@@ -311,8 +411,8 @@ pub(crate) enum MutationTarget<K, V> {
     Hot(K, V),
     /// Row exists only in a cold segment. The new hot key has no predecessor.
     Cold(V),
-    /// Newest hot row is already a tombstone.
-    Tombstoned,
+    /// Newest hot row is already a tombstone. The key stays so an insert can replace it.
+    Tombstoned(K, V),
     /// Absent from hot and cold storage.
     Missing,
 }
@@ -353,6 +453,7 @@ where
                         "tombstone for primary key '{pk_str}' disappeared before replacement"
                     )));
                 };
+                kalamdb_observability::dml_stage::record_baseline_decode();
                 tombstones.insert(pk_str.clone(), (key, row));
             },
             Ok(None) => {},
@@ -463,10 +564,10 @@ fn pk_already_exists(pk: &str, column: &str, qualifier: Option<&str>) -> KalamDb
 pub(crate) fn insert_notification_when_watched(
     watched: bool,
     table_id: TableId,
-    row: Row,
+    row: impl FnOnce() -> Row,
 ) -> Option<ChangeNotification> {
     if watched {
-        Some(ChangeNotification::insert(table_id, row))
+        Some(ChangeNotification::insert(table_id, row()))
     } else {
         None
     }
@@ -486,9 +587,9 @@ pub(crate) fn update_notification(
 pub(crate) fn update_notification_when_watched(
     watched: bool,
     table_id: TableId,
-    old_row: Row,
-    new_row: Row,
+    old_row: impl FnOnce() -> Row,
+    new_row: impl FnOnce() -> Row,
     pk_column: String,
 ) -> Option<ChangeNotification> {
-    watched.then(|| update_notification(table_id, old_row, new_row, pk_column))
+    watched.then(|| update_notification(table_id, old_row(), new_row(), pk_column))
 }

@@ -351,19 +351,55 @@ where
     R: ScanRow,
     F: FnMut(&mut Row, &R),
 {
+    let mut batches = rows_to_arrow_batches(schema, kvs, projection, usize::MAX, enrich_row)?;
+    Ok(batches.remove(0))
+}
+
+/// Convert resolved rows into owned batches of at most `chunk_rows`.
+///
+/// Each chunk is built and the source rows for that chunk are dropped before
+/// the next chunk. Callers that still need one batch pass `usize::MAX`.
+pub fn rows_to_arrow_batches<K, R, F>(
+    schema: &SchemaRef,
+    kvs: Vec<(K, R)>,
+    projection: Option<&Vec<usize>>,
+    chunk_rows: usize,
+    enrich_row: F,
+) -> Result<Vec<RecordBatch>, KalamDbError>
+where
+    R: ScanRow,
+    F: FnMut(&mut Row, &R),
+{
+    let chunk_rows = chunk_rows.max(1);
     let row_count = kvs.len();
-    let (target_schema, rows) = materialize_scan_rows(schema, kvs, projection, enrich_row)?;
+    let (target_schema, mut rows) = materialize_scan_rows(schema, kvs, projection, enrich_row)?;
 
     if target_schema.fields().is_empty() {
-        if row_count == 0 {
-            return Ok(RecordBatch::new_empty(target_schema));
-        }
-        let options = RecordBatchOptions::new().with_row_count(Some(row_count));
-        return RecordBatch::try_new_with_options(target_schema, vec![], &options).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to build Arrow batch: {}", e))
-        });
+        let batch = if row_count == 0 {
+            RecordBatch::new_empty(target_schema)
+        } else {
+            let options = RecordBatchOptions::new().with_row_count(Some(row_count));
+            RecordBatch::try_new_with_options(target_schema, vec![], &options).map_err(|e| {
+                KalamDbError::InvalidOperation(format!("Failed to build Arrow batch: {}", e))
+            })?
+        };
+        return Ok(vec![batch]);
     }
 
-    json_rows_to_arrow_batch(&target_schema, rows)
-        .into_invalid_operation("Failed to build Arrow batch")
+    if rows.is_empty() {
+        let batch = json_rows_to_arrow_batch(&target_schema, rows)
+            .into_invalid_operation("Failed to build Arrow batch")?;
+        return Ok(vec![batch]);
+    }
+
+    let mut batches = Vec::with_capacity(rows.len().div_ceil(chunk_rows));
+    while !rows.is_empty() {
+        let width = chunk_rows.min(rows.len());
+        let chunk = rows.drain(..width).collect();
+        batches.push(
+            json_rows_to_arrow_batch(&target_schema, chunk)
+                .into_invalid_operation("Failed to build Arrow batch")?,
+        );
+    }
+    Ok(batches)
 }

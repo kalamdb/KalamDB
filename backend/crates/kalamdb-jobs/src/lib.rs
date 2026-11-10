@@ -26,45 +26,79 @@ pub use jobs_manager::{JobsManager, JobsManagerRuntime, JobsShutdownStatus};
 pub use stream_eviction::StreamEvictionScheduler;
 pub use topic_retention::TopicRetentionScheduler;
 
-// ============================================================================
-// JobWaker implementation (bridges kalamdb-core trait → JobsManager)
-// ============================================================================
-impl kalamdb_core::job_waker::JobWaker for JobsManager {
-    fn awake_job(&self, job_id: kalamdb_commons::JobId) {
-        // Delegate to the inherent method on JobsManager
-        JobsManager::awake_job(self, job_id);
-    }
-}
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, OnceLock, Weak},
+};
 
-// ============================================================================
-// Extension trait: ergonomic `.job_manager()` on AppContext
-// ============================================================================
-use std::sync::Arc;
+use kalamdb_core::{
+    app_context::AppContext,
+    error::KalamDbError,
+    job_waker::{JobCapability, JobWaker},
+};
+use kalamdb_system::JobType;
 
-use kalamdb_core::app_context::AppContext;
-
-/// Extension trait that provides typed access to the `JobsManager` stored
-/// inside `AppContext` (which stores it as `Arc<dyn Any>`).
+/// Extension trait that provides typed access to the installed `JobsManager`.
 pub trait AppContextJobsExt {
-    /// Downcast the type-erased job manager to `Arc<JobsManager>`.
+    /// The job manager installed for this context.
+    ///
+    /// # Panics
+    /// Panics when startup did not register the job capability.
     fn job_manager(&self) -> Arc<JobsManager>;
 }
 
 impl AppContextJobsExt for AppContext {
     fn job_manager(&self) -> Arc<JobsManager> {
-        self.job_manager_raw()
-            .clone()
-            .downcast::<JobsManager>()
-            .expect("job_manager is not a JobsManager — was set_job_manager called?")
+        let key = self as *const AppContext as usize;
+        let managers = installed_job_managers().lock().unwrap_or_else(|err| err.into_inner());
+        managers
+            .get(&key)
+            .and_then(Weak::upgrade)
+            .expect("job capability is not registered")
     }
 }
 
-/// Convenience: create a fully-wired `JobsManager`, register all executors,
-/// and install it into the given `AppContext`.
-pub fn init_job_manager(app_ctx: &Arc<AppContext>) {
+impl JobWaker for JobsManager {
+    fn awake_job(&self, job_id: kalamdb_commons::JobId) {
+        JobsManager::awake_job(self, job_id);
+    }
+}
+
+impl JobCapability for JobsManager {
+    fn registered_executor_names(&self) -> Vec<&'static str> {
+        self.job_registry
+            .registered_job_types()
+            .into_iter()
+            .map(|job_type| job_type.as_str())
+            .collect()
+    }
+}
+
+static INSTALLED_JOB_MANAGERS: OnceLock<Mutex<HashMap<usize, Weak<JobsManager>>>> = OnceLock::new();
+
+fn installed_job_managers() -> &'static Mutex<HashMap<usize, Weak<JobsManager>>> {
+    INSTALLED_JOB_MANAGERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+const REQUIRED_JOB_TYPES: &[JobType] = &[
+    JobType::Flush,
+    JobType::Cleanup,
+    JobType::JobCleanup,
+    JobType::StreamEviction,
+    JobType::Compact,
+    JobType::SegmentCompact,
+    JobType::Backup,
+    JobType::Restore,
+    JobType::VectorIndex,
+    JobType::TopicRetention,
+    JobType::UserExport,
+    JobType::TableExport,
+    JobType::TableImport,
+];
+
+fn register_production_executors(job_registry: &JobRegistry) {
     use crate::executors::*;
 
-    let job_registry = Arc::new(JobRegistry::new());
     job_registry.register(Arc::new(FlushExecutor::new()));
     job_registry.register(Arc::new(CleanupExecutor::new()));
     job_registry.register(Arc::new(JobCleanupExecutor::new()));
@@ -78,6 +112,42 @@ pub fn init_job_manager(app_ctx: &Arc<AppContext>) {
     job_registry.register(Arc::new(UserExportExecutor::new()));
     job_registry.register(Arc::new(TableExportExecutor::new()));
     job_registry.register(Arc::new(TableImportExecutor::new()));
+}
+
+pub(crate) fn missing_job_executors(job_registry: &JobRegistry) -> Vec<JobType> {
+    REQUIRED_JOB_TYPES
+        .iter()
+        .copied()
+        .filter(|job_type| !job_registry.contains(job_type))
+        .collect()
+}
+
+/// Install an already-built manager. Tests that register a subset of executors
+/// use this. Production startup uses [`init_job_manager`].
+pub fn install_job_manager(app_ctx: &Arc<AppContext>, manager: Arc<JobsManager>) {
+    let key = Arc::as_ptr(app_ctx) as usize;
+    installed_job_managers()
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .insert(key, Arc::downgrade(&manager));
+    let cloned = Arc::clone(&manager);
+    let waker: Arc<dyn JobWaker> = cloned;
+    let capability: Arc<dyn JobCapability> = manager;
+    app_ctx.set_job_capability(capability, waker);
+}
+
+/// Create a fully-wired `JobsManager`, register every production executor, and
+/// install it. Startup fails when a required executor is missing.
+pub fn init_job_manager(app_ctx: &Arc<AppContext>) -> Result<(), KalamDbError> {
+    let job_registry = Arc::new(JobRegistry::new());
+    register_production_executors(&job_registry);
+    let missing = missing_job_executors(&job_registry);
+    if !missing.is_empty() {
+        let names = missing.iter().map(|job_type| job_type.as_str()).collect::<Vec<_>>().join(", ");
+        return Err(KalamDbError::InvalidOperation(format!(
+            "job capability is missing executors: {names}"
+        )));
+    }
 
     let jobs_provider = app_ctx.system_tables().jobs();
     let job_nodes_provider = app_ctx.system_tables().job_nodes();
@@ -87,6 +157,39 @@ pub fn init_job_manager(app_ctx: &Arc<AppContext>) {
         job_registry,
         Arc::clone(app_ctx),
     ));
-    // Pass as both the type-erased store and the JobWaker impl
-    app_ctx.set_job_manager(job_manager.clone(), job_manager);
+    install_job_manager(app_ctx, job_manager);
+    if !app_ctx.is_job_manager_initialized() {
+        return Err(KalamDbError::InvalidOperation(
+            "job capability was not registered".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn startup_rejects_a_registry_without_required_executors() {
+        let registry = JobRegistry::new();
+        let missing = missing_job_executors(&registry);
+        assert!(missing.contains(&JobType::Flush));
+        assert!(missing.contains(&JobType::TableExport));
+    }
+
+    #[test]
+    fn production_registration_covers_every_required_executor() {
+        let registry = JobRegistry::new();
+        register_production_executors(&registry);
+        assert!(missing_job_executors(&registry).is_empty());
+        let capability_names = registry
+            .registered_job_types()
+            .into_iter()
+            .map(|job_type| job_type.as_str())
+            .collect::<Vec<_>>();
+        for required in REQUIRED_JOB_TYPES {
+            assert!(capability_names.contains(&required.as_str()));
+        }
+    }
 }

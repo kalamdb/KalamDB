@@ -20,16 +20,16 @@ use once_cell::sync::OnceCell;
 
 use super::providers::{
     catalog::{
-        CatalogFunctionArtifact, CatalogFunctionModule, CatalogFunctionRevision, CatalogRoutine,
-        CatalogRoutineGrant, CatalogRoutineParameter, CatalogSchedule, CatalogStores,
-        CatalogTrigger, CatalogTriggerAttempt, CatalogType, CatalogTypeField,
+        function_artifacts_provider, function_modules_provider, function_revisions_provider,
+        routine_grants_provider, routine_parameters_provider, routines_provider,
+        schedules_provider, trigger_attempts_provider, triggers_provider, type_fields_provider,
+        types_provider, CatalogFunctionArtifact, CatalogFunctionModule, CatalogFunctionRevision,
+        CatalogRoutine, CatalogRoutineGrant, CatalogRoutineParameter, CatalogSchedule,
+        CatalogStores, CatalogTrigger, CatalogTriggerAttempt, CatalogType, CatalogTypeField,
         FunctionArtifactsTableProvider, FunctionModulesTableProvider,
         FunctionRevisionsTableProvider, RoutineGrantsTableProvider, RoutineParametersTableProvider,
         RoutinesTableProvider, SchedulesTableProvider, TriggerAttemptsTableProvider,
-        TriggersTableProvider, TypeFieldsTableProvider, TypesTableProvider, function_artifacts_provider,
-        function_modules_provider, function_revisions_provider, routine_grants_provider,
-        routine_parameters_provider, routines_provider, schedules_provider,
-        trigger_attempts_provider, triggers_provider, type_fields_provider, types_provider,
+        TriggersTableProvider, TypeFieldsTableProvider, TypesTableProvider,
     },
     job_nodes::models::JobNode,
     jobs::models::Job,

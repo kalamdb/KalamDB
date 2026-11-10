@@ -762,8 +762,7 @@ fn decode_selected_indexed(
             );
             continue;
         }
-        let value =
-            read_indexed_value(reader, schema, stored_field_count, offset_table, ordinal)?;
+        let value = read_indexed_value(reader, schema, stored_field_count, offset_table, ordinal)?;
         values.insert(field.name.clone(), value);
     }
     Ok(Row { values })
@@ -780,7 +779,10 @@ fn read_indexed_value(
         SerializationError::Decode(format!("column ordinal {ordinal} is out of schema range"))
     })?;
     if ordinal >= stored_field_count {
-        return Ok(field.missing_default.clone().unwrap_or_else(|| null_for_type(&field.data_type)));
+        return Ok(field
+            .missing_default
+            .clone()
+            .unwrap_or_else(|| null_for_type(&field.data_type)));
     }
     let slot = ordinal.checked_mul(4).ok_or(SerializationError::Truncated)?;
     let slot_end = slot.checked_add(4).ok_or(SerializationError::Truncated)?;

@@ -102,13 +102,12 @@ use std::sync::Arc;
 use datafusion::logical_expr::{Expr, Operator};
 #[cfg(feature = "datafusion")]
 use datafusion::scalar::ScalarValue;
-use kalamdb_commons::ids::VersionId;
-use kalamdb_commons::models::UserId;
-use kalamdb_commons::{KSerializable, StorageKey};
+use kalamdb_commons::{ids::VersionId, models::UserId, KSerializable, StorageKey};
 
 use crate::{
     async_utils::run_blocking_result,
     entity_store::{EntityIterator, EntityStore},
+    index::IndexRole,
     persist::{object_entity_codec, EntityCodec},
     storage_trait::{Operation, Partition, Result, StorageBackend, StorageError},
 };
@@ -169,6 +168,11 @@ where
     /// Used by DataFusion to determine if a filter can use this index.
     /// Should match the order of fields in the index key.
     fn indexed_columns(&self) -> Vec<&str>;
+
+    /// Primary-key indexes keep tombstones. Secondary indexes default to live rows only.
+    fn role(&self) -> IndexRole {
+        IndexRole::SecondaryScalar
+    }
 
     /// Extracts the index key from the entity.
     ///
@@ -395,8 +399,8 @@ where
     /// Rebuild one index CF from every row currently in the main partition.
     ///
     /// Used by `CREATE INDEX` backfill. Empty tables succeed with zero writes.
-    /// Keys include MVCC `seq`, so this indexes all versions the same way live
-    /// inserts do.
+    /// Keys include MVCC `seq`. A secondary scalar index omits tombstone keys;
+    /// a primary-key index keeps them, matching live inserts.
     pub fn backfill_index(&self, index_idx: usize) -> Result<usize> {
         let index = self.indexes.get(index_idx).ok_or_else(|| {
             StorageError::Other(format!("index {} does not exist on this store", index_idx))
@@ -469,7 +473,7 @@ where
                 continue;
             };
             plan.index_idx = idx;
-            let score = plan.score(idx == 0);
+            let score = plan.score(index.role() == IndexRole::PrimaryKey);
             if score > best_score {
                 best_score = score;
                 best = Some(plan);
@@ -597,22 +601,30 @@ where
             return Ok(());
         }
 
-        // Pre-allocate: each entry = 1 entity write + N index writes
+        let mut operations = Vec::new();
+        self.append_insert_ops(entries, &mut operations)?;
+        self.commit_operations(operations)
+    }
+
+    /// Append main-row and index puts for `entries` without writing.
+    pub fn append_insert_ops(
+        &self,
+        entries: &[(K, V)],
+        operations: &mut Vec<Operation>,
+    ) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
         let ops_per_entry = 1 + self.indexes.len();
-        let mut operations = Vec::with_capacity(entries.len() * ops_per_entry);
-
+        operations.reserve(entries.len() * ops_per_entry);
         let partition = self.main_partition.clone();
-
         for (key, entity) in entries {
-            // 1. Main entity write
             let value = self.codec.encode(key, entity)?;
             operations.push(Operation::Put {
                 partition: partition.clone(),
                 key: key.storage_key(),
                 value,
             });
-
-            // 2. Index writes for this entity
             for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
                 if let Some(index_key) = index.extract_key(key, entity) {
                     let index_value = index.index_value(key, entity);
@@ -624,8 +636,26 @@ where
                 }
             }
         }
+        Ok(())
+    }
 
-        // Single atomic batch write for ALL entities
+    /// Append one hot replacement without writing.
+    pub fn append_replace_ops(
+        &self,
+        operations: &mut Vec<Operation>,
+        previous: Option<(&K, &V)>,
+        new_key: &K,
+        new_entity: &V,
+        retention: Option<PinnedHotVersion>,
+    ) -> Result<()> {
+        self.push_replace(operations, previous, new_key, new_entity, retention)
+    }
+
+    /// Submit `operations` in one backend batch. An empty list does not call the backend.
+    pub fn commit_operations(&self, operations: Vec<Operation>) -> Result<()> {
+        if operations.is_empty() {
+            return Ok(());
+        }
         self.backend.batch(operations)
     }
 
@@ -920,17 +950,17 @@ where
                     key: old_storage,
                 });
             }
-            for (index_position, (index, index_partition)) in
-                self.indexes.iter().zip(self.index_partitions.iter()).enumerate()
-            {
+            for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
                 let old_index_key = index.extract_key(old_key, old_entity);
                 let drop_old = if same_key {
                     old_index_key != index.extract_key(new_key, new_entity)
                 } else {
                     true
                 };
-                // Index 0 is the primary-key index. Later indexes are secondary.
-                if drop_old && !(retain_previous && index_position == 0) {
+                // A pinned snapshot keeps the previous key for every role.
+                // PrimaryKey still writes the new tombstone; SecondaryScalar
+                // omits that put because `extract_key` returns None.
+                if drop_old && !retain_previous {
                     if let Some(index_key) = old_index_key {
                         operations.push(Operation::Delete {
                             partition: index_partition.clone(),
@@ -1442,7 +1472,14 @@ where
             .clone();
         let iter = self.backend.scan(&index_partition, prefix, start_key, limit)?;
 
-        let mapped = iter.map(|(index_key, primary_key_bytes)| {
+        let trace_index = kalamdb_observability::dml_stage::tracing_enabled();
+        let mapped = iter.map(move |(index_key, primary_key_bytes)| {
+            if trace_index {
+                kalamdb_observability::dml_stage::add_count(
+                    kalamdb_observability::dml_stage::DmlCount::IndexEntries,
+                    1,
+                );
+            }
             let primary_key = K::from_storage_key(&primary_key_bytes)
                 .map_err(StorageError::SerializationError)?;
             Ok((index_key, primary_key))
@@ -1467,7 +1504,14 @@ where
             .clone();
         let iter = self.backend.scan(&index_partition, prefix, None, limit)?;
 
-        let mapped = iter.map(|(_index_key, primary_key_bytes)| {
+        let trace_index = kalamdb_observability::dml_stage::tracing_enabled();
+        let mapped = iter.map(move |(_index_key, primary_key_bytes)| {
+            if trace_index {
+                kalamdb_observability::dml_stage::add_count(
+                    kalamdb_observability::dml_stage::DmlCount::IndexEntries,
+                    1,
+                );
+            }
             K::from_storage_key(&primary_key_bytes).map_err(StorageError::SerializationError)
         });
 
@@ -1748,11 +1792,15 @@ pub fn extract_i64_equality(filter: &Expr) -> Option<(&str, i64)> {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::{ids::VersionId, JobId, NodeId};
+    use kalamdb_commons::{ids::VersionId, JobId, KSerializable, NodeId};
     use kalamdb_system::{providers::jobs::models::Job, JobStatus, JobType};
 
     use super::*;
-    use crate::{test_utils::InMemoryBackend, StorageBackend};
+    use crate::{
+        index::{IndexRole, PrefixIndex, PrefixIndexedValue},
+        test_utils::InMemoryBackend,
+        StorageBackend,
+    };
 
     // Test index: Jobs by status
     struct TestStatusIndex;
@@ -1821,6 +1869,123 @@ mod tests {
             queue: None,
             priority: None,
         }
+    }
+
+    #[derive(Clone, serde::Serialize, serde::Deserialize)]
+    struct TombstoneRow {
+        id: String,
+        color: String,
+        deleted: bool,
+    }
+
+    impl KSerializable for TombstoneRow {}
+
+    impl PrefixIndexedValue for TombstoneRow {
+        fn prefix_index_field_bytes(&self, column: &str) -> Option<Vec<u8>> {
+            match column {
+                "id" => Some(self.id.as_bytes().to_vec()),
+                "color" => Some(self.color.as_bytes().to_vec()),
+                _ => None,
+            }
+        }
+
+        fn prefix_index_is_tombstone(&self) -> bool {
+            self.deleted
+        }
+    }
+
+    fn tombstone_row(id: &str, color: &str, deleted: bool) -> TombstoneRow {
+        TombstoneRow {
+            id: id.to_string(),
+            color: color.to_string(),
+            deleted,
+        }
+    }
+
+    fn version_key(seq: i64) -> VersionId {
+        VersionId::try_from_i64(seq).expect("version")
+    }
+
+    #[test]
+    fn primary_key_keeps_latest_tombstone_and_secondary_omits_it() {
+        let backend = Arc::new(InMemoryBackend::new());
+        let pk = PrefixIndex::<VersionId, TombstoneRow>::with_role(
+            "rows_pk",
+            vec!["id".to_string()],
+            false,
+            IndexRole::PrimaryKey,
+        );
+        let color = PrefixIndex::<VersionId, TombstoneRow>::with_role(
+            "rows_color",
+            vec!["color".to_string()],
+            false,
+            IndexRole::SecondaryScalar,
+        );
+        let store = IndexedEntityStore::new(
+            backend.clone(),
+            "rows",
+            vec![Arc::new(pk.clone()), Arc::new(color.clone())],
+        );
+        let live_key = version_key(1);
+        let tombstone_key = version_key(2);
+        let live = tombstone_row("row-1", "red", false);
+        let tombstone = tombstone_row("row-1", "red", true);
+        store.insert(&live_key, &live).unwrap();
+
+        let old_pk = pk.extract_key(&live_key, &live).expect("live pk key");
+        let new_pk = pk.extract_key(&tombstone_key, &tombstone).expect("tombstone pk key");
+        let old_color = color.extract_key(&live_key, &live).expect("live color key");
+        assert!(color.extract_key(&tombstone_key, &tombstone).is_none());
+
+        store.replace(Some((&live_key, &live)), &tombstone_key, &tombstone).unwrap();
+
+        assert!(backend.get(&pk.partition(), &new_pk).unwrap().is_some());
+        assert!(backend.get(&pk.partition(), &old_pk).unwrap().is_none());
+        assert!(backend.get(&color.partition(), &old_color).unwrap().is_none());
+        assert!(store.scan_by_index(1, None, None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn pinned_snapshot_keeps_previous_secondary_key_without_a_tombstone_put() {
+        let backend = Arc::new(InMemoryBackend::new());
+        let pk = PrefixIndex::<VersionId, TombstoneRow>::with_role(
+            "rows_pk",
+            vec!["id".to_string()],
+            false,
+            IndexRole::PrimaryKey,
+        );
+        let color = PrefixIndex::<VersionId, TombstoneRow>::with_role(
+            "rows_color",
+            vec!["color".to_string()],
+            false,
+            IndexRole::SecondaryScalar,
+        );
+        let store = IndexedEntityStore::new(
+            backend.clone(),
+            "rows",
+            vec![Arc::new(pk.clone()), Arc::new(color.clone())],
+        );
+        let live_key = version_key(1);
+        let tombstone_key = version_key(5);
+        let live = tombstone_row("row-1", "red", false);
+        let tombstone = tombstone_row("row-1", "red", true);
+        store.insert(&live_key, &live).unwrap();
+        let old_color = color.extract_key(&live_key, &live).expect("live color key");
+        let new_pk = pk.extract_key(&tombstone_key, &tombstone).expect("tombstone pk key");
+
+        let retention = PinnedHotVersion {
+            old_version: version_key(1),
+            new_version: version_key(5),
+            snapshot: version_key(3),
+        };
+        store
+            .replace_pinned(Some((&live_key, &live)), &tombstone_key, &tombstone, retention)
+            .unwrap();
+
+        assert!(color.extract_key(&tombstone_key, &tombstone).is_none());
+        assert!(backend.get(&color.partition(), &old_color).unwrap().is_some());
+        assert!(backend.get(&pk.partition(), &new_pk).unwrap().is_some());
+        assert_eq!(store.scan_by_index(1, None, None).unwrap().len(), 1);
     }
 
     #[test]

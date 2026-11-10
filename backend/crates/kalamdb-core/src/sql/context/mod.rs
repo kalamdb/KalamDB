@@ -11,10 +11,12 @@
 
 mod execution_context;
 mod execution_result;
+mod query_stream;
 
 // Re-export DataFusion's ScalarValue for convenience
 pub use datafusion::scalar::ScalarValue;
 pub use execution_context::ExecutionContext;
 pub use execution_result::ExecutionResult;
+pub use query_stream::{stream_dataframe, QueryBatchStream};
 // Re-export SessionUserContext from kalamdb-session-datafusion for TableProviders.
 pub use kalamdb_session_datafusion::{SessionConfigValues, SessionUserContext};

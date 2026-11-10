@@ -341,7 +341,7 @@ mod tests {
     #[ntest::timeout(4000)]
     async fn schedules_progress_while_job_capacity_is_exhausted() {
         let app = test_app_context_simple();
-        crate::init_job_manager(&app);
+        crate::init_job_manager(&app).expect("job capability");
         app.executor().start().await.unwrap();
         app.executor().initialize_cluster().await.unwrap();
         app.wire_raft_appliers();

@@ -140,7 +140,11 @@ mod tests {
     use super::{contains_internal_namespace_hint, HandlerRegistry, SqlExecutor};
     use crate::sql::{ExecutionContext, ExecutionResult};
 
-    fn result_row_count(result: ExecutionResult) -> usize {
+    async fn result_row_count(result: ExecutionResult) -> usize {
+        let result = result
+            .into_materialized_rows()
+            .await
+            .unwrap_or_else(|error| panic!("materialize rows: {error}"));
         match result {
             ExecutionResult::Rows { row_count, .. }
             | ExecutionResult::ScalarRows { row_count, .. } => row_count,
@@ -461,7 +465,8 @@ mod tests {
                     .execute(sql, &alice, vec![ScalarValue::Utf8(Some("doc-a".to_string()))])
                     .await
                     .unwrap()
-            ),
+            )
+            .await,
             1
         );
         assert_eq!(
@@ -470,7 +475,8 @@ mod tests {
                     .execute(sql, &bob, vec![ScalarValue::Utf8(Some("doc-a".to_string()))])
                     .await
                     .unwrap()
-            ),
+            )
+            .await,
             0
         );
         assert_eq!(
@@ -479,7 +485,8 @@ mod tests {
                     .execute(sql, &bob, vec![ScalarValue::Utf8(Some("doc-b".to_string()))])
                     .await
                     .unwrap()
-            ),
+            )
+            .await,
             1
         );
         assert_eq!(
@@ -488,7 +495,8 @@ mod tests {
                     .execute(sql, &alice, vec![ScalarValue::Utf8(Some("doc-b".to_string()))])
                     .await
                     .unwrap()
-            ),
+            )
+            .await,
             0
         );
         assert_eq!(executor.plan_cache_len(), 1);

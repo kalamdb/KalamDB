@@ -8,7 +8,7 @@ use kalamdb_commons::{
 use kalamdb_system::{providers::storages::models::StorageMode, AuthData, User};
 use tracing::Instrument;
 
-use super::bearer_session_cache::{lookup_cached_bearer_session, store_cached_bearer_session};
+use super::bearer_session_cache::{cache_generation, lookup_cached_bearer_session, store_cached_bearer_session_at_generation};
 use crate::{
     errors::error::{AuthError, AuthResult},
     models::context::AuthenticatedUser,
@@ -25,6 +25,7 @@ pub(super) async fn authenticate_bearer(
         return Ok(cached);
     }
 
+    let generation = cache_generation();
     let span = tracing::info_span!(
         "auth.bearer",
         token_len = token.len(),
@@ -99,7 +100,7 @@ pub(super) async fn authenticate_bearer(
 
         tracing::trace!(user_id = %user.user_id, role = ?role, "Bearer authentication succeeded");
 
-        store_cached_bearer_session(token, &user, claims.exp);
+        store_cached_bearer_session_at_generation(token, &user, claims.exp, generation);
 
         Ok(user)
     }

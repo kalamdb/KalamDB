@@ -163,8 +163,38 @@ impl UserTableProvider {
         versions: &[VersionId],
         validate_unique_pk: bool,
     ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
+        let (entries, operations) = self
+            .collect_insert_batch_rows(user_id, rows, versions, validate_unique_pk)
+            .await?;
+        if entries.is_empty() {
+            return Ok(entries);
+        }
+        self.store.commit_operations(operations).map_err(|error| {
+            KalamDbError::InvalidOperation(format!("Failed to batch insert table rows: {error}"))
+        })?;
+        self.finish_planned_user_insert(user_id, &entries).await;
+        let row_count = entries.len();
+        log::debug!(
+            "Batch inserted {} user table rows for user {} with _seq range [{}, {}]",
+            row_count,
+            user_id.as_str(),
+            entries.first().map(|(k, _)| k.version.as_i64()).unwrap_or(0),
+            entries.last().map(|(k, _)| k.version.as_i64()).unwrap_or(0)
+        );
+        Ok(entries)
+    }
+
+    /// Build insert rows and storage operations without writing or staging effects.
+    pub(crate) async fn collect_insert_batch_rows(
+        &self,
+        user_id: &UserId,
+        rows: Vec<Row>,
+        versions: &[VersionId],
+        validate_unique_pk: bool,
+    ) -> Result<(Vec<(UserTableRowId, UserTableRow)>, Vec<kalamdb_store::Operation>), KalamDbError>
+    {
         if rows.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
 
         ensure_manifest_ready(&self.core, Some(user_id), "UserTableProvider")?;
@@ -201,29 +231,66 @@ impl UserTableProvider {
             ));
         }
 
-        crate::versioned::write_insert_batch(
+        let mut operations = Vec::new();
+        crate::versioned::append_insert_batch_ops(
             &self.store,
             &entries,
             replaced_tombstones,
             self.primary_key_field_name(),
             |entity| &entity.fields,
+            &mut operations,
         )?;
+        Ok((entries, operations))
+    }
 
-        if let Err(error) = self.stage_vector_upsert_batch(user_id, &entries).await {
+    pub(crate) async fn finish_planned_user_insert(
+        &self,
+        user_id: &UserId,
+        entries: &[(UserTableRowId, UserTableRow)],
+    ) {
+        if entries.is_empty() {
+            return;
+        }
+        if let Err(error) = self.stage_vector_upsert_batch(user_id, entries).await {
             crate::versioned::warn_vector_upsert_batch(self.core.table_id(), Some(user_id), &error);
         }
-
         crate::versioned::mark_table_pending_write(&self.core, Some(user_id));
+    }
 
-        log::debug!(
-            "Batch inserted {} user table rows for user {} with _seq range [{}, {}]",
-            row_count,
-            user_id.as_str(),
-            entries.first().map(|(k, _)| k.version.as_i64()).unwrap_or(0),
-            entries.last().map(|(k, _)| k.version.as_i64()).unwrap_or(0)
-        );
-
-        Ok(entries)
+    /// Stage vector work for this scope, then mark the manifest once.
+    pub(crate) async fn finish_planned_user_scope(
+        &self,
+        user_id: &UserId,
+        ops: &[crate::versioned::PlannedScopeFinish],
+    ) {
+        if !self.vector_columns.is_empty() {
+            for op in ops {
+                match op {
+                    crate::versioned::PlannedScopeFinish::Upsert { version, row } => {
+                        if let Err(error) = self.stage_vector_upsert(user_id, *version, row).await {
+                            crate::versioned::warn_vector_upsert(
+                                self.core.table_id(),
+                                Some(user_id),
+                                *version,
+                                &error,
+                            );
+                        }
+                    },
+                    crate::versioned::PlannedScopeFinish::Delete { version, pk } => {
+                        if let Err(error) = self.stage_vector_delete(user_id, *version, pk).await {
+                            crate::versioned::warn_vector_delete(
+                                self.core.table_id(),
+                                Some(user_id),
+                                *version,
+                                pk,
+                                &error,
+                            );
+                        }
+                    },
+                }
+            }
+        }
+        crate::versioned::mark_table_pending_write(&self.core, Some(user_id));
     }
 
     /// Apply Raft ordinal field payloads without decoding them back into name maps
@@ -389,7 +456,16 @@ impl UserTableProvider {
         } else {
             None
         };
+        kalamdb_observability::dml_stage::record_baseline_decode();
         Ok(crate::versioned::mutation_target_from_hot(lookup, cold))
+    }
+
+    pub(crate) fn is_auto_increment_pk(&self) -> bool {
+        self.core.is_auto_increment_pk()
+    }
+
+    pub(crate) fn has_vector_columns(&self) -> bool {
+        !self.vector_columns.is_empty()
     }
 
     async fn insert_predecessor(
@@ -501,40 +577,45 @@ impl UserTableProvider {
                 cold_files_skipped: Some(0),
                 cold_files_scanned: Some(0),
                 cold_files: Vec::new(),
+                access_path: Some(ScanAccess::Sequential),
             }
         } else {
             DeferredScanDiagnostics::default()
         };
 
         for user_id in user_ids {
-            let cold_result = if include_diagnostics {
+            let mut cold_result = if include_diagnostics {
                 base::scan_provider_parquet_stats(&self.core, Some(&user_id), filter, None).await?
             } else {
                 base::scan_provider_parquet_result(&self.core, Some(&user_id), filter, None).await?
             };
+            let mut resolved = hot_rows_by_user.remove(&user_id).unwrap_or_default();
+            let mut cold_rows = 0;
+            while let Some(batch) = cold_result.next_batch().await {
+                let batch = batch?;
+                cold_rows += batch.num_rows();
+                resolved = resolve_latest_kvs_from_cold_batch(
+                    &pk_name,
+                    resolved,
+                    &batch,
+                    keep_deleted,
+                    snapshot_commit_seq,
+                    |row_data| self.construct_mvcc_row_from_parquet_data(&user_id, row_data),
+                )
+                .map_err(|error| KalamDbError::DataFusion(error.to_string()))?;
+            }
+            let stats = cold_result.stats().await;
             if include_diagnostics {
                 diagnostics.cold_rows_scanned =
-                    Some(diagnostics.cold_rows_scanned.unwrap_or(0) + cold_result.batch.num_rows());
+                    Some(diagnostics.cold_rows_scanned.unwrap_or(0) + cold_rows);
                 diagnostics.cold_files_total =
-                    Some(diagnostics.cold_files_total.unwrap_or(0) + cold_result.stats.total_files);
-                diagnostics.cold_files_skipped = Some(
-                    diagnostics.cold_files_skipped.unwrap_or(0) + cold_result.stats.skipped_files,
-                );
-                diagnostics.cold_files_scanned = Some(
-                    diagnostics.cold_files_scanned.unwrap_or(0) + cold_result.stats.scanned_files,
-                );
-                diagnostics.cold_files.extend(cold_result.stats.visited_files);
+                    Some(diagnostics.cold_files_total.unwrap_or(0) + stats.total_files);
+                diagnostics.cold_files_skipped =
+                    Some(diagnostics.cold_files_skipped.unwrap_or(0) + stats.skipped_files);
+                diagnostics.cold_files_scanned =
+                    Some(diagnostics.cold_files_scanned.unwrap_or(0) + stats.scanned_files);
+                diagnostics.cold_files.extend(stats.visited_files);
             }
-            let hot_rows = hot_rows_by_user.remove(&user_id).unwrap_or_default();
-            let resolved = resolve_latest_kvs_from_cold_batch(
-                &pk_name,
-                hot_rows,
-                &cold_result.batch,
-                keep_deleted,
-                snapshot_commit_seq,
-                |row_data| self.construct_mvcc_row_from_parquet_data(&user_id, row_data),
-            )
-            .map_err(|error| KalamDbError::DataFusion(error.to_string()))?;
             result.extend(resolved);
         }
 
@@ -544,17 +625,5 @@ impl UserTableProvider {
             rows: result,
             diagnostics,
         })
-    }
-
-    async fn collect_matching_rows_for_subject(
-        &self,
-        state: &dyn Session,
-        filters: &[Expr],
-        projection: Option<&Vec<usize>>,
-    ) -> DataFusionResult<Vec<Row>> {
-        crate::utils::datafusion_dml::collect_matching_rows_with_projection(
-            self, state, filters, projection,
-        )
-        .await
     }
 }

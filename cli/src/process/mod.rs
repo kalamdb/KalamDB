@@ -11,17 +11,18 @@ mod shell;
 #[cfg(windows)]
 pub use lifecycle::wait_for_windows_shutdown_event;
 pub use lifecycle::{
-    configure_supervised_child, kill_process_tree_by_pid, kill_supervised_child,
-    kill_supervised_process_by_pid, pid_is_running, process_command_line,
-    process_matches_executable, request_terminate, SupervisedKillScope,
+    SupervisedKillScope, configure_supervised_child, kill_process_tree_by_pid,
+    kill_supervised_child, kill_supervised_process_by_pid, pid_is_running, process_command_line,
+    process_matches_executable, request_terminate,
 };
 pub use path::{
     program_needs_shell_launch, resolve_node_binary, resolve_program_on_path,
     shell_working_directory,
 };
 pub use runner::{
-    run_path_tool, run_program, run_program_configured, run_shell_script,
-    run_shell_script_inherited, spawn_detached, spawn_program_piped, spawn_shell_piped,
+    MANAGED_SERVER_CLEARED_ENV, run_path_tool, run_program, run_program_configured,
+    run_shell_script, run_shell_script_inherited, spawn_detached, spawn_program_piped,
+    spawn_shell_piped,
 };
 pub use shell::{
     configure_shell_command, configure_tokio_shell_command, quote_for_shell, shell_command,

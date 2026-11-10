@@ -36,7 +36,7 @@ async fn query_i32_col(
     sql: &str,
 ) -> Vec<Option<i32>> {
     let ctx = root_ctx(app);
-    match executor.execute(sql, &ctx, vec![]).await.expect(sql) {
+    match support::materialize_result(executor.execute(sql, &ctx, vec![]).await.expect(sql)).await {
         ExecutionResult::Rows { batches, .. } => {
             let mut out = Vec::new();
             for batch in batches {

@@ -4,18 +4,20 @@
 //! enough to claim a database: the live PID must match this record.
 
 use std::{
-    fs,
-    net::TcpListener,
+    fs::{self, OpenOptions},
+    io::Write,
+    net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{CLIError, Result},
-    fs_atomic::{write_atomic, FileReadPolicy, FileWriteOptions},
+    fs_atomic::{FileReadPolicy, FileWriteOptions, write_atomic},
     history::get_kalam_config_dir,
-    process::{pid_is_running, process_matches_executable, request_terminate, SupervisedKillScope},
+    process::{SupervisedKillScope, pid_is_running, process_matches_executable, request_terminate},
 };
 
 pub const INSTANCE_SCHEMA_VERSION: u32 = 1;
@@ -245,7 +247,7 @@ pub fn allocate_http_port(preferred: u16, explicit: bool, owned_port: Option<u16
         // Occupied, but we already claim it via instance identity. Caller verifies ownership.
         return Ok(preferred);
     }
-    if port_is_available(preferred) {
+    if port_is_available(preferred) && claim_port(preferred) {
         return Ok(preferred);
     }
     if explicit {
@@ -259,7 +261,7 @@ pub fn allocate_http_port(preferred: u16, explicit: bool, owned_port: Option<u16
         ));
     }
     for port in preferred.saturating_add(1)..=preferred.saturating_add(PORT_SEARCH_SPAN) {
-        if port_is_available(port) {
+        if port_is_available(port) && claim_port(port) {
             return Ok(port);
         }
     }
@@ -283,7 +285,47 @@ pub fn allocate_companion_port(preferred: u16, reserved: u16) -> Result<u16> {
 }
 
 pub fn port_is_available(port: u16) -> bool {
-    TcpListener::bind(("127.0.0.1", port)).is_ok()
+    if listener_accepts(port) {
+        return false;
+    }
+    TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_ok()
+}
+
+fn listener_accepts(port: u16) -> bool {
+    TcpStream::connect_timeout(
+        &SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
+        Duration::from_millis(50),
+    )
+    .is_ok()
+}
+
+fn port_claim_path(port: u16) -> PathBuf {
+    std::env::temp_dir().join("kalamdb-port-claims").join(port.to_string())
+}
+
+fn claim_port(port: u16) -> bool {
+    let path = port_claim_path(port);
+    if let Some(parent) = path.parent() {
+        if fs::create_dir_all(parent).is_err() {
+            return false;
+        }
+    }
+    if path.exists() {
+        let live = fs::read_to_string(&path).ok().is_some_and(|contents| claim_is_live(&contents));
+        if live {
+            return false;
+        }
+        let _ = fs::remove_file(&path);
+    }
+    let mut file = match OpenOptions::new().write(true).create_new(true).open(&path) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    write!(file, "{}", std::process::id()).is_ok()
+}
+
+fn claim_is_live(contents: &str) -> bool {
+    contents.trim().parse::<u32>().ok().is_some_and(pid_is_running)
 }
 
 pub fn parse_server_listen_ports(config_path: &Path) -> Result<(u16, Option<u16>)> {

@@ -29,7 +29,8 @@ use kalamdb_store::{EntityStore, IndexedEntityStore};
 use crate::{
     error::KalamDbError,
     utils::base::{
-        calculate_scan_limit, hot_index_seek, reject_truncated_unbounded_scan, TableProviderCore,
+        authoritative_hot_index_plan, calculate_scan_limit, reject_truncated_unbounded_scan,
+        TableProviderCore,
     },
 };
 
@@ -69,13 +70,14 @@ pub(crate) async fn run_columnar_hot_scan<K, V>(
     filter: Option<&Expr>,
     limit: Option<usize>,
     keep_deleted: bool,
+    chunk_rows: usize,
     decode_version: fn(&[u8]) -> Option<VersionId>,
-) -> Result<Option<(RecordBatch, usize)>, KalamDbError>
+) -> Result<Option<(Vec<RecordBatch>, usize)>, KalamDbError>
 where
     K: StorageKey + Clone + Send + Sync + 'static,
     V: KSerializable + Clone + Send + Sync + 'static,
 {
-    if filter.is_some_and(|expr| hot_index_seek(store.as_ref(), Some(expr), user_id).is_some()) {
+    if authoritative_hot_index_plan(store.as_ref(), filter, user_id, keep_deleted, None).is_some() {
         return Ok(None);
     }
     let manifest = core.manifest_service().get_or_load_async(core.table_id(), user_id).await;
@@ -108,6 +110,7 @@ where
             snapshot,
             limit,
             keep_deleted,
+            chunk_rows,
             decode_version,
         )
     })
@@ -183,8 +186,9 @@ fn scan_hot_columnar<K, V>(
     snapshot: Option<VersionId>,
     limit: Option<usize>,
     keep_deleted: bool,
+    chunk_rows: usize,
     decode_version: fn(&[u8]) -> Option<VersionId>,
-) -> Result<Option<(RecordBatch, usize)>, KalamDbError>
+) -> Result<Option<(Vec<RecordBatch>, usize)>, KalamDbError>
 where
     K: StorageKey + Clone + Send + Sync + 'static,
     V: KSerializable + Clone + Send + Sync + 'static,
@@ -314,10 +318,46 @@ where
     }
 
     let batch_schema = Arc::new(Schema::new(prepared.fields.clone()));
-    let batch = scalar_columns_to_record_batch(&batch_schema, columns).map_err(|error| {
-        KalamDbError::InvalidOperation(format!("columnar hot scan failed to build arrow: {error}"))
-    })?;
-    Ok(Some((batch, visited)))
+    let batches = record_batches_from_columns(batch_schema, columns, chunk_rows)?;
+    Ok(Some((batches, visited)))
+}
+
+/// Drain resolved scalar columns into owned batches of at most `chunk_rows`.
+///
+/// Each batch is a separate allocation. The caller can drop a batch without
+/// keeping the rest of the scan. Version resolution has already finished, so
+/// a later chunk cannot change an earlier row.
+pub(crate) fn record_batches_from_columns(
+    schema: SchemaRef,
+    mut columns: Vec<Vec<ScalarValue>>,
+    chunk_rows: usize,
+) -> Result<Vec<RecordBatch>, KalamDbError> {
+    let chunk_rows = chunk_rows.max(1);
+    let total = columns.first().map(Vec::len).unwrap_or(0);
+    if total == 0 {
+        let batch = scalar_columns_to_record_batch(&schema, columns).map_err(|error| {
+            KalamDbError::InvalidOperation(format!(
+                "columnar hot scan failed to build arrow: {error}"
+            ))
+        })?;
+        return Ok(vec![batch]);
+    }
+    let mut batches = Vec::with_capacity(total.div_ceil(chunk_rows));
+    while columns.first().is_some_and(|column| !column.is_empty()) {
+        let width = chunk_rows.min(columns[0].len());
+        let mut piece = Vec::with_capacity(columns.len());
+        for column in &mut columns {
+            let tail = column.split_off(width);
+            piece.push(mem::replace(column, tail));
+        }
+        let batch = scalar_columns_to_record_batch(&schema, piece).map_err(|error| {
+            KalamDbError::InvalidOperation(format!(
+                "columnar hot scan failed to build arrow: {error}"
+            ))
+        })?;
+        batches.push(batch);
+    }
+    Ok(batches)
 }
 
 fn push_row(columns: &mut [Vec<ScalarValue>], values: Vec<ScalarValue>) {
@@ -339,5 +379,47 @@ fn compact_dead_rows(columns: &mut [Vec<ScalarValue>], dead: &[bool]) {
             kept.push(mem::replace(&mut taken[*index], ScalarValue::Null));
         }
         *column = kept;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use datafusion::arrow::{
+        array::{Array, Int64Array},
+        datatypes::DataType,
+    };
+
+    use super::*;
+
+    #[test]
+    fn record_batches_from_columns_splits_owned_chunks() {
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, true)]));
+        let columns = vec![vec![
+            ScalarValue::Int64(Some(1)),
+            ScalarValue::Int64(Some(2)),
+            ScalarValue::Int64(Some(3)),
+            ScalarValue::Int64(Some(4)),
+            ScalarValue::Int64(Some(5)),
+        ]];
+
+        let batches = record_batches_from_columns(schema, columns, 2).expect("split columns");
+
+        assert_eq!(batches.len(), 3);
+        assert_eq!(batches[0].num_rows(), 2);
+        assert_eq!(batches[2].num_rows(), 1);
+        let values: Vec<i64> = batches
+            .iter()
+            .flat_map(|batch| {
+                batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .expect("int64 column")
+                    .values()
+                    .iter()
+                    .copied()
+            })
+            .collect();
+        assert_eq!(values, vec![1, 2, 3, 4, 5]);
     }
 }

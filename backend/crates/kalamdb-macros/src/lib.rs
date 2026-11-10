@@ -365,14 +365,14 @@ fn parse_namespace(input: ParseStream<'_>) -> Result<NamespaceArg> {
                     &expr,
                     "namespace must be SchemaId::system(), SchemaId::pg_catalog(), SchemaId::information_schema(), or a string",
                 ));
-            }
+            },
         },
         _ => {
             return Err(syn::Error::new_spanned(
                 &expr,
                 "namespace must be SchemaId::system(), SchemaId::pg_catalog(), SchemaId::information_schema(), or a string",
             ));
-        }
+        },
     };
     let ident = path
         .segments

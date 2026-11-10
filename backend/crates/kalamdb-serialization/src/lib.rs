@@ -32,8 +32,11 @@ pub use error::{Result, SerializationError};
 pub use model::{model_ms_to_row, model_to_row, row_to_model, row_to_model_ms};
 pub use object::{
     decode_object, decode_string_list, encode_object, encode_object_versioned, encode_string_list,
-    has_object_magic, is_row_v2_writer_enabled, set_row_v2_writer_enabled, EncodedObject,
-    ObjectKind, FLAG_ROW_BODY_V2, FLAG_TOMBSTONE_ONLY, SUPPORTED_ROW_FLAGS,
+    format_compatibility_floor, has_object_magic, install_format_compatibility_floor,
+    is_row_v2_writer_enabled, load_format_compatibility_floor, set_row_v2_writer_enabled,
+    EncodedObject, FormatCompatibilityFloor, ObjectKind, ReplicaFormatCapability,
+    RowFormatActivationError, FLAG_ROW_BODY_V2, FLAG_TOMBSTONE_ONLY, ROW_FORMAT_V1, ROW_FORMAT_V2,
+    SUPPORTED_ROW_FLAGS,
 };
 pub use protocol::{
     decode_packed_data_response, decode_packed_delete, decode_packed_insert, decode_packed_log_id,
@@ -49,12 +52,12 @@ pub use protocol::{
 pub use row::{
     decode_payloads_to_arrow_batch, decode_row_fields, decode_row_fields_columns,
     decode_row_metadata, decode_shared_row, decode_shared_row_selected, decode_stream_row,
-    decode_user_row, decode_user_row_selected, open_v2_row, project_row_fields,
-    encode_row_envelope, encode_row_fields, encode_row_fields_from_columns, encode_shared_row,
-    encode_shared_row_v2, encode_stream_row, encode_tombstone_row_v2, encode_user_row,
-    encode_user_row_from_columns, encode_user_row_v2,     storage_data_type_from_arrow, storage_data_type_from_kalam, storage_schema_from_table,
-    storage_schema_from_table_versions, storage_schema_from_table_versions_with_arrow,
-    storage_schema_from_table_with_arrow,
+    decode_user_row, decode_user_row_selected, encode_row_envelope, encode_row_fields,
+    encode_row_fields_from_columns, encode_shared_row, encode_shared_row_v2, encode_stream_row,
+    encode_tombstone_row_v2, encode_user_row, encode_user_row_from_columns, encode_user_row_v2,
+    open_v2_row, project_row_fields, storage_data_type_from_arrow, storage_data_type_from_kalam,
+    storage_schema_from_table, storage_schema_from_table_versions,
+    storage_schema_from_table_versions_with_arrow, storage_schema_from_table_with_arrow,
     RowMetadata, RowView, StorageDataType, StorageField, StorageSchema, StorageVersionLayout,
 };
 pub use stream_frame::{

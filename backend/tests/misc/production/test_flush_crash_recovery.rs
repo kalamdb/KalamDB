@@ -115,14 +115,26 @@ timeout = 5
     Ok(config_path)
 }
 
+fn command_for_config(config_path: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kalamdb-server"));
+    command.arg(config_path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    for key in [
+        "KALAMDB_SERVER_HOST",
+        "KALAMDB_SERVER_PORT",
+        "KALAMDB_ENABLE_PGWIRE",
+        "KALAMDB_PGWIRE_HOST",
+        "KALAMDB_PGWIRE_PORT",
+        "KALAMDB_ENABLE_PG_EXTENSION",
+        "KALAMDB_GRPC_HOST",
+        "KALAMDB_GRPC_PORT",
+    ] {
+        command.env_remove(key);
+    }
+    command
+}
+
 fn spawn_server(config_path: &Path) -> Result<ProcessGuard> {
-    let child = Command::new(env!("CARGO_BIN_EXE_kalamdb-server"))
-        .arg(config_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("failed to spawn kalamdb-server")?;
+    let child = command_for_config(config_path).spawn().context("failed to spawn kalamdb-server")?;
 
     Ok(ProcessGuard::new(child))
 }

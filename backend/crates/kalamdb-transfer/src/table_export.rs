@@ -1,6 +1,7 @@
 use std::{
-    io::{Cursor, Write},
-    path::Path,
+    fs::File,
+    io::{BufWriter, Cursor, Write},
+    path::{Path, PathBuf},
 };
 
 use crate::error::TransferError;
@@ -69,15 +70,28 @@ pub struct TableExportZip {
     pub file_count: usize,
 }
 
+pub struct TableExportZipStats {
+    pub raw_bytes: usize,
+    pub file_count: usize,
+    pub zip_bytes: u64,
+}
+
+/// ZIP writer that flushes each segment to disk through a bounded buffer.
+pub struct StreamingTableExport {
+    zip_writer: ZipWriter<BufWriter<File>>,
+    zip_options: SimpleFileOptions,
+    path: PathBuf,
+    files: Vec<TableExportArchiveFile>,
+    raw_bytes: usize,
+}
+
 pub fn write_table_export_zip(
     mut metadata: TableExportArchiveMetadata,
     segment_data: Vec<TableExportSegmentData>,
 ) -> Result<TableExportZip, TransferError> {
     let zip_buffer = Cursor::new(Vec::new());
     let mut zip_writer = ZipWriter::new(zip_buffer);
-    let zip_options = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated)
-        .compression_level(Some(6));
+    let zip_options = zip_options();
 
     let mut archive_files = Vec::with_capacity(segment_data.len());
     let mut raw_bytes = 0usize;
@@ -129,6 +143,120 @@ pub fn write_table_export_zip(
         raw_bytes,
         file_count,
     })
+}
+
+impl StreamingTableExport {
+    pub fn create(path: &Path) -> Result<Self, TransferError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                TransferError::InvalidOperation(format!(
+                    "Failed to create table export directory '{}': {}",
+                    parent.display(),
+                    error
+                ))
+            })?;
+        }
+        let file = File::create(path).map_err(|error| {
+            TransferError::InvalidOperation(format!(
+                "Failed to create table export ZIP '{}': {}",
+                path.display(),
+                error
+            ))
+        })?;
+        let writer = BufWriter::with_capacity(crate::TRANSFER_STREAM_BUFFER_BYTES, file);
+        Ok(Self {
+            zip_writer: ZipWriter::new(writer),
+            zip_options: zip_options(),
+            path: path.to_path_buf(),
+            files: Vec::new(),
+            raw_bytes: 0,
+        })
+    }
+
+    pub fn write_segment(&mut self, source_path: &str, data: &[u8]) -> Result<(), TransferError> {
+        let entry_path = format!("data/{:05}-{}", self.files.len(), sanitize_filename(source_path));
+        self.zip_writer.start_file(&entry_path, self.zip_options).map_err(|error| {
+            TransferError::InvalidOperation(format!(
+                "Failed to add '{}' to ZIP: {}",
+                entry_path, error
+            ))
+        })?;
+        self.zip_writer.write_all(data).map_err(|error| {
+            TransferError::InvalidOperation(format!(
+                "Failed to write '{}' to ZIP: {}",
+                entry_path, error
+            ))
+        })?;
+        self.raw_bytes += data.len();
+        self.files.push(TableExportArchiveFile {
+            source_path: source_path.to_string(),
+            entry_path,
+            size_bytes: data.len() as u64,
+        });
+        Ok(())
+    }
+
+    pub fn finish(
+        mut self,
+        mut metadata: TableExportArchiveMetadata,
+    ) -> Result<TableExportZipStats, TransferError> {
+        metadata.files = std::mem::take(&mut self.files);
+        let file_count = metadata.files.len();
+        let raw_bytes = self.raw_bytes;
+        let metadata_bytes = serde_json::to_vec_pretty(&metadata).map_err(|error| {
+            TransferError::InvalidOperation(format!(
+                "Failed to serialize export metadata: {}",
+                error
+            ))
+        })?;
+        self.zip_writer
+            .start_file(TABLE_EXPORT_METADATA_ENTRY, self.zip_options)
+            .map_err(|error| {
+                TransferError::InvalidOperation(format!("Failed to add export metadata: {}", error))
+            })?;
+        self.zip_writer.write_all(&metadata_bytes).map_err(|error| {
+            TransferError::InvalidOperation(format!("Failed to write export metadata: {}", error))
+        })?;
+        let mut finished = self.zip_writer.finish().map_err(|error| {
+            TransferError::InvalidOperation(format!(
+                "Failed to finalize ZIP archive '{}': {}",
+                self.path.display(),
+                error
+            ))
+        })?;
+        finished.flush().map_err(|error| {
+            TransferError::InvalidOperation(format!(
+                "Failed to flush ZIP archive '{}': {}",
+                self.path.display(),
+                error
+            ))
+        })?;
+        let file = finished.into_inner().map_err(|error| {
+            TransferError::InvalidOperation(format!(
+                "Failed to finish ZIP archive '{}': {}",
+                self.path.display(),
+                error
+            ))
+        })?;
+        let zip_bytes = file.metadata().map(|metadata| metadata.len()).map_err(|error| {
+            TransferError::InvalidOperation(format!(
+                "Failed to stat ZIP archive '{}': {}",
+                self.path.display(),
+                error
+            ))
+        })?;
+        Ok(TableExportZipStats {
+            raw_bytes,
+            file_count,
+            zip_bytes,
+        })
+    }
+}
+
+fn zip_options() -> SimpleFileOptions {
+    SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .compression_level(Some(6))
 }
 
 pub fn parse_transfer_user_id(

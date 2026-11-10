@@ -682,6 +682,12 @@ impl KalamStateMachine for MetaStateMachine {
         self.publish_last_applied(index);
     }
 
+    fn rewind_applied_index(&self, index: u64, term: u64) {
+        self.last_applied_index.store(index, Ordering::Release);
+        self.last_applied_term.store(term, Ordering::Release);
+        self.publish_last_applied(index);
+    }
+
     fn last_applied_term(&self) -> u64 {
         self.last_applied_term.load(Ordering::Acquire)
     }

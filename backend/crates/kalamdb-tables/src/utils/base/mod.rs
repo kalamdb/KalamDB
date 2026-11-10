@@ -68,27 +68,23 @@ mod provider;
 mod rows;
 mod versions;
 
-pub(crate) use cold_pk::{
-    ensure_pk_absent_in_cold, ensure_unique_pk_value, find_row_by_pk, validate_pk_update,
-};
+pub(crate) use cold_pk::{ensure_pk_absent_in_cold, find_row_by_pk, validate_pk_update};
 pub use cold_pk::{pk_exists_batch_in_cold, pk_exists_in_cold};
-pub(crate) use deferred::scan_diagnostics_enabled;
-pub(crate) use deferred::DeferredMvccScanProvider;
 pub use deferred::{
     extract_pk_equality_literal, filter_uses_deleted_column, is_count_only_projection,
     typed_pk_literal_from_filter, MvccScanResult,
 };
+pub(crate) use deferred::{scan_diagnostics_enabled, DeferredMvccScanProvider};
 pub use hot_scan::{
     apply_limit, build_count_only_batch, calculate_scan_limit, compute_cold_columns,
     compute_metadata_only_cold_columns, reject_truncated_count_scan,
     reject_truncated_unbounded_scan, UNBOUNDED_COUNT_SCAN_LIMIT,
 };
 pub(crate) use hot_scan::{
-    count_resolved_rows_from_futures, hot_index_seek, resolve_latest_scan_from_futures,
-    scan_hot_index_resolved,
+    authoritative_hot_index_plan, count_resolved_rows_from_futures, masks_secondary_index_deletes,
+    resolve_latest_scan_from_futures, scan_hot_index_resolved, SecondaryDeleteMask,
 };
-pub(crate) use provider::BaseTableProvider;
-pub(crate) use provider::{plan_scan_output, PlannedScanOutput};
+pub(crate) use provider::{plan_scan_output, BaseTableProvider, PlannedScanOutput};
 pub use rows::{
     build_notification_row, build_stream_notification_row, embedding_columns,
     extract_embedding_vector,
@@ -98,9 +94,7 @@ pub use versions::{
     statement_row_version, transaction_snapshot_bound,
 };
 
-pub(crate) use crate::utils::parquet::{
-    scan_provider_parquet_batch, scan_provider_parquet_result, scan_provider_parquet_stats,
-};
+pub(crate) use crate::utils::parquet::{scan_provider_parquet_result, scan_provider_parquet_stats};
 pub use crate::utils::{
     core::TableProviderCore,
     row_utils::{

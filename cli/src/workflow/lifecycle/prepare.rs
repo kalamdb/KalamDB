@@ -12,10 +12,10 @@ use crate::{
     output::WorkflowOutput,
     workflow::{
         instance::{
-            self, allocate_companion_port, allocate_http_port, browser_http_url, default_http_url,
-            live_instance, new_instance_record, parse_server_listen_ports, preferred_postgres_port,
-            relative_layout_path, save_instance, stop_recorded_processes, InstanceRecord,
-            ManagedLayout, StartedBy,
+            self, InstanceRecord, ManagedLayout, StartedBy, allocate_companion_port,
+            allocate_http_port, browser_http_url, default_http_url, live_instance,
+            new_instance_record, parse_server_listen_ports, preferred_postgres_port,
+            relative_layout_path, save_instance, stop_recorded_processes,
         },
         target::ResolvedTarget,
     },
@@ -228,6 +228,9 @@ pub fn spawn_detached_server(
         .stdout(log)
         .stderr(log_err)
         .current_dir(working_dir);
+    for key in crate::process::MANAGED_SERVER_CLEARED_ENV {
+        command.env_remove(key);
+    }
 
     #[cfg(unix)]
     {

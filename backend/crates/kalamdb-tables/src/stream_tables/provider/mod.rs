@@ -12,7 +12,6 @@
 //! - TTL-based eviction in scan operations
 
 use std::{
-    collections::HashSet,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -38,7 +37,7 @@ use kalamdb_commons::{
 use kalamdb_datafusion_sources::{
     exec::{
         finalize_deferred_batch, DeferredBatchExec, DeferredBatchOutput, DeferredBatchSource,
-        DeferredScanDiagnostics,
+        DeferredScanDiagnostics, ScanAccess,
     },
     provider::{
         combined_filter, merged_projection_scan_descriptor, pushdown_results_for_filters,

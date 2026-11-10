@@ -38,16 +38,18 @@ fn root_ctx(app: &Arc<AppContext>) -> ExecutionContext {
 
 async fn exec(app: &Arc<AppContext>, executor: &SqlExecutor, sql: &str) -> ExecutionResult {
     let ctx = root_ctx(app);
-    executor.execute(sql, &ctx, vec![]).await.expect(sql)
+    support::materialize_result(executor.execute(sql, &ctx, vec![]).await.expect(sql)).await
 }
 
 async fn exec_err(app: &Arc<AppContext>, executor: &SqlExecutor, sql: &str) -> String {
     let ctx = root_ctx(app);
-    executor
-        .execute(sql, &ctx, vec![])
-        .await
-        .expect_err(&format!("expected error for `{sql}`"))
-        .to_string()
+    match executor.execute(sql, &ctx, vec![]).await {
+        Ok(result) => match result.into_materialized_rows().await {
+            Ok(_) => panic!("expected error for `{sql}`"),
+            Err(error) => error,
+        },
+        Err(error) => error.to_string(),
+    }
 }
 
 fn first_i64_or_i32(result: &ExecutionResult) -> Option<i64> {

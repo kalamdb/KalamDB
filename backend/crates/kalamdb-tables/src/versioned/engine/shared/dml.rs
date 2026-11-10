@@ -40,7 +40,7 @@ impl SharedTableProvider {
 
         // Cold storage: project only the PK + MVCC metadata needed for counting.
         let cold_columns = base::compute_metadata_only_cold_columns(&pk_name);
-        let cold_future = base::scan_provider_parquet_batch(
+        let cold_future = base::scan_provider_parquet_result(
             &self.core,
             None,
             None,
@@ -61,7 +61,8 @@ impl SharedTableProvider {
         row_data: Row,
         version: VersionId,
         hot_predecessor: Option<(SharedTableRowId, SharedTableRow)>,
-    ) -> Result<(SharedTableRowId, Option<ChangeNotification>), KalamDbError> {
+        planned_ops: Option<&mut Vec<kalamdb_store::Operation>>,
+    ) -> Result<(SharedTableRowId, Option<ChangeNotification>, Row), KalamDbError> {
         let span = tracing::debug_span!(
             "table.insert",
             table_id = %self.core.table_id(),
@@ -90,49 +91,58 @@ impl SharedTableProvider {
                 fields: row_data,
             };
             let row_key = seq_id;
-
-            if let Err(error) = self.stage_vector_upsert(seq_id, &entity.fields).await {
-                crate::versioned::warn_vector_upsert(self.core.table_id(), None, seq_id, &error);
-            }
-
+            let stored_fields = entity.fields.clone();
             let table_id = self.core.table_id().clone();
             let watched = crate::versioned::table_watch(&self.core, None).any();
             let notification = watched.then(|| {
                 ChangeNotification::insert(table_id, Self::build_notification_row(&entity))
             });
 
-            self.write_replaced_row(
-                predecessor,
-                row_key,
-                entity,
-                "Failed to insert shared table row",
-            )
-            .await?;
+            if let Some(operations) = planned_ops {
+                crate::versioned::append_replaced_row_ops(
+                    &self.store,
+                    operations,
+                    predecessor,
+                    &row_key,
+                    &entity,
+                    "Failed to insert shared table row",
+                )?;
+            } else {
+                if let Err(error) = self.stage_vector_upsert(seq_id, &entity.fields).await {
+                    crate::versioned::warn_vector_upsert(
+                        self.core.table_id(),
+                        None,
+                        seq_id,
+                        &error,
+                    );
+                }
 
-            crate::versioned::mark_table_pending_write(&self.core, None);
+                self.write_replaced_row(
+                    predecessor,
+                    row_key,
+                    entity,
+                    "Failed to insert shared table row",
+                )
+                .await?;
 
-            Ok((row_key, notification))
+                crate::versioned::mark_table_pending_write(&self.core, None);
+            }
+
+            Ok((row_key, notification, stored_fields))
         }
         .instrument(span)
         .await
     }
 
-    pub async fn insert_deferred_prevalidated(
+    pub(crate) async fn plan_insert_deferred(
         &self,
         row_data: Row,
         version: VersionId,
-    ) -> Result<(SharedTableRowId, Option<ChangeNotification>), KalamDbError> {
-        self.insert_deferred_internal(row_data, version, None).await
-    }
-
-    /// Insert over a hot row already staged in this commit.
-    pub async fn insert_over_hot_deferred(
-        &self,
-        row_data: Row,
-        version: VersionId,
-        previous: (SharedTableRowId, SharedTableRow),
-    ) -> Result<(SharedTableRowId, Option<ChangeNotification>), KalamDbError> {
-        self.insert_deferred_internal(row_data, version, Some(previous)).await
+        hot_predecessor: Option<(SharedTableRowId, SharedTableRow)>,
+        operations: &mut Vec<kalamdb_store::Operation>,
+    ) -> Result<(SharedTableRowId, Option<ChangeNotification>, Row), KalamDbError> {
+        self.insert_deferred_internal(row_data, version, hot_predecessor, Some(operations))
+            .await
     }
 
     async fn persist_insert_batch_rows(
@@ -141,8 +151,37 @@ impl SharedTableProvider {
         versions: &[VersionId],
         validate_unique_pk: bool,
     ) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
+        let (entries, operations) =
+            self.collect_insert_batch_rows(rows, versions, validate_unique_pk).await?;
+        if entries.is_empty() {
+            return Ok(entries);
+        }
+        self.store.commit_operations(operations).map_err(|error| {
+            KalamDbError::InvalidOperation(format!("Failed to batch insert table rows: {error}"))
+        })?;
+        self.finish_planned_shared_insert(&entries).await;
+        let row_count = entries.len();
+        log::debug!(
+            "Batch inserted {} shared table rows with _seq range [{}, {}]",
+            row_count,
+            entries.first().map(|(k, _)| k.as_i64()).unwrap_or(0),
+            entries.last().map(|(k, _)| k.as_i64()).unwrap_or(0)
+        );
+        Ok(entries)
+    }
+
+    /// Build shared insert rows and storage operations without writing or staging effects.
+    pub(crate) async fn collect_insert_batch_rows(
+        &self,
+        rows: Vec<Row>,
+        versions: &[VersionId],
+        validate_unique_pk: bool,
+    ) -> Result<
+        (Vec<(SharedTableRowId, SharedTableRow)>, Vec<kalamdb_store::Operation>),
+        KalamDbError,
+    > {
         if rows.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
 
         let _authorization_mutation = self.begin_authorization_mutation();
@@ -205,28 +244,16 @@ impl SharedTableProvider {
             ));
         }
 
-        crate::versioned::write_insert_batch(
+        let mut operations = Vec::new();
+        crate::versioned::append_insert_batch_ops(
             &self.store,
             &entries,
             replaced_tombstones,
             self.primary_key_field_name(),
             |entity| &entity.fields,
+            &mut operations,
         )?;
-
-        if let Err(error) = self.stage_vector_upsert_batch(&entries).await {
-            crate::versioned::warn_vector_upsert_batch(self.core.table_id(), None, &error);
-        }
-
-        crate::versioned::mark_table_pending_write(&self.core, None);
-
-        log::debug!(
-            "Batch inserted {} shared table rows with _seq range [{}, {}]",
-            row_count,
-            entries.first().map(|(k, _)| k.as_i64()).unwrap_or(0),
-            entries.last().map(|(k, _)| k.as_i64()).unwrap_or(0)
-        );
-
-        Ok(entries)
+        Ok((entries, operations))
     }
 
     pub async fn insert_batch_with_versions(
@@ -286,7 +313,7 @@ impl SharedTableProvider {
                     let notification = crate::versioned::insert_notification_when_watched(
                         watched,
                         table_id.clone(),
-                        Self::build_notification_row(&entity),
+                        || Self::build_notification_row(&entity),
                     );
                     (row_key, notification)
                 })
@@ -296,13 +323,62 @@ impl SharedTableProvider {
         .await
     }
 
-    /// Update `pk_value`, using `known_hot` when this commit already wrote that key.
-    pub async fn update_by_pk_value_deferred_with_hot(
+    /// Validate and encode a prevalidated shared insert batch without writing it.
+    pub(crate) async fn plan_insert_batch_prevalidated(
+        &self,
+        rows: Vec<Row>,
+        versions: &[VersionId],
+    ) -> Result<
+        (
+            Vec<kalamdb_store::Operation>,
+            Vec<(SharedTableRowId, Option<ChangeNotification>)>,
+            Vec<(SharedTableRowId, SharedTableRow)>,
+        ),
+        KalamDbError,
+    > {
+        let (entries, operations) = self.collect_insert_batch_rows(rows, versions, false).await?;
+        let table_id = self.core.table_id().clone();
+        let watched = crate::versioned::table_watch(&self.core, None).any();
+        let applied = entries
+            .iter()
+            .map(|(row_key, entity)| {
+                let notification = crate::versioned::insert_notification_when_watched(
+                    watched,
+                    table_id.clone(),
+                    || Self::build_notification_row(entity),
+                );
+                (*row_key, notification)
+            })
+            .collect();
+        Ok((operations, applied, entries))
+    }
+
+    pub(crate) async fn plan_update_by_pk_value_deferred_with_hot(
         &self,
         pk_value: &str,
         updates: Row,
         version: VersionId,
-        known_hot: Option<(SharedTableRowId, SharedTableRow)>,
+        known: Option<crate::versioned::AuthoritativeBaseline<SharedTableRowId, SharedTableRow>>,
+        operations: &mut Vec<kalamdb_store::Operation>,
+    ) -> Result<Option<(SharedTableRowId, SharedTableRow, Option<ChangeNotification>)>, KalamDbError>
+    {
+        self.update_by_pk_value_deferred_with_hot_ops(
+            pk_value,
+            updates,
+            version,
+            known,
+            Some(operations),
+        )
+        .await
+    }
+
+    async fn update_by_pk_value_deferred_with_hot_ops(
+        &self,
+        pk_value: &str,
+        updates: Row,
+        version: VersionId,
+        known: Option<crate::versioned::AuthoritativeBaseline<SharedTableRowId, SharedTableRow>>,
+        planned_ops: Option<&mut Vec<kalamdb_store::Operation>>,
     ) -> Result<Option<(SharedTableRowId, SharedTableRow, Option<ChangeNotification>)>, KalamDbError>
     {
         let span = tracing::debug_span!(
@@ -318,24 +394,29 @@ impl SharedTableProvider {
             let updates = crate::versioned::coerce_update_row(updates, &schema)?;
 
             let pk_name = self.primary_key_field_name().to_string();
-            let (previous, latest_row) = if let Some((key, row)) = known_hot {
-                if row._deleted {
-                    return Err(KalamDbError::NotFound(format!(
-                        "Row with {}={} was deleted",
-                        pk_name, pk_value
-                    )));
-                }
-                (Some((key, row.clone())), row)
-            } else {
-                crate::versioned::require_live_row(
-                    self.load_mutation_target(pk_value).await?,
+            let loaded = match known {
+                Some(baseline) => crate::versioned::take_update_baseline(
+                    baseline,
+                    |row| row._deleted,
                     &pk_name,
                     pk_value,
-                )?
+                )?,
+                None => crate::versioned::take_update_baseline(
+                    crate::versioned::authoritative_baseline(
+                        self.load_mutation_target(pk_value).await?,
+                    ),
+                    |row| row._deleted,
+                    &pk_name,
+                    pk_value,
+                )?,
+            };
+            let (hot_key, row) = match loaded {
+                crate::versioned::LoadedBaseline::Hot(key, row) => (Some(key), row),
+                crate::versioned::LoadedBaseline::Cold(row) => (None, row),
             };
 
             let Some(new_fields) = crate::versioned::changed_update_fields(
-                &latest_row.fields,
+                &row.fields,
                 updates,
                 self.core.non_null_columns(),
             )?
@@ -348,6 +429,13 @@ impl SharedTableProvider {
                 return Ok(None);
             };
 
+            let watched = crate::versioned::table_watch(&self.core, None).any();
+            let old_notification = if watched {
+                Some(Self::build_notification_row(&row))
+            } else {
+                None
+            };
+            let previous = hot_key.map(|key| (key, row));
             let seq_id = version;
 
             let entity = SharedTableRow {
@@ -357,27 +445,44 @@ impl SharedTableProvider {
             };
             let row_key = seq_id;
 
-            if let Err(error) = self.stage_vector_upsert(seq_id, &entity.fields).await {
-                crate::versioned::warn_vector_upsert(self.core.table_id(), None, seq_id, &error);
+            let notification = old_notification.map(|old_row| {
+                crate::versioned::update_notification(
+                    self.core.table_id().clone(),
+                    old_row,
+                    Self::build_notification_row(&entity),
+                    self.primary_key_field_name().to_string(),
+                )
+            });
+
+            if let Some(operations) = planned_ops {
+                crate::versioned::append_replaced_row_ops(
+                    &self.store,
+                    operations,
+                    previous,
+                    &row_key,
+                    &entity,
+                    "Failed to update shared table row",
+                )?;
+            } else {
+                if let Err(error) = self.stage_vector_upsert(seq_id, &entity.fields).await {
+                    crate::versioned::warn_vector_upsert(
+                        self.core.table_id(),
+                        None,
+                        seq_id,
+                        &error,
+                    );
+                }
+
+                self.write_replaced_row(
+                    previous,
+                    row_key,
+                    entity.clone(),
+                    "Failed to update shared table row",
+                )
+                .await?;
+
+                crate::versioned::mark_table_pending_write(&self.core, None);
             }
-
-            let notification = crate::versioned::update_notification_when_watched(
-                crate::versioned::table_watch(&self.core, None).any(),
-                self.core.table_id().clone(),
-                Self::build_notification_row(&latest_row),
-                Self::build_notification_row(&entity),
-                self.primary_key_field_name().to_string(),
-            );
-
-            self.write_replaced_row(
-                previous,
-                row_key,
-                entity.clone(),
-                "Failed to update shared table row",
-            )
-            .await?;
-
-            crate::versioned::mark_table_pending_write(&self.core, None);
 
             Ok(Some((row_key, entity, notification)))
         }
@@ -385,12 +490,24 @@ impl SharedTableProvider {
         .await
     }
 
-    /// Delete `pk_value`, using `known_hot` when this commit already wrote that key.
-    pub async fn delete_by_pk_value_deferred_with_hot(
+    pub(crate) async fn plan_delete_by_pk_value_deferred_with_hot(
         &self,
         pk_value: &str,
         version: VersionId,
-        known_hot: Option<(SharedTableRowId, SharedTableRow)>,
+        known: Option<crate::versioned::AuthoritativeBaseline<SharedTableRowId, SharedTableRow>>,
+        operations: &mut Vec<kalamdb_store::Operation>,
+    ) -> Result<Option<(SharedTableRowId, SharedTableRow, Option<ChangeNotification>)>, KalamDbError>
+    {
+        self.delete_by_pk_value_deferred_with_hot_ops(pk_value, version, known, Some(operations))
+            .await
+    }
+
+    async fn delete_by_pk_value_deferred_with_hot_ops(
+        &self,
+        pk_value: &str,
+        version: VersionId,
+        known: Option<crate::versioned::AuthoritativeBaseline<SharedTableRowId, SharedTableRow>>,
+        planned_ops: Option<&mut Vec<kalamdb_store::Operation>>,
     ) -> Result<Option<(SharedTableRowId, SharedTableRow, Option<ChangeNotification>)>, KalamDbError>
     {
         let span = tracing::debug_span!(
@@ -402,18 +519,23 @@ impl SharedTableProvider {
         );
         async move {
             let _authorization_mutation = self.begin_authorization_mutation();
-            let (previous, latest_row) = if let Some((key, row)) = known_hot {
-                if row._deleted {
-                    return Ok(None);
-                }
-                (Some((key, row.clone())), row)
-            } else {
-                let Some(loaded) =
-                    crate::versioned::optional_live_row(self.load_mutation_target(pk_value).await?)
-                else {
-                    return Ok(None);
-                };
-                loaded
+            let loaded = match known {
+                Some(baseline) => {
+                    crate::versioned::take_delete_baseline(baseline, |row| row._deleted)
+                },
+                None => crate::versioned::take_delete_baseline(
+                    crate::versioned::authoritative_baseline(
+                        self.load_mutation_target(pk_value).await?,
+                    ),
+                    |row| row._deleted,
+                ),
+            };
+            let Some(loaded) = loaded else {
+                return Ok(None);
+            };
+            let (previous, latest_row) = match loaded {
+                crate::versioned::LoadedBaseline::Hot(key, row) => (Some((key, row.clone())), row),
+                crate::versioned::LoadedBaseline::Cold(row) => (None, row),
             };
 
             let seq_id = version;
@@ -425,16 +547,6 @@ impl SharedTableProvider {
             };
             let row_key = seq_id;
 
-            if let Err(error) = self.stage_vector_delete(seq_id, pk_value).await {
-                crate::versioned::warn_vector_delete(
-                    self.core.table_id(),
-                    None,
-                    seq_id,
-                    pk_value,
-                    &error,
-                );
-            }
-
             let table_id = self.core.table_id().clone();
             let watched = crate::versioned::table_watch(&self.core, None).any();
             let notification = if watched {
@@ -445,15 +557,36 @@ impl SharedTableProvider {
                 None
             };
 
-            self.write_replaced_row(
-                previous,
-                row_key,
-                entity.clone(),
-                "Failed to delete shared table row",
-            )
-            .await?;
+            if let Some(operations) = planned_ops {
+                crate::versioned::append_replaced_row_ops(
+                    &self.store,
+                    operations,
+                    previous,
+                    &row_key,
+                    &entity,
+                    "Failed to delete shared table row",
+                )?;
+            } else {
+                if let Err(error) = self.stage_vector_delete(seq_id, pk_value).await {
+                    crate::versioned::warn_vector_delete(
+                        self.core.table_id(),
+                        None,
+                        seq_id,
+                        pk_value,
+                        &error,
+                    );
+                }
 
-            crate::versioned::mark_table_pending_write(&self.core, None);
+                self.write_replaced_row(
+                    previous,
+                    row_key,
+                    entity.clone(),
+                    "Failed to delete shared table row",
+                )
+                .await?;
+
+                crate::versioned::mark_table_pending_write(&self.core, None);
+            }
 
             Ok(Some((row_key, entity, notification)))
         }
@@ -461,7 +594,11 @@ impl SharedTableProvider {
         .await
     }
 
-    /// Delete many primary keys in one RocksDB batch and one pending-write mark.
+    /// One `load_mutation_target` per key, then one replace batch.
+    ///
+    /// Same decode budget as the user range delete. Updates use that load and
+    /// do not decode the payload again to recheck a version. One RocksDB batch
+    /// and one pending-write mark follow the loads.
     pub async fn delete_batch_by_pk_values_deferred(
         &self,
         pk_values: &[String],
@@ -560,8 +697,8 @@ impl SharedTableProvider {
             let notification = crate::versioned::update_notification_when_watched(
                 watched,
                 table_id.clone(),
-                Self::build_notification_row(&latest_row),
-                Self::build_notification_row(&entity),
+                || Self::build_notification_row(&latest_row),
+                || Self::build_notification_row(&entity),
                 pk_column.clone(),
             );
             if let Err(error) = self.stage_vector_upsert(*version, &entity.fields).await {

@@ -1,5 +1,6 @@
 use std::{
     fs::{self, File},
+    io::{BufReader, BufWriter, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -71,13 +72,16 @@ pub fn create_tar_gz_archive(src_dir: &Path, archive_path: &Path) -> Result<(), 
         })?;
     }
 
-    let archive_file = File::create(archive_path).map_err(|error| {
-        TransferError::InvalidOperation(format!(
-            "Failed to create archive '{}': {}",
-            archive_path.display(),
-            error
-        ))
-    })?;
+    let archive_file = BufWriter::with_capacity(
+        crate::TRANSFER_STREAM_BUFFER_BYTES,
+        File::create(archive_path).map_err(|error| {
+            TransferError::InvalidOperation(format!(
+                "Failed to create archive '{}': {}",
+                archive_path.display(),
+                error
+            ))
+        })?,
+    );
     let encoder = GzEncoder::new(archive_file, Compression::default());
     let mut builder = Builder::new(encoder);
 
@@ -135,9 +139,16 @@ pub fn create_tar_gz_archive(src_dir: &Path, archive_path: &Path) -> Result<(), 
             error
         ))
     })?;
-    encoder.finish().map_err(|error| {
+    let mut buffered = encoder.finish().map_err(|error| {
         TransferError::InvalidOperation(format!(
             "Failed to flush archive '{}': {}",
+            archive_path.display(),
+            error
+        ))
+    })?;
+    buffered.flush().map_err(|error| {
+        TransferError::InvalidOperation(format!(
+            "Failed to flush archive buffer '{}': {}",
             archive_path.display(),
             error
         ))
@@ -155,13 +166,16 @@ pub fn extract_tar_gz_archive(archive_path: &Path, output_dir: &Path) -> Result<
         ))
     })?;
 
-    let archive_file = File::open(archive_path).map_err(|error| {
-        TransferError::InvalidOperation(format!(
-            "Failed to open archive '{}': {}",
-            archive_path.display(),
-            error
-        ))
-    })?;
+    let archive_file = BufReader::with_capacity(
+        crate::TRANSFER_STREAM_BUFFER_BYTES,
+        File::open(archive_path).map_err(|error| {
+            TransferError::InvalidOperation(format!(
+                "Failed to open archive '{}': {}",
+                archive_path.display(),
+                error
+            ))
+        })?,
+    );
     let decoder = GzDecoder::new(archive_file);
     let mut archive = Archive::new(decoder);
 

@@ -10,17 +10,17 @@ use std::{
     net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{mpsc as std_mpsc, Mutex, OnceLock},
+    sync::{Mutex, OnceLock, mpsc as std_mpsc},
     thread,
     time::{Duration, Instant, SystemTime},
 };
 
 #[cfg(unix)]
-use libc::{flock, LOCK_EX, LOCK_UN};
-use rand::{distr::Alphanumeric, RngExt};
+use libc::{LOCK_EX, LOCK_UN, flock};
+use rand::{RngExt, distr::Alphanumeric};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 use tokio::{
     runtime::{Handle, Runtime},
@@ -103,9 +103,9 @@ pub use std::os::unix::fs::PermissionsExt;
 
 pub use kalam_cli::FileCredentialStore;
 pub use kalam_client::{
+    AuthProvider, KalamLinkClient, KalamLinkTimeouts,
     client::KalamLinkClientBuilder,
     credentials::{CredentialStore, Credentials},
-    AuthProvider, KalamLinkClient, KalamLinkTimeouts,
 };
 pub use tempfile::TempDir;
 
@@ -174,7 +174,7 @@ pub fn decode_unverified_token_claims(
     let _header = parts.next().ok_or("token is missing header")?;
     let payload = parts.next().ok_or("token is missing payload")?;
 
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     let decoded = URL_SAFE_NO_PAD.decode(payload)?;
     Ok(serde_json::from_slice(&decoded)?)
 }
@@ -1079,8 +1079,8 @@ fn with_auto_test_server_state_lock<R>(
     }
 }
 
-fn read_auto_test_server_state_locked(
-) -> Result<Option<SharedAutoTestServerState>, Box<dyn std::error::Error>> {
+fn read_auto_test_server_state_locked()
+-> Result<Option<SharedAutoTestServerState>, Box<dyn std::error::Error>> {
     let state_path = auto_test_server_state_file_path();
     if !state_path.exists() {
         return Ok(None);
@@ -1730,11 +1730,7 @@ fn parse_test_urls() -> Option<Vec<String>> {
         .map(|url| url.trim().to_string())
         .filter(|url| !url.is_empty())
         .collect();
-    if urls.is_empty() {
-        None
-    } else {
-        Some(urls)
-    }
+    if urls.is_empty() { None } else { Some(urls) }
 }
 
 fn configured_cluster_urls_from_env() -> Vec<String> {
@@ -1910,11 +1906,7 @@ fn extract_leader_url(message: &str) -> Option<String> {
         .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ')' | '}' | ',' | '\\'))
         .unwrap_or(rest.len());
     let url = rest[..end].to_string();
-    if url.is_empty() {
-        None
-    } else {
-        Some(url)
-    }
+    if url.is_empty() { None } else { Some(url) }
 }
 
 fn detect_leader_url(urls: &[String], username: &str, password: &str) -> Option<String> {
@@ -2284,6 +2276,15 @@ pub fn test_context() -> &'static TestContext {
             cluster_urls_raw,
         }
     })
+}
+
+/// Status output rewrites loopback addresses to `localhost`.
+pub fn browser_server_url(url: &str) -> String {
+    url.replace("://127.0.0.1", "://localhost")
+        .replace("://[::1]", "://localhost")
+        .replace("://::1", "://localhost")
+        .trim_end_matches('/')
+        .to_string()
 }
 
 /// Get the server URL for tests.
@@ -6263,7 +6264,7 @@ pub fn verify_consistent_across_nodes(sql: &str, expected_contains: &[&str]) -> 
 
 #[cfg(test)]
 mod job_wait_tests {
-    use super::{classify_job_status, JobWaitState};
+    use super::{JobWaitState, classify_job_status};
 
     #[test]
     fn running_is_pending_not_completed() {

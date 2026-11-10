@@ -8,17 +8,27 @@ use kalamdb_commons::{
     conversions::scalar_value_to_bytes, ids::ScopedRowKey, models::rows::VersionedTableRow,
     TableId, UserId,
 };
-use kalamdb_store::PrefixIndex;
+use kalamdb_store::{IndexRole, PrefixIndex};
 
 /// Primary-key prefix index over [`ScopedRowKey`] and [`VersionedTableRow`].
 pub type VersionedPkIndex = PrefixIndex<ScopedRowKey, VersionedTableRow>;
 
 pub fn new_user_pk_index(table_id: &TableId, pk_field_name: &str) -> VersionedPkIndex {
-    PrefixIndex::new(format!("user_{table_id}_pk_idx"), vec![pk_field_name.to_string()], true)
+    PrefixIndex::with_role(
+        format!("user_{table_id}_pk_idx"),
+        vec![pk_field_name.to_string()],
+        true,
+        IndexRole::PrimaryKey,
+    )
 }
 
 pub fn new_shared_pk_index(table_id: &TableId, pk_field_name: &str) -> VersionedPkIndex {
-    PrefixIndex::new(format!("shared_{table_id}_pk_idx"), vec![pk_field_name.to_string()], false)
+    PrefixIndex::with_role(
+        format!("shared_{table_id}_pk_idx"),
+        vec![pk_field_name.to_string()],
+        false,
+        IndexRole::PrimaryKey,
+    )
 }
 
 pub trait PkPrefix {

@@ -69,7 +69,9 @@ fn test_project_workflow_environment_precedence_cli_over_env_and_config() {
     );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains(&cli_url), "CLI url flag should win\n{stderr}");
+    let shown_url = browser_server_url(&cli_url);
+    assert!(stderr.contains(&shown_url), "CLI url flag should win\n{stderr}");
+    assert!(!stderr.contains("/env-override"), "env url should not win\n{stderr}");
     assert!(stderr.contains("cli_ns"), "CLI namespace flag should win\n{stderr}");
     assert!(stderr.contains("cli flag"), "expected cli resolution source\n{stderr}");
 }
@@ -91,6 +93,10 @@ fn test_project_workflow_environment_precedence_env_over_config() {
     assert!(output.status.success());
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains(&env_url), "env var should override kalam.toml\n{stderr}");
+    assert!(
+        stderr.contains(&browser_server_url(&env_url)),
+        "env var should override kalam.toml\n{stderr}"
+    );
+    assert!(!stderr.contains("config.example.com"), "config url should not win\n{stderr}");
     assert!(stderr.contains("env_ns"), "env namespace should override config\n{stderr}");
 }

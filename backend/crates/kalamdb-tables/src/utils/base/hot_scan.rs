@@ -6,14 +6,17 @@ use datafusion::{
     arrow::{datatypes::SchemaRef, record_batch::RecordBatch},
     error::Result as DataFusionResult,
     logical_expr::Expr,
+    scalar::ScalarValue,
 };
 use kalamdb_commons::{
-    constants::SystemColumnNames, ids::VersionId, models::rows::RowMetadata, StorageKey, UserId,
+    constants::SystemColumnNames, conversions::PkBucketKey, ids::VersionId,
+    models::rows::RowMetadata, KSerializable, StorageKey, UserId,
 };
 use kalamdb_datafusion_sources::exec::{
-    count_resolved_from_metadata, resolve_latest_kvs_from_cold_batch, ParquetRowData, VersionedRow,
+    merge_row_metadata, parquet_batch_to_metadata, resolve_latest_kvs_from_cold_batch,
+    ParquetBatchDecoder, ParquetRowData, VersionedRow,
 };
-use kalamdb_store::{IndexScanPlan, IndexedEntityStore, StorageError};
+use kalamdb_store::{IndexRole, IndexScanPlan, IndexedEntityStore, StorageError};
 
 use crate::{
     error::KalamDbError,
@@ -30,6 +33,22 @@ pub(crate) struct ResolvedMvccScan<K, V> {
     pub cold_files: Vec<String>,
 }
 
+/// Latest hot primary-key rows that a secondary-index seek cannot see.
+///
+/// Secondary indexes omit tombstones. A flushed row that was deleted or
+/// updated still matches the cold predicate, so the merge needs the current
+/// hot version or the cold row stays visible.
+pub(crate) struct SecondaryDeleteMask<'a, K, V>
+where
+    K: StorageKey + Clone + Send + Sync + 'static,
+    V: KSerializable + Clone + Send + Sync + 'static,
+{
+    pub store: &'a IndexedEntityStore<K, V>,
+    pub schema: SchemaRef,
+    pub pk_name: &'a str,
+    pub prefix_for_pk: &'a (dyn Fn(&ScalarValue) -> Vec<u8> + Sync),
+}
+
 pub(crate) async fn resolve_latest_scan_from_futures<K, R, HotFuture, ColdFuture, Build>(
     pk_name: &str,
     limit: Option<usize>,
@@ -38,29 +57,44 @@ pub(crate) async fn resolve_latest_scan_from_futures<K, R, HotFuture, ColdFuture
     hot_future: HotFuture,
     cold_future: ColdFuture,
     build_cold_row: Build,
+    mask: Option<SecondaryDeleteMask<'_, K, R>>,
 ) -> Result<ResolvedMvccScan<K, R>, KalamDbError>
 where
-    K: Clone,
-    R: VersionedRow,
+    K: StorageKey + Clone + Send + Sync + 'static,
+    R: VersionedRow + KSerializable + Clone + Send + Sync + 'static,
     HotFuture: Future<Output = Result<Vec<(K, R)>, KalamDbError>>,
     ColdFuture: Future<Output = Result<ParquetScanResult, KalamDbError>>,
     Build: Fn(ParquetRowData) -> DataFusionResult<(K, R)>,
 {
     let (hot_result, cold_result) = tokio::join!(hot_future, cold_future);
-    let hot_rows = hot_result?;
-    let hot_rows_scanned = hot_rows.len();
-    let cold_result = cold_result?;
-    let cold_rows_scanned = cold_result.batch.num_rows();
-
-    let mut rows = resolve_latest_kvs_from_cold_batch(
-        pk_name,
-        hot_rows,
-        &cold_result.batch,
-        keep_deleted,
-        snapshot_commit_seq,
-        build_cold_row,
-    )
-    .map_err(|error| KalamDbError::DataFusion(error.to_string()))?;
+    let mut rows = hot_result?;
+    let hot_rows_scanned = rows.len();
+    let mut cold_result = cold_result?;
+    let mut cold_rows_scanned = 0;
+    let mut merged_with_cold = false;
+    while let Some(batch) = cold_result.next_batch().await {
+        let batch = batch?;
+        if let Some(mask) = mask.as_ref() {
+            append_secondary_delete_masks(mask, &mut rows, &batch).await?;
+        }
+        cold_rows_scanned += batch.num_rows();
+        rows = resolve_latest_kvs_from_cold_batch(
+            pk_name,
+            rows,
+            &batch,
+            keep_deleted,
+            snapshot_commit_seq,
+            &build_cold_row,
+        )
+        .map_err(|error| KalamDbError::DataFusion(error.to_string()))?;
+        merged_with_cold = true;
+    }
+    // Cold merge applies snapshot + tombstone filtering. Hot storage is already
+    // one row per PK, so hot-only only needs visibility + tombstone retain.
+    if !merged_with_cold {
+        filter_hot_only_winners(&mut rows, keep_deleted, snapshot_commit_seq);
+    }
+    let cold_stats = cold_result.stats().await;
 
     apply_limit(&mut rows, limit);
 
@@ -68,10 +102,10 @@ where
         rows,
         hot_rows_scanned,
         cold_rows_scanned,
-        cold_files_total: cold_result.stats.total_files,
-        cold_files_skipped: cold_result.stats.skipped_files,
-        cold_files_scanned: cold_result.stats.scanned_files,
-        cold_files: cold_result.stats.visited_files,
+        cold_files_total: cold_stats.total_files,
+        cold_files_skipped: cold_stats.skipped_files,
+        cold_files_scanned: cold_stats.scanned_files,
+        cold_files: cold_stats.visited_files,
     })
 }
 
@@ -83,14 +117,155 @@ pub(crate) async fn count_resolved_rows_from_futures<HotFuture, ColdFuture>(
 ) -> Result<usize, KalamDbError>
 where
     HotFuture: Future<Output = Result<Vec<RowMetadata>, KalamDbError>>,
-    ColdFuture: Future<Output = Result<RecordBatch, KalamDbError>>,
+    ColdFuture: Future<Output = Result<ParquetScanResult, KalamDbError>>,
 {
     let (hot_result, cold_result) = tokio::join!(hot_future, cold_future);
-    let hot_metadata = hot_result?;
-    let parquet_batch = cold_result?;
+    let mut winners = hot_result?;
+    let mut cold_result = cold_result?;
+    let mut merged_with_cold = false;
+    while let Some(batch) = cold_result.next_batch().await {
+        let batch = batch?;
+        let cold_metadata = parquet_batch_to_metadata(&batch, pk_name)
+            .map_err(|error| KalamDbError::DataFusion(error.to_string()))?;
+        winners = merge_row_metadata(pk_name, winners, cold_metadata, snapshot_commit_seq);
+        merged_with_cold = true;
+    }
+    let _stats = cold_result.stats().await;
+    // Hot-only counts skip merge_row_metadata, so apply the snapshot bound here.
+    if !merged_with_cold {
+        winners.retain(|row| {
+            snapshot_commit_seq.is_none_or(|snapshot| row.version <= snapshot)
+        });
+    }
+    Ok(winners.iter().filter(|row| !row.deleted).count())
+}
 
-    count_resolved_from_metadata(pk_name, hot_metadata, &parquet_batch, snapshot_commit_seq)
-        .map_err(|error| KalamDbError::DataFusion(error.to_string()))
+/// Hot storage keeps one row per PK. Without a cold merge, apply the same
+/// snapshot visibility and tombstone rules the merge path would have applied.
+fn filter_hot_only_winners<K, R>(
+    rows: &mut Vec<(K, R)>,
+    keep_deleted: bool,
+    snapshot_commit_seq: Option<VersionId>,
+) where
+    R: VersionedRow,
+{
+    rows.retain(|(_, row)| {
+        let visible = snapshot_commit_seq.is_none_or(|snapshot| row.version() <= snapshot);
+        visible && (keep_deleted || !row.deleted())
+    });
+}
+
+/// Whether this scan's hot side is a secondary index that omits tombstones.
+pub(crate) fn masks_secondary_index_deletes<K, V>(
+    store: &IndexedEntityStore<K, V>,
+    filter: Option<&Expr>,
+    user_id: Option<&UserId>,
+    keep_deleted: bool,
+    since_seq: Option<VersionId>,
+) -> bool
+where
+    K: StorageKey + Clone + Send + Sync + 'static,
+    V: KSerializable + Clone + Send + Sync + 'static,
+{
+    let Some(plan) = authoritative_hot_index_plan(store, filter, user_id, keep_deleted, since_seq)
+    else {
+        return false;
+    };
+    store
+        .indexes()
+        .get(plan.index_idx)
+        .is_some_and(|index| index.role() == IndexRole::SecondaryScalar)
+}
+
+async fn append_secondary_delete_masks<K, V>(
+    mask: &SecondaryDeleteMask<'_, K, V>,
+    hot_rows: &mut Vec<(K, V)>,
+    cold_batch: &RecordBatch,
+) -> Result<(), KalamDbError>
+where
+    K: StorageKey + Clone + Send + Sync + 'static,
+    V: VersionedRow + KSerializable + Clone + Send + Sync + 'static,
+{
+    if cold_batch.num_rows() == 0 {
+        return Ok(());
+    }
+    let decoder = ParquetBatchDecoder::new(cold_batch, Some(mask.pk_name))
+        .map_err(|error| KalamDbError::DataFusion(error.to_string()))?;
+    let mut seen = HashSet::with_capacity(hot_rows.len());
+    for (_, row) in hot_rows.iter() {
+        if let Some(pk) = row.pk_value(mask.pk_name) {
+            seen.insert(pk);
+        }
+    }
+    let mut missing = Vec::new();
+    for row_idx in 0..cold_batch.num_rows() {
+        let metadata = decoder
+            .metadata_at(row_idx)
+            .map_err(|error| KalamDbError::DataFusion(error.to_string()))?;
+        let PkBucketKey::Version(_) = &metadata.pk_bucket else {
+            let pk = metadata.pk_bucket.to_string();
+            if seen.insert(pk.clone()) {
+                missing.push(pk);
+            }
+            continue;
+        };
+    }
+    for pk in missing {
+        let scalar = crate::versioned::pk_text_to_scalar(&mask.schema, mask.pk_name, &pk)?;
+        let prefix = (mask.prefix_for_pk)(&scalar);
+        if let Some(latest) =
+            crate::versioned::latest_hot_by_prefix(mask.store, prefix, None).await?
+        {
+            hot_rows.push(latest);
+        }
+    }
+    Ok(())
+}
+
+/// Index seek that is safe for this scan.
+///
+/// `since_seq` and `_deleted = true` on a secondary scalar index return `None`
+/// so the caller reads the complete hot-plus-cold path.
+pub(crate) fn authoritative_hot_index_plan<K, V>(
+    store: &IndexedEntityStore<K, V>,
+    filter: Option<&Expr>,
+    user_id: Option<&UserId>,
+    keep_deleted: bool,
+    since_seq: Option<VersionId>,
+) -> Option<IndexScanPlan>
+where
+    K: StorageKey + Clone + Send + Sync + 'static,
+    V: kalamdb_commons::KSerializable + Clone + Send + Sync + 'static,
+{
+    let plan = hot_index_seek(store, filter, user_id)?;
+    let role = store.indexes().get(plan.index_idx).map(|index| index.role())?;
+    if !crate::table_engine::use_index_plan(role, keep_deleted, since_seq) {
+        return None;
+    }
+    if prefers_index_access(plan.equality_columns(), plan.has_range(), None) {
+        Some(plan)
+    } else {
+        None
+    }
+}
+
+/// Selectivity at or above this fraction is cheaper as a projected sequential scan.
+const SEQUENTIAL_SELECTIVITY: f64 = 0.5;
+
+/// Whether an index walk plus row fetch beats a projected sequential scan.
+///
+/// A leading equality stays indexed when no row estimate exists. A range with
+/// no equality prefix is the broad case and uses the sequential scan. A caller
+/// that has a selectivity estimate uses that estimate for both shapes.
+pub(crate) fn prefers_index_access(
+    equality_columns: u8,
+    has_range: bool,
+    estimated_selectivity: Option<f64>,
+) -> bool {
+    if let Some(selectivity) = estimated_selectivity {
+        return selectivity < SEQUENTIAL_SELECTIVITY;
+    }
+    equality_columns > 0 || !has_range
 }
 
 /// If `filter` matches a prefix index, return a seek plan for `scan_by_index_plan_iter`.
@@ -214,7 +389,8 @@ pub fn reject_truncated_unbounded_scan(
 pub fn reject_truncated_count_scan(scanned_rows: usize) -> Result<(), KalamDbError> {
     if scanned_rows >= UNBOUNDED_COUNT_SCAN_LIMIT {
         return Err(KalamDbError::InvalidOperation(format!(
-            "count scan stopped at {UNBOUNDED_COUNT_SCAN_LIMIT} hot rows before the partition ended"
+            "count scan stopped at {UNBOUNDED_COUNT_SCAN_LIMIT} hot rows before the partition \
+             ended"
         )));
     }
     Ok(())
@@ -241,8 +417,69 @@ pub fn build_count_only_batch(count: usize) -> Result<RecordBatch, KalamDbError>
 #[cfg(test)]
 mod tests {
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
+    use kalamdb_commons::ids::VersionId;
+    use kalamdb_datafusion_sources::exec::VersionedRow;
 
     use super::*;
+
+    #[derive(Debug, Clone)]
+    struct HotOnlyRow {
+        version: VersionId,
+        deleted: bool,
+        pk: String,
+    }
+
+    impl VersionedRow for HotOnlyRow {
+        fn version(&self) -> VersionId {
+            self.version
+        }
+
+        fn deleted(&self) -> bool {
+            self.deleted
+        }
+
+        fn pk_value(&self, _pk_name: &str) -> Option<String> {
+            Some(self.pk.clone())
+        }
+    }
+
+    #[test]
+    fn hot_only_filter_drops_tombstones_and_honors_snapshot() {
+        let mut rows = vec![
+            (
+                "k-live".to_string(),
+                HotOnlyRow {
+                    version: VersionId::try_from_i64(1).unwrap(),
+                    deleted: false,
+                    pk: "live".to_string(),
+                },
+            ),
+            (
+                "k-dead".to_string(),
+                HotOnlyRow {
+                    version: VersionId::try_from_i64(2).unwrap(),
+                    deleted: true,
+                    pk: "dead".to_string(),
+                },
+            ),
+            (
+                "k-future".to_string(),
+                HotOnlyRow {
+                    version: VersionId::try_from_i64(10).unwrap(),
+                    deleted: false,
+                    pk: "future".to_string(),
+                },
+            ),
+        ];
+
+        filter_hot_only_winners(
+            &mut rows,
+            false,
+            Some(VersionId::try_from_i64(5).unwrap()),
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.pk, "live");
+    }
 
     #[test]
     fn scan_limit_saturates_without_overflow() {
@@ -258,6 +495,17 @@ mod tests {
         assert!(super::reject_truncated_unbounded_scan(Some(10), 100_000).is_ok());
         assert!(super::reject_truncated_count_scan(super::UNBOUNDED_COUNT_SCAN_LIMIT).is_err());
         assert!(super::reject_truncated_count_scan(super::UNBOUNDED_COUNT_SCAN_LIMIT - 1).is_ok());
+    }
+
+    #[test]
+    fn index_access_keeps_equality_and_leaves_a_leading_range_sequential() {
+        assert!(prefers_index_access(1, false, None));
+        assert!(prefers_index_access(1, true, None));
+        assert!(!prefers_index_access(0, true, None));
+        assert!(prefers_index_access(0, true, Some(0.01)));
+        assert!(!prefers_index_access(1, false, Some(0.9)));
+        assert!(prefers_index_access(0, true, Some(0.49)));
+        assert!(!prefers_index_access(0, true, Some(0.5)));
     }
 
     #[test]

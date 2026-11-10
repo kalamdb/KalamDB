@@ -268,9 +268,7 @@ mod tests {
     use kalamdb_core::{
         app_context::AppContext,
         providers::{
-            arrow_json_conversion::json_to_row,
-            base::TableProviderCore,
-            StreamTableEngine,
+            arrow_json_conversion::json_to_row, base::TableProviderCore, StreamTableEngine,
         },
         test_helpers::test_app_context_simple,
     };

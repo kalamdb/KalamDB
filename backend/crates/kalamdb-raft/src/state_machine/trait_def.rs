@@ -134,6 +134,12 @@ pub trait KalamStateMachine: Send + Sync {
     /// state-machine watermark to advance past them.
     fn mark_applied_index(&self, _index: u64, _term: u64) {}
 
+    /// Move the applied watermark back after a durable batch failed.
+    ///
+    /// [`Self::mark_applied_index`] refuses to move backward. When the outer
+    /// flush fails, the same log index has to be applied again.
+    fn rewind_applied_index(&self, _index: u64, _term: u64) {}
+
     /// Get the last applied log term
     fn last_applied_term(&self) -> u64;
 

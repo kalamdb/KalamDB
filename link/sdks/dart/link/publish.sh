@@ -75,7 +75,7 @@ echo "==> Running dart analyze..."
 dart analyze lib
 
 echo "==> Running tests..."
-flutter test || true   # warn but don't block (live-server tests may require a running server)
+bash ./test-offline.sh
 
 if $DRY_RUN; then
   echo "==> Dry run — validating package (no upload)..."

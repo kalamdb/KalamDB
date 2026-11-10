@@ -43,16 +43,18 @@ async fn exec(app: &Arc<AppContext>, executor: &SqlExecutor, sql: &str) {
 
 async fn exec_err(app: &Arc<AppContext>, executor: &SqlExecutor, sql: &str) -> String {
     let ctx = root_ctx(app);
-    executor
-        .execute(sql, &ctx, vec![])
-        .await
-        .expect_err(&format!("expected error for `{sql}`"))
-        .to_string()
+    match executor.execute(sql, &ctx, vec![]).await {
+        Ok(result) => match result.into_materialized_rows().await {
+            Ok(_) => panic!("expected error for `{sql}`"),
+            Err(error) => error,
+        },
+        Err(error) => error.to_string(),
+    }
 }
 
 async fn query_strings(app: &Arc<AppContext>, executor: &SqlExecutor, sql: &str) -> Vec<String> {
     let ctx = root_ctx(app);
-    match executor.execute(sql, &ctx, vec![]).await.expect(sql) {
+    match support::materialize_result(executor.execute(sql, &ctx, vec![]).await.expect(sql)).await {
         ExecutionResult::Rows { batches, .. } => {
             let mut out = Vec::new();
             for batch in batches {
@@ -216,10 +218,13 @@ async fn file_functions_mint_read_delete_and_reject_forged_references() {
 
     // Read back via file_read
     let ctx = root_ctx(&app);
-    match executor
-        .execute("SELECT file_read(doc) FROM ext_files.docs WHERE id = 1", &ctx, vec![])
-        .await
-        .expect("file_read should succeed")
+    match support::materialize_result(
+        executor
+            .execute("SELECT file_read(doc) FROM ext_files.docs WHERE id = 1", &ctx, vec![])
+            .await
+            .expect("file_read should succeed"),
+    )
+    .await
     {
         ExecutionResult::Rows { batches, .. } => {
             let col = batches[0]
@@ -234,10 +239,13 @@ async fn file_functions_mint_read_delete_and_reject_forged_references() {
 
     // Delete via file_delete (returns void / null) and verify subsequent read fails
     let ctx = root_ctx(&app);
-    match executor
-        .execute("SELECT file_delete(doc) FROM ext_files.docs WHERE id = 1", &ctx, vec![])
-        .await
-        .expect("file_delete should succeed")
+    match support::materialize_result(
+        executor
+            .execute("SELECT file_delete(doc) FROM ext_files.docs WHERE id = 1", &ctx, vec![])
+            .await
+            .expect("file_delete should succeed"),
+    )
+    .await
     {
         ExecutionResult::Rows { batches, .. } => {
             assert_eq!(batches[0].num_rows(), 1);

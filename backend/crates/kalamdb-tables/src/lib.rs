@@ -88,7 +88,13 @@ pub use user_tables::{
 };
 // Re-export providers for core integration
 pub(crate) use provider::as_shared_table;
-pub use provider::{as_kalam_table, as_stream_table, KalamTableProvider, TableCapabilityProfile};
+pub use provider::{
+    as_kalam_table, as_stream_table, KalamTableProvider, PlannedInsertBatch, TableCapabilityProfile,
+};
 pub(crate) use utils::SharedTableProvider;
 pub use utils::{StreamTableEngine, TableProviderCore, TableRowDml};
-pub use versioned::DeferredMutation;
+pub use versioned::{
+    batch_baseline_requests, check_expected_max_version, AuthoritativeBaseline, BaselineRequest,
+    DeferredMutation, PlannedScopeFinish, TargetResolutionCache, TargetVersionError,
+    BASELINE_BATCH_LIMIT,
+};

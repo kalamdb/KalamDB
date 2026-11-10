@@ -29,6 +29,7 @@ use datafusion::{
     physical_expr::PhysicalExpr,
     physical_plan::{
         metrics::{Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
+        stream::RecordBatchStreamAdapter,
         ChildrenPropertiesMode, DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties,
         ReplaceChildrenOptions,
     },
@@ -43,7 +44,9 @@ pub use kalamdb_commons::{
     pk_bucket_key_from_array, pk_bucket_key_from_row, pk_bucket_key_from_scalar, PkBucketKey,
 };
 
-use crate::{stats::single_partition_plan_properties, stream::one_shot_batch_stream};
+use futures_util::{stream, StreamExt};
+
+use crate::stats::single_partition_plan_properties;
 
 /// Apply provider-side filter, projection, and limit handling to a deferred
 /// source batch after the source has materialized its raw rows.
@@ -76,6 +79,46 @@ pub fn finalize_deferred_batch(
     }
 
     Ok(batch)
+}
+
+/// Filter and project each batch, then apply `limit` across the sequence.
+///
+/// A later chunk is still read when an earlier chunk shrinks under the limit.
+/// The result is one empty batch when every row is filtered out.
+pub fn finalize_deferred_batches(
+    batches: Vec<RecordBatch>,
+    physical_filter: Option<&Arc<dyn PhysicalExpr>>,
+    projection: Option<&[usize]>,
+    limit: Option<usize>,
+    source_name: &str,
+) -> DataFusionResult<Vec<RecordBatch>> {
+    let mut remaining = limit;
+    let mut kept = Vec::new();
+    let mut empty = None;
+    for batch in batches {
+        let batch = finalize_deferred_batch(batch, physical_filter, projection, None, source_name)?;
+        let batch = match remaining {
+            Some(left) if batch.num_rows() > left => batch.slice(0, left),
+            _ => batch,
+        };
+        if let Some(left) = remaining {
+            remaining = Some(left.saturating_sub(batch.num_rows()));
+        }
+        if batch.num_rows() == 0 {
+            empty = Some(batch);
+        } else {
+            kept.push(batch);
+        }
+        if remaining == Some(0) {
+            break;
+        }
+    }
+    if kept.is_empty() {
+        kept.push(empty.ok_or_else(|| {
+            DataFusionError::Internal(format!("{source_name} produced no batches to finalize"))
+        })?);
+    }
+    Ok(kept)
 }
 
 /// Project a schema with the requested column indices, or return the original
@@ -395,6 +438,33 @@ pub fn count_resolved_from_metadata(
     let cold_metadata = parquet_batch_to_metadata(cold_batch, pk_name)?;
 
     Ok(count_merged_rows(pk_name, hot_metadata, cold_metadata, snapshot_version))
+}
+
+/// Keep the newest metadata per key, including tombstones.
+///
+/// Count scans fold cold batches one at a time. Dropping a tombstone before
+/// the next batch would let an older live version of that key win.
+pub fn merge_row_metadata(
+    pk_name: &str,
+    hot_metadata: impl IntoIterator<Item = RowMetadata>,
+    cold_metadata: impl IntoIterator<Item = RowMetadata>,
+    snapshot_version: Option<VersionId>,
+) -> Vec<RowMetadata> {
+    select_latest_versions(
+        hot_metadata.into_iter().map(|row| {
+            VersionCandidate::new(row.pk_bucket_key(pk_name), row.version(), row.deleted(), row)
+        }),
+        cold_metadata.into_iter().map(|row| {
+            VersionCandidate::new(row.pk_bucket_key(pk_name), row.version(), row.deleted(), row)
+        }),
+        snapshot_version,
+        true,
+    )
+    .into_iter()
+    .map(|winner| match winner {
+        SelectedVersion::Hot(row) | SelectedVersion::Cold(row) => row,
+    })
+    .collect()
 }
 
 pub fn merge_versioned_rows<K, R, I, J>(
@@ -752,6 +822,31 @@ pub type SharedSchema = Arc<arrow_schema::Schema>;
 
 const MAX_RECORDED_SCAN_FILES: usize = 16;
 
+/// How a deferred scan read the hot table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanAccess {
+    Index,
+    Sequential,
+}
+
+impl ScanAccess {
+    /// `chosen` is true when the scan kept an index plan.
+    pub fn from_index_chosen(chosen: bool) -> Self {
+        if chosen {
+            Self::Index
+        } else {
+            Self::Sequential
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Index => "index",
+            Self::Sequential => "sequential",
+        }
+    }
+}
+
 /// Runtime diagnostics recorded by deferred scan sources.
 ///
 /// Values are optional so sources only report measurements they can collect
@@ -764,12 +859,16 @@ pub struct DeferredScanDiagnostics {
     pub cold_files_skipped: Option<usize>,
     pub cold_files_scanned: Option<usize>,
     pub cold_files: Vec<String>,
+    /// Set when the scan recorded which access it chose.
+    pub access_path: Option<ScanAccess>,
 }
 
 /// A materialized deferred batch with optional scan diagnostics.
 #[derive(Debug)]
 pub struct DeferredBatchOutput {
     pub batch: RecordBatch,
+    /// Later chunks of the same scan. Empty when the source still returns one batch.
+    pub follow_batches: Vec<RecordBatch>,
     pub diagnostics: DeferredScanDiagnostics,
 }
 
@@ -777,14 +876,57 @@ impl DeferredBatchOutput {
     pub fn new(batch: RecordBatch) -> Self {
         Self {
             batch,
+            follow_batches: Vec::new(),
             diagnostics: DeferredScanDiagnostics::default(),
         }
+    }
+
+    pub fn with_follow(mut self, follow_batches: Vec<RecordBatch>) -> Self {
+        self.follow_batches = follow_batches;
+        self
     }
 
     pub fn with_diagnostics(mut self, diagnostics: DeferredScanDiagnostics) -> Self {
         self.diagnostics = diagnostics;
         self
     }
+
+    pub fn output_rows(&self) -> usize {
+        self.batch.num_rows() + self.follow_batches.iter().map(RecordBatch::num_rows).sum::<usize>()
+    }
+
+    pub fn output_batch_count(&self) -> usize {
+        1 + self.follow_batches.len()
+    }
+}
+
+/// One batch, or every chunk in order when the scan emitted more than one.
+pub fn flatten_deferred_output(output: DeferredBatchOutput) -> DataFusionResult<RecordBatch> {
+    if output.follow_batches.is_empty() {
+        return Ok(output.batch);
+    }
+    let mut batches = Vec::with_capacity(output.output_batch_count());
+    batches.push(output.batch);
+    batches.extend(output.follow_batches);
+    let schema = batches[0].schema();
+    arrow::compute::concat_batches(&schema, &batches)
+        .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))
+}
+
+fn deferred_output_stream<F>(schema: SchemaRef, pending: F) -> SendableRecordBatchStream
+where
+    F: std::future::Future<Output = DataFusionResult<DeferredBatchOutput>> + Send + 'static,
+{
+    let batches = stream::once(pending).flat_map(|result| match result {
+        Ok(output) => {
+            let mut batches = Vec::with_capacity(output.output_batch_count());
+            batches.push(Ok(output.batch));
+            batches.extend(output.follow_batches.into_iter().map(Ok));
+            stream::iter(batches)
+        },
+        Err(error) => stream::iter(vec![Err(error)]),
+    });
+    Box::pin(RecordBatchStreamAdapter::new(schema, batches))
 }
 
 #[derive(Clone)]
@@ -823,8 +965,8 @@ impl DeferredBatchMetrics {
     }
 
     fn record(&self, output: &DeferredBatchOutput) {
-        self.output_rows.add(output.batch.num_rows());
-        self.output_batches.add(1);
+        self.output_rows.add(output.output_rows());
+        self.output_batches.add(output.output_batch_count());
 
         let diagnostics = &output.diagnostics;
         if let Some(value) = diagnostics.hot_rows_scanned {
@@ -841,6 +983,13 @@ impl DeferredBatchMetrics {
         }
         if let Some(value) = diagnostics.cold_files_scanned {
             self.cold_files_scanned.add(value);
+        }
+
+        if let Some(access) = diagnostics.access_path {
+            MetricBuilder::new(&self.set)
+                .with_new_label("path", access.as_str().to_owned())
+                .global_counter("scan_access")
+                .add(1);
         }
 
         let recorded_files = diagnostics.cold_files.len().min(MAX_RECORDED_SCAN_FILES);
@@ -883,6 +1032,14 @@ pub trait DeferredBatchSource: Send + Sync {
     async fn produce_batch(&self) -> DataFusionResult<RecordBatch>;
 
     async fn produce_batch_with_diagnostics(&self) -> DataFusionResult<DeferredBatchOutput> {
+        Ok(DeferredBatchOutput::new(self.produce_batch().await?))
+    }
+
+    /// Full scan output, including chunks after the first batch.
+    ///
+    /// The default wraps [`Self::produce_batch`]. A source that already split
+    /// its output overrides this so execution does not concatenate the chunks.
+    async fn load_batch_output(&self) -> DataFusionResult<DeferredBatchOutput> {
         Ok(DeferredBatchOutput::new(self.produce_batch().await?))
     }
 
@@ -930,9 +1087,9 @@ impl DeferredBatchExec {
             Some(metrics) => {
                 let output = self.source.produce_batch_with_diagnostics().await?;
                 metrics.record(&output);
-                Ok(output.batch)
+                flatten_deferred_output(output)
             },
-            None => self.source.produce_batch().await,
+            None => flatten_deferred_output(self.source.load_batch_output().await?),
         }
     }
 
@@ -1033,14 +1190,14 @@ impl ExecutionPlan for DeferredBatchExec {
         let source = Arc::clone(&self.source);
         let schema = source.schema();
         let metrics = self.metrics.clone();
-        Ok(one_shot_batch_stream(schema, async move {
+        Ok(deferred_output_stream(schema, async move {
             match metrics {
                 Some(metrics) => {
                     let output = source.produce_batch_with_diagnostics().await?;
                     metrics.record(&output);
-                    Ok(output.batch)
+                    Ok(output)
                 },
-                None => source.produce_batch().await,
+                None => source.load_batch_output().await,
             }
         }))
     }

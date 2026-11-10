@@ -33,10 +33,27 @@ pub trait PrefixIndexedKey: StorageKey {
     fn prefix_index_seq(&self) -> i64;
 }
 
+/// Whether a prefix index stores live rows only or live rows and tombstones.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndexRole {
+    /// Point lookup and uniqueness see the latest tombstone.
+    PrimaryKey,
+    /// Ordinary scalar indexes store live rows only.
+    SecondaryScalar,
+}
+
 /// Entity fields encoded into a prefix index.
 pub trait PrefixIndexedValue {
     /// Order-preserving bytes for `column`, or `None` to skip indexing this row.
     fn prefix_index_field_bytes(&self, column: &str) -> Option<Vec<u8>>;
+
+    /// `true` when this row is a tombstone (`_deleted`).
+    ///
+    /// [`IndexRole::SecondaryScalar`] omits a new key for tombstones.
+    /// [`IndexRole::PrimaryKey`] still indexes them.
+    fn prefix_index_is_tombstone(&self) -> bool {
+        false
+    }
 }
 
 /// Column-list prefix index. PK is this type with a single column name.
@@ -45,20 +62,38 @@ pub struct PrefixIndex<K, V> {
     partition: Partition,
     columns: Vec<String>,
     user_scoped: bool,
+    role: IndexRole,
     _marker: PhantomData<(K, V)>,
 }
 
 impl<K, V> PrefixIndex<K, V> {
-    /// Create a prefix index.
+    /// Create a primary-key prefix index.
     ///
     /// `user_scoped` must match whether `K` carries a `user_id` (USER tables).
+    /// Scalar indexes use [`with_role`] with [`IndexRole::SecondaryScalar`].
     pub fn new(partition: impl Into<Partition>, columns: Vec<String>, user_scoped: bool) -> Self {
+        Self::with_role(partition, columns, user_scoped, IndexRole::PrimaryKey)
+    }
+
+    /// Create a prefix index with an explicit [`IndexRole`].
+    pub fn with_role(
+        partition: impl Into<Partition>,
+        columns: Vec<String>,
+        user_scoped: bool,
+        role: IndexRole,
+    ) -> Self {
         Self {
             partition: partition.into(),
             columns,
             user_scoped,
+            role,
             _marker: PhantomData,
         }
+    }
+
+    /// Role that decides whether tombstones are indexed.
+    pub fn role(&self) -> IndexRole {
+        self.role
     }
 
     /// Encode a prefix over `user_id` (optional) and column bytes.
@@ -133,7 +168,14 @@ where
         self.columns.iter().map(String::as_str).collect()
     }
 
+    fn role(&self) -> IndexRole {
+        self.role
+    }
+
     fn extract_key(&self, primary_key: &K, entity: &V) -> Option<Vec<u8>> {
+        if self.role == IndexRole::SecondaryScalar && entity.prefix_index_is_tombstone() {
+            return None;
+        }
         if self.columns.is_empty() || self.columns.len() > MAX_INDEX_COLUMNS {
             return None;
         }
@@ -280,11 +322,19 @@ impl PrefixIndexedValue for SharedTableRow {
     fn prefix_index_field_bytes(&self, column: &str) -> Option<Vec<u8>> {
         self.fields.get(column).map(scalar_value_to_bytes)
     }
+
+    fn prefix_index_is_tombstone(&self) -> bool {
+        self._deleted
+    }
 }
 
 impl PrefixIndexedValue for UserTableRow {
     fn prefix_index_field_bytes(&self, column: &str) -> Option<Vec<u8>> {
         self.fields.get(column).map(scalar_value_to_bytes)
+    }
+
+    fn prefix_index_is_tombstone(&self) -> bool {
+        self._deleted
     }
 }
 
@@ -294,6 +344,10 @@ impl PrefixIndexedValue for VersionedTableRow {
             Self::User(row) => row.prefix_index_field_bytes(column),
             Self::Shared(row) => row.prefix_index_field_bytes(column),
         }
+    }
+
+    fn prefix_index_is_tombstone(&self) -> bool {
+        self.is_deleted()
     }
 }
 

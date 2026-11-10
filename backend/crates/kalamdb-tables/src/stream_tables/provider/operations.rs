@@ -327,18 +327,22 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableEngine {
 
                     deleted_count += 1;
 
-                    // Fire live query notification (DELETE hard)
                     let notification_service = self.core.services.notification_service.clone();
                     let table_id = self.core.table_id().clone();
-
-                    if notification_service.has_subscribers(Some(&user_id), &table_id) {
+                    let scope = kalamdb_system::live_notify_scope(
+                        kalamdb_commons::TableType::Stream,
+                        Some(user_id),
+                    );
+                    if notification_service.has_subscribers(scope.as_ref(), &table_id) {
                         let row_id_str =
                             format!("{}:{}", key.user_id().as_str(), key.version().as_i64());
                         let notification =
                             ChangeNotification::delete_hard(table_id.clone(), row_id_str);
-                        notification_service.notify_table_change(
-                            Some(user_id.clone()),
-                            table_id,
+                        kalamdb_system::publish_live_table_change(
+                            Some(notification_service.as_ref()),
+                            kalamdb_commons::TableType::Stream,
+                            Some(user_id),
+                            &table_id,
                             notification,
                         );
                     }

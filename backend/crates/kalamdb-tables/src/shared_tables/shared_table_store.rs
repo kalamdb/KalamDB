@@ -540,8 +540,7 @@ mod tests {
         assert!(store.get(&second_key).unwrap().is_none());
         assert!(store.get(&tombstone_key).unwrap().unwrap()._deleted);
         let tombstone_hits = store.scan_by_index(closed_idx, Some(&closed_prefix), None).unwrap();
-        assert_eq!(tombstone_hits.len(), 1);
-        assert_eq!(tombstone_hits[0].0, tombstone_key);
+        assert!(tombstone_hits.is_empty(), "secondary index omits the delete tombstone");
 
         let (live_key, live_row) = status_row(4, "open", false);
         store.replace(Some((&tombstone_key, &tombstone)), &live_key, &live_row).unwrap();
@@ -654,7 +653,7 @@ mod tests {
         assert_eq!(plan.index_idx, 1);
         let indexed =
             store.scan_by_index(plan.index_idx, Some(plan.prefix.as_slice()), None).unwrap();
-        assert_eq!(indexed.len(), 4, "tombstone stays in the secondary index");
+        assert_eq!(indexed.len(), 3, "secondary index omits the delete tombstone");
 
         let stats = store.sum_visible_index_integers(&plan).unwrap().expect("integer sum");
         assert_eq!(stats.count, 2);

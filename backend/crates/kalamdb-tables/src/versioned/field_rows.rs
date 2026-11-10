@@ -250,9 +250,10 @@ pub(crate) fn table_watch(
     subscriber_scope: Option<&UserId>,
 ) -> TableWatch {
     let table_id = core.table_id();
+    let scope = kalamdb_system::live_notify_scope(core.table_type(), subscriber_scope);
     TableWatch {
         topics: core.has_topic_routes(table_id),
-        live: core.services.notification_service.has_subscribers(subscriber_scope, table_id),
+        live: core.services.notification_service.has_subscribers(scope.as_ref(), table_id),
     }
 }
 
@@ -277,7 +278,13 @@ pub(crate) async fn fanout_row_change(
     }
     if watch.live {
         let notification = live(table_id.clone(), row);
-        notification_service.notify_table_change(subscriber_scope.cloned(), table_id, notification);
+        kalamdb_system::publish_live_table_change(
+            Some(notification_service.as_ref()),
+            core.table_type(),
+            subscriber_scope,
+            &table_id,
+            notification,
+        );
     }
 }
 
@@ -305,11 +312,12 @@ pub(crate) async fn fanout_insert_notifications(
         .await;
     }
     if watch.live {
-        let notify_scope = subscriber_scope.cloned();
         for row in rows {
-            notification_service.notify_table_change(
-                notify_scope.clone(),
-                table_id.clone(),
+            kalamdb_system::publish_live_table_change(
+                Some(notification_service.as_ref()),
+                core.table_type(),
+                subscriber_scope,
+                &table_id,
                 ChangeNotification::insert(table_id.clone(), row),
             );
         }

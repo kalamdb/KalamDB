@@ -7,12 +7,12 @@ use datafusion::{
     datasource::TableProvider,
     error::{DataFusionError, Result as DataFusionResult},
     logical_expr::{Expr, ExprSchemable, Operator, TableProviderFilterPushDown},
-    physical_plan::{collect, filter::FilterExec, ExecutionPlan},
+    physical_plan::{filter::FilterExec, ExecutionPlan},
     scalar::ScalarValue,
 };
 use kalamdb_commons::{
     conversions::{
-        arrow_json_conversion::{arrow_value_to_scalar, coerce_updates, json_rows_to_arrow_batch},
+        arrow_json_conversion::{arrow_value_to_scalar, coerce_updates},
         scalar_to_pk_string,
     },
     models::{rows::Row, OperationKind, TransactionId, UserId},
@@ -73,15 +73,22 @@ fn residual_filter_required(provider: &dyn TableProvider, filters: &[Expr]) -> b
     })
 }
 
-pub async fn collect_matching_rows_with_projection(
+pub async fn visit_matching_batches<F>(
     provider: &dyn TableProvider,
     state: &dyn Session,
     filters: &[Expr],
     projection: Option<&Vec<usize>>,
-) -> DataFusionResult<Vec<Row>> {
+    visit: F,
+) -> DataFusionResult<()>
+where
+    F: FnMut(RecordBatch) -> DataFusionResult<()>,
+{
     // Pass filters to scan() which may apply partial or full filtering.
     // MVCC providers report Exact and apply the predicate on resolved rows.
     // A second FilterExec is only required when pushdown is not Exact.
+    // Batches are visited one at a time so the scan scratch is not the full match.
+    // Mutations stay unstaged until the caller finishes this scan, so a statement
+    // cannot observe rows it just wrote (Halloween).
     let scan_plan = provider.scan(state, projection, filters, None).await?;
 
     let plan: Arc<dyn ExecutionPlan> = if residual_filter_required(provider, filters) {
@@ -94,27 +101,22 @@ pub async fn collect_matching_rows_with_projection(
         scan_plan
     };
 
-    let task_ctx = state.task_ctx();
-    let batches = collect(plan, task_ctx).await?;
-    kalamdb_datafusion_sources::dml::record_batches_to_rows(&batches)
+    kalamdb_datafusion_sources::dml::visit_plan_batches(state, plan, visit).await
 }
 
-pub fn row_matches_filters(
+pub async fn collect_matching_rows_with_projection(
+    provider: &dyn TableProvider,
     state: &dyn Session,
-    schema: &SchemaRef,
-    row: &Row,
     filters: &[Expr],
-) -> DataFusionResult<bool> {
-    let batch = build_row_batch(schema, row)?;
-    let df_schema = DFSchema::try_from(Arc::clone(schema))?;
-
-    for filter in filters {
-        let predicate = evaluate_expr_against_batch(state, &df_schema, &batch, filter)?;
-        if !predicate_to_bool(predicate)? {
-            return Ok(false);
-        }
-    }
-    Ok(true)
+    projection: Option<&Vec<usize>>,
+) -> DataFusionResult<Vec<Row>> {
+    let mut rows = Vec::new();
+    visit_matching_batches(provider, state, filters, projection, |batch| {
+        rows.extend(kalamdb_datafusion_sources::dml::record_batch_to_rows(&batch)?);
+        Ok(())
+    })
+    .await?;
+    Ok(rows)
 }
 
 pub fn validate_update_assignments(assignments: &[(String, Expr)]) -> DataFusionResult<()> {
@@ -250,6 +252,119 @@ pub fn stage_field_update(
         updates,
         false,
     ));
+}
+
+/// What one matched row becomes after its UPDATE assignments are evaluated.
+#[derive(Debug)]
+pub enum UpdateChange {
+    /// Every assigned value already equals the stored value.
+    Unchanged,
+    /// The primary key moves. The row is the full replacement for the new key.
+    PrimaryKeyMove(Row),
+    /// The primary key stays. The row holds only the assigned fields.
+    FieldUpdate(Row),
+}
+
+/// Decide how one matched row changes. One implementation for user and shared tables.
+pub fn classify_update(
+    schema: &SchemaRef,
+    pk_column: &str,
+    pk_value: &str,
+    is_auto_increment_pk: bool,
+    row: &Row,
+    evaluated_updates: Row,
+) -> DataFusionResult<UpdateChange> {
+    if relocated_primary_key(&evaluated_updates, pk_column, pk_value)?.is_some() {
+        let inserted = prepared_primary_key_move(
+            is_auto_increment_pk,
+            pk_column,
+            row,
+            &evaluated_updates,
+            schema,
+        )?;
+        return Ok(UpdateChange::PrimaryKeyMove(inserted));
+    }
+    if update_assignments_noop(schema, row, &evaluated_updates)? {
+        return Ok(UpdateChange::Unchanged);
+    }
+    Ok(UpdateChange::FieldUpdate(evaluated_updates))
+}
+
+/// Stage `change` for a transaction. Returns whether anything was staged.
+pub fn stage_update_change(
+    staged: &mut Vec<StagedMutation>,
+    context: &TransactionQueryContext,
+    table_id: &TableId,
+    table_type: TableType,
+    user_id: &UserId,
+    pk_column: &str,
+    pk_value: String,
+    change: UpdateChange,
+) -> DataFusionResult<bool> {
+    let transaction_id = context.transaction_id.clone();
+    match change {
+        UpdateChange::Unchanged => Ok(false),
+        UpdateChange::PrimaryKeyMove(inserted_row) => {
+            stage_primary_key_move(
+                staged,
+                transaction_id,
+                table_id,
+                table_type,
+                user_id.clone(),
+                pk_column,
+                pk_value,
+                inserted_row,
+            )?;
+            Ok(true)
+        },
+        UpdateChange::FieldUpdate(updates) => {
+            stage_field_update(
+                staged,
+                transaction_id,
+                table_id,
+                table_type,
+                user_id.clone(),
+                pk_value,
+                updates,
+            );
+            Ok(true)
+        },
+    }
+}
+
+/// Distinct primary keys of the rows `filters` match, in scan order.
+///
+/// Scans one bounded batch at a time. Only the key strings are retained, so the
+/// scan scratch never holds the full match.
+pub async fn collect_matching_primary_keys(
+    provider: &dyn TableProvider,
+    state: &dyn Session,
+    filters: &[Expr],
+    projection: Option<&Vec<usize>>,
+    pk_column: &str,
+) -> DataFusionResult<Vec<String>> {
+    let mut seen = std::collections::HashSet::new();
+    let mut keys = Vec::new();
+    visit_matching_batches(provider, state, filters, projection, |batch| {
+        let index = batch.schema().index_of(pk_column).map_err(|_| {
+            DataFusionError::Execution(format!(
+                "Primary key column '{pk_column}' not found in matching row"
+            ))
+        })?;
+        let column = batch.column(index);
+        for row in 0..batch.num_rows() {
+            let scalar = arrow_value_to_scalar(column.as_ref(), row)?;
+            let key = scalar_to_pk_string(&scalar).map_err(|error| {
+                DataFusionError::Execution(format!("Invalid primary key value: {error}"))
+            })?;
+            if seen.insert(key.clone()) {
+                keys.push(key);
+            }
+        }
+        Ok(())
+    })
+    .await?;
+    Ok(keys)
 }
 
 /// Claim `pk_value` when this transaction tracks claims, then stage the delete if it is live.
@@ -518,24 +633,6 @@ pub fn extract_pk_value(row: &Row, pk_column: &str) -> DataFusionResult<String> 
         .map_err(|e| DataFusionError::Execution(format!("Invalid primary key value: {}", e)))
 }
 
-pub fn evaluate_assignment_values(
-    state: &dyn Session,
-    schema: &SchemaRef,
-    row: &Row,
-    assignments: &[(String, Expr)],
-) -> DataFusionResult<Row> {
-    let df_schema = DFSchema::try_from(Arc::clone(schema))?;
-    let batch = build_row_batch(schema, row)?;
-    let mut values = BTreeMap::new();
-
-    for (column, expr) in assignments {
-        let value = evaluate_expr_against_batch(state, &df_schema, &batch, expr)?;
-        values.insert(column.clone(), value);
-    }
-
-    Ok(Row::new(values))
-}
-
 pub fn update_assignments_noop(
     schema: &SchemaRef,
     row: &Row,
@@ -551,38 +648,6 @@ pub fn update_assignments_noop(
     }
 
     Ok(true)
-}
-
-fn build_row_batch(schema: &SchemaRef, row: &Row) -> DataFusionResult<RecordBatch> {
-    json_rows_to_arrow_batch(schema, vec![row.clone()]).map_err(DataFusionError::Execution)
-}
-
-fn evaluate_expr_against_batch(
-    state: &dyn Session,
-    df_schema: &DFSchema,
-    batch: &RecordBatch,
-    expr: &Expr,
-) -> DataFusionResult<ScalarValue> {
-    let physical_expr = state.create_physical_expr(expr.clone(), df_schema)?;
-    let value = physical_expr.evaluate(batch)?;
-
-    match value {
-        datafusion::logical_expr::ColumnarValue::Scalar(scalar) => Ok(scalar),
-        datafusion::logical_expr::ColumnarValue::Array(array) => {
-            arrow_value_to_scalar(array.as_ref(), 0)
-        },
-    }
-}
-
-fn predicate_to_bool(value: ScalarValue) -> DataFusionResult<bool> {
-    match value {
-        ScalarValue::Boolean(Some(v)) => Ok(v),
-        ScalarValue::Boolean(None) | ScalarValue::Null => Ok(false),
-        other => Err(DataFusionError::Execution(format!(
-            "WHERE predicate did not evaluate to boolean: {:?}",
-            other
-        ))),
-    }
 }
 
 fn row_number(row_idx: usize) -> i64 {
@@ -630,24 +695,27 @@ mod tests {
     use std::sync::Arc;
 
     use datafusion::{
-        arrow::datatypes::{DataType, Field, Schema, SchemaRef},
+        arrow::{
+            datatypes::{DataType, Field, Schema, SchemaRef},
+            record_batch::RecordBatch,
+        },
         logical_expr::{col, lit},
         prelude::SessionContext,
         scalar::ScalarValue,
     };
     use kalamdb_commons::{
+        conversions::arrow_json_conversion::json_rows_to_arrow_batch,
         models::{
             rows::Row,
             schemas::{ForeignKeyAction, ForeignKeyDefinition, TableName},
         },
         SchemaId,
     };
-
     use kalamdb_datafusion_sources::dml::{dml_scan_projection, PreparedUpdateAssignments};
 
     use super::{
-        evaluate_assignment_values, foreign_key_violation_message, pk_membership_literals,
-        relocated_primary_key, row_for_primary_key_move, row_matches_filters,
+        classify_update, foreign_key_violation_message, pk_membership_literals,
+        relocated_primary_key, row_for_primary_key_move, UpdateChange,
     };
 
     fn test_schema() -> SchemaRef {
@@ -666,42 +734,38 @@ mod tests {
         ])
     }
 
-    #[test]
-    fn evaluate_assignment_values_returns_all_assignment_results() {
-        let ctx = SessionContext::new();
-        let schema = test_schema();
-        let row = test_row();
-        let assignments = vec![
-            ("value".to_string(), col("value") + lit(5_i64)),
-            ("name".to_string(), lit("ALICE")),
-        ];
-
-        let values = evaluate_assignment_values(&ctx.state(), &schema, &row, &assignments).unwrap();
-
-        assert_eq!(values.get("value"), Some(&ScalarValue::Int64(Some(15))));
-        assert_eq!(values.get("name"), Some(&ScalarValue::Utf8(Some("ALICE".to_string()))));
+    fn evaluate_rows(
+        evaluator: &PreparedUpdateAssignments,
+        schema: &SchemaRef,
+        rows: Vec<Row>,
+    ) -> Vec<Row> {
+        let batch = json_rows_to_arrow_batch(schema, rows).unwrap();
+        evaluator.evaluate_batch(&batch).unwrap()
     }
 
     #[test]
-    fn prepared_assignments_match_row_evaluation_across_batches() {
+    fn prepared_assignments_return_all_assignment_results_for_every_row() {
         let ctx = SessionContext::new();
-        let state = ctx.state();
         let schema = test_schema();
         let assignments = vec![
             ("value".to_string(), col("value") + lit(5_i64)),
             ("name".to_string(), lit("updated")),
         ];
-        let evaluator = PreparedUpdateAssignments::new(&state, &schema, &assignments).unwrap();
+        let evaluator =
+            PreparedUpdateAssignments::new(&ctx.state(), &schema, &assignments).unwrap();
         let mut second = test_row();
         second.values.insert("value".to_string(), ScalarValue::Int64(Some(20)));
-        let rows = vec![test_row(), second];
-        let expected = rows
-            .iter()
-            .map(|row| evaluate_assignment_values(&state, &schema, row, &assignments).unwrap())
-            .collect::<Vec<_>>();
-        assert_eq!(evaluator.evaluate(&rows).unwrap(), expected);
-        assert_eq!(evaluator.evaluate(&rows[1..]).unwrap(), expected[1..]);
-        assert!(evaluator.evaluate(&[]).unwrap().is_empty());
+
+        let updates = evaluate_rows(&evaluator, &schema, vec![test_row(), second]);
+
+        assert_eq!(updates.len(), 2);
+        assert_eq!(updates[0].get("value"), Some(&ScalarValue::Int64(Some(15))));
+        assert_eq!(updates[1].get("value"), Some(&ScalarValue::Int64(Some(25))));
+        for update in &updates {
+            assert_eq!(update.get("name"), Some(&ScalarValue::Utf8(Some("updated".to_string()))));
+        }
+        let empty = RecordBatch::new_empty(Arc::clone(&schema));
+        assert!(evaluator.evaluate_batch(&empty).unwrap().is_empty());
     }
 
     #[test]
@@ -719,7 +783,7 @@ mod tests {
         let evaluator =
             PreparedUpdateAssignments::new(&ctx.state(), &projected, &assignments).unwrap();
 
-        let updates = evaluator.evaluate(&rows).unwrap();
+        let updates = evaluate_rows(&evaluator, &projected, rows);
 
         assert_eq!(
             updates[0].values.get("used_at"),
@@ -750,52 +814,41 @@ mod tests {
             &[("a".into(), col("b")), ("b".into(), col("a"))],
         )
         .unwrap();
-        let updates = evaluator.evaluate(&rows).unwrap();
+        let updates = evaluate_rows(&evaluator, &schema, rows.clone());
         assert_eq!(updates[0].get("a"), rows[0].get("b"));
         assert_eq!(updates[0].get("b"), rows[0].get("a"));
         assert_eq!(updates[1].get("b"), Some(&ScalarValue::Int64(None)));
     }
 
     #[test]
-    #[ignore = "manual dev-profile assignment evaluation benchmark"]
-    fn benchmark_prepared_assignment_batches() {
-        let ctx = SessionContext::new();
-        let state = ctx.state();
-        let schema = test_schema();
-        let rows = vec![test_row(); 8192];
-        let assignments = vec![
-            ("value".into(), col("value") + lit(5_i64)),
-            ("name".into(), lit("updated")),
-        ];
-        let start = std::time::Instant::now();
-        let baseline = rows
-            .iter()
-            .map(|row| evaluate_assignment_values(&state, &schema, row, &assignments).unwrap())
-            .collect::<Vec<_>>();
-        let baseline_seconds = start.elapsed().as_secs_f64();
-        let start = std::time::Instant::now();
-        let evaluator = PreparedUpdateAssignments::new(&state, &schema, &assignments).unwrap();
-        let mut batched = Vec::new();
-        for chunk in rows.chunks(1024) {
-            batched.extend(evaluator.evaluate(chunk).unwrap());
-        }
-        let batched_seconds = start.elapsed().as_secs_f64();
-        assert_eq!(baseline, batched);
-        println!(
-            "8192 rows, dev profile: per-row={baseline_seconds:.6}s, batched={batched_seconds:.6}s"
-        );
-    }
-
-    #[test]
-    fn row_matches_filters_evaluates_multiple_predicates_for_one_row() {
-        let ctx = SessionContext::new();
+    fn classify_update_distinguishes_noop_field_update_and_key_move() {
         let schema = test_schema();
         let row = test_row();
-        let filters = vec![col("value").gt(lit(5_i64)), col("name").eq(lit("alice"))];
+        let assigned = |pairs: Vec<(&str, ScalarValue)>| {
+            Row::from_vec(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+        };
 
-        let matches = row_matches_filters(&ctx.state(), &schema, &row, &filters).unwrap();
+        let same = assigned(vec![("value", ScalarValue::Int64(Some(10)))]);
+        assert!(matches!(
+            classify_update(&schema, "id", "row-1", false, &row, same).unwrap(),
+            UpdateChange::Unchanged
+        ));
 
-        assert!(matches);
+        let field = assigned(vec![("value", ScalarValue::Int64(Some(11)))]);
+        assert!(matches!(
+            classify_update(&schema, "id", "row-1", false, &row, field).unwrap(),
+            UpdateChange::FieldUpdate(_)
+        ));
+
+        let moved = assigned(vec![("id", ScalarValue::Utf8(Some("row-2".to_string())))]);
+        match classify_update(&schema, "id", "row-1", false, &row, moved.clone()).unwrap() {
+            UpdateChange::PrimaryKeyMove(inserted) => {
+                assert_eq!(inserted.get("id"), Some(&ScalarValue::Utf8(Some("row-2".to_string()))));
+                assert_eq!(inserted.get("name"), row.get("name"));
+            },
+            other => panic!("expected a primary key move, got {other:?}"),
+        }
+        assert!(classify_update(&schema, "id", "row-1", true, &row, moved).is_err());
     }
 
     #[test]

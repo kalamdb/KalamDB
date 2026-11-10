@@ -1512,7 +1512,9 @@ async fn shared_provider_scalar_index_seek_does_not_resurrect_superseded_version
         "scalar index seek must hide superseded versions and tombstones"
     );
     let metrics = plan.metrics().expect("indexed shared scan metrics").to_string();
-    assert_metric(&metrics, "hot_rows_scanned=19");
+    // The moved row leaves the conversation_id=1 index, and the delete tombstone
+    // is not written there, so the seek reads the 18 remaining live keys.
+    assert_metric(&metrics, "hot_rows_scanned=18");
 }
 
 #[tokio::test]

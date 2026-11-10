@@ -15,6 +15,8 @@ Stream tables are hot-only: no Parquet, no merge step. See [stream-storage.md](s
 
 Manifest indexing, flush mechanics, and compaction are documented in [manifest.md](manifest.md). This document focuses on the **read path** — how DataFusion table providers scan both tiers and unify results.
 
+User and shared tables share `VersionedTableEngine` behind `KalamTableProvider`. One `VersionedTableFlushJob` (`backend/crates/kalamdb-flush/src/flush/versioned/mod.rs`) selects the user or shared scope and still encodes Parquet through the existing scope jobs. `mark_pending_write` takes the manifest state lock only. Parquet write, rename, and the scope hook run outside `flush_scope_locks`. Idle flush-scope locks are removed when no holder or waiter remains. Computed catalog scans are not part of this hot/cold path.
+
 ## Hot storage layout
 
 ### User tables

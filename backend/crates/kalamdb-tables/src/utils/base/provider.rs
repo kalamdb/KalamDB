@@ -1,6 +1,6 @@
 //! `BaseTableProvider` contract and DataFusion scan planning.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use async_trait::async_trait;
 use datafusion::{
@@ -8,7 +8,7 @@ use datafusion::{
     catalog::Session,
     common::DFSchema,
     error::{DataFusionError, Result as DataFusionResult},
-    logical_expr::{Expr, TableProviderFilterPushDown},
+    logical_expr::{utils::expr_to_columns, Expr, TableProviderFilterPushDown},
     physical_expr::PhysicalExpr,
     physical_plan::ExecutionPlan,
 };
@@ -340,6 +340,7 @@ pub(crate) trait BaseTableProvider<K: StorageKey, V>: Send + Sync {
             physical_filter,
             output_projection,
             limit,
+            batch_rows: state.config().batch_size().max(1),
             output_schema,
             _marker: std::marker::PhantomData,
         });
@@ -374,10 +375,30 @@ pub(crate) trait BaseTableProvider<K: StorageKey, V>: Send + Sync {
             return self.base_scan(state, projection, filters, limit).await;
         };
 
-        // Scan the full row so the residual predicate can see columns that the
-        // caller did not project, then project back to the requested columns.
-        let base_plan = self.base_scan(state, None, filters, limit).await?;
+        let required = overlay_required_projection(
+            &self.schema_ref(),
+            projection,
+            filters,
+            self.primary_key_field_name(),
+        )?;
+        // Deletes shrink the page after the child stops. A residual predicate
+        // can drop still more rows, so that scan keeps the guard limit and the
+        // overlay applies the SQL limit after the predicate.
+        let deleted_keys = overlay_view
+            .overlay_for_table(self.table_id())
+            .and_then(|overlay| overlay.deleted_keys.get(self.table_id()).map(|keys| keys.len()))
+            .unwrap_or(0);
+        let has_residual_filter = combined_filter(filters).is_some();
+        let child_limit = overlay_child_scan_limit(limit, deleted_keys, has_residual_filter);
+        let base_plan = self.base_scan(state, required.as_ref(), filters, child_limit).await?;
         let residual_filter = overlay_residual_filter(state, &base_plan.schema(), filters)?;
+        let final_projection = match projection {
+            Some(indices) if required.is_some() => {
+                Some(remap_projection_indices(&self.schema_ref(), &base_plan.schema(), indices))
+            },
+            Some(indices) => Some(indices.clone()),
+            None => None,
+        };
 
         Ok(Arc::new(TransactionOverlayExec::try_new(
             base_plan,
@@ -385,8 +406,8 @@ pub(crate) trait BaseTableProvider<K: StorageKey, V>: Send + Sync {
             self.primary_key_field_name().to_string(),
             overlay_view,
             overlay_user,
-            projection.cloned(),
-            None,
+            final_projection,
+            limit,
             residual_filter,
         )?))
     }
@@ -549,6 +570,62 @@ pub(crate) fn plan_scan_output(
     })
 }
 
+/// Columns the overlay child must decode: the caller's projection, filter
+/// inputs, and the primary key.
+fn overlay_required_projection(
+    schema: &SchemaRef,
+    projection: Option<&Vec<usize>>,
+    filters: &[Expr],
+    pk_column: &str,
+) -> DataFusionResult<Option<Vec<usize>>> {
+    let Some(projection) = projection else {
+        return Ok(None);
+    };
+    let mut names = HashSet::new();
+    for &index in projection {
+        if let Some(field) = schema.fields().get(index) {
+            names.insert(field.name().clone());
+        }
+    }
+    names.insert(pk_column.to_string());
+    for filter in filters {
+        let mut columns = HashSet::new();
+        expr_to_columns(filter, &mut columns)?;
+        for column in columns {
+            names.insert(column.name);
+        }
+    }
+    if names.len() >= schema.fields().len() {
+        return Ok(None);
+    }
+    let mut indices: Vec<usize> = schema
+        .fields()
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| names.contains(field.name()))
+        .map(|(index, _)| index)
+        .collect();
+    indices.sort_unstable();
+    Ok(Some(indices))
+}
+
+/// Child scan limit that still satisfies `limit` after the overlay drops rows.
+///
+/// A residual predicate can reject committed rows the child already counted,
+/// so the child keeps the scan guard and the overlay fetch stays at `limit`.
+/// Without that predicate, one extra committed row per staged delete fills
+/// the page after those deletes are removed.
+fn overlay_child_scan_limit(
+    limit: Option<usize>,
+    deleted_keys: usize,
+    has_residual_filter: bool,
+) -> Option<usize> {
+    if has_residual_filter {
+        return None;
+    }
+    limit.map(|limit| limit.saturating_add(deleted_keys))
+}
+
 /// Rebuild the scan predicate so rows staged in the open transaction are
 /// filtered the same way as committed rows.
 fn overlay_residual_filter(
@@ -561,6 +638,43 @@ fn overlay_residual_filter(
     };
     let df_schema = DFSchema::try_from(Arc::clone(schema))?;
     Ok(Some(state.create_physical_expr(filter, &df_schema)?))
+}
+
+#[cfg(test)]
+mod overlay_projection_tests {
+    use datafusion::arrow::datatypes::{DataType, Field, Schema};
+    use datafusion::logical_expr::Expr;
+
+    use super::*;
+
+    #[test]
+    fn overlay_child_limit_keeps_one_extra_row_per_staged_delete() {
+        assert_eq!(overlay_child_scan_limit(Some(10), 3, false), Some(13));
+        assert_eq!(overlay_child_scan_limit(Some(usize::MAX), 1, false), Some(usize::MAX));
+        assert_eq!(overlay_child_scan_limit(None, 4, false), None);
+        assert_eq!(overlay_child_scan_limit(Some(10), 0, false), Some(10));
+        assert_eq!(overlay_child_scan_limit(Some(10), 3, true), None);
+    }
+
+    #[test]
+    fn overlay_projection_keeps_filter_and_primary_key_columns() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, true),
+            Field::new("color", DataType::Utf8, true),
+            Field::new("note", DataType::Utf8, true),
+        ]));
+        let filters = vec![Expr::eq(
+            Expr::Column(datafusion::common::Column::from("name")),
+            Expr::Literal(datafusion::scalar::ScalarValue::Utf8(Some("keep".into())), None),
+        )];
+        let required = overlay_required_projection(&schema, Some(&vec![2]), &filters, "id")
+            .expect("required columns");
+        assert_eq!(required, Some(vec![0, 1, 2]));
+        assert!(overlay_required_projection(&schema, None, &filters, "id")
+            .expect("full scan")
+            .is_none());
+    }
 }
 
 fn kalam_error_to_datafusion(error: KalamDbError) -> DataFusionError {

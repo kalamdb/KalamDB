@@ -15,7 +15,7 @@ use crate::{
     error::KalamDbError,
     manifest::ManifestAccessPlanner,
     utils::{
-        core::TableProviderCore, parquet::scan_provider_parquet_batch,
+        core::TableProviderCore, parquet::scan_provider_parquet_result,
         row_utils::resolve_user_scope, unified_dml,
     },
 };
@@ -58,36 +58,28 @@ where
         .unwrap_or_else(|_| ScalarValue::Utf8(Some(pk_value.to_owned())));
     let filter: Expr = col(pk_name).eq(Expr::Literal(pk_scalar, None));
 
-    // Scan cold storage for this PK value using async I/O
-    let batch = scan_provider_parquet_batch(core, scope, Some(&filter), None).await?;
-
-    if batch.num_rows() == 0 {
-        return Ok(None);
-    }
-
-    // Parse rows from Parquet batch
-    let rows_data: Vec<ParquetRowData> = parquet_batch_to_rows(&batch)?;
-
-    // Find the latest non-deleted version with matching PK
-    // Rows should already be filtered by PK, but we need version resolution
+    // Scan cold storage for this PK value using async I/O. Keep only the
+    // newest matching live row so later files do not copy earlier batches.
+    let mut read = scan_provider_parquet_result(core, scope, Some(&filter), None).await?;
     let mut latest: Option<ParquetRowData> = None;
-
-    for row_data in rows_data {
-        // Skip deleted rows
-        if row_data.deleted {
+    while let Some(batch) = read.next_batch().await {
+        let batch = batch?;
+        if batch.num_rows() == 0 {
             continue;
         }
-
-        // Check if this row matches the PK value
-        if let Some(row_pk) = row_data.fields.values.get(pk_name) {
+        for row_data in parquet_batch_to_rows(&batch)? {
+            if row_data.deleted {
+                continue;
+            }
+            let Some(row_pk) = row_data.fields.values.get(pk_name) else {
+                continue;
+            };
             let Ok(row_pk_key) = try_pk_bucket_key(row_pk) else {
                 continue;
             };
             if row_pk_key.to_string() != pk_value {
                 continue;
             }
-
-            // Keep the row with the highest (commit_seq, seq) version.
             if latest
                 .as_ref()
                 .map(|current| prefers_version(row_data.version, current.version))
@@ -97,6 +89,7 @@ where
             }
         }
     }
+    let _stats = read.stats().await;
 
     // Convert ParquetRowData to the provider's (K, V) types
     if let Some(row_data) = latest {
@@ -442,56 +435,6 @@ pub async fn pk_exists_batch_in_cold(
     }
 
     Ok(None)
-}
-
-/// Ensure an INSERT payload either auto-generates or provides a unique primary-key value
-///
-/// This uses find_row_key_by_id_field which providers can override to use PK indexes
-/// for O(1) lookup instead of scanning all rows.
-///
-/// **Optimization**: If the PK column is AUTO_INCREMENT or SNOWFLAKE_ID, this check
-/// is skipped since the system guarantees unique values.
-///
-/// **Cold Storage Check**: After checking hot storage (RocksDB), this also checks
-/// cold storage (Parquet files) for full PK uniqueness validation.
-pub(crate) async fn ensure_unique_pk_value<P, K, V>(
-    provider: &P,
-    scope: Option<&UserId>,
-    row_data: &Row,
-) -> Result<(), KalamDbError>
-where
-    P: BaseTableProvider<K, V>,
-    K: StorageKey,
-{
-    let table_id = provider.table_id();
-
-    // Fast path: Skip uniqueness check if PK is auto-increment (O(1) cached value)
-    if provider.core().is_auto_increment_pk() {
-        log::trace!(
-            "[ensure_unique_pk_value] Skipping PK check for {} - PK is auto-increment",
-            table_id
-        );
-        return Ok(());
-    }
-
-    let pk_name = provider.primary_key_field_name();
-    if let Some(pk_value) = row_data.get(pk_name) {
-        if !matches!(pk_value, ScalarValue::Null) {
-            let pk_str = unified_dml::extract_user_pk_value(row_data, pk_name)?;
-            let user_scope = resolve_user_scope(scope);
-
-            // Step 1: Check hot storage (RocksDB) - fast PK index lookup
-            if provider.find_row_key_by_id_field(user_scope, &pk_str).await?.is_some() {
-                return Err(KalamDbError::AlreadyExists(format!(
-                    "Primary key violation: value '{}' already exists in column '{}' (hot storage)",
-                    pk_str, pk_name
-                )));
-            }
-
-            ensure_pk_absent_in_cold(provider, scope, &pk_str).await?;
-        }
-    }
-    Ok(())
 }
 
 /// Reject a primary key that already exists in a cold segment.

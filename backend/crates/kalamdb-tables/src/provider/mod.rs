@@ -36,6 +36,7 @@ pub use capability::{
     ColdTierMode, MutationMode, RlsMode, ScanEngineKind, ScopeMode, TableCapabilityProfile,
     TransactionMode, VersionSource,
 };
+pub use ops::PlannedInsertBatch;
 
 enum ProviderKind {
     Versioned(VersionedTableEngine),

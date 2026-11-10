@@ -32,7 +32,7 @@ async fn e2e_duplicate_primary_key_insert_fails() {
 
     let message = postgres_error_text(&err);
     assert!(
-        message.contains("Primary key violation")
+        message.to_ascii_lowercase().contains("primary key")
             || message.contains("already exists")
             || message.contains("appears multiple times")
             || message.contains("db error"),

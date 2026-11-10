@@ -272,9 +272,9 @@ fn table_id_from_factor(factor: &TableFactor, default_namespace: &SchemaId) -> O
                 .collect();
             table_id_from_parts(&parts, default_namespace)
         },
-        TableFactor::NestedJoin { table_with_joins, .. } => {
-            table_id_from_factor(&table_with_joins.relation, default_namespace)
-        },
+        TableFactor::NestedJoin {
+            table_with_joins, ..
+        } => table_id_from_factor(&table_with_joins.relation, default_namespace),
         TableFactor::Derived { subquery, .. } => {
             table_id_from_set_expr(subquery.body.as_ref(), default_namespace)
         },
@@ -661,13 +661,11 @@ mod tests {
 
     #[test]
     fn extract_query_table_id_reads_the_from_clause() {
-        let statement = crate::parser::KalamParser::parse_one("SELECT a FROM app.events WHERE a > 1")
-            .expect("parse");
-        let table_id = extract_query_table_id_from_statement(
-            &statement,
-            &SchemaId::new("public"),
-        )
-        .expect("table");
+        let statement =
+            crate::parser::KalamParser::parse_one("SELECT a FROM app.events WHERE a > 1")
+                .expect("parse");
+        let table_id = extract_query_table_id_from_statement(&statement, &SchemaId::new("public"))
+            .expect("table");
         assert_eq!(table_id.namespace_id().as_str(), "app");
         assert_eq!(table_id.table_name().as_str(), "events");
     }

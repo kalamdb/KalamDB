@@ -88,7 +88,7 @@ impl StorageRegistry {
         // Slow path: fetch from RocksDB
         let storage = self
             .storages_provider
-            .get_storage(storage_id)
+            .get_storage_by_id(storage_id)
             .map_err(|e| FilestoreError::StorageError(e.to_string()))?;
 
         if let Some(s) = storage {

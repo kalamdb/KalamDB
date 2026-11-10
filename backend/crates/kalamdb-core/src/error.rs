@@ -598,6 +598,12 @@ impl BackupError {
 }
 
 impl KalamDbError {
+    /// Classify a free-form error message the same way [`Self::sqlstate`] does
+    /// for [`KalamDbError::Other`], without allocating a wrapper error.
+    pub fn sqlstate_for_message(msg: &str) -> &'static str {
+        classify_message_sqlstate(msg, "XX000")
+    }
+
     pub fn sqlstate(&self) -> &'static str {
         if let KalamDbError::Coded(coded) = self {
             if let Some(code) = coded.leaf_code().sqlstate() {

@@ -248,6 +248,11 @@ impl JobRegistry {
         executors.insert(job_type, executor);
     }
 
+    /// Job types that currently have an executor.
+    pub fn registered_job_types(&self) -> Vec<JobType> {
+        self.executors.read().keys().copied().collect()
+    }
+
     /// Register a job executor, replacing any existing one
     ///
     /// # Arguments

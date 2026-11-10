@@ -15,19 +15,19 @@ use crate::{
     },
 };
 
-#[derive(Debug)]
 pub(crate) struct ParquetScanResult {
-    pub batch: RecordBatch,
-    pub stats: ParquetScanStats,
+    read: crate::manifest::planner::ColdBatchRead,
 }
 
-pub(crate) async fn scan_provider_parquet_batch(
-    core: &TableProviderCore,
-    user_id: Option<&UserId>,
-    filter: Option<&Expr>,
-    columns: Option<&[String]>,
-) -> Result<RecordBatch, KalamDbError> {
-    Ok(scan_provider_parquet_result(core, user_id, filter, columns).await?.batch)
+impl ParquetScanResult {
+    pub(crate) async fn next_batch(&mut self) -> Option<Result<RecordBatch, KalamDbError>> {
+        self.read.next_batch().await
+    }
+
+    /// File stats. Drain [`Self::next_batch`] first.
+    pub(crate) async fn stats(self) -> crate::manifest::ParquetScanStats {
+        self.read.stats().await
+    }
 }
 
 pub(crate) async fn scan_provider_parquet_result(
@@ -65,8 +65,7 @@ async fn scan_parquet_files_internal_async(
     if let Ok(Some(entry)) = &cache_result {
         if entry.manifest.segments.is_empty() {
             return Ok(ParquetScanResult {
-                batch: RecordBatch::new_empty(schema),
-                stats: ParquetScanStats::default(),
+                read: crate::manifest::planner::ColdBatchRead::ready(ParquetScanStats::default()),
             });
         }
     }
@@ -181,7 +180,7 @@ async fn scan_parquet_files_internal_async(
     let table_def = core.schema_registry().get_table_if_exists(table_id).ok().flatten();
     let pruning = cold_scan_pruning(filter, table_def.as_deref());
 
-    let (combined, stats) = planner
+    let read = planner
         .scan_parquet_files_async(
             manifest_entry.as_ref().map(|entry| &entry.manifest),
             storage_cached,
@@ -198,33 +197,13 @@ async fn scan_parquet_files_internal_async(
         .await?;
 
     log::trace!(
-        "[PARQUET_SCAN_ASYNC] Scan complete: table={} {} total_batches={} skipped={} scanned={} \
-         rows={} use_degraded_mode={}",
+        "[PARQUET_SCAN_ASYNC] cold read started: table={} {} use_degraded_mode={}",
         table_id,
         scope_label,
-        stats.total_files,
-        stats.skipped_files,
-        stats.scanned_files,
-        combined.num_rows(),
         use_degraded_mode
     );
 
-    if stats.total_files > 0 {
-        log::trace!(
-            "[Manifest Pruning] table={} {} batches_total={} skipped={} scanned={} rows={}",
-            table_id,
-            scope_label,
-            stats.total_files,
-            stats.skipped_files,
-            stats.scanned_files,
-            combined.num_rows()
-        );
-    }
-
-    Ok(ParquetScanResult {
-        batch: combined,
-        stats,
-    })
+    Ok(ParquetScanResult { read })
 }
 
 fn cold_scan_pruning(

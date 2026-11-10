@@ -241,6 +241,54 @@ impl SharedTableProvider {
         .await
     }
 
+    pub(crate) async fn finish_planned_shared_insert(
+        &self,
+        entries: &[(SharedTableRowId, SharedTableRow)],
+    ) {
+        if entries.is_empty() {
+            return;
+        }
+        if let Err(error) = self.stage_vector_upsert_batch(entries).await {
+            crate::versioned::warn_vector_upsert_batch(self.core.table_id(), None, &error);
+        }
+        crate::versioned::mark_table_pending_write(&self.core, None);
+    }
+
+    /// Stage vector work for this scope, then mark the manifest once.
+    pub(crate) async fn finish_planned_shared_scope(
+        &self,
+        ops: &[crate::versioned::PlannedScopeFinish],
+    ) {
+        if !self.vector_columns.is_empty() {
+            for op in ops {
+                match op {
+                    crate::versioned::PlannedScopeFinish::Upsert { version, row } => {
+                        if let Err(error) = self.stage_vector_upsert(*version, row).await {
+                            crate::versioned::warn_vector_upsert(
+                                self.core.table_id(),
+                                None,
+                                *version,
+                                &error,
+                            );
+                        }
+                    },
+                    crate::versioned::PlannedScopeFinish::Delete { version, pk } => {
+                        if let Err(error) = self.stage_vector_delete(*version, pk).await {
+                            crate::versioned::warn_vector_delete(
+                                self.core.table_id(),
+                                None,
+                                *version,
+                                pk,
+                                &error,
+                            );
+                        }
+                    },
+                }
+            }
+        }
+        crate::versioned::mark_table_pending_write(&self.core, None);
+    }
+
     fn construct_shared_row_from_parquet_data(
         &self,
         row_data: crate::utils::version_resolution::ParquetRowData,
@@ -296,7 +344,16 @@ impl SharedTableProvider {
         } else {
             None
         };
+        kalamdb_observability::dml_stage::record_baseline_decode();
         Ok(crate::versioned::mutation_target_from_hot(lookup, cold))
+    }
+
+    pub(crate) fn is_auto_increment_pk(&self) -> bool {
+        self.core.is_auto_increment_pk()
+    }
+
+    pub(crate) fn has_vector_columns(&self) -> bool {
+        !self.vector_columns.is_empty()
     }
 
     /// Hot tombstone to delete when re-inserting a primary key, if one exists.

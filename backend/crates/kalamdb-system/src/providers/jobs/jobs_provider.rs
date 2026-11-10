@@ -19,7 +19,6 @@
 
 use std::sync::Arc;
 
-use datafusion::arrow::array::RecordBatch;
 use kalamdb_commons::{models::rows::SystemTableRow, JobId, SystemTable};
 use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBackend};
 
@@ -99,14 +98,9 @@ impl JobsTableProvider {
     }
 
     /// Get a job by ID
-    pub fn get_job_by_id(&self, job_id: &JobId) -> Result<Option<Job>, SystemError> {
+    pub fn get_job(&self, job_id: &JobId) -> Result<Option<Job>, SystemError> {
         let row = self.sql.store().get(job_id)?;
         row.map(|value| Self::decode_job_row(&value)).transpose()
-    }
-
-    /// Alias for get_job_by_id (for backward compatibility)
-    pub fn get_job(&self, job_id: &JobId) -> Result<Option<Job>, SystemError> {
-        self.get_job_by_id(job_id)
     }
 
     /// Async version of `get_job()`.
@@ -523,11 +517,6 @@ impl JobsTableProvider {
         Ok(expired)
     }
 
-    /// Helper to create RecordBatch from jobs
-    pub fn scan_all_jobs(&self) -> Result<RecordBatch, SystemError> {
-        self.sql.scan_all_to_batch()
-    }
-
     fn encode_job_row(job: &Job) -> Result<SystemTableRow, SystemError> {
         model_to_system_row(job, &Job::definition())
     }
@@ -716,7 +705,7 @@ mod tests {
         provider.create_job(job.clone()).unwrap();
 
         let job_id = JobId::new("job1");
-        let retrieved = provider.get_job_by_id(&job_id).unwrap();
+        let retrieved = provider.get_job(&job_id).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.job_id, job_id);
@@ -737,7 +726,7 @@ mod tests {
 
         // Verify
         let job_id = JobId::new("job1");
-        let retrieved = provider.get_job_by_id(&job_id).unwrap().unwrap();
+        let retrieved = provider.get_job(&job_id).unwrap().unwrap();
         assert_eq!(retrieved.status, JobStatus::Completed);
     }
 
@@ -786,7 +775,7 @@ mod tests {
         let job_id = JobId::new("job1");
         provider.delete_job(&job_id).unwrap();
 
-        let retrieved = provider.get_job_by_id(&job_id).unwrap();
+        let retrieved = provider.get_job(&job_id).unwrap();
         assert!(retrieved.is_none());
     }
 
@@ -801,7 +790,7 @@ mod tests {
         }
 
         // Scan
-        let batch = provider.scan_all_jobs().unwrap();
+        let batch = provider.sql.scan_all_to_batch().unwrap();
         assert_eq!(batch.num_rows(), 3);
         assert_eq!(batch.num_columns(), 20);
     }
@@ -859,9 +848,9 @@ mod tests {
         assert_eq!(provider.cleanup_old_jobs(7).unwrap(), 2);
         assert!(!provider.has_expired_terminal_jobs(7).unwrap());
 
-        assert!(provider.get_job_by_id(&JobId::new("old_completed")).unwrap().is_none());
-        assert!(provider.get_job_by_id(&JobId::new("old_skipped")).unwrap().is_none());
-        assert!(provider.get_job_by_id(&JobId::new("recent_failed")).unwrap().is_some());
-        assert!(provider.get_job_by_id(&JobId::new("still_running")).unwrap().is_some());
+        assert!(provider.get_job(&JobId::new("old_completed")).unwrap().is_none());
+        assert!(provider.get_job(&JobId::new("old_skipped")).unwrap().is_none());
+        assert!(provider.get_job(&JobId::new("recent_failed")).unwrap().is_some());
+        assert!(provider.get_job(&JobId::new("still_running")).unwrap().is_some());
     }
 }

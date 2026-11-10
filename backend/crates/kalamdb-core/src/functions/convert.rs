@@ -212,10 +212,16 @@ pub fn bind_call_arguments(
 const MAX_PROCEDURE_QUERY_ROWS: usize = 10_000;
 const MAX_PROCEDURE_QUERY_BYTES: usize = 8 * 1024 * 1024;
 
-pub fn execution_result_to_routine(result: ExecutionResult) -> Result<RoutineValue, KalamDbError> {
+pub async fn execution_result_to_routine(
+    result: ExecutionResult,
+) -> Result<RoutineValue, KalamDbError> {
     if let ExecutionResult::ScalarRows { rows, schema, .. } = result {
         return routine_value_from_scalar_rows(rows, &schema);
     }
+    let result = result
+        .into_materialized_rows()
+        .await
+        .map_err(KalamDbError::InvalidOperation)?;
     let result = result.into_arrow_rows().map_err(KalamDbError::InvalidOperation)?;
     match result {
         ExecutionResult::Rows { batches, .. } => rows_to_routine(&batches),
@@ -233,11 +239,15 @@ pub fn execution_result_to_routine(result: ExecutionResult) -> Result<RoutineVal
     }
 }
 
-pub fn execution_result_to_rows(result: ExecutionResult) -> Result<RoutineValue, KalamDbError> {
+pub async fn execution_result_to_rows(result: ExecutionResult) -> Result<RoutineValue, KalamDbError> {
     if let ExecutionResult::ScalarRows { rows, schema, .. } = result {
         ensure_scalar_row_limit(&rows)?;
         return Ok(wrap_query_list(structs_from_scalar_rows(rows, &schema)?));
     }
+    let result = result
+        .into_materialized_rows()
+        .await
+        .map_err(KalamDbError::InvalidOperation)?;
     let result = result.into_arrow_rows().map_err(KalamDbError::InvalidOperation)?;
     let ExecutionResult::Rows { batches, .. } = result else {
         return Err(KalamDbError::InvalidOperation(
@@ -479,19 +489,21 @@ mod tests {
         assert_eq!(ids.iter().collect::<Vec<_>>(), expected);
     }
 
-    #[test]
-    fn point_get_query_keeps_schema_field_order() {
+    #[tokio::test]
+    async fn point_get_query_keeps_schema_field_order() {
         let result =
             execution_result_to_rows(scalar_rows(vec![point_row(7, "hello")], message_schema()))
+                .await
                 .expect("point get rows");
         let structs = query_structs(result.value);
         assert_eq!(structs.len(), 1);
         assert_message_row(&structs, 0, 7, "hello");
     }
 
-    #[test]
-    fn point_get_query_returns_empty_list_for_zero_rows() {
+    #[tokio::test]
+    async fn point_get_query_returns_empty_list_for_zero_rows() {
         let result = execution_result_to_rows(scalar_rows(vec![], message_schema()))
+            .await
             .expect("empty point get");
         let ScalarValue::List(list) = result.value else {
             panic!("empty query must be a list");
@@ -503,12 +515,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn point_get_query_keeps_schema_order_across_rows() {
+    #[tokio::test]
+    async fn point_get_query_keeps_schema_order_across_rows() {
         let result = execution_result_to_rows(scalar_rows(
             vec![point_row(1, "a"), point_row(2, "b")],
             message_schema(),
         ))
+        .await
         .expect("two point rows");
         let structs = query_structs(result.value);
         assert_eq!(structs.len(), 2);
@@ -531,15 +544,15 @@ mod tests {
         super::RoutineValue::new(ScalarValue::List(ScalarValue::new_list(&rows, &item_type, true)))
     }
 
-    #[test]
-    fn point_get_query_matches_arrow_oracle() {
+    #[tokio::test]
+    async fn point_get_query_matches_arrow_oracle() {
         let input = scalar_rows(vec![point_row(7, "hello")], message_schema());
-        let direct = execution_result_to_rows(input.clone()).expect("direct");
+        let direct = execution_result_to_rows(input.clone()).await.expect("direct");
         assert_eq!(direct.value, query_rows_via_arrow(input).value);
     }
 
-    #[test]
-    fn point_get_query_reads_alias_and_fills_missing_key_with_null() {
+    #[tokio::test]
+    async fn point_get_query_reads_alias_and_fills_missing_key_with_null() {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, true),
             Field::new("title", DataType::Utf8, true),
@@ -549,7 +562,7 @@ mod tests {
         values.insert("id".to_string(), ScalarValue::Int64(Some(3)));
         values.insert("title".to_string(), ScalarValue::Utf8(Some("renamed".to_string())));
         let input = scalar_rows(vec![Row { values }], schema);
-        let direct = execution_result_to_rows(input.clone()).expect("alias row");
+        let direct = execution_result_to_rows(input.clone()).await.expect("alias row");
         assert_eq!(direct.value, query_rows_via_arrow(input).value);
         let structs = query_structs(direct.value);
         assert_eq!(
@@ -559,31 +572,34 @@ mod tests {
         assert!(structs.column_by_name("note").expect("note").is_null(0));
     }
 
-    #[test]
-    fn point_get_query_rejects_more_than_10_000_rows() {
+    #[tokio::test]
+    async fn point_get_query_rejects_more_than_10_000_rows() {
         let rows = vec![
             Row {
                 values: BTreeMap::new(),
             };
             10_001
         ];
-        let error =
-            execution_result_to_rows(scalar_rows(rows, message_schema())).expect_err("row limit");
+        let error = execution_result_to_rows(scalar_rows(rows, message_schema()))
+            .await
+            .expect_err("row limit");
         assert!(error.to_string().contains("procedure query result limit exceeded"), "{error}");
     }
 
-    #[test]
-    fn point_get_execute_returns_one_column_as_scalar_and_insert_count() {
+    #[tokio::test]
+    async fn point_get_execute_returns_one_column_as_scalar_and_insert_count() {
         use super::execution_result_to_routine;
 
         let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, true)]));
         let mut values = BTreeMap::new();
         values.insert("id".to_string(), ScalarValue::Int64(Some(5)));
         let scalar = execution_result_to_routine(scalar_rows(vec![Row { values }], schema))
+            .await
             .expect("one column");
         assert_eq!(scalar.value, ScalarValue::Int64(Some(5)));
 
         let inserted = execution_result_to_routine(ExecutionResult::Inserted { rows_affected: 1 })
+            .await
             .expect("insert count");
         assert_eq!(inserted.value, ScalarValue::Int64(Some(1)));
     }

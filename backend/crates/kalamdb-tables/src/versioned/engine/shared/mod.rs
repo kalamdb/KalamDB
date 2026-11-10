@@ -29,9 +29,9 @@ use kalamdb_commons::{
     websocket::ChangeNotification,
     NotLeaderError, PolicyCommand, TableId, TableType,
 };
-use kalamdb_datafusion_sources::dml::PreparedUpdateAssignments;
 use kalamdb_datafusion_sources::{
-    exec::{pk_bucket_key_from_row, DeferredScanDiagnostics},
+    dml::PreparedUpdateAssignments,
+    exec::{pk_bucket_key_from_row, DeferredScanDiagnostics, ScanAccess},
     provider::{
         merged_projection_scan_descriptor, mvcc_filter_capability, FilterCapability,
         ScanDescriptor, SourceProvider,
@@ -57,6 +57,7 @@ use crate::{
     shared_tables::{SharedTableIndexedStore, SharedTableRow},
     utils::{
         base::{self, BaseTableProvider, DeferredMvccScanProvider, TableProviderCore},
+        datafusion_dml::UpdateChange,
         row_utils::{extract_full_user_context, extract_user_context},
     },
     versioned::pk_index::{new_shared_pk_index, PkPrefix, VersionedPkIndex},

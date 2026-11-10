@@ -8,6 +8,7 @@
 //! Each phase sends the published statement text. `USE SCHEMA` only selects the
 //! empty schema for this run. Table names stay `t1`, `t2`, and `t3`.
 
+#[path = "workload.rs"]
 mod workload;
 
 use std::time::{Duration, Instant};
@@ -49,7 +50,7 @@ struct PhaseReport {
 
 struct BenchClient {
     runtime: tokio::runtime::Runtime,
-    client:  kalam_client::KalamLinkClient,
+    client: kalam_client::KalamLinkClient,
 }
 
 impl BenchClient {

@@ -1,6 +1,6 @@
 //! Statement parsing, DataFusion planning, and SELECT limit shaping.
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use arrow::{array::RecordBatch, datatypes::SchemaRef};
 use datafusion::{
@@ -177,6 +177,9 @@ impl SqlExecutor {
         session: &SessionContext,
         statement: &Statement,
     ) -> Result<DataFrame, datafusion::error::DataFusionError> {
+        let _planning = kalamdb_observability::dml_stage::stage_guard(
+            kalamdb_observability::dml_stage::DmlStage::Planning,
+        );
         let mut statement = statement.clone();
         hide_storage_columns_from_star(session, &mut statement).await;
         let plan = session
@@ -254,12 +257,23 @@ impl SqlExecutor {
         }
     }
 
+    pub(super) async fn stream_dataframe(
+        dataframe: DataFrame,
+    ) -> Result<crate::sql::context::QueryBatchStream, datafusion::error::DataFusionError> {
+        let _scan = kalamdb_observability::dml_stage::stage_guard(
+            kalamdb_observability::dml_stage::DmlStage::ScanFilter,
+        );
+        crate::sql::context::stream_dataframe(dataframe).await
+    }
+
     pub(super) async fn collect_dataframe(
         dataframe: DataFrame,
     ) -> Result<(Vec<RecordBatch>, SchemaRef), datafusion::error::DataFusionError> {
-        let schema = Arc::new(dataframe.schema().as_arrow().clone());
-        let batches = dataframe.collect().await?;
-        Ok((batches, schema))
+        let stream = Self::stream_dataframe(dataframe).await?;
+        stream
+            .collect()
+            .await
+            .map_err(datafusion::error::DataFusionError::Execution)
     }
 
     /// One unoptimized plan for prepared parameter and result metadata.
@@ -407,6 +421,9 @@ impl SqlExecutor {
         data_frame: &DataFrame,
         default_namespace: &SchemaId,
     ) -> Result<LogicalPlan, KalamDbError> {
+        let _planning = kalamdb_observability::dml_stage::stage_guard(
+            kalamdb_observability::dml_stage::DmlStage::Planning,
+        );
         let ordered = apply_default_order_by(
             data_frame.logical_plan().clone(),
             &self.app_context,
@@ -414,5 +431,71 @@ impl SqlExecutor {
         )
         .await?;
         session.state().optimize(&ordered).map_err(Self::datafusion_to_execution_error)
+    }
+}
+
+#[cfg(test)]
+mod postgres_star_cache_tests {
+    use std::sync::Arc;
+
+    use datafusion::{
+        common::DFSchema,
+        logical_expr::{EmptyRelation, LogicalPlan},
+        prelude::SessionContext,
+    };
+    use kalamdb_commons::{Role, SchemaId, UserId};
+    use kalamdb_plan_cache::{PlanAdmission, PlanCache, PlanCacheKey};
+
+    use crate::sql::ExecutionContext;
+
+    fn empty_plan() -> LogicalPlan {
+        LogicalPlan::EmptyRelation(EmptyRelation {
+            produce_one_row: true,
+            schema: Arc::new(DFSchema::empty()),
+        })
+    }
+
+    fn star_key(cache: &PlanCache, postgres_star: bool) -> PlanCacheKey {
+        let base = ExecutionContext::new(
+            UserId::new("alice"),
+            Role::User,
+            Arc::new(SessionContext::new()),
+        );
+        let context = if postgres_star {
+            base.with_postgres_star()
+        } else {
+            base
+        };
+        cache
+            .current_key(SchemaId::new("public"), context.user_role(), "SELECT * FROM t")
+            .postgres_star(context.hides_storage_star())
+    }
+
+    #[test]
+    fn http_and_wire_select_star_stay_isolated_in_both_warmup_orders() {
+        let wire_first = PlanCache::new();
+        let wire = star_key(&wire_first, true);
+        let http = star_key(&wire_first, false);
+        assert_ne!(http, wire);
+        assert_eq!(wire_first.insert(wire.clone(), empty_plan()), PlanAdmission::Admitted);
+        assert!(wire_first.get(&http).is_none());
+        assert!(wire_first.get(&wire).is_some());
+
+        let http_first = PlanCache::new();
+        let http = star_key(&http_first, false);
+        let wire = star_key(&http_first, true);
+        assert_eq!(http_first.insert(http.clone(), empty_plan()), PlanAdmission::Admitted);
+        assert!(http_first.get(&wire).is_none());
+        assert!(http_first.get(&http).is_some());
+    }
+
+    #[test]
+    fn cancelled_plan_leader_releases_waiters() {
+        let cache = PlanCache::new();
+        let key = star_key(&cache, true);
+        assert!(cache.try_lead(&key));
+        cache.cancel_lead(&key);
+        assert!(cache.try_lead(&key));
+        cache.cancel_lead(&key);
     }
 }

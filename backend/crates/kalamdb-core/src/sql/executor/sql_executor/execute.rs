@@ -2,7 +2,9 @@
 
 use std::{sync::Arc, time::Instant};
 
-use datafusion::{dataframe::DataFrame, prelude::SessionContext, scalar::ScalarValue};
+use datafusion::{
+    dataframe::DataFrame, logical_expr::LogicalPlan, prelude::SessionContext, scalar::ScalarValue,
+};
 use kalamdb_commons::{models::SchemaId, Role};
 use kalamdb_session_datafusion::{install_extension, ScanDiagnosticsContext};
 use kalamdb_sql::{classifier::SqlStatementKind, rewrite_explain_for_datafusion};
@@ -16,7 +18,7 @@ use crate::{
             parameter_binding::{replace_placeholders_in_plan, validate_params},
             PreparedExecutionStatement, SqlExecutor,
         },
-        plan_cache::PlanCacheKey,
+        plan_cache::{PlanCacheKey, PlanCoordination, PlanLead},
         ExecutionContext, ExecutionResult,
     },
 };
@@ -58,6 +60,7 @@ impl SqlExecutor {
             .plan_cache()
             .current_key(exec_ctx.default_namespace(), exec_ctx.user_role(), sql)
             .search_path(search_path)
+            .postgres_star(exec_ctx.hides_storage_star())
     }
 
     /// Placeholder form of a statement whose only differences are scalar literals.
@@ -361,6 +364,7 @@ impl SqlExecutor {
                 let rows = match res {
                     ExecutionResult::Rows { row_count, .. }
                     | ExecutionResult::ScalarRows { row_count, .. } => *row_count,
+                    ExecutionResult::StreamingRows { .. } => 0,
                     ExecutionResult::Inserted { rows_affected } => *rows_affected,
                     ExecutionResult::Updated { rows_affected } => *rows_affected,
                     ExecutionResult::Deleted { rows_affected } => *rows_affected,
@@ -390,6 +394,7 @@ impl SqlExecutor {
         cache_key: PlanCacheKey,
         had_catalog_func: bool,
         failure: SelectExecFailure,
+        lead: Option<PlanLead>,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<DataFrame, KalamDbError>> + Send + 'a>,
     > {
@@ -403,7 +408,20 @@ impl SqlExecutor {
             cache_key,
             had_catalog_func,
             failure,
+            lead,
         ))
+    }
+
+    async fn plan_slot(
+        &self,
+        cache_key: &PlanCacheKey,
+    ) -> (Option<Arc<LogicalPlan>>, Option<PlanLead>) {
+        let cache = self.sql_cache_registry.plan_cache_arc();
+        match cache.coordinate(cache_key).await {
+            PlanCoordination::Shared(plan) => (Some(plan), None),
+            PlanCoordination::Lead => (None, Some(cache.lead_guard(cache_key.clone()))),
+            PlanCoordination::Uncoordinated => (None, None),
+        }
     }
 
     async fn plan_bind_and_execute_select(
@@ -417,6 +435,7 @@ impl SqlExecutor {
         cache_key: PlanCacheKey,
         mut had_catalog_func: bool,
         failure: SelectExecFailure,
+        lead: Option<PlanLead>,
     ) -> Result<DataFrame, KalamDbError> {
         had_catalog_func |= self
             .evaluate_catalog_functions_in_statement(&mut statement, exec_ctx, params)
@@ -432,7 +451,11 @@ impl SqlExecutor {
             .await?;
         let template_plan =
             self.optimized_plan_for_cache(&session, &planned_df, default_namespace).await?;
-        if !had_catalog_func {
+        if had_catalog_func {
+            drop(lead);
+        } else if let Some(lead) = lead {
+            lead.finish(template_plan.clone());
+        } else {
             self.sql_cache_registry.plan_cache().insert(cache_key, template_plan.clone());
         }
         let executable_plan = replace_placeholders_in_plan(template_plan, params)?;
@@ -537,6 +560,7 @@ impl SqlExecutor {
                         cache_key,
                         false,
                         SelectExecFailure::AfterReplan,
+                        None,
                     )
                     .await?
                 },
@@ -575,6 +599,7 @@ impl SqlExecutor {
                             shape_key,
                             false,
                             SelectExecFailure::AfterReplan,
+                            None,
                         )
                         .await?
                     },
@@ -593,18 +618,47 @@ impl SqlExecutor {
                 {
                     return Ok(direct_result);
                 }
-                self.plan_bind_and_execute_select_erased(
-                    session,
-                    statement,
-                    sql,
-                    &bound,
-                    exec_ctx,
-                    &default_namespace,
-                    shape_key,
-                    had_catalog_func,
-                    SelectExecFailure::Initial,
-                )
-                .await?
+                let (shared, lead) = self.plan_slot(&shape_key).await;
+                if let Some(template_plan) = shared {
+                    let executable_plan =
+                        replace_placeholders_in_plan((*template_plan).clone(), &bound)?;
+                    match session.execute_logical_plan(executable_plan).await {
+                        Ok(df) => df,
+                        Err(error) => {
+                            log::warn!(
+                                "Failed to execute shared literal plan, replanning: {}",
+                                error
+                            );
+                            self.plan_bind_and_execute_select_erased(
+                                session,
+                                statement,
+                                sql,
+                                &bound,
+                                exec_ctx,
+                                &default_namespace,
+                                shape_key,
+                                false,
+                                SelectExecFailure::AfterReplan,
+                                None,
+                            )
+                            .await?
+                        },
+                    }
+                } else {
+                    self.plan_bind_and_execute_select_erased(
+                        session,
+                        statement,
+                        sql,
+                        &bound,
+                        exec_ctx,
+                        &default_namespace,
+                        shape_key,
+                        had_catalog_func,
+                        SelectExecFailure::Initial,
+                        lead,
+                    )
+                    .await?
+                }
             }
         } else {
             let session = self.create_session_with_transaction_context(exec_ctx)?;
@@ -621,35 +675,52 @@ impl SqlExecutor {
             {
                 return Ok(direct_result);
             }
-            self.plan_bind_and_execute_select_erased(
-                session,
-                statement,
-                sql,
-                &params,
-                exec_ctx,
-                &default_namespace,
-                cache_key,
-                had_catalog_func,
-                SelectExecFailure::Initial,
-            )
-            .await?
+            let (shared, lead) = self.plan_slot(&cache_key).await;
+            if let Some(template_plan) = shared {
+                let executable_plan =
+                    replace_placeholders_in_plan((*template_plan).clone(), &params)?;
+                match session.execute_logical_plan(executable_plan).await {
+                    Ok(df) => df,
+                    Err(error) => {
+                        log::warn!("Failed to execute shared plan, reparsing SQL: {}", error);
+                        let statement = Self::statement_for_datafusion(sql, metadata)?;
+                        self.plan_bind_and_execute_select_erased(
+                            session,
+                            statement,
+                            sql,
+                            &params,
+                            exec_ctx,
+                            &default_namespace,
+                            cache_key,
+                            false,
+                            SelectExecFailure::AfterReplan,
+                            None,
+                        )
+                        .await?
+                    },
+                }
+            } else {
+                self.plan_bind_and_execute_select_erased(
+                    session,
+                    statement,
+                    sql,
+                    &params,
+                    exec_ctx,
+                    &default_namespace,
+                    cache_key,
+                    had_catalog_func,
+                    SelectExecFailure::Initial,
+                    lead,
+                )
+                .await?
+            }
         };
 
         let df = self.apply_select_limits(df, sql)?;
-        let (batches, schema) = Self::collect_dataframe(df)
+        let stream = Self::stream_dataframe(df)
             .await
             .map_err(|error| self.map_collect_error(sql, exec_ctx, error))?;
-
-        // Calculate total row count
-        let row_count: usize = batches.iter().map(|b| b.num_rows()).sum();
-        kalamdb_observability::kdb_record_current_span!("row_count", row_count);
-
-        // Return batches with row count and schema (schema is needed when batches is empty)
-        Ok(ExecutionResult::Rows {
-            batches,
-            row_count,
-            schema: Some(schema),
-        })
+        Ok(ExecutionResult::StreamingRows { stream })
     }
 
     /// Execute DataFusion meta commands (EXPLAIN, SET, SHOW, etc.)

@@ -10,10 +10,19 @@ use kalamdb_commons::{
     ids::{SharedTableRowId, UserTableRowId, VersionId},
     models::{rows::Row, UserId},
     websocket::ChangeNotification,
-    PolicyCommand, Role, TableId,
+    PolicyCommand, Role,
 };
+use kalamdb_store::Operation;
+
+/// Insert rows encoded into storage operations, with effects still unstaged.
+pub struct PlannedInsertBatch<K, V> {
+    pub operations: Vec<Operation>,
+    pub applied: Vec<(K, Option<ChangeNotification>)>,
+    pub entries: Vec<(K, V)>,
+}
 use kalamdb_rls::{AuthorizationCacheMetrics, BoundLiveAuthorization};
 
+use super::KalamTableProvider;
 use crate::{
     error::KalamDbError,
     shared_tables::{SharedTableIndexedStore, SharedTableProvider, SharedTableRow},
@@ -22,10 +31,8 @@ use crate::{
         base::{BaseTableProvider, TableProviderCore},
         row_utils::system_user_id,
     },
-    versioned::DeferredMutation,
+    versioned::{authoritative_baseline, AuthoritativeBaseline, DeferredMutation},
 };
-
-use super::KalamTableProvider;
 
 fn not_user() -> KalamDbError {
     KalamDbError::InvalidOperation("table provider is not a user table".into())
@@ -62,6 +69,38 @@ impl KalamTableProvider {
 
     pub fn shared_store(&self) -> Option<Arc<SharedTableIndexedStore>> {
         self.as_shared().map(SharedTableProvider::store)
+    }
+
+    pub fn is_auto_increment_pk(&self) -> bool {
+        self.as_user().is_some_and(UserTableProvider::is_auto_increment_pk)
+            || self.as_shared().is_some_and(SharedTableProvider::is_auto_increment_pk)
+    }
+
+    pub fn has_vector_columns(&self) -> bool {
+        self.as_user().is_some_and(UserTableProvider::has_vector_columns)
+            || self.as_shared().is_some_and(SharedTableProvider::has_vector_columns)
+    }
+
+    pub async fn load_user_baseline(
+        &self,
+        user_id: &UserId,
+        pk_value: &str,
+    ) -> Result<AuthoritativeBaseline<UserTableRowId, UserTableRow>, KalamDbError> {
+        let target = self
+            .as_user()
+            .ok_or_else(not_user)?
+            .load_mutation_target(user_id, pk_value)
+            .await?;
+        Ok(authoritative_baseline(target))
+    }
+
+    pub async fn load_shared_baseline(
+        &self,
+        pk_value: &str,
+    ) -> Result<AuthoritativeBaseline<SharedTableRowId, SharedTableRow>, KalamDbError> {
+        let target =
+            self.as_shared().ok_or_else(not_shared)?.load_mutation_target(pk_value).await?;
+        Ok(authoritative_baseline(target))
     }
 
     pub fn primary_key_field_name(&self) -> &str {
@@ -183,20 +222,6 @@ impl KalamTableProvider {
         Ok(())
     }
 
-    pub async fn ensure_insert_pk_unique(
-        &self,
-        scope: Option<&UserId>,
-        row: &Row,
-    ) -> Result<(), KalamDbError> {
-        if let Some(provider) = self.as_user() {
-            return crate::utils::base::ensure_unique_pk_value(provider, scope, row).await;
-        }
-        if let Some(provider) = self.as_shared() {
-            return crate::utils::base::ensure_unique_pk_value(provider, scope, row).await;
-        }
-        Err(not_user())
-    }
-
     pub async fn insert_user_batch_deferred_prevalidated(
         &self,
         user_id: &UserId,
@@ -220,66 +245,174 @@ impl KalamTableProvider {
             .await
     }
 
-    pub async fn insert_user_deferred_prevalidated(
+    pub async fn plan_user_insert_batch(
+        &self,
+        user_id: &UserId,
+        rows: Vec<Row>,
+        versions: &[VersionId],
+    ) -> Result<PlannedInsertBatch<UserTableRowId, UserTableRow>, KalamDbError> {
+        let (operations, applied, entries) = self
+            .as_user()
+            .ok_or_else(not_user)?
+            .plan_insert_batch_prevalidated(user_id, rows, versions)
+            .await?;
+        Ok(PlannedInsertBatch {
+            operations,
+            applied,
+            entries,
+        })
+    }
+
+    pub async fn plan_shared_insert_batch(
+        &self,
+        rows: Vec<Row>,
+        versions: &[VersionId],
+    ) -> Result<PlannedInsertBatch<SharedTableRowId, SharedTableRow>, KalamDbError> {
+        let (operations, applied, entries) = self
+            .as_shared()
+            .ok_or_else(not_shared)?
+            .plan_insert_batch_prevalidated(rows, versions)
+            .await?;
+        Ok(PlannedInsertBatch {
+            operations,
+            applied,
+            entries,
+        })
+    }
+
+    pub async fn finish_user_insert_batch(
+        &self,
+        user_id: &UserId,
+        entries: &[(UserTableRowId, UserTableRow)],
+    ) -> Result<(), KalamDbError> {
+        self.as_user()
+            .ok_or_else(not_user)?
+            .finish_planned_user_insert(user_id, entries)
+            .await;
+        Ok(())
+    }
+
+    pub async fn finish_shared_insert_batch(
+        &self,
+        entries: &[(SharedTableRowId, SharedTableRow)],
+    ) -> Result<(), KalamDbError> {
+        self.as_shared()
+            .ok_or_else(not_shared)?
+            .finish_planned_shared_insert(entries)
+            .await;
+        Ok(())
+    }
+
+    pub async fn finish_user_scope(
+        &self,
+        user_id: &UserId,
+        ops: &[crate::versioned::PlannedScopeFinish],
+    ) -> Result<(), KalamDbError> {
+        self.as_user()
+            .ok_or_else(not_user)?
+            .finish_planned_user_scope(user_id, ops)
+            .await;
+        Ok(())
+    }
+
+    pub async fn finish_shared_scope(
+        &self,
+        ops: &[crate::versioned::PlannedScopeFinish],
+    ) -> Result<(), KalamDbError> {
+        self.as_shared().ok_or_else(not_shared)?.finish_planned_shared_scope(ops).await;
+        Ok(())
+    }
+
+    pub async fn plan_user_insert(
         &self,
         user_id: &UserId,
         row_data: Row,
         version: VersionId,
-    ) -> Result<(UserTableRowId, Option<ChangeNotification>), KalamDbError> {
+        previous: Option<(UserTableRowId, UserTableRow)>,
+        operations: &mut Vec<Operation>,
+    ) -> Result<(UserTableRowId, Option<ChangeNotification>, Row), KalamDbError> {
         self.as_user()
             .ok_or_else(not_user)?
-            .insert_deferred_prevalidated(user_id, row_data, version)
+            .plan_insert_deferred(user_id, row_data, version, previous, operations)
             .await
     }
 
-    pub async fn insert_user_over_hot_deferred(
-        &self,
-        user_id: &UserId,
-        row_data: Row,
-        version: VersionId,
-        previous: (UserTableRowId, UserTableRow),
-    ) -> Result<(UserTableRowId, Option<ChangeNotification>), KalamDbError> {
-        self.as_user()
-            .ok_or_else(not_user)?
-            .insert_over_hot_deferred(user_id, row_data, version, previous)
-            .await
-    }
-
-    pub async fn insert_shared_deferred_prevalidated(
-        &self,
-        row_data: Row,
-        version: VersionId,
-    ) -> Result<(SharedTableRowId, Option<ChangeNotification>), KalamDbError> {
-        self.as_shared()
-            .ok_or_else(not_shared)?
-            .insert_deferred_prevalidated(row_data, version)
-            .await
-    }
-
-    pub async fn insert_shared_over_hot_deferred(
-        &self,
-        row_data: Row,
-        version: VersionId,
-        previous: (SharedTableRowId, SharedTableRow),
-    ) -> Result<(SharedTableRowId, Option<ChangeNotification>), KalamDbError> {
-        self.as_shared()
-            .ok_or_else(not_shared)?
-            .insert_over_hot_deferred(row_data, version, previous)
-            .await
-    }
-
-    pub async fn update_user_deferred_with_hot(
+    pub async fn plan_user_update(
         &self,
         user_id: &UserId,
         pk_value: &str,
         updates: Row,
         version: VersionId,
-        known_hot: Option<(UserTableRowId, UserTableRow)>,
+        known: Option<AuthoritativeBaseline<UserTableRowId, UserTableRow>>,
+        operations: &mut Vec<Operation>,
     ) -> Result<Option<(UserTableRowId, UserTableRow, Option<ChangeNotification>)>, KalamDbError>
     {
         self.as_user()
             .ok_or_else(not_user)?
-            .update_by_pk_value_deferred_with_hot(user_id, pk_value, updates, version, known_hot)
+            .plan_update_by_pk_value_deferred_with_hot(
+                user_id, pk_value, updates, version, known, operations,
+            )
+            .await
+    }
+
+    pub async fn plan_user_delete(
+        &self,
+        user_id: &UserId,
+        pk_value: &str,
+        version: VersionId,
+        known: Option<AuthoritativeBaseline<UserTableRowId, UserTableRow>>,
+        operations: &mut Vec<Operation>,
+    ) -> Result<Option<(UserTableRowId, UserTableRow, Option<ChangeNotification>)>, KalamDbError>
+    {
+        self.as_user()
+            .ok_or_else(not_user)?
+            .plan_delete_by_pk_value_deferred_with_hot(
+                user_id, pk_value, version, known, operations,
+            )
+            .await
+    }
+
+    pub async fn plan_shared_insert(
+        &self,
+        row_data: Row,
+        version: VersionId,
+        previous: Option<(SharedTableRowId, SharedTableRow)>,
+        operations: &mut Vec<Operation>,
+    ) -> Result<(SharedTableRowId, Option<ChangeNotification>, Row), KalamDbError> {
+        self.as_shared()
+            .ok_or_else(not_shared)?
+            .plan_insert_deferred(row_data, version, previous, operations)
+            .await
+    }
+
+    pub async fn plan_shared_update(
+        &self,
+        pk_value: &str,
+        updates: Row,
+        version: VersionId,
+        known: Option<AuthoritativeBaseline<SharedTableRowId, SharedTableRow>>,
+        operations: &mut Vec<Operation>,
+    ) -> Result<Option<(SharedTableRowId, SharedTableRow, Option<ChangeNotification>)>, KalamDbError>
+    {
+        self.as_shared()
+            .ok_or_else(not_shared)?
+            .plan_update_by_pk_value_deferred_with_hot(
+                pk_value, updates, version, known, operations,
+            )
+            .await
+    }
+
+    pub async fn plan_shared_delete(
+        &self,
+        pk_value: &str,
+        version: VersionId,
+        known: Option<AuthoritativeBaseline<SharedTableRowId, SharedTableRow>>,
+        operations: &mut Vec<Operation>,
+    ) -> Result<Option<(SharedTableRowId, SharedTableRow, Option<ChangeNotification>)>, KalamDbError>
+    {
+        self.as_shared()
+            .ok_or_else(not_shared)?
+            .plan_delete_by_pk_value_deferred_with_hot(pk_value, version, known, operations)
             .await
     }
 
@@ -292,47 +425,6 @@ impl KalamTableProvider {
         self.as_user()
             .ok_or_else(not_user)?
             .delete_by_pk_value_deferred(user_id, pk_value, version)
-            .await
-    }
-
-    pub async fn delete_user_deferred_with_hot(
-        &self,
-        user_id: &UserId,
-        pk_value: &str,
-        version: VersionId,
-        known_hot: Option<(UserTableRowId, UserTableRow)>,
-    ) -> Result<Option<(UserTableRowId, UserTableRow, Option<ChangeNotification>)>, KalamDbError>
-    {
-        self.as_user()
-            .ok_or_else(not_user)?
-            .delete_by_pk_value_deferred_with_hot(user_id, pk_value, version, known_hot)
-            .await
-    }
-
-    pub async fn update_shared_deferred_with_hot(
-        &self,
-        pk_value: &str,
-        updates: Row,
-        version: VersionId,
-        known_hot: Option<(SharedTableRowId, SharedTableRow)>,
-    ) -> Result<Option<(SharedTableRowId, SharedTableRow, Option<ChangeNotification>)>, KalamDbError>
-    {
-        self.as_shared()
-            .ok_or_else(not_shared)?
-            .update_by_pk_value_deferred_with_hot(pk_value, updates, version, known_hot)
-            .await
-    }
-
-    pub async fn delete_shared_deferred_with_hot(
-        &self,
-        pk_value: &str,
-        version: VersionId,
-        known_hot: Option<(SharedTableRowId, SharedTableRow)>,
-    ) -> Result<Option<(SharedTableRowId, SharedTableRow, Option<ChangeNotification>)>, KalamDbError>
-    {
-        self.as_shared()
-            .ok_or_else(not_shared)?
-            .delete_by_pk_value_deferred_with_hot(pk_value, version, known_hot)
             .await
     }
 
@@ -451,128 +543,5 @@ impl KalamTableProvider {
             )
             .await?;
         Ok(!rows.is_empty())
-    }
-
-    pub async fn user_cleanup_row(
-        &self,
-        table_id: &TableId,
-        user_id: &UserId,
-        pk_value: &str,
-    ) -> Option<Row> {
-        let provider = self.as_user()?;
-        let pk_name = provider.primary_key_field_name();
-        let schema = datafusion::datasource::TableProvider::schema(provider);
-        let pk_field = match schema.field_with_name(pk_name) {
-            Ok(field) => field,
-            Err(err) => {
-                log::warn!(
-                    "Failed to resolve PK field for file cleanup in {} (pk={}): {}",
-                    table_id,
-                    pk_value,
-                    err
-                );
-                return None;
-            },
-        };
-        let pk_scalar = match kalamdb_commons::conversions::parse_string_as_scalar(
-            pk_value,
-            pk_field.data_type(),
-        ) {
-            Ok(value) => value,
-            Err(err) => {
-                log::warn!(
-                    "Failed to parse PK value for file cleanup in {} (pk={}): {}",
-                    table_id,
-                    pk_value,
-                    err
-                );
-                return None;
-            },
-        };
-        match provider.find_by_pk(user_id, &pk_scalar).await {
-            Ok(Some((_key, row))) => Some(row.fields),
-            Ok(None) => {
-                match crate::utils::base::find_row_by_pk(provider, Some(user_id), pk_value).await {
-                    Ok(Some((_key, row))) => Some(row.fields),
-                    Ok(None) => None,
-                    Err(err) => {
-                        log::warn!(
-                            "Failed to load cold row for file cleanup in {} (pk={}): {}",
-                            table_id,
-                            pk_value,
-                            err
-                        );
-                        None
-                    },
-                }
-            },
-            Err(err) => {
-                log::warn!(
-                    "Failed to load hot row for file cleanup in {} (pk={}): {}",
-                    table_id,
-                    pk_value,
-                    err
-                );
-                None
-            },
-        }
-    }
-
-    pub async fn shared_cleanup_row(&self, table_id: &TableId, pk_value: &str) -> Option<Row> {
-        let provider = self.as_shared()?;
-        let pk_name = provider.primary_key_field_name();
-        let schema = datafusion::datasource::TableProvider::schema(provider);
-        let pk_field = match schema.field_with_name(pk_name) {
-            Ok(field) => field,
-            Err(err) => {
-                log::warn!(
-                    "Failed to resolve PK field for file cleanup in {} (pk={}): {}",
-                    table_id,
-                    pk_value,
-                    err
-                );
-                return None;
-            },
-        };
-        let pk_scalar = match kalamdb_commons::conversions::parse_string_as_scalar(
-            pk_value,
-            pk_field.data_type(),
-        ) {
-            Ok(value) => value,
-            Err(err) => {
-                log::warn!(
-                    "Failed to parse PK value for file cleanup in {} (pk={}): {}",
-                    table_id,
-                    pk_value,
-                    err
-                );
-                return None;
-            },
-        };
-        match provider.find_by_pk(&pk_scalar).await {
-            Ok(Some((_key, row))) => Some(row.fields),
-            Ok(None) => match crate::utils::base::find_row_by_pk(provider, None, pk_value).await {
-                Ok(Some((_key, row))) => Some(row.fields),
-                Ok(None) => None,
-                Err(err) => {
-                    log::warn!(
-                        "Failed to load cold row for file cleanup in {} (pk={}): {}",
-                        table_id,
-                        pk_value,
-                        err
-                    );
-                    None
-                },
-            },
-            Err(err) => {
-                log::warn!(
-                    "Failed to load hot row for file cleanup in {} (pk={}): {}",
-                    table_id,
-                    pk_value,
-                    err
-                );
-                None
-            },
-        }
     }
 }

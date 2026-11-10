@@ -624,7 +624,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-commons"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "hex",
  "once_cell",
@@ -636,7 +636,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-serialization"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "base64 0.23.1",
  "flexbuffers",

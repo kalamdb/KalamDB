@@ -683,6 +683,10 @@ impl OperationExecutor for OperationService {
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
 
+        let result = result
+            .into_materialized_rows()
+            .await
+            .map_err(Status::internal)?;
         let result = result.into_arrow_rows().map_err(Status::internal)?;
 
         match result {

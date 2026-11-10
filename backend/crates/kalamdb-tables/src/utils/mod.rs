@@ -16,9 +16,11 @@ pub mod version_resolution;
 #[cfg(test)]
 pub mod test_backend;
 
-pub(crate) use crate::shared_tables::SharedTableProvider;
-pub use crate::stream_tables::StreamTableEngine;
-pub use base::TableProviderCore;
 pub use core::TableServices;
+
+pub use base::TableProviderCore;
 pub use dml_provider::TableRowDml;
 pub use unified_dml::{extract_user_pk_value, validate_primary_key};
+
+pub(crate) use crate::shared_tables::SharedTableProvider;
+pub use crate::stream_tables::StreamTableEngine;

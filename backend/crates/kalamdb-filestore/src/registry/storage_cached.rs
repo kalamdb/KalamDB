@@ -587,7 +587,10 @@ impl StorageCached {
             .complete()
             .await
             .map_err(|error| FilestoreError::ObjectStore(error.to_string()))?;
-        Ok(PutResult::new(path_result.full_path, usize::try_from(size_bytes).unwrap_or(usize::MAX)))
+        Ok(PutResult::new(
+            path_result.full_path,
+            usize::try_from(size_bytes).unwrap_or(usize::MAX),
+        ))
     }
 
     /// List Parquet filenames under a table's storage path (sorted, deduplicated).
