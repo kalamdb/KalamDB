@@ -246,12 +246,16 @@ impl CoreFunctionHost {
             },
             "func.host.execute_sql"
         )?;
-        let _span = kalamdb_observability::kdb_info_span_entered!("func.host.convert_result");
-        if rows {
-            super::convert::execution_result_to_rows(result).await.map_err(map_core)
-        } else {
-            super::convert::execution_result_to_routine(result).await.map_err(map_core)
-        }
+        kalamdb_observability::kdb_await_in_info_span!(
+            async {
+                if rows {
+                    super::convert::execution_result_to_rows(result).await.map_err(map_core)
+                } else {
+                    super::convert::execution_result_to_routine(result).await.map_err(map_core)
+                }
+            },
+            "func.host.convert_result"
+        )
     }
 
     async fn run_sql_view(
