@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import SetupWizard from "@/pages/SetupWizard";
 
@@ -37,6 +37,7 @@ vi.mock("@/store/setupSlice", () => ({
 
 describe("SetupWizard", () => {
   beforeEach(() => {
+    cleanup();
     mockDispatch.mockReset();
     mockSubmitSetup.mockReset();
     mockClearSetupError.mockReset();
@@ -89,5 +90,51 @@ describe("SetupWizard", () => {
       email: "admin@example.com",
     });
     expect(mockDispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a server error instead of clearing it on arrival", () => {
+    setupState.error = "User ID can only contain ASCII letters, digits, '_' and '-'";
+
+    render(
+      <MemoryRouter>
+        <SetupWizard />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText(/setup failed/i)).toBeTruthy();
+    expect(screen.getByText(setupState.error)).toBeTruthy();
+    expect(mockClearSetupError).not.toHaveBeenCalled();
+  });
+
+  it("clears the server error once the user edits the form", () => {
+    setupState.error = "Setup failed";
+
+    render(
+      <MemoryRouter>
+        <SetupWizard />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/username/i), {
+      target: { value: "admin_user" },
+    });
+
+    expect(mockClearSetupError).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a username outside the id alphabet before submitting", () => {
+    render(
+      <MemoryRouter>
+        <SetupWizard />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/username/i), {
+      target: { value: "admin.user" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect(screen.getByText(/can only contain letters, digits/i)).toBeTruthy();
+    expect(mockSubmitSetup).not.toHaveBeenCalled();
   });
 });
