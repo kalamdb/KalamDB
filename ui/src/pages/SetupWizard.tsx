@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertCircle, Check, Eye, EyeOff } from "lucide-react";
 import AuthSplitLayout from "@/components/auth/AuthSplitLayout";
@@ -8,6 +8,10 @@ import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { clearSetupError, submitSetup } from "@/store/setupSlice";
+
+// Mirrors UserId::validate_id in kalamdb-commons.
+const USERNAME_PATTERN = /^[A-Za-z0-9_-]+$/;
+const USERNAME_MAX_LENGTH = 128;
 
 interface FormData {
   username: string;
@@ -57,8 +61,19 @@ export default function SetupWizard() {
   const [showRootPassword, setShowRootPassword] = useState(false);
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
+  // Clear a server error only once the user edits the form, never in the render
+  // that delivered it — that cleared it before the alert could show.
+  const erroredFormData = useRef<FormData | null>(null);
   useEffect(() => {
-    if (error) {
+    if (!error) {
+      erroredFormData.current = null;
+      return;
+    }
+    if (erroredFormData.current === null) {
+      erroredFormData.current = formData;
+      return;
+    }
+    if (erroredFormData.current !== formData) {
       dispatch(clearSetupError());
     }
   }, [error, formData, dispatch]);
@@ -82,6 +97,10 @@ export default function SetupWizard() {
       errors.username = "Cannot use 'root' as username";
     } else if (formData.username.length < 3) {
       errors.username = "Username must be at least 3 characters";
+    } else if (formData.username.length > USERNAME_MAX_LENGTH) {
+      errors.username = `Username cannot exceed ${USERNAME_MAX_LENGTH} characters`;
+    } else if (!USERNAME_PATTERN.test(formData.username)) {
+      errors.username = "Username can only contain letters, digits, '_' and '-'";
     }
 
     if (formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {

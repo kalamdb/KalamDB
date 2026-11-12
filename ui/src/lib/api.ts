@@ -20,6 +20,40 @@ export interface ApiError {
   details?: Record<string, unknown>;
 }
 
+// Request rejections from the framework arrive as plain text, e.g.
+// "Json deserialize error: User ID can only contain ... at line 1 column 24".
+// Keep the reason, drop the serde framing.
+function readableMessage(body: string): string {
+  const withoutPrefix = body.replace(/^Json deserialize error:\s*/i, "");
+  return withoutPrefix.replace(/\s+at line \d+ column \d+\.?$/i, "").trim();
+}
+
+async function parseApiError(response: Response): Promise<ApiError> {
+  const fallback: ApiError = {
+    error: "unknown_error",
+    message: `Request failed with status ${response.status}`,
+  };
+
+  const body = await response.text().catch(() => "");
+  if (!body.trim()) {
+    return fallback;
+  }
+
+  try {
+    const parsed = JSON.parse(body) as Partial<ApiError>;
+    if (parsed && typeof parsed.message === "string" && parsed.message.trim()) {
+      return {
+        error: typeof parsed.error === "string" ? parsed.error : fallback.error,
+        message: parsed.message,
+        details: parsed.details,
+      };
+    }
+    return fallback;
+  } catch {
+    return { ...fallback, message: readableMessage(body) || fallback.message };
+  }
+}
+
 export class ApiClient {
   private baseUrl: string;
 
@@ -49,11 +83,7 @@ export class ApiClient {
     });
 
     if (!response.ok) {
-      const error: ApiError = await response.json().catch(() => ({
-        error: "unknown_error",
-        message: `Request failed with status ${response.status}`,
-      }));
-      throw new ApiRequestError(error, response.status);
+      throw new ApiRequestError(await parseApiError(response), response.status);
     }
 
     // Handle empty responses
