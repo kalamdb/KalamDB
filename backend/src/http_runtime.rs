@@ -160,7 +160,7 @@ mod tests {
 
         assert!(status.contains("embedded in binary at "));
         assert!(status.contains("https://db.example.com/ui"));
-        assert!(status.contains("local: http://127.0.0.1:2900/ui"));
+        assert!(status.contains("local: http://localhost:2900/ui"));
     }
 
     #[test]

@@ -24,7 +24,7 @@ use kalamdb_store::{EntityStore, IndexedEntityStore, StorageBackend};
 
 use crate::{
     common::{ensure_partition, new_indexed_store_with_pk, partition_name, table_prefix_indexes},
-    row_codec::SharedRowCodec,
+    versioned::VersionedRowCodec,
 };
 
 /// Store for shared tables (cross-user data, not system metadata).
@@ -119,7 +119,7 @@ pub fn new_indexed_shared_table_store(
         Arc::clone(&backend),
         name,
         indexes,
-        Arc::new(SharedRowCodec::new(schema)),
+        Arc::new(VersionedRowCodec::new(schema)),
     )
 }
 
@@ -476,7 +476,7 @@ mod tests {
             ColumnId,
         };
 
-        use crate::shared_tables::SharedTablePkIndex;
+        use crate::versioned::pk_index::{new_shared_pk_index, PkPrefix};
 
         let backend = Arc::new(RecordingBackend::new());
         let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("orders"));
@@ -511,8 +511,8 @@ mod tests {
         assert!(store.get(&first_key).unwrap().is_none());
         assert_eq!(store.get(&second_key).unwrap().unwrap()._version, second_key);
 
-        let pk_prefix = SharedTablePkIndex::new(&table_id, "id")
-            .build_prefix_for_pk(&ScalarValue::Int64(Some(1)));
+        let pk_prefix = new_shared_pk_index(&table_id, "id")
+            .build_shared_pk_prefix(&ScalarValue::Int64(Some(1)));
         let pk_hits = store.scan_by_index(0, Some(&pk_prefix), None).unwrap();
         assert_eq!(pk_hits.len(), 1);
         assert_eq!(pk_hits[0].0, second_key);
@@ -540,8 +540,7 @@ mod tests {
         assert!(store.get(&second_key).unwrap().is_none());
         assert!(store.get(&tombstone_key).unwrap().unwrap()._deleted);
         let tombstone_hits = store.scan_by_index(closed_idx, Some(&closed_prefix), None).unwrap();
-        assert_eq!(tombstone_hits.len(), 1);
-        assert_eq!(tombstone_hits[0].0, tombstone_key);
+        assert!(tombstone_hits.is_empty(), "secondary index omits the delete tombstone");
 
         let (live_key, live_row) = status_row(4, "open", false);
         store.replace(Some((&tombstone_key, &tombstone)), &live_key, &live_row).unwrap();
@@ -613,15 +612,13 @@ mod tests {
             ColumnDefinition::primary_key(1, "a", 1, KalamDataType::BigInt),
             ColumnDefinition::simple(2, "b", 2, KalamDataType::Int),
         ];
-        let indexes = [ScalarIndexDefinition::new("i2b", vec![ColumnId::new(2)], false)];
-        let store = new_indexed_shared_table_store(
-            backend,
-            &table_id,
-            "a",
-            schema,
-            &indexes,
-            &columns,
-        );
+        let indexes = [ScalarIndexDefinition::new(
+            "i2b",
+            vec![ColumnId::new(2)],
+            false,
+        )];
+        let store =
+            new_indexed_shared_table_store(backend, &table_id, "a", schema, &indexes, &columns);
 
         let insert = |seq: i64, b: i32, deleted: bool| {
             let version = VersionId::try_from_i64(seq).unwrap();
@@ -646,9 +643,7 @@ mod tests {
         store.insert(&outside_key, &outside_row).unwrap();
 
         let (tombstone_key, tombstone) = insert(5, 15, true);
-        store
-            .replace(Some((&mid_key, &mid_row)), &tombstone_key, &tombstone)
-            .unwrap();
+        store.replace(Some((&mid_key, &mid_row)), &tombstone_key, &tombstone).unwrap();
         assert!(store.get(&tombstone_key).unwrap().unwrap()._deleted);
 
         let wide = datafusion::logical_expr::col("b")
@@ -656,8 +651,9 @@ mod tests {
             .and(datafusion::logical_expr::col("b").lt(datafusion::logical_expr::lit(100_i32)));
         let plan = store.plan_index_scan(None, &wide).expect("b range uses i2b");
         assert_eq!(plan.index_idx, 1);
-        let indexed = store.scan_by_index(plan.index_idx, Some(plan.prefix.as_slice()), None).unwrap();
-        assert_eq!(indexed.len(), 4, "tombstone stays in the secondary index");
+        let indexed =
+            store.scan_by_index(plan.index_idx, Some(plan.prefix.as_slice()), None).unwrap();
+        assert_eq!(indexed.len(), 3, "secondary index omits the delete tombstone");
 
         let stats = store.sum_visible_index_integers(&plan).unwrap().expect("integer sum");
         assert_eq!(stats.count, 2);

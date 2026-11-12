@@ -2,7 +2,7 @@
 
 **Branch**: `feat/pg-dialect` | **Date**: 2026-10-27 | **Spec**: [spec.md](spec.md)
 
-**Input**: Feature specification from `/specs/039-unified-table-transactions/spec.md`, reconciliation notes in `/specs/039-unified-table-transactions/source-review.md`, and reference material in `/specs/039-unified-table-transactions/references/storage-transaction-notes.md`.
+**Input**: Feature specification from `/specs/039-unified-table-transactions/spec.md`, reconciliation notes in `/specs/039-unified-table-transactions/source-review.md`, reference material in `/specs/039-unified-table-transactions/references/storage-transaction-notes.md`, and the performance program in [`dml-storage-performance-handoff.md`](dml-storage-performance-handoff.md) (same text as `docs/plans/2026-10-30-dml-storage-performance-handoff.md`).
 
 ## Summary
 
@@ -15,6 +15,8 @@ Unify `User`, `Shared`, `Stream`, and persisted `System` tables **starting at th
 This eliminates the parallel provider hierarchies (`UserTableProvider`, `SharedTableProvider`, `StreamTableProvider`, the 11 boilerplate `Catalog*TableProvider` structs, per-view `PgCatalogView` schema copies, and `SystemTableScan`/`SimpleSystemTableScan`), retires the redundant `<K, V>` generic traits (`BaseTableProvider<K, V>`, `DeferredMvccScanProvider<K, V>`), removes all 35+ `.downcast_ref::<UserTableProvider | SharedTableProvider | StreamTableProvider>()` call sites across the workspace, brings shared-only hot-storage fast paths (`columnar_hot_scan`, `sum_hot_covering_integers`, `plan_literal_equality_updates`) to both `User` and `Shared` tables, and realigns crate boundaries without introducing circular crate dependencies. System catalog runtime latency is a hard non-regression gate (SC-015), stricter than the 5% user/shared allowance.
 
 On top of this unified foundation, the plan delivers true group-wide atomic transaction commits (`PreparedCommitBatch` -> single `StorageBackend::batch`), snapshot-safe hot version replacement (`min_pinned_version`), commit-time write-set folding (**User Story 3**), secondary-index tombstone omission and complete-event/delete retention (**User Story 4**), short-lock flush publication and streaming archive transfers (**User Story 5**), transport-aware `PlanCacheKey` and AST-only `RETURNING`/stream target handling (**User Story 6**), and durable Row V2 compatibility gating plus typed job orchestration (**User Story 7**).
+
+The same feature then implements the staged DML, query, storage, and transaction performance program in [`dml-storage-performance-handoff.md`](dml-storage-performance-handoff.md). That document is the specification for tasks T069–T089. Its architecture acceptance section and correctness gates are completion gates. Phase E there is evidence-gated investigation, not a storage-format migration. Practical goals, not predicted speedups: at least 20% lower current-baseline `benchv2/pgwire-speed` total and 30% lower combined #8/#11/#12/#13/#15 time, on a new same-profile `dev` baseline. The saved 2026-10-27 release timings are not that baseline.
 
 ## Technical Context
 
@@ -33,6 +35,7 @@ On top of this unified foundation, the plan delivers true group-wide atomic tran
 **Performance Goals**:
 - Exactly **1** `StorageBackend::batch` submission per supported non-empty transaction commit across all touched tables and indexes in a commit domain (`0` for empty/no-op commits) (SC-001).
 - Positive median runtime improvement (reported in seconds across $\ge 5$ matched `dev`-profile repeats) exceeding baseline run-to-run spread on 25,000-row insert/update/delete transactions, 25,000-op repeated-key folding, and 100/1,000 dirty-transaction overlay reads, with $\le 5\%$ regression on unaffected workloads (SC-001, SC-003, SC-009, SC-010).
+- Handoff goals on the new `dev`-profile `benchv2/pgwire-speed` baseline: ≥20% lower total median and ≥30% lower combined #8/#11/#12/#13/#15 median; ≥30% lower peak tracked transient memory on the selected large-DML workload; flag any script-median regression above max(5%, 0.005s). These goals do not weaken correctness. See [`dml-storage-performance-handoff.md`](dml-storage-performance-handoff.md).
 - Zero wait on bulk Parquet I/O during ordinary `mark_pending_write` calls when cold storage is delayed by 1 second (SC-007).
 - Both `User` and `Shared` tables execute `columnar_hot_scan`, `sum_hot_covering_integers`, and `plan_literal_equality_updates` from the single shared `VersionedTableEngine` implementation (SC-013).
 - Persisted system-table point lookups and the recorded `pg_catalog` / `information_schema` introspection query have median and p99 latency less than or equal to the recorded baseline (SC-015). Zero regression is the gate. The user/shared 5% allowance does not apply.
@@ -72,6 +75,7 @@ specs/039-unified-table-transactions/
 ├── research.md                                      # Phase 0 research & duplication inventory
 ├── data-model.md                                    # Phase 1 domain entities & state transitions
 ├── quickstart.md                                    # Phase 1 validation & benchmark guide
+├── dml-storage-performance-handoff.md               # Performance program. Same text as docs/plans/2026-10-30-dml-storage-performance-handoff.md. Tasks T069–T089.
 ├── checklists/
 │   └── requirements.md                              # Specification quality checklist
 ├── contracts/
@@ -252,6 +256,19 @@ Implementation MUST proceed in strict dependency order per `spec.md` Assumptions
    - Replace raw `Arc<dyn Any>` job manager access with a typed trait capability and startup executor registration check.
 3. **Final Consolidation Accounting, Full Regression Sweep & Architecture Docs**:
    - Verify positive net LOC reduction and zero concrete provider downcasts (SC-005), run full `cargo nextest run` and CLI smoke suites (SC-012), and update `docs/architecture/`.
+
+### Phase H — DML, query, storage, and transaction performance (tasks T069–T089)
+
+Specified exactly by [`dml-storage-performance-handoff.md`](dml-storage-performance-handoff.md). This section is the phase index. The handoff section named on each task is the requirement, including its acceptance text, architecture review gate, and correctness gates 1–8. Do not add a parallel fast path, a second parser, or a new crate. Preserve the dirty tree and do not commit unless the user explicitly asks.
+
+Execution order from that document:
+
+1. **T069 A1** — current `dev`-profile baseline, stage attribution, ownership/call-path map. Revalidate folding, target cache, batching, and overlay.
+2. **T070 A2** and **T071 B1** together — inactive coalescing allocations, and consume the write set on commit. Measure before proceeding.
+3. **T072 B2** and **T073 B3** — one authoritative target decode, then batched post-commit work, on range DELETE and then UPDATE.
+4. **T075** — D3 reservation plumbing before streaming expansion. Then **T076 C1** and **T077 C2**, then **T078 C3**.
+5. **T079 D1** and **T080 D2** from profiles. **T081** finishes D3 resource tests. **T074 B4** only if concurrent-load evidence says claim contention matters.
+6. **T088** and **T089** — full correctness, benchmark, concurrency, and soak evidence. **T082 E1**, **T083 E2**, and **T084 E3** require a measured bottleneck and an ADR. **T085 F1** may follow T069. **T086 F2** follows T078. **T087 F3** follows the C/D stream and budget contracts.
 
 ## Complexity Tracking
 

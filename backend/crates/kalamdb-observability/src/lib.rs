@@ -14,6 +14,7 @@ pub mod activity;
 pub mod allocator_metrics;
 pub mod coarse_clock;
 pub mod cpu;
+pub mod dml_stage;
 pub mod function_metrics;
 pub mod health_monitor;
 pub mod process_memory;

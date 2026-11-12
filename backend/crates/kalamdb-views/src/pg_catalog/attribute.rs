@@ -1,11 +1,12 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, BooleanBuilder, Int64Builder, StringBuilder},
-    datatypes::{DataType, Field, Schema, SchemaRef},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use kalamdb_commons::{constants::SystemColumnNames, Role};
+use kalamdb_macros::table;
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
@@ -15,35 +16,76 @@ use crate::{
     },
 };
 
+#[table(
+    name = "pg_attribute",
+    namespace = SchemaId::pg_catalog(),
+    view = true,
+    comment = "Table columns"
+)]
+#[derive(Debug)]
+struct PgAttributeRow {
+    /// Relation oid
+    attrelid: i64,
+    /// Column name
+    attname: String,
+    /// Type oid
+    atttypid: i64,
+    /// Statistics target
+    attstattarget: i64,
+    /// Type length
+    attlen: i64,
+    /// Attribute number
+    attnum: i64,
+    /// Number of dimensions
+    attndims: i64,
+    /// Cache offset
+    attcacheoff: i64,
+    /// Type modifier
+    atttypmod: i64,
+    /// Whether the type is passed by value
+    attbyval: bool,
+    /// Alignment
+    attalign: String,
+    /// Storage
+    attstorage: String,
+    /// Whether the column rejects nulls
+    attnotnull: bool,
+    /// Whether the column has a default
+    atthasdef: bool,
+    /// Whether the column has a missing value
+    atthasmissing: bool,
+    /// Identity
+    attidentity: String,
+    /// Generated expression kind
+    attgenerated: String,
+    /// Whether the column is dropped
+    attisdropped: bool,
+    /// Whether the column is local
+    attislocal: bool,
+    /// Inheritance count
+    attinhcount: i64,
+    /// Collation oid
+    attcollation: i64,
+}
+
 fn schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("attrelid", DataType::Int64, false),
-                Field::new("attname", DataType::Utf8, false),
-                Field::new("atttypid", DataType::Int64, false),
-                Field::new("attstattarget", DataType::Int64, false),
-                Field::new("attlen", DataType::Int64, false),
-                Field::new("attnum", DataType::Int64, false),
-                Field::new("attndims", DataType::Int64, false),
-                Field::new("attcacheoff", DataType::Int64, false),
-                Field::new("atttypmod", DataType::Int64, false),
-                Field::new("attbyval", DataType::Boolean, false),
-                Field::new("attalign", DataType::Utf8, false),
-                Field::new("attstorage", DataType::Utf8, false),
-                Field::new("attnotnull", DataType::Boolean, false),
-                Field::new("atthasdef", DataType::Boolean, false),
-                Field::new("atthasmissing", DataType::Boolean, false),
-                Field::new("attidentity", DataType::Utf8, false),
-                Field::new("attgenerated", DataType::Utf8, false),
-                Field::new("attisdropped", DataType::Boolean, false),
-                Field::new("attislocal", DataType::Boolean, false),
-                Field::new("attinhcount", DataType::Int64, false),
-                Field::new("attcollation", DataType::Int64, false),
-            ]))
-        })
-        .clone()
+    PgAttributeRow::arrow_schema()
+}
+
+pub(crate) fn column_order() -> &'static [&'static str] {
+    PgAttributeRow::ordinal_column_order()
+}
+
+#[cfg(test)]
+mod schema_order {
+    use super::*;
+
+    #[test]
+    fn schema_follows_table_macro() {
+        let schema = schema();
+        let names: Vec<_> = schema.fields().iter().map(|field| field.name().as_str()).collect();
+        assert_eq!(names, PgAttributeRow::ordinal_column_order());
+    }
 }
 
 #[derive(Debug)]

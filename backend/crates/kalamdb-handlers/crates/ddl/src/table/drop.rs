@@ -85,17 +85,6 @@ pub(crate) fn capture_storage_cleanup_details(
     })
 }
 
-#[allow(dead_code)]
-pub(crate) async fn schedule_drop_table_cleanup(
-    app_context: &Arc<AppContext>,
-    table_id: &TableId,
-    table_type: TableType,
-    storage_details: StorageCleanupDetails,
-) -> Result<String, KalamDbError> {
-    cleanup_dropped_table_partitions(app_context, table_id, table_type).await?;
-    enqueue_drop_table_cleanup_job(app_context, table_id, table_type, storage_details).await
-}
-
 pub(crate) async fn cleanup_dropped_table_partitions(
     app_context: &Arc<AppContext>,
     table_id: &TableId,

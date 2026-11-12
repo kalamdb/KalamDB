@@ -16,18 +16,22 @@ use std::{
 };
 
 use kalamdb_commons::{
-    ids::{SharedTableRowId, StreamTableRowId, UserTableRowId, VersionId},
+    ids::{SharedTableRowId, UserTableRowId, VersionId},
     models::{rows::Row, OperationKind, TopicOp, TransactionId, UserId},
     schemas::TableType,
     websocket::{ChangeNotification, ChangeType},
-    TableId,
+    MemoryClass, PkBucketKey, Reservation, TableId,
 };
 use kalamdb_raft::{assign_entry_versions, TransactionApplyResult};
-use kalamdb_sharding::{GroupId, ShardRouter};
+use kalamdb_sharding::GroupId;
 use kalamdb_system::{FileRef, NotificationService as NotificationServiceTrait, TopicPublisher};
-use kalamdb_tables::{utils::base as table_base, SharedTableRow, StreamTableRow, UserTableRow};
-use kalamdb_transactions::StagedMutation;
+use kalamdb_tables::{
+    batch_baseline_requests, AuthoritativeBaseline, BaselineRequest, KalamTableProvider,
+    PlannedScopeFinish, SharedTableRow, TargetResolutionCache, UserTableRow, BASELINE_BATCH_LIMIT,
+};
+use kalamdb_transactions::{admit_versioned_commit, ScopedTargetKey, StagedMutation, TableScope};
 
+use super::prepared_commit::{CommitFinish, FileCleanupIntent, PreparedCommitBatch};
 use crate::{
     app_context::AppContext,
     applier::{
@@ -37,10 +41,7 @@ use crate::{
             delete_file_refs_best_effort,
         },
     },
-    providers::{
-        base::{find_row_by_pk, BaseTableProvider},
-        SharedTableProvider, StreamTableProvider, UserTableProvider,
-    },
+    providers::StreamTableEngine,
     transactions::CommitSideEffectPlan,
 };
 
@@ -49,13 +50,40 @@ use crate::{
 /// This executor is stateless and designed for concurrent access from
 /// multiple Data Raft groups. Each method accesses the schema registry
 /// to get the appropriate provider and performs the operation.
+fn vector_upsert(
+    provider: &KalamTableProvider,
+    version: VersionId,
+    fields: &Row,
+) -> Option<PlannedScopeFinish> {
+    if provider.has_vector_columns() {
+        Some(PlannedScopeFinish::Upsert {
+            version,
+            row: fields.clone(),
+        })
+    } else {
+        None
+    }
+}
+
+fn vector_delete(
+    provider: &KalamTableProvider,
+    version: VersionId,
+    pk: &str,
+) -> Option<PlannedScopeFinish> {
+    if provider.has_vector_columns() {
+        Some(PlannedScopeFinish::Delete {
+            version,
+            pk: pk.to_string(),
+        })
+    } else {
+        None
+    }
+}
+
 fn table_has_file_column(app_context: &AppContext, table_id: &TableId) -> bool {
     app_context.schema_registry().get(table_id).is_some_and(|cached| {
         cached.table.columns.iter().any(|column| {
-            matches!(
-                column.data_type(),
-                kalamdb_commons::models::datatypes::KalamDataType::File
-            )
+            matches!(column.data_type(), kalamdb_commons::models::datatypes::KalamDataType::File)
         })
     })
 }
@@ -111,13 +139,26 @@ impl DmlExecutor {
         table_type: TableType,
         user_id: Option<&UserId>,
     ) -> Option<GroupId> {
-        let router =
-            ShardRouter::from_optional_cluster_config(self.app_context.config().cluster.as_ref());
+        let router = self.app_context.shard_router();
         match table_type {
             TableType::User | TableType::Stream => user_id.map(|uid| router.user_group_id(uid)),
             TableType::Shared => self.app_context.shared_group_id(table_id).ok(),
             TableType::System => None,
         }
+    }
+
+    fn admission_groups(&self, mutations: &[StagedMutation]) -> Vec<Option<GroupId>> {
+        mutations
+            .iter()
+            .map(|mutation| match mutation.table_type {
+                TableType::Stream | TableType::System => None,
+                TableType::User | TableType::Shared => self.dml_group_id(
+                    &mutation.table_id,
+                    mutation.table_type,
+                    mutation.user_id.as_ref(),
+                ),
+            })
+            .collect()
     }
 
     fn local_versions(&self, slot_count: usize) -> Result<(u64, Vec<VersionId>), ApplierError> {
@@ -219,9 +260,15 @@ impl DmlExecutor {
         if publish {
             plan.record_publisher_event();
         }
+        let table_type = match &owner_scope {
+            crate::transactions::FanoutOwnerScope::Shared => TableType::Shared,
+            crate::transactions::FanoutOwnerScope::User(_) => TableType::User,
+        };
+        let notify_scope =
+            crate::live_adapters::live_notify_scope(table_type, owner_scope.user_id());
         let live = NotificationServiceTrait::has_subscribers(
             self.app_context.notification_service().as_ref(),
-            owner_scope.user_id(),
+            notify_scope.as_ref(),
             &notification.table_id,
         );
         if publish || live {
@@ -233,10 +280,10 @@ impl DmlExecutor {
         &self,
         table_id: &TableId,
         provider_label: &'static str,
-    ) -> Result<Arc<dyn datafusion::datasource::TableProvider + Send + Sync>, ApplierError> {
+    ) -> Result<Arc<kalamdb_tables::KalamTableProvider>, ApplierError> {
         let schema_registry = self.app_context.schema_registry();
 
-        if let Some(provider) = schema_registry.get_provider(table_id) {
+        if let Some(provider) = schema_registry.get_kalam_provider(table_id) {
             return Ok(provider);
         }
 
@@ -248,7 +295,7 @@ impl DmlExecutor {
         })?;
 
         schema_registry
-            .get_provider(table_id)
+            .get_kalam_provider(table_id)
             .ok_or_else(|| ApplierError::not_found(provider_label, table_id))
     }
 
@@ -320,44 +367,6 @@ impl DmlExecutor {
         }
     }
 
-    async fn collect_user_file_refs_for_mutation(
-        &self,
-        provider: &UserTableProvider,
-        table_id: &TableId,
-        user_id: &UserId,
-        pk_value: &str,
-        operation_kind: OperationKind,
-        payload: Option<&Row>,
-    ) -> Vec<FileRef> {
-        if !self.table_has_file_columns(table_id) {
-            return Vec::new();
-        }
-        let Some(prior_row) =
-            self.load_user_row_for_cleanup(provider, table_id, user_id, pk_value).await
-        else {
-            return Vec::new();
-        };
-        self.collect_file_refs_for_prior_row(table_id, &prior_row, operation_kind, payload)
-    }
-
-    async fn collect_shared_file_refs_for_mutation(
-        &self,
-        provider: &SharedTableProvider,
-        table_id: &TableId,
-        pk_value: &str,
-        operation_kind: OperationKind,
-        payload: Option<&Row>,
-    ) -> Vec<FileRef> {
-        if !self.table_has_file_columns(table_id) {
-            return Vec::new();
-        }
-        let Some(prior_row) = self.load_shared_row_for_cleanup(provider, table_id, pk_value).await
-        else {
-            return Vec::new();
-        };
-        self.collect_file_refs_for_prior_row(table_id, &prior_row, operation_kind, payload)
-    }
-
     fn emit_autocommit_notification(
         &self,
         user_id: Option<&UserId>,
@@ -380,12 +389,17 @@ impl DmlExecutor {
         actor_user_id: Option<&UserId>,
         notification: ChangeNotification,
     ) {
+        let table_type = if subscriber_user_id.is_some() {
+            TableType::User
+        } else {
+            TableType::Shared
+        };
+        let notify_scope = crate::live_adapters::live_notify_scope(table_type, subscriber_user_id);
         let has_live_subscribers = NotificationServiceTrait::has_subscribers(
             self.app_context.notification_service().as_ref(),
-            subscriber_user_id,
+            notify_scope.as_ref(),
             &notification.table_id,
         );
-        let scoped_user = subscriber_user_id.cloned();
         let table_id = notification.table_id.clone();
         let notification_service = Arc::clone(self.app_context.notification_service());
         let topic_publisher = self.app_context.topic_publisher();
@@ -407,7 +421,13 @@ impl DmlExecutor {
                 }
             }
             if has_live_subscribers {
-                notification_service.notify_table_change(scoped_user, table_id, notification);
+                crate::live_adapters::publish_live_table_change(
+                    Some(notification_service.as_ref()),
+                    table_type,
+                    notify_scope.as_ref(),
+                    &table_id,
+                    notification,
+                );
             }
         });
     }
@@ -443,20 +463,17 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
 
-        // Try UserTableProvider first, then StreamTableProvider
-        if let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
-        {
+        // Try a user table first, then StreamTableEngine
+        if provider_arc.is_user() {
+            let provider = provider_arc.as_ref();
             let row_ids = provider
-                .insert_batch_with_versions(user_id, rows, versions)
+                .insert_user_batch_with_versions(user_id, rows, versions)
                 .await
                 .map_err(|e| ApplierError::from_table(e, "Failed to insert batch"))?;
             self.defer_observe(table_id, TableType::User, Some(user_id), log_index);
             log::debug!("DmlExecutor: Inserted {} rows into {}", row_ids.len(), table_id);
             Ok(row_ids.len())
-        } else if let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<StreamTableProvider>()
-        {
+        } else if let Some(provider) = provider_arc.as_stream() {
             let row_ids = provider.insert_batch(user_id, rows, versions).await.map_err(|e| {
                 ApplierError::Execution(format!("Failed to insert stream batch: {}", e))
             })?;
@@ -487,14 +504,13 @@ impl DmlExecutor {
             return Ok(None);
         }
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
-        let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
-        else {
+        if !provider_arc.is_user() {
             return Ok(None);
-        };
+        }
+        let provider = provider_arc.as_ref();
         let log_index = Self::log_index_from_versions(versions)?;
         let count = provider
-            .insert_encoded_fields_with_versions(user_id, payloads, versions)
+            .insert_user_encoded_fields_with_versions(user_id, payloads, versions)
             .await
             .map_err(|error| ApplierError::from_table(error, "Failed to insert batch"))?;
         self.defer_observe(table_id, TableType::User, Some(user_id), log_index);
@@ -535,11 +551,10 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
 
-        if let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
-        {
+        if provider_arc.is_user() {
+            let provider = provider_arc.as_ref();
             let applied = provider
-                .update_batch_by_pk_values_deferred(
+                .update_user_batch_deferred(
                     user_id,
                     &[(pk_value.to_string(), update_row.clone(), version)],
                 )
@@ -569,9 +584,7 @@ impl DmlExecutor {
             } else {
                 Ok(0)
             }
-        } else if let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<StreamTableProvider>()
-        {
+        } else if let Some(provider) = provider_arc.as_stream() {
             self.update_stream_provider(provider, user_id, pk_value, update_row.clone(), version)
                 .await
         } else {
@@ -613,13 +626,13 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
 
-        if let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
-        {
-            let applied = provider
-                .delete_batch_by_pk_values_deferred(user_id, pk_values, versions)
-                .await
-                .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?;
+        if provider_arc.is_user() {
+            let provider = provider_arc.as_ref();
+            let applied =
+                provider
+                    .delete_user_batch_deferred(user_id, pk_values, versions)
+                    .await
+                    .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?;
             let deleted_count = applied.len();
             for mutation in applied {
                 if let Some(notification) = mutation.notification {
@@ -645,9 +658,7 @@ impl DmlExecutor {
                 self.defer_observe(table_id, TableType::User, Some(user_id), log_index);
             }
             Ok(deleted_count)
-        } else if let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<StreamTableProvider>()
-        {
+        } else if let Some(provider) = provider_arc.as_stream() {
             let mut deleted_count = 0;
             for (pk_value, version) in pk_values.iter().zip(versions.iter().copied()) {
                 if provider
@@ -699,11 +710,10 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
 
-        if let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
-        {
+        if provider_arc.is_shared() {
+            let provider = provider_arc.as_ref();
             let row_ids = provider
-                .insert_batch_with_versions(actor_user_id, rows, versions)
+                .insert_shared_batch_with_versions(actor_user_id, rows, versions)
                 .await
                 .map_err(|e| ApplierError::from_table(e, "Failed to insert batch"))?;
             self.defer_observe(table_id, TableType::Shared, actor_user_id, log_index);
@@ -732,14 +742,13 @@ impl DmlExecutor {
             return Ok(None);
         }
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
-        let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
-        else {
+        if !provider_arc.is_shared() {
             return Ok(None);
-        };
+        }
+        let provider = provider_arc.as_ref();
         let log_index = Self::log_index_from_versions(versions)?;
         let count = provider
-            .insert_encoded_fields_with_versions(actor_user_id, payloads, versions)
+            .insert_shared_encoded_fields_with_versions(actor_user_id, payloads, versions)
             .await
             .map_err(|error| ApplierError::from_table(error, "Failed to insert batch"))?;
         self.defer_observe(table_id, TableType::Shared, actor_user_id, log_index);
@@ -784,11 +793,10 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
 
-        if let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
-        {
+        if provider_arc.is_shared() {
+            let provider = provider_arc.as_ref();
             let applied = provider
-                .update_batch_by_pk_values_deferred(&targets)
+                .update_shared_batch_deferred(&targets)
                 .await
                 .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
             let affected_rows = applied.len();
@@ -863,11 +871,10 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
 
-        if let Some(provider) =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
-        {
+        if provider_arc.is_shared() {
+            let provider = provider_arc.as_ref();
             let applied = provider
-                .delete_batch_by_pk_values_deferred(pk_values, versions)
+                .delete_shared_batch_deferred(pk_values, versions)
                 .await
                 .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?;
             let deleted_count = applied.len();
@@ -921,19 +928,18 @@ impl DmlExecutor {
                 if all_inserts_same_table_and_user {
                     let provider_arc =
                         self.load_provider(&first_mutation.table_id, "Table provider").await?;
-                    let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-                        .downcast_ref::<UserTableProvider>()
-                        .ok_or_else(|| {
-                            ApplierError::Execution(format!(
-                                "Provider type mismatch for user table {}",
-                                first_mutation.table_id
-                            ))
-                        })?;
+                    if !provider_arc.is_user() {
+                        return Err(ApplierError::Execution(format!(
+                            "Provider type mismatch for user table {}",
+                            first_mutation.table_id
+                        )));
+                    }
+                    let provider = provider_arc.as_ref();
 
                     let batch_rows: Vec<&Row> =
                         mutations.iter().map(|mutation| &mutation.payload).collect();
 
-                    provider.validate_insert_batch_rows(user_id, batch_rows).await.map_err(
+                    provider.validate_user_insert_rows(user_id, batch_rows).await.map_err(
                         |error| ApplierError::from_table(error, "Failed to insert batch row"),
                     )?;
 
@@ -943,10 +949,7 @@ impl DmlExecutor {
         }
 
         let mut seen_insert_keys = HashSet::with_capacity(mutations.len());
-        let mut cached_provider: Option<(
-            TableId,
-            Arc<dyn datafusion::datasource::TableProvider + Send + Sync>,
-        )> = None;
+        let mut cached_provider: Option<(TableId, Arc<kalamdb_tables::KalamTableProvider>)> = None;
 
         for mutation in mutations {
             if mutation.operation_kind != OperationKind::Insert {
@@ -977,14 +980,13 @@ impl DmlExecutor {
                 cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
                 provider_arc
             };
-            let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-                .downcast_ref::<UserTableProvider>()
-                .ok_or_else(|| {
-                    ApplierError::Execution(format!(
-                        "Provider type mismatch for user table {}",
-                        mutation.table_id
-                    ))
-                })?;
+            if !provider_arc.is_user() {
+                return Err(ApplierError::Execution(format!(
+                    "Provider type mismatch for user table {}",
+                    mutation.table_id
+                )));
+            }
+            let provider = provider_arc.as_ref();
 
             let batch_key =
                 format!("{}|{}|{}", mutation.table_id, user_id.as_str(), mutation.primary_key);
@@ -996,10 +998,6 @@ impl DmlExecutor {
                     provider.primary_key_field_name()
                 )));
             }
-
-            table_base::ensure_unique_pk_value(provider, Some(&user_id), &mutation.payload)
-                .await
-                .map_err(|error| ApplierError::from_table(error, "Failed to insert batch row"))?;
         }
 
         Ok(())
@@ -1011,10 +1009,7 @@ impl DmlExecutor {
         mutations: &[StagedMutation],
     ) -> Result<(), ApplierError> {
         let mut seen_insert_keys = HashSet::with_capacity(mutations.len());
-        let mut cached_provider: Option<(
-            TableId,
-            Arc<dyn datafusion::datasource::TableProvider + Send + Sync>,
-        )> = None;
+        let mut cached_provider: Option<(TableId, Arc<kalamdb_tables::KalamTableProvider>)> = None;
 
         for mutation in mutations {
             if mutation.operation_kind != OperationKind::Insert {
@@ -1040,14 +1035,13 @@ impl DmlExecutor {
                 cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
                 provider_arc
             };
-            let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-                .downcast_ref::<SharedTableProvider>()
-                .ok_or_else(|| {
-                    ApplierError::Execution(format!(
-                        "Provider type mismatch for shared table {}",
-                        mutation.table_id
-                    ))
-                })?;
+            if !provider_arc.is_shared() {
+                return Err(ApplierError::Execution(format!(
+                    "Provider type mismatch for shared table {}",
+                    mutation.table_id
+                )));
+            }
+            let provider = provider_arc.as_ref();
 
             let batch_key = format!("{}|{}", mutation.table_id, mutation.primary_key);
             if !seen_insert_keys.insert(batch_key) {
@@ -1058,10 +1052,6 @@ impl DmlExecutor {
                     provider.primary_key_field_name()
                 )));
             }
-
-            table_base::ensure_unique_pk_value(provider, None, &mutation.payload)
-                .await
-                .map_err(|error| ApplierError::from_table(error, "Failed to insert batch row"))?;
         }
 
         Ok(())
@@ -1073,284 +1063,8 @@ impl DmlExecutor {
         mutations: &[StagedMutation],
         versions: &[VersionId],
     ) -> Result<TransactionApplyResult, ApplierError> {
-        let log_index = Self::log_index_from_versions(versions)?;
-        for mutation in mutations {
-            if matches!(mutation.operation_kind, OperationKind::Insert | OperationKind::Update) {
-                self.validate_file_columns_for_rows(
-                    &mutation.table_id,
-                    TableType::User,
-                    mutation.user_id.as_ref(),
-                    std::slice::from_ref(&mutation.payload),
-                )?;
-            }
-        }
-        self.prevalidate_user_transaction_batch(transaction_id, mutations).await?;
-
-        let mut affected_rows = 0;
-        let mut side_effect_plan = CommitSideEffectPlan::new(transaction_id.clone());
-
-        if let Some(first_mutation) = mutations.first() {
-            if let Some(user_id) = first_mutation.user_id.clone() {
-                let all_inserts_same_table_and_user = mutations.iter().all(|mutation| {
-                    &mutation.transaction_id == transaction_id
-                        && mutation.operation_kind == OperationKind::Insert
-                        && mutation.table_id == first_mutation.table_id
-                        && mutation.user_id.as_ref() == Some(&user_id)
-                });
-
-                if all_inserts_same_table_and_user {
-                    let provider_arc =
-                        self.load_provider(&first_mutation.table_id, "Table provider").await?;
-                    let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-                        .downcast_ref::<UserTableProvider>()
-                        .ok_or_else(|| {
-                            ApplierError::Execution(format!(
-                                "Provider type mismatch for user table {}",
-                                first_mutation.table_id
-                            ))
-                        })?;
-
-                    let applied = provider
-                        .insert_batch_deferred_prevalidated_with_versions(
-                            &user_id,
-                            mutations.iter().map(|mutation| mutation.payload.clone()).collect(),
-                            versions,
-                        )
-                        .await
-                        .map_err(|e| ApplierError::from_table(e, "Failed to insert batch rows"))?;
-
-                    if applied.len() != mutations.len() {
-                        return Err(ApplierError::Execution(format!(
-                            "User transaction batch insert length mismatch: expected {}, got {}",
-                            mutations.len(),
-                            applied.len()
-                        )));
-                    }
-
-                    for (_row_key, notification) in applied {
-                        affected_rows += 1;
-                        side_effect_plan.record_manifest_update();
-
-                        if let Some(notification) = notification {
-                            self.stage_commit_notification(
-                                &mut side_effect_plan,
-                                crate::transactions::FanoutOwnerScope::User(user_id.clone()),
-                                notification,
-                            );
-                        }
-                    }
-
-                    let notifications_sent = self.defer_observe_and_dispatch(
-                        &mutations[0].table_id,
-                        TableType::User,
-                        Some(&user_id),
-                        log_index,
-                        side_effect_plan.clone(),
-                    );
-
-                    return Ok(TransactionApplyResult {
-                        rows_affected: affected_rows,
-                        log_index,
-                        notifications_sent,
-                        manifest_updates: side_effect_plan.manifest_updates,
-                        publisher_events: side_effect_plan.publisher_events,
-                    });
-                }
-            }
-        }
-
-        let mut cached_provider: Option<(
-            TableId,
-            Arc<dyn datafusion::datasource::TableProvider + Send + Sync>,
-        )> = None;
-        // Writes in this commit are buffered until the Raft entry finishes, so a
-        // later statement cannot read them back from RocksDB.
-        let mut written: HashMap<(TableId, UserId, String), (UserTableRowId, UserTableRow)> =
-            HashMap::with_capacity(mutations.len());
-
-        for (mutation, version) in mutations.iter().zip(versions.iter().copied()) {
-            if &mutation.transaction_id != transaction_id {
-                return Err(ApplierError::Validation(format!(
-                    "staged mutation transaction mismatch: expected '{}', got '{}'",
-                    transaction_id, mutation.transaction_id
-                )));
-            }
-
-            let user_id = mutation.user_id.clone().ok_or_else(|| {
-                ApplierError::Validation(
-                    "user transaction batch mutation missing user_id".to_string(),
-                )
-            })?;
-
-            let provider_arc = if cached_provider
-                .as_ref()
-                .map(|(table_id, _)| table_id == &mutation.table_id)
-                .unwrap_or(false)
-            {
-                Arc::clone(&cached_provider.as_ref().expect("cached provider").1)
-            } else {
-                let provider_arc = self.load_provider(&mutation.table_id, "Table provider").await?;
-                cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
-                provider_arc
-            };
-            let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-                .downcast_ref::<UserTableProvider>()
-                .ok_or_else(|| {
-                    ApplierError::Execution(format!(
-                        "Provider type mismatch for user table {}",
-                        mutation.table_id
-                    ))
-                })?;
-
-            let written_key =
-                (mutation.table_id.clone(), user_id.clone(), mutation.primary_key.clone());
-            let known = written.get(&written_key).cloned();
-            let file_refs_to_delete = if let Some((_, row)) = known.as_ref().filter(|_| {
-                matches!(mutation.operation_kind, OperationKind::Update | OperationKind::Delete)
-            }) {
-                if self.table_has_file_columns(&mutation.table_id) {
-                    self.collect_file_refs_for_prior_row(
-                        &mutation.table_id,
-                        &row.fields,
-                        mutation.operation_kind,
-                        Some(&mutation.payload),
-                    )
-                } else {
-                    Vec::new()
-                }
-            } else {
-                self.collect_user_file_refs_for_mutation(
-                    provider,
-                    &mutation.table_id,
-                    &user_id,
-                    &mutation.primary_key,
-                    mutation.operation_kind,
-                    Some(&mutation.payload),
-                )
-                .await
-            };
-
-            let applied = match mutation.operation_kind {
-                OperationKind::Insert => {
-                    if known.as_ref().is_some_and(|(_, row)| !row._deleted) {
-                        return Err(ApplierError::Execution(format!(
-                            "Failed to insert batch row: Already exists: Primary key violation: \
-                             value '{}' appears multiple times in the transaction batch for \
-                             column '{}'",
-                            mutation.primary_key,
-                            provider.primary_key_field_name()
-                        )));
-                    }
-                    let (row_key, notification) = if let Some(previous) = known {
-                        provider
-                            .insert_over_hot_deferred(
-                                &user_id,
-                                mutation.payload.clone(),
-                                version,
-                                previous,
-                            )
-                            .await
-                    } else {
-                        provider
-                            .insert_deferred_prevalidated(
-                                &user_id,
-                                mutation.payload.clone(),
-                                version,
-                            )
-                            .await
-                    }
-                    .map_err(|e| ApplierError::from_table(e, "Failed to insert batch row"))?;
-                    written.insert(
-                        written_key,
-                        (
-                            row_key.clone(),
-                            UserTableRow {
-                                user_id: user_id.clone(),
-                                _version: version,
-                                _deleted: false,
-                                fields: mutation.payload.clone(),
-                            },
-                        ),
-                    );
-                    Some((row_key, notification))
-                },
-                OperationKind::Update => {
-                    let updated = provider
-                        .update_by_pk_value_deferred_with_hot(
-                            &user_id,
-                            mutation.primary_key.as_str(),
-                            mutation.payload.clone(),
-                            version,
-                            known,
-                        )
-                        .await
-                        .map_err(|e| {
-                            ApplierError::Execution(format!("Failed to update row: {}", e))
-                        })?;
-                    updated.map(|(row_key, row, notification)| {
-                        written.insert(written_key, (row_key.clone(), row));
-                        (row_key, notification)
-                    })
-                },
-                OperationKind::Delete => {
-                    let deleted = provider
-                        .delete_by_pk_value_deferred_with_hot(
-                            &user_id,
-                            mutation.primary_key.as_str(),
-                            version,
-                            known,
-                        )
-                        .await
-                        .map_err(|e| {
-                            ApplierError::Execution(format!("Failed to delete row: {}", e))
-                        })?;
-                    deleted.map(|(row_key, row, notification)| {
-                        written.insert(written_key, (row_key.clone(), row));
-                        (row_key, notification)
-                    })
-                },
-            };
-
-            let Some((_row_key, notification)) = applied else {
-                continue;
-            };
-
-            delete_file_refs_best_effort(
-                self.app_context.as_ref(),
-                &mutation.table_id,
-                TableType::User,
-                Some(&user_id),
-                &file_refs_to_delete,
-            )
-            .await;
-
-            affected_rows += 1;
-            side_effect_plan.record_manifest_update();
-
-            if let Some(notification) = notification {
-                self.stage_commit_notification(
-                    &mut side_effect_plan,
-                    crate::transactions::FanoutOwnerScope::User(user_id.clone()),
-                    notification,
-                );
-            }
-        }
-
-        let notifications_sent = self.defer_observe_and_dispatch(
-            &mutations[0].table_id,
-            TableType::User,
-            mutations.first().and_then(|m| m.user_id.as_ref()),
-            log_index,
-            side_effect_plan.clone(),
-        );
-
-        Ok(TransactionApplyResult {
-            rows_affected: affected_rows,
-            log_index,
-            notifications_sent,
-            manifest_updates: side_effect_plan.manifest_updates,
-            publisher_events: side_effect_plan.publisher_events,
-        })
+        self.apply_versioned_commit(TableType::User, transaction_id, mutations, versions)
+            .await
     }
 
     pub async fn apply_shared_transaction_batch_with_versions(
@@ -1359,96 +1073,354 @@ impl DmlExecutor {
         mutations: &[StagedMutation],
         versions: &[VersionId],
     ) -> Result<TransactionApplyResult, ApplierError> {
+        self.apply_versioned_commit(TableType::Shared, transaction_id, mutations, versions)
+            .await
+    }
+
+    /// Validate a user or shared commit, build one operation list, then submit it.
+    ///
+    /// Shared `WITH CHECK` stays on `SharedTableAuthorization` when the statement is
+    /// staged. This path does not add a second policy checker.
+    async fn apply_versioned_commit(
+        &self,
+        table_type: TableType,
+        transaction_id: &TransactionId,
+        mutations: &[StagedMutation],
+        versions: &[VersionId],
+    ) -> Result<TransactionApplyResult, ApplierError> {
         let log_index = Self::log_index_from_versions(versions)?;
+        if mutations.is_empty() {
+            return Ok(TransactionApplyResult {
+                rows_affected: 0,
+                log_index,
+                notifications_sent: 0,
+                manifest_updates: 0,
+                publisher_events: 0,
+            });
+        }
+        if !matches!(table_type, TableType::User | TableType::Shared) {
+            return Err(ApplierError::Validation(
+                "versioned commit requires a user or shared table".to_string(),
+            ));
+        }
+        let max_bytes = self.app_context.config().max_transaction_buffer_bytes;
+        admit_versioned_commit(
+            mutations,
+            &self.admission_groups(mutations),
+            max_bytes,
+            versions.len() as u64,
+        )
+        .map_err(|error| ApplierError::Validation(error.to_string()))?;
+
+        let encoded_bytes = mutations.iter().map(StagedMutation::approximate_size_bytes).sum();
+        let _encoded_reservation = self
+            .app_context
+            .try_transaction_coordinator()
+            .map(|coordinator| {
+                Reservation::reserve(
+                    &coordinator.memory_ledger(),
+                    MemoryClass::EncodedBatch,
+                    encoded_bytes,
+                )
+            })
+            .transpose()
+            .map_err(|error| ApplierError::Validation(error.to_string()))?;
+
         for mutation in mutations {
             if matches!(mutation.operation_kind, OperationKind::Insert | OperationKind::Update) {
                 self.validate_file_columns_for_rows(
                     &mutation.table_id,
-                    TableType::Shared,
-                    None,
+                    table_type,
+                    if table_type == TableType::User {
+                        mutation.user_id.as_ref()
+                    } else {
+                        None
+                    },
                     std::slice::from_ref(&mutation.payload),
                 )?;
             }
         }
-        self.prevalidate_shared_transaction_batch(transaction_id, mutations).await?;
 
-        let mut affected_rows = 0;
-        let mut side_effect_plan = CommitSideEffectPlan::new(transaction_id.clone());
+        if table_type == TableType::User {
+            self.prevalidate_user_transaction_batch(transaction_id, mutations).await?;
+        } else {
+            self.prevalidate_shared_transaction_batch(transaction_id, mutations).await?;
+        }
 
-        if let Some(first_mutation) = mutations.first() {
-            let all_inserts_same_table = mutations.iter().all(|mutation| {
-                &mutation.transaction_id == transaction_id
-                    && mutation.operation_kind == OperationKind::Insert
-                    && mutation.table_id == first_mutation.table_id
+        let first = &mutations[0];
+        let mut prepared = PreparedCommitBatch {
+            log_index,
+            storage_operations: Vec::new(),
+            rows_affected: 0,
+            post_commit_effects: super::prepared_commit::PostCommitEffectPlan {
+                notifications: CommitSideEffectPlan::new(transaction_id.clone()),
+                file_cleanup_intents: Vec::new(),
+            },
+            finishes: Vec::new(),
+            user_scopes: Vec::new(),
+            user_scope_providers: Vec::new(),
+            shared_scopes: Vec::new(),
+            shared_scope_providers: Vec::new(),
+            frontier_table_id: first.table_id.clone(),
+            frontier_table_type: table_type,
+            frontier_user_id: first.user_id.clone(),
+        };
+
+        let same_table_inserts = mutations.iter().all(|mutation| {
+            &mutation.transaction_id == transaction_id
+                && mutation.operation_kind == OperationKind::Insert
+                && mutation.table_id == first.table_id
+                && (table_type == TableType::Shared || mutation.user_id == first.user_id)
+        });
+        if same_table_inserts && (table_type == TableType::Shared || first.user_id.is_some()) {
+            return self
+                .prepare_same_table_inserts(table_type, mutations, versions, prepared)
+                .await;
+        }
+
+        self.prepare_mixed_versioned_commit(
+            table_type,
+            transaction_id,
+            mutations,
+            versions,
+            &mut prepared,
+        )
+        .await?;
+        self.submit_prepared_commit(prepared).await
+    }
+
+    async fn prepare_same_table_inserts(
+        &self,
+        table_type: TableType,
+        mutations: &[StagedMutation],
+        versions: &[VersionId],
+        mut prepared: PreparedCommitBatch,
+    ) -> Result<TransactionApplyResult, ApplierError> {
+        let first = &mutations[0];
+        let provider_label = if table_type == TableType::User {
+            "Table provider"
+        } else {
+            "Shared table provider"
+        };
+        let provider_arc = self.load_provider(&first.table_id, provider_label).await?;
+        let rows: Vec<Row> = mutations.iter().map(|mutation| mutation.payload.clone()).collect();
+        if table_type == TableType::User {
+            let user_id = first.user_id.clone().ok_or_else(|| {
+                ApplierError::Validation(
+                    "user transaction batch mutation missing user_id".to_string(),
+                )
+            })?;
+            if !provider_arc.is_user() {
+                return Err(ApplierError::Execution(format!(
+                    "Provider type mismatch for user table {}",
+                    first.table_id
+                )));
+            }
+            let planned = provider_arc
+                .plan_user_insert_batch(&user_id, rows, versions)
+                .await
+                .map_err(|error| ApplierError::from_table(error, "Failed to insert batch rows"))?;
+            if planned.applied.len() != mutations.len() {
+                return Err(ApplierError::Execution(format!(
+                    "User transaction batch insert length mismatch: expected {}, got {}",
+                    mutations.len(),
+                    planned.applied.len()
+                )));
+            }
+            prepared.storage_operations = planned.operations;
+            prepared.rows_affected = planned.applied.len();
+            for (_row_key, notification) in planned.applied {
+                prepared.post_commit_effects.notifications.record_manifest_update();
+                if let Some(notification) = notification {
+                    self.stage_commit_notification(
+                        &mut prepared.post_commit_effects.notifications,
+                        crate::transactions::FanoutOwnerScope::User(user_id.clone()),
+                        notification,
+                    );
+                }
+            }
+            prepared.finishes.push(CommitFinish::UserInsert {
+                provider: provider_arc,
+                user_id,
+                entries: planned.entries,
             });
-
-            if all_inserts_same_table {
-                let provider_arc =
-                    self.load_provider(&first_mutation.table_id, "Shared table provider").await?;
-                let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-                    .downcast_ref::<SharedTableProvider>()
-                    .ok_or_else(|| {
-                        ApplierError::Execution(format!(
-                            "Provider type mismatch for shared table {}",
-                            first_mutation.table_id
-                        ))
-                    })?;
-
-                let applied = provider
-                    .insert_batch_deferred_prevalidated_with_versions(
-                        mutations.iter().map(|mutation| mutation.payload.clone()).collect(),
-                        versions,
-                    )
-                    .await
-                    .map_err(|e| ApplierError::from_table(e, "Failed to insert batch rows"))?;
-
-                if applied.len() != mutations.len() {
-                    return Err(ApplierError::Execution(format!(
-                        "Shared transaction batch insert length mismatch: expected {}, got {}",
-                        mutations.len(),
-                        applied.len()
-                    )));
+        } else {
+            if !provider_arc.is_shared() {
+                return Err(ApplierError::Execution(format!(
+                    "Provider type mismatch for shared table {}",
+                    first.table_id
+                )));
+            }
+            let planned = provider_arc
+                .plan_shared_insert_batch(rows, versions)
+                .await
+                .map_err(|error| ApplierError::from_table(error, "Failed to insert batch rows"))?;
+            if planned.applied.len() != mutations.len() {
+                return Err(ApplierError::Execution(format!(
+                    "Shared transaction batch insert length mismatch: expected {}, got {}",
+                    mutations.len(),
+                    planned.applied.len()
+                )));
+            }
+            prepared.storage_operations = planned.operations;
+            prepared.rows_affected = planned.applied.len();
+            for (mutation, (_row_key, notification)) in mutations.iter().zip(planned.applied) {
+                prepared.post_commit_effects.notifications.record_manifest_update();
+                if let Some(notification) = notification {
+                    self.stage_commit_notification(
+                        &mut prepared.post_commit_effects.notifications,
+                        crate::transactions::FanoutOwnerScope::Shared,
+                        notification.with_actor(mutation.user_id.clone()),
+                    );
                 }
+            }
+            prepared.finishes.push(CommitFinish::SharedInsert {
+                provider: provider_arc,
+                entries: planned.entries,
+            });
+        }
+        self.submit_prepared_commit(prepared).await
+    }
 
-                for (mutation, (_row_key, notification)) in mutations.iter().zip(applied) {
-                    affected_rows += 1;
-                    side_effect_plan.record_manifest_update();
+    async fn prepare_mixed_versioned_commit(
+        &self,
+        table_type: TableType,
+        transaction_id: &TransactionId,
+        mutations: &[StagedMutation],
+        versions: &[VersionId],
+        prepared: &mut PreparedCommitBatch,
+    ) -> Result<(), ApplierError> {
+        let _targets = kalamdb_observability::dml_stage::stage_guard(
+            kalamdb_observability::dml_stage::DmlStage::TargetResolution,
+        );
+        #[derive(Clone)]
+        enum PlannedHot {
+            User(UserTableRowId, UserTableRow),
+            Shared(SharedTableRowId, SharedTableRow),
+        }
 
-                    if let Some(notification) = notification {
-                        self.stage_commit_notification(
-                            &mut side_effect_plan,
-                            crate::transactions::FanoutOwnerScope::Shared,
-                            notification.with_actor(mutation.user_id.clone()),
-                        );
-                    }
-                }
+        #[derive(Clone)]
+        enum StorageBaseline {
+            User(AuthoritativeBaseline<UserTableRowId, UserTableRow>),
+            Shared(AuthoritativeBaseline<SharedTableRowId, SharedTableRow>),
+        }
 
-                let notifications_sent = self.defer_observe_and_dispatch(
-                    &mutations[0].table_id,
-                    TableType::Shared,
-                    first_mutation.user_id.as_ref(),
-                    log_index,
-                    side_effect_plan.clone(),
-                );
+        /// Authoritative storage baseline, or the row this commit already wrote.
+        #[derive(Clone)]
+        enum CachedTarget {
+            Storage(StorageBaseline),
+            Written(PlannedHot),
+        }
 
-                return Ok(TransactionApplyResult {
-                    rows_affected: affected_rows,
-                    log_index,
-                    notifications_sent,
-                    manifest_updates: side_effect_plan.manifest_updates,
-                    publisher_events: side_effect_plan.publisher_events,
-                });
+        fn live_fields(target: &CachedTarget) -> Option<&Row> {
+            match target {
+                CachedTarget::Written(PlannedHot::User(_, row)) if !row._deleted => {
+                    Some(&row.fields)
+                },
+                CachedTarget::Written(PlannedHot::Shared(_, row)) if !row._deleted => {
+                    Some(&row.fields)
+                },
+                CachedTarget::Storage(StorageBaseline::User(AuthoritativeBaseline::Hot {
+                    row,
+                    ..
+                })) if !row._deleted => Some(&row.fields),
+                CachedTarget::Storage(StorageBaseline::User(AuthoritativeBaseline::Cold {
+                    row,
+                })) => Some(&row.fields),
+                CachedTarget::Storage(StorageBaseline::Shared(AuthoritativeBaseline::Hot {
+                    row,
+                    ..
+                })) if !row._deleted => Some(&row.fields),
+                CachedTarget::Storage(StorageBaseline::Shared(AuthoritativeBaseline::Cold {
+                    row,
+                })) => Some(&row.fields),
+                _ => None,
             }
         }
 
-        let mut cached_provider: Option<(
-            TableId,
-            Arc<dyn datafusion::datasource::TableProvider + Send + Sync>,
-        )> = None;
-        // Writes in this commit are buffered until the Raft entry finishes, so a
-        // later statement cannot read them back from RocksDB.
-        let mut written: HashMap<(TableId, String), (SharedTableRowId, SharedTableRow)> =
-            HashMap::with_capacity(mutations.len());
+        let provider_label = if table_type == TableType::User {
+            "Table provider"
+        } else {
+            "Shared table provider"
+        };
+        let mut cached_provider: Option<(TableId, Arc<kalamdb_tables::KalamTableProvider>)> = None;
+        let mut written: TargetResolutionCache<CachedTarget> = TargetResolutionCache::new();
+
+        // One load per distinct key. A primary-key claim held until commit or
+        // rollback keeps another writer off that key, so this baseline stays
+        // the committed row until this batch submits. `check_expected_max_version`
+        // is not called with `None`: this path has no row-version snapshot.
+        // Read pins use `snapshot_matches_frontier`. A liveness recheck after
+        // a claim wait is a conflict retry and is not one of these loads.
+        // Range DELETE already calls `load_mutation_target` once per key;
+        // this prefetch is that same load for both DELETE and UPDATE.
+        let requests = mutations.iter().map(|mutation| {
+            let scope_user = if table_type == TableType::User {
+                mutation.user_id.as_ref()
+            } else {
+                None
+            };
+            BaselineRequest {
+                key: ScopedTargetKey::new(
+                    mutation.table_id.clone(),
+                    TableScope::for_mutation(table_type, scope_user),
+                    PkBucketKey::Text(mutation.primary_key.clone()),
+                ),
+                primary_key: mutation.primary_key.clone(),
+                insert_only: mutation.operation_kind == OperationKind::Insert,
+            }
+        });
+        let batches = batch_baseline_requests(requests, BASELINE_BATCH_LIMIT);
+        let mut providers: HashMap<TableId, Arc<KalamTableProvider>> = HashMap::new();
+        for batch in batches {
+            let Some(table_id) = batch.first().map(|request| request.key.table_id.clone()) else {
+                continue;
+            };
+            let provider_arc = if let Some(provider) = providers.get(&table_id) {
+                Arc::clone(provider)
+            } else {
+                let provider_arc = self.load_provider(&table_id, provider_label).await?;
+                providers.insert(table_id, Arc::clone(&provider_arc));
+                provider_arc
+            };
+            let skip_generated_inserts = provider_arc.is_auto_increment_pk();
+            for request in batch {
+                if skip_generated_inserts && request.insert_only {
+                    continue;
+                }
+                if written.get(&request.key).is_some() {
+                    continue;
+                }
+                let stored = if table_type == TableType::User {
+                    let TableScope::User(user_id) = &request.key.scope else {
+                        return Err(ApplierError::Validation(
+                            "user transaction batch mutation missing user_id".to_string(),
+                        ));
+                    };
+                    StorageBaseline::User(
+                        provider_arc
+                            .load_user_baseline(user_id, &request.primary_key)
+                            .await
+                            .map_err(|error| {
+                                ApplierError::Execution(format!(
+                                    "Failed to resolve row baseline: {error}"
+                                ))
+                            })?,
+                    )
+                } else {
+                    StorageBaseline::Shared(
+                        provider_arc.load_shared_baseline(&request.primary_key).await.map_err(
+                            |error| {
+                                ApplierError::Execution(format!(
+                                    "Failed to resolve row baseline: {error}"
+                                ))
+                            },
+                        )?,
+                    )
+                };
+                written.insert(request.key, CachedTarget::Storage(stored));
+            }
+        }
 
         for (mutation, version) in mutations.iter().zip(versions.iter().copied()) {
             if &mutation.transaction_id != transaction_id {
@@ -1465,154 +1437,454 @@ impl DmlExecutor {
             {
                 Arc::clone(&cached_provider.as_ref().expect("cached provider").1)
             } else {
-                let provider_arc =
-                    self.load_provider(&mutation.table_id, "Shared table provider").await?;
+                let provider_arc = self.load_provider(&mutation.table_id, provider_label).await?;
                 cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
                 provider_arc
             };
-            let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-                .downcast_ref::<SharedTableProvider>()
-                .ok_or_else(|| {
-                    ApplierError::Execution(format!(
-                        "Provider type mismatch for shared table {}",
-                        mutation.table_id
-                    ))
-                })?;
 
-            let written_key = (mutation.table_id.clone(), mutation.primary_key.clone());
-            let known = written.get(&written_key).cloned();
-            let file_refs_to_delete = if let Some((_, row)) = known.as_ref().filter(|_| {
-                matches!(mutation.operation_kind, OperationKind::Update | OperationKind::Delete)
-            }) {
-                if self.table_has_file_columns(&mutation.table_id) {
-                    self.collect_file_refs_for_prior_row(
-                        &mutation.table_id,
-                        &row.fields,
-                        mutation.operation_kind,
-                        Some(&mutation.payload),
+            let scope_user = if table_type == TableType::User {
+                Some(mutation.user_id.clone().ok_or_else(|| {
+                    ApplierError::Validation(
+                        "user transaction batch mutation missing user_id".to_string(),
                     )
+                })?)
+            } else {
+                None
+            };
+            if table_type == TableType::User && !provider_arc.is_user() {
+                return Err(ApplierError::Execution(format!(
+                    "Provider type mismatch for user table {}",
+                    mutation.table_id
+                )));
+            }
+            if table_type == TableType::Shared && !provider_arc.is_shared() {
+                return Err(ApplierError::Execution(format!(
+                    "Provider type mismatch for shared table {}",
+                    mutation.table_id
+                )));
+            }
+
+            let written_key = ScopedTargetKey::new(
+                mutation.table_id.clone(),
+                TableScope::for_mutation(table_type, scope_user.as_ref()),
+                PkBucketKey::Text(mutation.primary_key.clone()),
+            );
+            let known = written.get(&written_key).cloned();
+            let file_refs_to_delete =
+                if matches!(mutation.operation_kind, OperationKind::Update | OperationKind::Delete)
+                    && self.table_has_file_columns(&mutation.table_id)
+                {
+                    known.as_ref().and_then(live_fields).map_or_else(Vec::new, |fields| {
+                        self.collect_file_refs_for_prior_row(
+                            &mutation.table_id,
+                            fields,
+                            mutation.operation_kind,
+                            Some(&mutation.payload),
+                        )
+                    })
                 } else {
                     Vec::new()
+                };
+
+            let applied_notification = if table_type == TableType::User {
+                let user_id = scope_user.clone().expect("user scope");
+                let pk_name = provider_arc.primary_key_field_name();
+                match mutation.operation_kind {
+                    OperationKind::Insert => {
+                        let predecessor = match known {
+                            Some(CachedTarget::Written(PlannedHot::User(key, row))) => {
+                                if !row._deleted {
+                                    return Err(ApplierError::Execution(format!(
+                                        "Failed to insert batch row: Already exists: Primary key \
+                                         violation: value '{}' appears multiple times in the \
+                                         transaction batch for column '{pk_name}'",
+                                        mutation.primary_key
+                                    )));
+                                }
+                                Some((key, row))
+                            },
+                            Some(CachedTarget::Storage(StorageBaseline::User(
+                                AuthoritativeBaseline::Hot { key, row },
+                            ))) => {
+                                if !row._deleted {
+                                    return Err(ApplierError::Execution(format!(
+                                        "Failed to insert batch row: Primary key violation: value \
+                                         '{}' already exists in column '{pk_name}' (hot storage)",
+                                        mutation.primary_key
+                                    )));
+                                }
+                                Some((key, row))
+                            },
+                            Some(CachedTarget::Storage(StorageBaseline::User(
+                                AuthoritativeBaseline::Cold { .. },
+                            ))) => {
+                                return Err(ApplierError::Execution(format!(
+                                    "Failed to insert batch row: Primary key violation: value \
+                                     '{}' already exists in column '{pk_name}' (cold storage)",
+                                    mutation.primary_key
+                                )));
+                            },
+                            Some(CachedTarget::Storage(StorageBaseline::User(
+                                AuthoritativeBaseline::Missing,
+                            )))
+                            | None => None,
+                            Some(_) => {
+                                return Err(ApplierError::Execution(format!(
+                                    "Provider type mismatch for user table {}",
+                                    mutation.table_id
+                                )));
+                            },
+                        };
+                        let (row_key, notification, fields) = provider_arc
+                            .plan_user_insert(
+                                &user_id,
+                                mutation.payload.clone(),
+                                version,
+                                predecessor,
+                                &mut prepared.storage_operations,
+                            )
+                            .await
+                            .map_err(|error| {
+                                ApplierError::from_table(error, "Failed to insert batch row")
+                            })?;
+                        let op = vector_upsert(provider_arc.as_ref(), version, &fields);
+                        written.insert(
+                            written_key,
+                            CachedTarget::Written(PlannedHot::User(
+                                row_key,
+                                UserTableRow {
+                                    user_id: user_id.clone(),
+                                    _version: version,
+                                    _deleted: false,
+                                    fields,
+                                },
+                            )),
+                        );
+                        prepared.push_user_scope(Arc::clone(&provider_arc), user_id, op);
+                        Some(notification)
+                    },
+                    OperationKind::Update => {
+                        let baseline = match known {
+                            Some(CachedTarget::Written(PlannedHot::User(key, row))) => {
+                                Some(AuthoritativeBaseline::Hot { key, row })
+                            },
+                            Some(CachedTarget::Storage(StorageBaseline::User(baseline))) => {
+                                Some(baseline)
+                            },
+                            None => None,
+                            Some(_) => {
+                                return Err(ApplierError::Execution(format!(
+                                    "Provider type mismatch for user table {}",
+                                    mutation.table_id
+                                )));
+                            },
+                        };
+                        let updated = provider_arc
+                            .plan_user_update(
+                                &user_id,
+                                mutation.primary_key.as_str(),
+                                mutation.payload.clone(),
+                                version,
+                                baseline,
+                                &mut prepared.storage_operations,
+                            )
+                            .await
+                            .map_err(|error| {
+                                ApplierError::Execution(format!("Failed to update row: {error}"))
+                            })?;
+                        let Some((row_key, row, notification)) = updated else {
+                            continue;
+                        };
+                        let op = vector_upsert(provider_arc.as_ref(), version, &row.fields);
+                        written.insert(
+                            written_key,
+                            CachedTarget::Written(PlannedHot::User(row_key, row)),
+                        );
+                        prepared.push_user_scope(Arc::clone(&provider_arc), user_id, op);
+                        Some(notification)
+                    },
+                    OperationKind::Delete => {
+                        let baseline = match known {
+                            Some(CachedTarget::Written(PlannedHot::User(key, row))) => {
+                                Some(AuthoritativeBaseline::Hot { key, row })
+                            },
+                            Some(CachedTarget::Storage(StorageBaseline::User(baseline))) => {
+                                Some(baseline)
+                            },
+                            None => None,
+                            Some(_) => {
+                                return Err(ApplierError::Execution(format!(
+                                    "Provider type mismatch for user table {}",
+                                    mutation.table_id
+                                )));
+                            },
+                        };
+                        let deleted = provider_arc
+                            .plan_user_delete(
+                                &user_id,
+                                mutation.primary_key.as_str(),
+                                version,
+                                baseline,
+                                &mut prepared.storage_operations,
+                            )
+                            .await
+                            .map_err(|error| {
+                                ApplierError::Execution(format!("Failed to delete row: {error}"))
+                            })?;
+                        let Some((row_key, row, notification)) = deleted else {
+                            continue;
+                        };
+                        let op =
+                            vector_delete(provider_arc.as_ref(), version, &mutation.primary_key);
+                        written.insert(
+                            written_key,
+                            CachedTarget::Written(PlannedHot::User(row_key, row)),
+                        );
+                        prepared.push_user_scope(Arc::clone(&provider_arc), user_id, op);
+                        Some(notification)
+                    },
                 }
             } else {
-                self.collect_shared_file_refs_for_mutation(
-                    provider,
-                    &mutation.table_id,
-                    &mutation.primary_key,
-                    mutation.operation_kind,
-                    Some(&mutation.payload),
-                )
-                .await
-            };
-
-            let applied = match mutation.operation_kind {
-                OperationKind::Insert => {
-                    if known.as_ref().is_some_and(|(_, row)| !row._deleted) {
-                        return Err(ApplierError::Execution(format!(
-                            "Failed to insert batch row: Already exists: Primary key violation: \
-                             value '{}' appears multiple times in the transaction batch for \
-                             column '{}'",
-                            mutation.primary_key,
-                            provider.primary_key_field_name()
-                        )));
-                    }
-                    let (row_key, notification) = if let Some(previous) = known {
-                        provider
-                            .insert_over_hot_deferred(mutation.payload.clone(), version, previous)
-                            .await
-                    } else {
-                        provider
-                            .insert_deferred_prevalidated(mutation.payload.clone(), version)
-                            .await
-                    }
-                    .map_err(|e| ApplierError::from_table(e, "Failed to insert batch row"))?;
-                    written.insert(
-                        written_key,
-                        (
-                            row_key,
-                            SharedTableRow {
-                                _version: version,
-                                _deleted: false,
-                                fields: mutation.payload.clone(),
+                let pk_name = provider_arc.primary_key_field_name();
+                match mutation.operation_kind {
+                    OperationKind::Insert => {
+                        let predecessor = match known {
+                            Some(CachedTarget::Written(PlannedHot::Shared(key, row))) => {
+                                if !row._deleted {
+                                    return Err(ApplierError::Execution(format!(
+                                        "Failed to insert batch row: Already exists: Primary key \
+                                         violation: value '{}' appears multiple times in the \
+                                         transaction batch for column '{pk_name}'",
+                                        mutation.primary_key
+                                    )));
+                                }
+                                Some((key, row))
                             },
-                        ),
-                    );
-                    Some((row_key, notification))
-                },
-                OperationKind::Update => {
-                    let updated = provider
-                        .update_by_pk_value_deferred_with_hot(
-                            mutation.primary_key.as_str(),
-                            mutation.payload.clone(),
-                            version,
-                            known,
+                            Some(CachedTarget::Storage(StorageBaseline::Shared(
+                                AuthoritativeBaseline::Hot { key, row },
+                            ))) => {
+                                if !row._deleted {
+                                    return Err(ApplierError::Execution(format!(
+                                        "Failed to insert batch row: Primary key violation: value \
+                                         '{}' already exists in column '{pk_name}' (hot storage)",
+                                        mutation.primary_key
+                                    )));
+                                }
+                                Some((key, row))
+                            },
+                            Some(CachedTarget::Storage(StorageBaseline::Shared(
+                                AuthoritativeBaseline::Cold { .. },
+                            ))) => {
+                                return Err(ApplierError::Execution(format!(
+                                    "Failed to insert batch row: Primary key violation: value \
+                                     '{}' already exists in column '{pk_name}' (cold storage)",
+                                    mutation.primary_key
+                                )));
+                            },
+                            Some(CachedTarget::Storage(StorageBaseline::Shared(
+                                AuthoritativeBaseline::Missing,
+                            )))
+                            | None => None,
+                            Some(_) => {
+                                return Err(ApplierError::Execution(format!(
+                                    "Provider type mismatch for shared table {}",
+                                    mutation.table_id
+                                )));
+                            },
+                        };
+                        let (row_key, notification, fields) = provider_arc
+                            .plan_shared_insert(
+                                mutation.payload.clone(),
+                                version,
+                                predecessor,
+                                &mut prepared.storage_operations,
+                            )
+                            .await
+                            .map_err(|error| {
+                                ApplierError::from_table(error, "Failed to insert batch row")
+                            })?;
+                        let op = vector_upsert(provider_arc.as_ref(), version, &fields);
+                        written.insert(
+                            written_key,
+                            CachedTarget::Written(PlannedHot::Shared(
+                                row_key,
+                                SharedTableRow {
+                                    _version: version,
+                                    _deleted: false,
+                                    fields,
+                                },
+                            )),
+                        );
+                        prepared.push_shared_scope(Arc::clone(&provider_arc), op);
+                        Some(
+                            notification.map(|notification| {
+                                notification.with_actor(mutation.user_id.clone())
+                            }),
                         )
-                        .await
-                        .map_err(|e| {
-                            ApplierError::Execution(format!("Failed to update row: {}", e))
-                        })?;
-                    updated.map(|(row_key, row, notification)| {
-                        written.insert(written_key, (row_key, row));
-                        (row_key, notification)
-                    })
-                },
-                OperationKind::Delete => {
-                    let deleted = provider
-                        .delete_by_pk_value_deferred_with_hot(
-                            mutation.primary_key.as_str(),
-                            version,
-                            known,
+                    },
+                    OperationKind::Update => {
+                        let baseline = match known {
+                            Some(CachedTarget::Written(PlannedHot::Shared(key, row))) => {
+                                Some(AuthoritativeBaseline::Hot { key, row })
+                            },
+                            Some(CachedTarget::Storage(StorageBaseline::Shared(baseline))) => {
+                                Some(baseline)
+                            },
+                            None => None,
+                            Some(_) => {
+                                return Err(ApplierError::Execution(format!(
+                                    "Provider type mismatch for shared table {}",
+                                    mutation.table_id
+                                )));
+                            },
+                        };
+                        let updated = provider_arc
+                            .plan_shared_update(
+                                mutation.primary_key.as_str(),
+                                mutation.payload.clone(),
+                                version,
+                                baseline,
+                                &mut prepared.storage_operations,
+                            )
+                            .await
+                            .map_err(|error| {
+                                ApplierError::Execution(format!("Failed to update row: {error}"))
+                            })?;
+                        let Some((row_key, row, notification)) = updated else {
+                            continue;
+                        };
+                        let op = vector_upsert(provider_arc.as_ref(), version, &row.fields);
+                        written.insert(
+                            written_key,
+                            CachedTarget::Written(PlannedHot::Shared(row_key, row)),
+                        );
+                        prepared.push_shared_scope(Arc::clone(&provider_arc), op);
+                        Some(
+                            notification.map(|notification| {
+                                notification.with_actor(mutation.user_id.clone())
+                            }),
                         )
-                        .await
-                        .map_err(|e| {
-                            ApplierError::Execution(format!("Failed to delete row: {}", e))
-                        })?;
-                    deleted.map(|(row_key, row, notification)| {
-                        written.insert(written_key, (row_key, row));
-                        (row_key, notification)
-                    })
-                },
+                    },
+                    OperationKind::Delete => {
+                        let baseline = match known {
+                            Some(CachedTarget::Written(PlannedHot::Shared(key, row))) => {
+                                Some(AuthoritativeBaseline::Hot { key, row })
+                            },
+                            Some(CachedTarget::Storage(StorageBaseline::Shared(baseline))) => {
+                                Some(baseline)
+                            },
+                            None => None,
+                            Some(_) => {
+                                return Err(ApplierError::Execution(format!(
+                                    "Provider type mismatch for shared table {}",
+                                    mutation.table_id
+                                )));
+                            },
+                        };
+                        let deleted = provider_arc
+                            .plan_shared_delete(
+                                mutation.primary_key.as_str(),
+                                version,
+                                baseline,
+                                &mut prepared.storage_operations,
+                            )
+                            .await
+                            .map_err(|error| {
+                                ApplierError::Execution(format!("Failed to delete row: {error}"))
+                            })?;
+                        let Some((row_key, row, notification)) = deleted else {
+                            continue;
+                        };
+                        let op =
+                            vector_delete(provider_arc.as_ref(), version, &mutation.primary_key);
+                        written.insert(
+                            written_key,
+                            CachedTarget::Written(PlannedHot::Shared(row_key, row)),
+                        );
+                        prepared.push_shared_scope(Arc::clone(&provider_arc), op);
+                        Some(
+                            notification.map(|notification| {
+                                notification.with_actor(mutation.user_id.clone())
+                            }),
+                        )
+                    },
+                }
             };
 
-            let Some((_row_key, notification)) = applied else {
-                continue;
-            };
-
-            delete_file_refs_best_effort(
-                self.app_context.as_ref(),
-                &mutation.table_id,
-                TableType::Shared,
-                None,
-                &file_refs_to_delete,
-            )
-            .await;
-
-            affected_rows += 1;
-            side_effect_plan.record_manifest_update();
-
-            if let Some(notification) = notification {
+            if !file_refs_to_delete.is_empty() {
+                prepared.post_commit_effects.file_cleanup_intents.push(FileCleanupIntent {
+                    table_id: mutation.table_id.clone(),
+                    table_type,
+                    user_id: if table_type == TableType::User {
+                        scope_user.clone()
+                    } else {
+                        None
+                    },
+                    file_refs: file_refs_to_delete,
+                });
+            }
+            prepared.rows_affected += 1;
+            prepared.post_commit_effects.notifications.record_manifest_update();
+            if let Some(notification) = applied_notification.flatten() {
+                let scope = if table_type == TableType::User {
+                    crate::transactions::FanoutOwnerScope::User(
+                        scope_user.clone().expect("user scope"),
+                    )
+                } else {
+                    crate::transactions::FanoutOwnerScope::Shared
+                };
                 self.stage_commit_notification(
-                    &mut side_effect_plan,
-                    crate::transactions::FanoutOwnerScope::Shared,
-                    notification.with_actor(mutation.user_id.clone()),
+                    &mut prepared.post_commit_effects.notifications,
+                    scope,
+                    notification,
                 );
             }
         }
+        Ok(())
+    }
+
+    async fn submit_prepared_commit(
+        &self,
+        mut prepared: PreparedCommitBatch,
+    ) -> Result<TransactionApplyResult, ApplierError> {
+        if !prepared.storage_operations.is_empty() {
+            let operations = std::mem::take(&mut prepared.storage_operations);
+            self.app_context.storage_backend().batch(operations).map_err(|error| {
+                ApplierError::Execution(format!("commit batch failed: {error}"))
+            })?;
+        }
+
+        let _post_commit = kalamdb_observability::dml_stage::stage_guard(
+            kalamdb_observability::dml_stage::DmlStage::PostCommit,
+        );
+        for finish in std::mem::take(&mut prepared.finishes) {
+            finish.run().await;
+        }
+        prepared.run_scope_finishes().await;
+        for intent in &prepared.post_commit_effects.file_cleanup_intents {
+            delete_file_refs_best_effort(
+                self.app_context.as_ref(),
+                &intent.table_id,
+                intent.table_type,
+                intent.user_id.as_ref(),
+                &intent.file_refs,
+            )
+            .await;
+        }
 
         let notifications_sent = self.defer_observe_and_dispatch(
-            &mutations[0].table_id,
-            TableType::Shared,
-            mutations.first().and_then(|m| m.user_id.as_ref()),
-            log_index,
-            side_effect_plan.clone(),
+            &prepared.frontier_table_id,
+            prepared.frontier_table_type,
+            prepared.frontier_user_id.as_ref(),
+            prepared.log_index,
+            prepared.post_commit_effects.notifications.clone(),
         );
-
         Ok(TransactionApplyResult {
-            rows_affected: affected_rows,
-            log_index,
+            rows_affected: prepared.rows_affected,
+            log_index: prepared.log_index,
             notifications_sent,
-            manifest_updates: side_effect_plan.manifest_updates,
-            publisher_events: side_effect_plan.publisher_events,
+            manifest_updates: prepared.post_commit_effects.notifications.manifest_updates,
+            publisher_events: prepared.post_commit_effects.notifications.publisher_events,
         })
     }
 
@@ -1629,139 +1901,10 @@ impl DmlExecutor {
         }
     }
 
-    async fn load_user_row_for_cleanup(
-        &self,
-        provider: &UserTableProvider,
-        table_id: &TableId,
-        user_id: &UserId,
-        pk_value: &str,
-    ) -> Option<Row> {
-        let pk_name = provider.primary_key_field_name();
-        let schema = provider.schema_ref();
-        let pk_field = match schema.field_with_name(pk_name) {
-            Ok(field) => field,
-            Err(err) => {
-                log::warn!(
-                    "Failed to resolve PK field for file cleanup in {} (pk={}): {}",
-                    table_id,
-                    pk_value,
-                    err
-                );
-                return None;
-            },
-        };
-
-        let pk_scalar = match kalamdb_commons::conversions::parse_string_as_scalar(
-            pk_value,
-            pk_field.data_type(),
-        ) {
-            Ok(value) => value,
-            Err(err) => {
-                log::warn!(
-                    "Failed to parse PK value for file cleanup in {} (pk={}): {}",
-                    table_id,
-                    pk_value,
-                    err
-                );
-                return None;
-            },
-        };
-
-        match provider.find_by_pk(user_id, &pk_scalar).await {
-            Ok(Some((_key, row))) => Some(row.fields),
-            Ok(None) => match find_row_by_pk(provider, Some(user_id), pk_value).await {
-                Ok(Some((_key, row))) => Some(row.fields),
-                Ok(None) => None,
-                Err(err) => {
-                    log::warn!(
-                        "Failed to load cold row for file cleanup in {} (pk={}): {}",
-                        table_id,
-                        pk_value,
-                        err
-                    );
-                    None
-                },
-            },
-            Err(err) => {
-                log::warn!(
-                    "Failed to load hot row for file cleanup in {} (pk={}): {}",
-                    table_id,
-                    pk_value,
-                    err
-                );
-                None
-            },
-        }
-    }
-
-    async fn load_shared_row_for_cleanup(
-        &self,
-        provider: &SharedTableProvider,
-        table_id: &TableId,
-        pk_value: &str,
-    ) -> Option<Row> {
-        let pk_name = provider.primary_key_field_name();
-        let schema = provider.schema_ref();
-        let pk_field = match schema.field_with_name(pk_name) {
-            Ok(field) => field,
-            Err(err) => {
-                log::warn!(
-                    "Failed to resolve PK field for file cleanup in {} (pk={}): {}",
-                    table_id,
-                    pk_value,
-                    err
-                );
-                return None;
-            },
-        };
-
-        let pk_scalar = match kalamdb_commons::conversions::parse_string_as_scalar(
-            pk_value,
-            pk_field.data_type(),
-        ) {
-            Ok(value) => value,
-            Err(err) => {
-                log::warn!(
-                    "Failed to parse PK value for file cleanup in {} (pk={}): {}",
-                    table_id,
-                    pk_value,
-                    err
-                );
-                return None;
-            },
-        };
-
-        match provider.find_by_pk(&pk_scalar).await {
-            Ok(Some((_key, row))) => Some(row.fields),
-            Ok(None) => match find_row_by_pk(provider, None, pk_value).await {
-                Ok(Some((_key, row))) => Some(row.fields),
-                Ok(None) => None,
-                Err(err) => {
-                    log::warn!(
-                        "Failed to load cold row for file cleanup in {} (pk={}): {}",
-                        table_id,
-                        pk_value,
-                        err
-                    );
-                    None
-                },
-            },
-            Err(err) => {
-                log::warn!(
-                    "Failed to load hot row for file cleanup in {} (pk={}): {}",
-                    table_id,
-                    pk_value,
-                    err
-                );
-                None
-            },
-        }
-    }
-
-    /// Update with fallback for StreamTableProvider
+    /// Update with fallback for StreamTableEngine
     async fn update_stream_provider(
         &self,
-        provider: &StreamTableProvider,
+        provider: &StreamTableEngine,
         user_id: &UserId,
         pk_value: &str,
         updates: Row,
@@ -1775,14 +1918,10 @@ impl DmlExecutor {
                         ApplierError::Execution(format!("Failed to find row key: {}", e))
                     })?
                 {
-                    let updated = <StreamTableProvider as BaseTableProvider<
-                        StreamTableRowId,
-                        StreamTableRow,
-                    >>::update(
-                        provider, user_id, &key, updates, version
-                    )
-                    .await
-                    .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
+                    let updated =
+                        provider.update(user_id, &key, updates, version).await.map_err(|e| {
+                            ApplierError::Execution(format!("Failed to update row: {}", e))
+                        })?;
                     Ok(usize::from(updated.is_some()))
                 } else {
                     Ok(0)

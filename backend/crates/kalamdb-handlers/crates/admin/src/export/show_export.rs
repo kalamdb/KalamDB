@@ -268,7 +268,7 @@ mod tests {
         use kalamdb_core::app_context::AppContext;
 
         let app_context = AppContext::new_test();
-        init_job_manager(&app_context);
+        init_job_manager(&app_context).expect("job capability");
 
         let now_ms = chrono::Utc::now().timestamp_millis();
         app_context
@@ -343,7 +343,7 @@ mod tests {
         use kalamdb_core::app_context::AppContext;
 
         let app_context = AppContext::new_test();
-        init_job_manager(&app_context);
+        init_job_manager(&app_context).expect("job capability");
 
         let now_ms = chrono::Utc::now().timestamp_millis();
         app_context

@@ -12,14 +12,11 @@ use datafusion::arrow::{
     datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
-use kalamdb_commons::{
-    datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
-    SystemTable,
-};
+use kalamdb_commons::{schemas::TableDefinition, SystemTable};
+use kalamdb_macros::table;
 use parking_lot::RwLock;
 
-use super::common::{system_view_definition, SystemViewProvider};
+use super::common::{SystemViewProvider, Timestamp};
 use crate::view_base::VirtualView;
 
 crate::memoized_view_schema!(sessions_schema, SessionsView);
@@ -44,6 +41,43 @@ pub struct ConnectionSessionSnapshot {
 
 /// Active-session snapshot callback type.
 pub type SessionsSnapshotCallback = Arc<dyn Fn() -> Vec<ConnectionSessionSnapshot> + Send + Sync>;
+
+#[table(
+    name = "sessions",
+    view = true,
+    comment = "Active connection sessions tracked by KalamDB"
+)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionRow {
+    /// Server-side PostgreSQL gRPC session identifier
+    pub session_id: String,
+    /// Connection entry point that opened this session
+    pub origin: String,
+    /// Parsed PostgreSQL backend PID when session_id follows pg-<pid> or pg-<pid>-<config-hash>
+    pub backend_pid: Option<i64>,
+    /// Authenticated KalamDB user id for this connection session
+    pub authenticated_user_id: Option<String>,
+    /// Current schema reported by the connection session
+    pub current_schema: Option<String>,
+    /// Session state similar to pg_stat_activity semantics
+    pub state: String,
+    /// Active remote transaction identifier, if any
+    pub transaction_id: Option<String>,
+    /// Current remote transaction lifecycle state
+    pub transaction_state: Option<String>,
+    /// Whether the active transaction has performed writes
+    pub transaction_has_writes: bool,
+    /// Observed client socket address for the gRPC session
+    pub client_addr: Option<String>,
+    /// Transport used by the session
+    pub transport: String,
+    /// When the server first observed this session
+    pub opened_at: Timestamp,
+    /// Most recent RPC activity timestamp for this session
+    pub last_seen_at: Timestamp,
+    /// Most recent gRPC method observed for this session
+    pub last_method: Option<String>,
+}
 
 /// Virtual view that snapshots active connection sessions from memory.
 pub struct SessionsView {
@@ -70,172 +104,7 @@ impl SessionsView {
     }
 
     pub fn definition() -> TableDefinition {
-        let columns = vec![
-            ColumnDefinition::new(
-                1,
-                "session_id",
-                1,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Server-side PostgreSQL gRPC session identifier".to_string()),
-            ),
-            ColumnDefinition::new(
-                2,
-                "origin",
-                2,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Connection entry point that opened this session".to_string()),
-            ),
-            ColumnDefinition::new(
-                3,
-                "backend_pid",
-                3,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some(
-                    "Parsed PostgreSQL backend PID when session_id follows pg-<pid> or \
-                     pg-<pid>-<config-hash>"
-                        .to_string(),
-                ),
-            ),
-            ColumnDefinition::new(
-                4,
-                "authenticated_user_id",
-                4,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Authenticated KalamDB user id for this connection session".to_string()),
-            ),
-            ColumnDefinition::new(
-                5,
-                "current_schema",
-                5,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Current schema reported by the connection session".to_string()),
-            ),
-            ColumnDefinition::new(
-                6,
-                "state",
-                6,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Session state similar to pg_stat_activity semantics".to_string()),
-            ),
-            ColumnDefinition::new(
-                7,
-                "transaction_id",
-                7,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Active remote transaction identifier, if any".to_string()),
-            ),
-            ColumnDefinition::new(
-                8,
-                "transaction_state",
-                8,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Current remote transaction lifecycle state".to_string()),
-            ),
-            ColumnDefinition::new(
-                9,
-                "transaction_has_writes",
-                9,
-                KalamDataType::Boolean,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Whether the active transaction has performed writes".to_string()),
-            ),
-            ColumnDefinition::new(
-                10,
-                "client_addr",
-                10,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Observed client socket address for the gRPC session".to_string()),
-            ),
-            ColumnDefinition::new(
-                11,
-                "transport",
-                11,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Transport used by the session".to_string()),
-            ),
-            ColumnDefinition::new(
-                12,
-                "opened_at",
-                12,
-                KalamDataType::Timestamp,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("When the server first observed this session".to_string()),
-            ),
-            ColumnDefinition::new(
-                13,
-                "last_seen_at",
-                13,
-                KalamDataType::Timestamp,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Most recent RPC activity timestamp for this session".to_string()),
-            ),
-            ColumnDefinition::new(
-                14,
-                "last_method",
-                14,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Most recent gRPC method observed for this session".to_string()),
-            ),
-        ];
-
-        system_view_definition(
-            SystemTable::Sessions,
-            columns,
-            "Active connection sessions tracked by KalamDB",
-        )
+        SessionRow::definition()
     }
 }
 

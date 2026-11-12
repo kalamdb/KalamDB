@@ -119,6 +119,21 @@ New Flutter apps: `kalam init --languages dart`. See [`example/README.md`](examp
 
 Apache-2.0. See [LICENSE.txt](LICENSE.txt).
 
+## SDK checks and release troubleshooting
+
+Run `bash test-offline.sh` for all offline regression and packaging checks.
+`test.sh` runs these checks plus server integration tests; `publish.sh` blocks
+publication if an offline check fails. Packaging checks cover declared platform
+folders, Android arm64-v8a/x86_64 libraries (including their ELF architecture),
+and the iOS archive size.
+
+Android and iOS are the supported Flutter plugin platforms. Do not infer desktop
+or web support from the presence of bridge build artifacts.
+
+If a just-published version is missing from your local hosted cache, try
+`flutter pub cache add kalam_link --version <published-version>`, then
+`flutter pub get`. Confirm the release exists and your version constraint allows it.
+
 ## Generated typed remote queries
 
 After `kalam schema gen --languages dart`, reuse the generated table codecs and

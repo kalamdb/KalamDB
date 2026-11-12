@@ -545,6 +545,10 @@ export class WasmTimestampFormatter {
     static withFormat(format: string): WasmTimestampFormatter;
 }
 
+export function decodeRoutineResult(frame: Uint8Array | number[]): any;
+
+export function encodeRoutineRequest(arguments_json: string, params_json: string): Uint8Array;
+
 export function fileRefDownloadUrl(file_ref_json: string, base_url: string, namespace: string, table: string): string;
 
 export function fileRefRelativePath(file_ref_json: string): string;
@@ -593,39 +597,41 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_kalamclient_free: (a: number, b: number) => void;
     readonly __wbg_wasmtimestampformatter_free: (a: number, b: number) => void;
+    readonly decodeRoutineResult: (a: number, b: number, c: number) => void;
+    readonly encodeRoutineRequest: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly fileRefDownloadUrl: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly fileRefRelativePath: (a: number, b: number, c: number) => void;
     readonly fileRefRelativeUrl: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly fileRefStoredName: (a: number, b: number, c: number) => void;
     readonly kalamclient_anonymous: (a: number, b: number, c: number) => void;
     readonly kalamclient_clearAuthProvider: (a: number) => void;
-    readonly kalamclient_connect: (a: number) => number;
-    readonly kalamclient_delete: (a: number, b: number, c: number, d: number, e: number) => number;
-    readonly kalamclient_disconnect: (a: number) => number;
+    readonly kalamclient_connect: (a: number) => any;
+    readonly kalamclient_delete: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly kalamclient_disconnect: (a: number) => any;
     readonly kalamclient_getAuthType: (a: number, b: number) => void;
     readonly kalamclient_getLastVersionId: (a: number, b: number, c: number, d: number) => void;
     readonly kalamclient_getReconnectAttempts: (a: number) => number;
-    readonly kalamclient_getSubscriptions: (a: number) => number;
-    readonly kalamclient_insert: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly kalamclient_getSubscriptions: (a: number) => any;
+    readonly kalamclient_insert: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly kalamclient_isConnected: (a: number) => number;
     readonly kalamclient_isReconnecting: (a: number) => number;
-    readonly kalamclient_live: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
-    readonly kalamclient_liveEvents: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
-    readonly kalamclient_liveTable: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
-    readonly kalamclient_login: (a: number) => number;
+    readonly kalamclient_live: (a: number, b: number, c: number, d: number, e: number, f: any) => any;
+    readonly kalamclient_liveEvents: (a: number, b: number, c: number, d: number, e: number, f: any) => any;
+    readonly kalamclient_liveTable: (a: number, b: number, c: number, d: number, e: number, f: any) => any;
+    readonly kalamclient_login: (a: number) => any;
     readonly kalamclient_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly kalamclient_onConnect: (a: number, b: number) => void;
-    readonly kalamclient_onConnectionError: (a: number, b: number) => void;
-    readonly kalamclient_onDisconnect: (a: number, b: number) => void;
-    readonly kalamclient_onError: (a: number, b: number) => void;
-    readonly kalamclient_onReceive: (a: number, b: number) => void;
-    readonly kalamclient_onSend: (a: number, b: number) => void;
-    readonly kalamclient_query: (a: number, b: number, c: number) => number;
-    readonly kalamclient_queryWithParams: (a: number, b: number, c: number, d: number, e: number) => number;
-    readonly kalamclient_refresh_access_token: (a: number, b: number, c: number) => number;
+    readonly kalamclient_onConnect: (a: number, b: any) => void;
+    readonly kalamclient_onConnectionError: (a: number, b: any) => void;
+    readonly kalamclient_onDisconnect: (a: number, b: any) => void;
+    readonly kalamclient_onError: (a: number, b: any) => void;
+    readonly kalamclient_onReceive: (a: number, b: any) => void;
+    readonly kalamclient_onSend: (a: number, b: any) => void;
+    readonly kalamclient_query: (a: number, b: number, c: number) => any;
+    readonly kalamclient_queryWithParams: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly kalamclient_refresh_access_token: (a: number, b: number, c: number) => any;
     readonly kalamclient_requestNextBatch: (a: number, b: number, c: number, d: number) => void;
     readonly kalamclient_sendPing: (a: number, b: number) => void;
-    readonly kalamclient_setAuthProvider: (a: number, b: number) => void;
+    readonly kalamclient_setAuthProvider: (a: number, b: any) => void;
     readonly kalamclient_setAutoReconnect: (a: number, b: number) => void;
     readonly kalamclient_setDefaultNamespace: (a: number, b: number, c: number) => void;
     readonly kalamclient_setDisableCompression: (a: number, b: number) => void;
@@ -633,7 +639,7 @@ export interface InitOutput {
     readonly kalamclient_setPingInterval: (a: number, b: number) => void;
     readonly kalamclient_setReconnectDelay: (a: number, b: bigint, c: bigint) => void;
     readonly kalamclient_setWsLazyConnect: (a: number, b: number) => void;
-    readonly kalamclient_unsubscribe: (a: number, b: number, c: number) => number;
+    readonly kalamclient_unsubscribe: (a: number, b: number, c: number) => any;
     readonly kalamclient_withJwt: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly parseIso8601: (a: number, b: number, c: number) => void;
     readonly timestampNow: () => number;
@@ -641,18 +647,22 @@ export interface InitOutput {
     readonly wasmtimestampformatter_formatRelative: (a: number, b: number, c: number) => void;
     readonly wasmtimestampformatter_new: () => number;
     readonly wasmtimestampformatter_withFormat: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_2543: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_2545: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_863: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_863_51: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_863_52: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_862: (a: number, b: number) => void;
-    readonly __wbindgen_export: (a: number, b: number) => number;
-    readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
-    readonly __wbindgen_export3: (a: number) => void;
-    readonly __wbindgen_export4: (a: number, b: number) => void;
-    readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
+    readonly __wasm_bindgen_func_elem_1974: (a: number, b: number, c: number, d: any) => void;
+    readonly __wasm_bindgen_func_elem_1976: (a: number, b: number, c: any, d: any) => void;
+    readonly __wasm_bindgen_func_elem_653: (a: number, b: number, c: any) => void;
+    readonly __wasm_bindgen_func_elem_653_53: (a: number, b: number, c: any) => void;
+    readonly __wasm_bindgen_func_elem_653_54: (a: number, b: number, c: any) => void;
+    readonly __wasm_bindgen_func_elem_652: (a: number, b: number) => void;
+    readonly __wbindgen_export: (a: number) => void;
+    readonly __wbindgen_export2: () => number;
+    readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly __wbindgen_export3: (a: number, b: number) => number;
+    readonly __wbindgen_export4: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export5: (a: number, b: number, c: number) => void;
+    readonly __wbindgen_export6: (a: number, b: number) => void;
+    readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
+    readonly __wbindgen_export7: (a: number) => void;
+    readonly __wbindgen_start: () => void;
 }
 
 export type SyncInitInput = BufferSource | WebAssembly.Module;

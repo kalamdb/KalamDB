@@ -4,7 +4,7 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::RwLock,
+    sync::{Mutex, RwLock},
 };
 
 #[cfg(feature = "rocksdb")]
@@ -33,6 +33,8 @@ type PartitionMap = BTreeMap<Vec<u8>, Vec<u8>>;
 pub struct InMemoryBackend {
     // Partition -> (Key -> Value)
     data: RwLock<HashMap<String, PartitionMap>>,
+    /// `get` and `scan` calls recorded for tests that must stay on the store.
+    ops: Mutex<Vec<(&'static str, String)>>,
 }
 
 impl InMemoryBackend {
@@ -40,7 +42,25 @@ impl InMemoryBackend {
     pub fn new() -> Self {
         Self {
             data: RwLock::new(HashMap::new()),
+            ops: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Drops recorded `get` and `scan` calls.
+    pub fn clear_recorded_ops(&self) {
+        self.ops.lock().expect("in-memory op log").clear();
+    }
+
+    /// `get` and `scan` calls since the last [`Self::clear_recorded_ops`].
+    pub fn recorded_ops(&self) -> Vec<(&'static str, String)> {
+        self.ops.lock().expect("in-memory op log").clone()
+    }
+
+    fn record(&self, kind: &'static str, partition: &Partition) {
+        self.ops
+            .lock()
+            .expect("in-memory op log")
+            .push((kind, partition.name().to_string()));
     }
 }
 
@@ -56,6 +76,7 @@ impl StorageBackend for InMemoryBackend {
         partition: &Partition,
         key: &[u8],
     ) -> crate::storage_trait::Result<Option<Vec<u8>>> {
+        self.record("get", partition);
         let data = self.data.read().unwrap();
         Ok(data.get(partition.name()).and_then(|map| map.get(key)).cloned())
     }
@@ -114,6 +135,7 @@ impl StorageBackend for InMemoryBackend {
         start_key: Option<&[u8]>,
         limit: Option<usize>,
     ) -> crate::storage_trait::Result<kalamdb_commons::storage::KvIterator<'_>> {
+        self.record("scan", partition);
         let data = self.data.read().unwrap();
         let limit = limit.unwrap_or(usize::MAX);
 

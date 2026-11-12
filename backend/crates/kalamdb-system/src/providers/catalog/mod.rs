@@ -1,36 +1,23 @@
-mod function_artifacts_provider;
-mod function_modules_provider;
-mod function_revisions_provider;
 mod models;
-mod routine_grants_provider;
-mod routine_parameters_provider;
-mod routines_provider;
-mod scan;
 pub mod schedule_timing;
-mod schedules_provider;
+mod sql_providers;
 mod stores;
-mod trigger_attempts_provider;
-mod triggers_provider;
-mod type_fields_provider;
-mod types_provider;
 
-pub use function_artifacts_provider::FunctionArtifactsTableProvider;
-pub use function_modules_provider::FunctionModulesTableProvider;
-pub use function_revisions_provider::FunctionRevisionsTableProvider;
 pub use models::{
     CatalogFunctionArtifact, CatalogFunctionModule, CatalogFunctionRevision, CatalogRoutine,
     CatalogRoutineGrant, CatalogRoutineParameter, CatalogSchedule, CatalogTrigger,
     CatalogTriggerAttempt, CatalogType, CatalogTypeField,
 };
-pub use routine_grants_provider::RoutineGrantsTableProvider;
-pub use routine_parameters_provider::RoutineParametersTableProvider;
-pub use routines_provider::RoutinesTableProvider;
-pub use schedules_provider::SchedulesTableProvider;
+pub use sql_providers::{
+    function_artifacts_provider, function_modules_provider, function_revisions_provider,
+    routine_grants_provider, routine_parameters_provider, routines_provider, schedules_provider,
+    trigger_attempts_provider, triggers_provider, type_fields_provider, types_provider,
+    FunctionArtifactsTableProvider, FunctionModulesTableProvider, FunctionRevisionsTableProvider,
+    RoutineGrantsTableProvider, RoutineParametersTableProvider, RoutinesTableProvider,
+    SchedulesTableProvider, TriggerAttemptsTableProvider, TriggersTableProvider,
+    TypeFieldsTableProvider, TypesTableProvider,
+};
 pub use stores::{ActivateFunctionOutcome, CatalogStores};
-pub use trigger_attempts_provider::TriggerAttemptsTableProvider;
-pub use triggers_provider::TriggersTableProvider;
-pub use type_fields_provider::TypeFieldsTableProvider;
-pub use types_provider::TypesTableProvider;
 
 #[cfg(test)]
 mod catalog_tests;

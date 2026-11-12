@@ -15,7 +15,10 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
 };
 
 use dashmap::{DashMap, DashSet};
@@ -86,11 +89,20 @@ pub struct ManifestService {
     /// query.
     empty_storage_checks: DashMap<ManifestId, i64>,
 
-    /// Per-scope flush serialization guards.
+    /// Per-scope flush publication guards.
     ///
     /// Flushes for the same table/user scope must not race batch-number allocation or manifest
-    /// persistence, otherwise later flushes can overwrite earlier segment metadata.
-    flush_scope_locks: DashMap<ManifestId, Arc<Mutex<()>>>,
+    /// persistence, otherwise later flushes can overwrite earlier segment metadata. Parquet
+    /// write, rename, and scope hooks stay outside this lock. Idle entries are removed when
+    /// the last holder or waiter leaves.
+    flush_scope_locks: DashMap<ManifestId, Arc<ScopeMutex>>,
+
+    /// Per-scope manifest sync-state guards.
+    ///
+    /// `mark_pending_write` takes this lock and not `flush_scope_locks`, so a flush that is
+    /// inside Parquet I/O or a scope hook cannot block pending-write registration. Publication
+    /// still takes this lock while it reads and writes sync state.
+    manifest_state_locks: DashMap<ManifestId, Arc<ScopeMutex>>,
 
     /// Per-scope compaction guards.
     ///
@@ -123,6 +135,60 @@ impl Drop for ManifestCompactionScopeGuard {
     }
 }
 
+/// Reference-counted mutex for one flush or manifest-state scope.
+///
+/// `inflight` counts holders and waiters. The map entry is removed when the count returns
+/// to zero so user-scope churn does not retain an idle lock per scope.
+struct ScopeMutex {
+    mutex: Mutex<()>,
+    inflight: AtomicUsize,
+}
+
+struct ScopeInflight<'a> {
+    locks: &'a DashMap<ManifestId, Arc<ScopeMutex>>,
+    manifest_id: ManifestId,
+    lock: Arc<ScopeMutex>,
+}
+
+impl Drop for ScopeInflight<'_> {
+    fn drop(&mut self) {
+        let previous = self.lock.inflight.fetch_sub(1, Ordering::AcqRel);
+        if previous == 1 {
+            self.locks.remove_if(&self.manifest_id, |_key, current| {
+                Arc::ptr_eq(current, &self.lock) && self.lock.inflight.load(Ordering::Acquire) == 0
+            });
+        }
+    }
+}
+
+impl<'a> ScopeInflight<'a> {
+    fn acquire(locks: &'a DashMap<ManifestId, Arc<ScopeMutex>>, manifest_id: ManifestId) -> Self {
+        let lock = loop {
+            let candidate = {
+                let entry = locks.entry(manifest_id.clone()).or_insert_with(|| {
+                    Arc::new(ScopeMutex {
+                        mutex: Mutex::new(()),
+                        inflight: AtomicUsize::new(0),
+                    })
+                });
+                Arc::clone(entry.value())
+            };
+            candidate.inflight.fetch_add(1, Ordering::AcqRel);
+            match locks.get(&manifest_id) {
+                Some(current) if Arc::ptr_eq(current.value(), &candidate) => break candidate,
+                _ => {
+                    candidate.inflight.fetch_sub(1, Ordering::AcqRel);
+                },
+            }
+        };
+        Self {
+            locks,
+            manifest_id,
+            lock,
+        }
+    }
+}
+
 impl ManifestService {
     pub(crate) fn try_begin_compaction_scope(
         &self,
@@ -149,15 +215,53 @@ impl ManifestService {
     where
         F: FnOnce() -> Result<T, StorageError>,
     {
-        let scope_lock = self.flush_scope_lock(table_id, user_id);
-        let _guard = scope_lock.lock().map_err(|_| {
+        Self::with_scope_mutex(&self.flush_scope_locks, table_id, user_id, "flush scope lock", f)
+    }
+
+    /// Number of flush publication locks currently retained.
+    ///
+    /// Idle scopes are removed, so this returns to zero after churn when no holder or waiter
+    /// remains.
+    #[cfg(test)]
+    pub(crate) fn flush_scope_lock_count(&self) -> usize {
+        self.flush_scope_locks.len()
+    }
+
+    fn with_manifest_state_lock<T, F>(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        f: F,
+    ) -> Result<T, StorageError>
+    where
+        F: FnOnce() -> Result<T, StorageError>,
+    {
+        Self::with_scope_mutex(
+            &self.manifest_state_locks,
+            table_id,
+            user_id,
+            "manifest state lock",
+            f,
+        )
+    }
+
+    fn with_scope_mutex<T, F>(
+        locks: &DashMap<ManifestId, Arc<ScopeMutex>>,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        lock_name: &str,
+        f: F,
+    ) -> Result<T, StorageError>
+    where
+        F: FnOnce() -> Result<T, StorageError>,
+    {
+        let inflight = ScopeInflight::acquire(locks, Self::manifest_id(table_id, user_id));
+        let _guard = inflight.lock.mutex.lock().map_err(|_| {
             StorageError::Other(format!(
-                "flush scope lock poisoned for {} (user_id={:?})",
-                table_id,
+                "{lock_name} poisoned for {table_id} (user_id={:?})",
                 user_id.map(UserId::as_str)
             ))
         })?;
-
         f()
     }
 
@@ -184,6 +288,7 @@ impl ManifestService {
             memory_cache: DashMap::with_capacity(config.max_entries.min(1024)),
             empty_storage_checks: DashMap::with_capacity(128),
             flush_scope_locks: DashMap::with_capacity(128),
+            manifest_state_locks: DashMap::with_capacity(128),
             active_compactions: Arc::new(DashSet::with_capacity(128)),
             provider,
             config,
@@ -460,7 +565,9 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<(), StorageError> {
-        self.update_cached_entry(table_id, user_id, |entry| entry.mark_syncing())
+        self.with_manifest_state_lock(table_id, user_id, || {
+            self.update_cached_entry(table_id, user_id, |entry| entry.mark_syncing())
+        })
     }
 
     /// Mark a cache entry as having pending writes (hot data not yet flushed to cold storage).
@@ -475,7 +582,7 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<(), StorageError> {
-        self.with_flush_scope_lock(table_id, user_id, || {
+        self.with_manifest_state_lock(table_id, user_id, || {
             self.mark_pending_write_in_locked_scope(table_id, user_id)
         })
     }
@@ -490,7 +597,7 @@ impl ManifestService {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<(), StorageError> {
-        self.with_flush_scope_lock(table_id, user_id, || {
+        self.with_manifest_state_lock(table_id, user_id, || {
             let now = chrono::Utc::now().timestamp_millis();
             self.update_cached_entry(table_id, user_id, |entry| {
                 entry.last_refreshed = now;
@@ -787,26 +894,6 @@ impl ManifestService {
         })
     }
 
-    /// Update manifest in cache using a caller-provided mutator.
-    ///
-    /// This is used for metadata updates that are not segment appends
-    /// (for example vector index watermark/snapshot pointers). This updates only the
-    /// cache layers; explicit persist/flush paths should write `manifest.json` when ready.
-    pub fn update_manifest_with<F>(
-        &self,
-        table_id: &TableId,
-        user_id: Option<&UserId>,
-        mutator: F,
-    ) -> Result<Manifest, StorageError>
-    where
-        F: FnOnce(&mut Manifest),
-    {
-        let mut manifest = self.ensure_manifest_initialized(table_id, user_id)?;
-        mutator(&mut manifest);
-        self.upsert_cache_entry(table_id, user_id, &manifest, None, SyncState::PendingWrite)?;
-        Ok(manifest)
-    }
-
     /// Persist a manifest to cold storage and mark cache state as in-sync.
     pub fn persist_manifest(
         &self,
@@ -912,18 +999,6 @@ impl ManifestService {
     /// Validate manifest structure. File existence is checked while rebuilding.
     pub fn validate_manifest(&self, manifest: &Manifest) -> Result<(), StorageError> {
         validate_manifest_structure(manifest)
-    }
-
-    /// Public helper for consumers that need the resolved manifest.json path.
-    pub fn manifest_path(
-        &self,
-        table_id: &TableId,
-        user_id: Option<&UserId>,
-    ) -> Result<String, StorageError> {
-        let (table_type, storage_cached) = self.storage_cached_for_table(table_id)?;
-        let manifest_path_result = storage_cached.get_manifest_path(table_type, table_id, user_id);
-
-        Ok(manifest_path_result.full_path)
     }
 
     pub fn get_manifest_user_ids(&self, table_id: &TableId) -> Result<Vec<UserId>, StorageError> {
@@ -1104,16 +1179,18 @@ impl ManifestService {
 
         self.write_manifest_to_storage(table_id, user_id, &manifest)?;
 
-        let next_sync_state = self
-            .cached_entry_snapshot(&Self::manifest_id(table_id, user_id))?
-            .map(|entry| match entry.sync_state {
-                SyncState::PendingWrite => SyncState::PendingWrite,
-                _ => SyncState::InSync,
-            })
-            .unwrap_or(SyncState::InSync);
+        self.with_manifest_state_lock(table_id, user_id, || {
+            let next_sync_state = self
+                .cached_entry_snapshot(&Self::manifest_id(table_id, user_id))?
+                .map(|entry| match entry.sync_state {
+                    SyncState::PendingWrite => SyncState::PendingWrite,
+                    _ => SyncState::InSync,
+                })
+                .unwrap_or(SyncState::InSync);
 
-        self.upsert_cache_entry(table_id, user_id, &manifest, None, next_sync_state)?;
-        Ok(manifest)
+            self.upsert_cache_entry(table_id, user_id, &manifest, None, next_sync_state)?;
+            Ok(manifest)
+        })
     }
 
     pub(crate) fn replace_segments_with_compacted_segment_in_locked_scope(
@@ -1151,25 +1228,18 @@ impl ManifestService {
 
         self.write_manifest_to_storage(table_id, user_id, &manifest)?;
 
-        let next_sync_state = self
-            .cached_entry_snapshot(&Self::manifest_id(table_id, user_id))?
-            .map(|entry| match entry.sync_state {
-                SyncState::PendingWrite => SyncState::PendingWrite,
-                _ => SyncState::InSync,
-            })
-            .unwrap_or(SyncState::InSync);
+        self.with_manifest_state_lock(table_id, user_id, || {
+            let next_sync_state = self
+                .cached_entry_snapshot(&Self::manifest_id(table_id, user_id))?
+                .map(|entry| match entry.sync_state {
+                    SyncState::PendingWrite => SyncState::PendingWrite,
+                    _ => SyncState::InSync,
+                })
+                .unwrap_or(SyncState::InSync);
 
-        self.upsert_cache_entry(table_id, user_id, &manifest, None, next_sync_state)?;
-        Ok(true)
-    }
-
-    fn flush_scope_lock(&self, table_id: &TableId, user_id: Option<&UserId>) -> Arc<Mutex<()>> {
-        let manifest_id = Self::manifest_id(table_id, user_id);
-        let entry = self
-            .flush_scope_locks
-            .entry(manifest_id)
-            .or_insert_with(|| Arc::new(Mutex::new(())));
-        Arc::clone(entry.value())
+            self.upsert_cache_entry(table_id, user_id, &manifest, None, next_sync_state)?;
+            Ok(true)
+        })
     }
 
     fn cached_entry_snapshot(
@@ -2114,6 +2184,57 @@ mod tests {
     }
 
     #[test]
+    fn mark_pending_write_does_not_wait_on_delayed_cold_flush_lock() {
+        let service = Arc::new(create_test_service());
+        let table_id = build_table_id("ns1", "tbl1");
+        let user_id = UserId::from("u_123");
+        let manifest = create_test_manifest(&table_id, Some(&user_id));
+        service.stage_before_flush(&table_id, Some(&user_id), &manifest).unwrap();
+
+        let started = Arc::new(std::sync::Barrier::new(2));
+        let service_flush = Arc::clone(&service);
+        let table_flush = table_id.clone();
+        let user_flush = user_id.clone();
+        let started_flush = Arc::clone(&started);
+        let cold_flush = std::thread::spawn(move || {
+            service_flush
+                .with_flush_scope_lock(&table_flush, Some(&user_flush), || {
+                    started_flush.wait();
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    Ok(())
+                })
+                .unwrap();
+        });
+
+        started.wait();
+        let began = std::time::Instant::now();
+        service.mark_pending_write(&table_id, Some(&user_id)).unwrap();
+        let elapsed = began.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_millis(250),
+            "pending-write registration waited {elapsed:?} on a one-second cold flush lock"
+        );
+        assert!(service.has_pending_writes(&table_id, Some(&user_id)).unwrap());
+        cold_flush.join().expect("cold flush thread");
+    }
+
+    #[test]
+    fn idle_flush_scope_locks_return_to_steady_state_after_churn() {
+        let service = create_test_service();
+        let table_id = build_table_id("ns1", "churn");
+        let before = service.flush_scope_lock_count();
+        for index in 0..64 {
+            let user_id = UserId::from(format!("u{index}"));
+            service.with_flush_scope_lock(&table_id, Some(&user_id), || Ok(())).unwrap();
+        }
+        let after = service.flush_scope_lock_count();
+        assert!(
+            after <= before,
+            "idle flush_scope_locks grew from {before} to {after} after scope churn"
+        );
+    }
+
+    #[test]
     fn test_get_pending_for_table() {
         let service = create_test_service();
         let table_id = build_table_id("ns1", "user_table");
@@ -2187,12 +2308,8 @@ mod tests {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
         let temp_dir = TempDir::new().unwrap();
         let table_id = build_table_id("ns1", "cold_rebuild");
-        let (service, registry) = create_test_service_with_storage(
-            backend,
-            &table_id,
-            TableType::Shared,
-            &temp_dir,
-        );
+        let (service, registry) =
+            create_test_service_with_storage(backend, &table_id, TableType::Shared, &temp_dir);
         let storage = registry.get_cached(&StorageId::local()).unwrap().unwrap();
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
@@ -2237,7 +2354,10 @@ mod tests {
             .full_path;
         std::fs::write(&corrupt_path, b"not parquet").unwrap();
         let error = service.rebuild_manifest(&table_id, None).unwrap_err();
-        assert!(error.to_string().contains("footer") || error.to_string().contains("parquet"), "{error}");
+        assert!(
+            error.to_string().contains("footer") || error.to_string().contains("parquet"),
+            "{error}"
+        );
     }
 
     // #[test]

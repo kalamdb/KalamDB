@@ -1,11 +1,8 @@
-use std::{
-    collections::BTreeMap,
-    sync::{Arc, OnceLock},
-};
+use std::{collections::BTreeMap, sync::Arc};
 
 use datafusion::arrow::{
     array::{ArrayRef, Int64Builder, ListBuilder, StringBuilder},
-    datatypes::{DataType, Field, Schema, SchemaRef},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use kalamdb_commons::{
@@ -13,6 +10,7 @@ use kalamdb_commons::{
     models::{RoutineKind, RoutineParameterMode},
     Role,
 };
+use kalamdb_macros::table;
 use kalamdb_system::{CatalogRoutine, CatalogRoutineParameter, SystemTablesRegistry};
 
 use crate::{
@@ -24,31 +22,36 @@ use crate::{
     },
 };
 
-fn utf8_list_type() -> DataType {
-    DataType::List(Arc::new(Field::new("item", DataType::Utf8, true)))
-}
-
-fn int64_list_type() -> DataType {
-    DataType::List(Arc::new(Field::new("item", DataType::Int64, true)))
+#[table(
+    name = "pg_proc",
+    namespace = SchemaId::pg_catalog(),
+    view = true,
+    comment = "Functions and procedures"
+)]
+#[derive(Debug)]
+struct PgProcRow {
+    /// Procedure oid
+    oid: i64,
+    /// Procedure name
+    proname: String,
+    /// Namespace oid
+    pronamespace: i64,
+    /// Procedure kind
+    prokind: String,
+    /// Return type oid
+    prorettype: i64,
+    /// Argument type oids as text
+    proargtypes: String,
+    /// Argument names
+    proargnames: Option<Vec<String>>,
+    /// Argument modes
+    proargmodes: Option<Vec<String>>,
+    /// All argument type oids
+    proallargtypes: Option<Vec<i64>>,
 }
 
 fn schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("oid", DataType::Int64, false),
-                Field::new("proname", DataType::Utf8, false),
-                Field::new("pronamespace", DataType::Int64, false),
-                Field::new("prokind", DataType::Utf8, false),
-                Field::new("prorettype", DataType::Int64, false),
-                Field::new("proargtypes", DataType::Utf8, false),
-                Field::new("proargnames", utf8_list_type(), true),
-                Field::new("proargmodes", utf8_list_type(), true),
-                Field::new("proallargtypes", int64_list_type(), true),
-            ]))
-        })
-        .clone()
+    PgProcRow::arrow_schema()
 }
 
 #[derive(Debug)]
@@ -271,5 +274,24 @@ pub fn function_definition(
     match routine.body.as_deref() {
         Some(body) if !body.trim().is_empty() => format!("{header}\n{body}"),
         _ => header,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use datafusion::arrow::datatypes::DataType;
+
+    #[test]
+    fn argument_lists_stay_arrow_lists() {
+        let schema = super::schema();
+        let names = schema.field_with_name("proargnames").unwrap();
+        assert!(names.is_nullable());
+        assert!(
+            matches!(names.data_type(), DataType::List(field) if field.data_type() == &DataType::Utf8)
+        );
+        let types = schema.field_with_name("proallargtypes").unwrap();
+        assert!(
+            matches!(types.data_type(), DataType::List(field) if field.data_type() == &DataType::Int64)
+        );
     }
 }

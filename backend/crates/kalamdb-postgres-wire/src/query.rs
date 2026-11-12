@@ -184,8 +184,30 @@ impl SimpleQueryHandler for KalamQueryHandler {
             .session_extensions()
             .get::<WireConnectionState>()
             .ok_or_else(|| pg_error("wire connection state is missing"))?;
-        self.execute_sql(&state, query).await
+        let result = self.execute_sql(&state, query).await;
+        if kalamdb_observability::dml_stage::tracing_enabled() {
+            kalamdb_observability::dml_stage::eprint_and_reset(&query_label(query));
+        }
+        result
     }
+}
+
+fn query_label(sql: &str) -> String {
+    let mut label = String::new();
+    for ch in sql.chars() {
+        if label.len() >= 72 {
+            break;
+        }
+        if ch.is_whitespace() {
+            if label.ends_with(' ') || label.is_empty() {
+                continue;
+            }
+            label.push(' ');
+        } else {
+            label.push(ch);
+        }
+    }
+    label
 }
 
 #[async_trait]

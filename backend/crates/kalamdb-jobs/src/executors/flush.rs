@@ -37,12 +37,10 @@ use kalamdb_core::{
     error::KalamDbError,
     error_extensions::KalamDbResultExt,
     manifest::{CoreFlushScopeHook, ManifestService},
-    providers::{SharedTableProvider, UserTableProvider},
     schema_registry::SchemaRegistry,
 };
 use kalamdb_flush::flush::{
-    FlushJobResult, FlushScopeHint, FlushTableMetadata, SharedTableFlushJob, TableFlush,
-    UserTableFlushJob,
+    FlushJobResult, FlushScopeHint, FlushTableMetadata, VersionedTableFlushJob,
 };
 use kalamdb_store::EntityStore;
 use kalamdb_system::JobType;
@@ -93,7 +91,7 @@ impl FlushTarget {
     ) -> Result<Option<Self>, KalamDbError> {
         let provider_arc = match table_type {
             TableType::User | TableType::Shared => {
-                schema_registry.get_provider(table_id).ok_or_else(|| {
+                schema_registry.get_kalam_provider(table_id).ok_or_else(|| {
                     KalamDbError::NotFound(format!(
                         "Table provider not registered for {} (id={})",
                         table_id, table_id
@@ -105,26 +103,22 @@ impl FlushTarget {
 
         match table_type {
             TableType::User => {
-                let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-                    .downcast_ref::<UserTableProvider>()
-                    .ok_or_else(|| {
-                        KalamDbError::InvalidOperation(
-                            "Cached provider type mismatch for user table".into(),
-                        )
-                    })?;
+                let store = provider_arc.user_store().ok_or_else(|| {
+                    KalamDbError::InvalidOperation(
+                        "Cached provider type mismatch for user table".into(),
+                    )
+                })?;
 
-                Ok(Some(Self::User(provider.store())))
+                Ok(Some(Self::User(store)))
             },
             TableType::Shared => {
-                let provider = (provider_arc.as_ref() as &dyn std::any::Any)
-                    .downcast_ref::<SharedTableProvider>()
-                    .ok_or_else(|| {
-                        KalamDbError::InvalidOperation(
-                            "Cached provider type mismatch for shared table".into(),
-                        )
-                    })?;
+                let store = provider_arc.shared_store().ok_or_else(|| {
+                    KalamDbError::InvalidOperation(
+                        "Cached provider type mismatch for shared table".into(),
+                    )
+                })?;
 
-                Ok(Some(Self::Shared(provider.store())))
+                Ok(Some(Self::Shared(store)))
             },
             TableType::Stream | TableType::System => Ok(None),
         }
@@ -235,7 +229,7 @@ impl FlushExecutor {
 
         match target {
             FlushTarget::User(store) => {
-                let flush_job = UserTableFlushJob::new(
+                let flush_job = VersionedTableFlushJob::user(
                     table_id,
                     store,
                     schema,
@@ -251,7 +245,7 @@ impl FlushExecutor {
                     .await
             },
             FlushTarget::Shared(store) => {
-                let flush_job = SharedTableFlushJob::new(
+                let flush_job = VersionedTableFlushJob::shared(
                     table_id,
                     store,
                     schema,

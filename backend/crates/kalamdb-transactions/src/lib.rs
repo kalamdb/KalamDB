@@ -24,10 +24,15 @@ pub mod write_set;
 pub use access::{TransactionAccessError, TransactionAccessValidator};
 pub use binding::TransactionRaftBinding;
 pub use commit_sequence::{CommitSequenceSource, CommitSequenceTracker, SNAPSHOT_UNSET};
-pub use engine::{TransactionEngine, TransactionEngineError, TransactionEngineResult};
+pub use engine::{
+    admit_versioned_commit, CommitAdmissionError, TransactionEngine, TransactionEngineError,
+    TransactionEngineResult,
+};
 pub use handle::TransactionHandle;
 pub use metrics::ActiveTransactionMetric;
-pub use overlay::{ScopedPkKey, TransactionOverlay, TransactionOverlayEntry};
+pub use overlay::{
+    ScopedPkKey, ScopedTargetKey, TableScope, TransactionOverlay, TransactionOverlayEntry,
+};
 pub use overlay_exec::TransactionOverlayExec;
 pub use owner::{ExecutionOwnerKey, TransactionOwnerParseError};
 pub use pk_claims::{primary_key_claims, PrimaryKeyClaims};
@@ -38,4 +43,4 @@ pub use request::{
     RequestTransactionState, OPEN_REQUEST_TRANSACTION_ROLLED_BACK_MESSAGE,
 };
 pub use staged_mutation::{build_insert_staged_mutations, StagedInsertBuildError, StagedMutation};
-pub use write_set::TransactionWriteSet;
+pub use write_set::{CommitFoldError, TransactionWriteSet};

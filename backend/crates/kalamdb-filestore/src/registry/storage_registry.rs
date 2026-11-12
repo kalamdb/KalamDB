@@ -88,7 +88,7 @@ impl StorageRegistry {
         // Slow path: fetch from RocksDB
         let storage = self
             .storages_provider
-            .get_storage(storage_id)
+            .get_storage_by_id(storage_id)
             .map_err(|e| FilestoreError::StorageError(e.to_string()))?;
 
         if let Some(s) = storage {
@@ -147,11 +147,6 @@ impl StorageRegistry {
     /// Call this on server restart or when bulk storage changes occur.
     pub fn invalidate_all(&self) {
         self.cache.clear();
-    }
-
-    /// Get the number of cached storage entries (for metrics/debugging)
-    pub fn cache_size(&self) -> usize {
-        self.cache.len()
     }
 
     /// List all storage configurations

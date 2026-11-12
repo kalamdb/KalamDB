@@ -3,13 +3,10 @@
 //! This module provides a DataFusion TableProvider implementation for the system.manifest table.
 //! Exposes manifest cache entries as a queryable system table.
 
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, RwLock};
 
-use datafusion::{
-    arrow::{array::RecordBatch, datatypes::SchemaRef},
-    logical_expr::Expr,
-};
-use kalamdb_commons::{models::rows::SystemTableRow, ManifestId, StorageKey, TableId};
+use datafusion::{arrow::array::RecordBatch, logical_expr::Expr};
+use kalamdb_commons::{models::rows::SystemTableRow, ManifestId, StorageKey, SystemTable, TableId};
 use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBackend, StorageError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,7 +17,7 @@ use super::{
 use crate::{
     error::{SystemError, SystemResultExt},
     providers::{
-        base::{extract_filter_value, SimpleProviderDefinition},
+        base::extract_filter_value, keyed_provider::KeyedTableProvider,
         manifest::ManifestCacheEntry,
     },
     system_row_mapper::{model_to_system_row, system_row_to_model},
@@ -45,22 +42,23 @@ pub type InMemoryChecker = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 /// System.manifest table provider using IndexedEntityStore architecture
 pub struct ManifestTableProvider {
-    store: IndexedEntityStore<ManifestId, SystemTableRow>,
+    sql: KeyedTableProvider<ManifestId, SystemTableRow>,
     /// Optional callback to check if a cache key is in process memory (injected from kalamdb-core)
-    in_memory_checker: RwLock<Option<InMemoryChecker>>,
+    in_memory_checker: Arc<RwLock<Option<InMemoryChecker>>>,
 }
 
 impl Clone for ManifestTableProvider {
     fn clone(&self) -> Self {
-        let in_memory_checker = match self.in_memory_checker.read() {
-            Ok(guard) => guard.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
-        };
-
         Self {
-            store: self.store.clone(),
-            in_memory_checker: RwLock::new(in_memory_checker),
+            sql: self.sql.clone(),
+            in_memory_checker: Arc::clone(&self.in_memory_checker),
         }
+    }
+}
+
+impl std::fmt::Debug for ManifestTableProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ManifestTableProvider").finish_non_exhaustive()
     }
 }
 
@@ -79,9 +77,23 @@ impl ManifestTableProvider {
             create_manifest_indexes(),
         );
 
-        Self {
+        let in_memory_checker = Arc::new(RwLock::new(None));
+        let checker = Arc::clone(&in_memory_checker);
+        let mut sql = KeyedTableProvider::from_stored_rows(
             store,
-            in_memory_checker: RwLock::new(None),
+            manifest_table_definition(),
+            SystemTable::Manifest.table_id(),
+            SystemTable::Manifest.table_name(),
+            "cache_key",
+            |value| Some(ManifestId::from(value)),
+        );
+        sql.set_custom_scan(Arc::new(move |store, filters, limit| {
+            manifest_filtered_scan(store, checker.as_ref(), filters, limit)
+        }));
+
+        Self {
+            sql,
+            in_memory_checker,
         }
     }
 
@@ -90,7 +102,7 @@ impl ManifestTableProvider {
         &self,
         manifest_id: &ManifestId,
     ) -> Result<Option<ManifestCacheEntry>, StorageError> {
-        let row = self.store.get(manifest_id)?;
+        let row = self.sql.store().get(manifest_id)?;
         row.map(|value| Self::decode_manifest_row(&value).map_err(Self::to_storage_error))
             .transpose()
     }
@@ -100,7 +112,7 @@ impl ManifestTableProvider {
         &self,
         manifest_id: &ManifestId,
     ) -> Result<Option<ManifestCacheEntry>, StorageError> {
-        let row = self.store.get_async(manifest_id.clone()).await?;
+        let row = self.sql.store().get_async(manifest_id.clone()).await?;
         row.map(|value| Self::decode_manifest_row(&value).map_err(Self::to_storage_error))
             .transpose()
     }
@@ -122,7 +134,7 @@ impl ManifestTableProvider {
         entry: &ManifestCacheEntry,
     ) -> Result<(), StorageError> {
         let row = Self::encode_manifest_row(entry).map_err(Self::to_storage_error)?;
-        self.store.insert(manifest_id, &row)
+        self.sql.store().insert(manifest_id, &row)
     }
 
     /// Update with old and new typed entries (for index maintenance correctness).
@@ -134,29 +146,29 @@ impl ManifestTableProvider {
     ) -> Result<(), StorageError> {
         let old_row = Self::encode_manifest_row(old_entry).map_err(Self::to_storage_error)?;
         let new_row = Self::encode_manifest_row(new_entry).map_err(Self::to_storage_error)?;
-        self.store.update_with_old(manifest_id, Some(&old_row), &new_row)
+        self.sql.store().update_with_old(manifest_id, Some(&old_row), &new_row)
     }
 
     pub fn delete_cache_entry(&self, manifest_id: &ManifestId) -> Result<(), StorageError> {
-        self.store.delete(manifest_id)
+        self.sql.store().delete(manifest_id)
     }
 
     pub async fn delete_cache_entry_async(
         &self,
         manifest_id: &ManifestId,
     ) -> Result<(), StorageError> {
-        self.store.delete_async(manifest_id.clone()).await
+        self.sql.store().delete_async(manifest_id.clone()).await
     }
 
     pub fn count_entries(&self) -> Result<usize, StorageError> {
-        self.store.count_all()
+        self.sql.store().count_all()
     }
 
     pub fn scan_manifest_entries(
         &self,
         limit: usize,
     ) -> Result<Vec<(ManifestId, ManifestCacheEntry)>, StorageError> {
-        let rows = self.store.scan_all_typed(Some(limit), None, None)?;
+        let rows = self.sql.store().scan_all_typed(Some(limit), None, None)?;
         rows.into_iter()
             .map(|(key, row)| {
                 Self::decode_manifest_row(&row)
@@ -172,95 +184,16 @@ impl ManifestTableProvider {
         start_key: Option<&[u8]>,
         limit: usize,
     ) -> Result<Vec<ManifestId>, StorageError> {
-        self.store.scan_keys_with_raw_prefix(prefix, start_key, limit)
+        self.sql.store().scan_keys_with_raw_prefix(prefix, start_key, limit)
     }
 
     pub fn delete_manifest_ids_batch(&self, ids: &[ManifestId]) -> Result<(), StorageError> {
-        self.store.delete_batch(ids)
+        self.sql.store().delete_batch(ids)
     }
 
-    /// Check if a cache key is in hot memory
-    fn is_in_memory(&self, cache_key: &str) -> bool {
-        if let Ok(guard) = self.in_memory_checker.read() {
-            if let Some(ref checker) = *guard {
-                return checker(cache_key);
-            }
-        }
-        false // Default to false if no checker is set
-    }
-
-    /// Scan all manifest cache entries and return as RecordBatch
-    ///
-    /// This is the main method used by DataFusion to read the table.
-    ///
-    /// Uses schema-driven array building for optimal performance and correctness.
+    /// Scan all manifest cache entries and return as RecordBatch.
     pub fn scan_to_record_batch(&self) -> Result<RecordBatch, SystemError> {
-        let entries = self.scan_entries(None)?;
-        self.build_batch_from_entries(entries)
-    }
-
-    /// Collect manifest entries with optional early limit.
-    fn scan_entries(
-        &self,
-        limit: Option<usize>,
-    ) -> Result<Vec<(ManifestId, ManifestCacheEntry)>, SystemError> {
-        let iter = self
-            .store
-            .scan_iterator(None, None)
-            .map_err(|e| SystemError::Storage(e.to_string()))?;
-
-        let mut entries = Vec::with_capacity(limit.unwrap_or(256));
-        let mut count = 0usize;
-        for row in iter {
-            if limit.is_some_and(|lim| count >= lim) {
-                break;
-            }
-            let (key, raw_row) = row.map_err(|e| SystemError::Storage(e.to_string()))?;
-            let entry = Self::decode_manifest_row(&raw_row)?;
-            entries.push((key, entry));
-            count += 1;
-        }
-        Ok(entries)
-    }
-
-    /// Build a RecordBatch from materialized manifest entries.
-    fn build_batch_from_entries(
-        &self,
-        entries: Vec<(ManifestId, ManifestCacheEntry)>,
-    ) -> Result<RecordBatch, SystemError> {
-        crate::build_record_batch!(
-            schema: manifest_arrow_schema(),
-            entries: entries,
-            columns: [
-                cache_keys => OptionalString(|entry| Some(entry.0.as_str())),
-                namespace_ids => OptionalString(|entry| Some(entry.0.table_id().namespace_id().as_str())),
-                table_names => OptionalString(|entry| Some(entry.0.table_id().table_name().as_str())),
-                scopes => OptionalString(|entry| Some(entry.0.scope_str())),
-                etags => OptionalString(|entry| entry.1.etag.as_deref()),
-                last_refreshed_vals => Timestamp(|entry| Some(entry.1.last_refreshed_millis())),
-                // last_accessed currently follows last_refreshed; the memory layer does not persist access timestamps.
-                last_accessed_vals => Timestamp(|entry| Some(entry.1.last_refreshed_millis())),
-                in_memory_vals => OptionalBoolean(|entry| Some(self.is_in_memory(&entry.0.as_str()))),
-                sync_states => OptionalString(|entry| Some(entry.1.sync_state.to_string())),
-                manifest_jsons => OptionalString(|entry| Some(entry.1.manifest_json()))
-            ]
-        )
-        .into_arrow_error("Failed to create RecordBatch")
-    }
-
-    /// Build a RecordBatch from a single manifest entry (point lookup result).
-    fn build_single_entry_batch(
-        &self,
-        manifest_id: &ManifestId,
-        entry: &ManifestCacheEntry,
-    ) -> Result<RecordBatch, SystemError> {
-        self.build_batch_from_entries(vec![(manifest_id.clone(), entry.clone())])
-    }
-
-    /// Scan manifest entries with a limit (early termination).
-    fn scan_to_record_batch_limited(&self, limit: usize) -> Result<RecordBatch, SystemError> {
-        let entries = self.scan_entries(Some(limit))?;
-        self.build_batch_from_entries(entries)
+        manifest_filtered_scan(self.sql.store(), self.in_memory_checker.as_ref(), &[], None)
     }
 
     /// Iterator over pending manifest IDs (from the pending-write index).
@@ -271,7 +204,8 @@ impl ManifestTableProvider {
     ) -> Result<Box<dyn Iterator<Item = Result<ManifestId, SystemError>> + Send + '_>, SystemError>
     {
         let iter = self
-            .store
+            .sql
+            .store()
             .scan_index_keys_iter(0, prefix, limit)
             .map_err(|e| SystemError::Storage(e.to_string()))?;
 
@@ -308,7 +242,8 @@ impl ManifestTableProvider {
     /// Check if a specific manifest is pending (by key).
     pub fn pending_exists(&self, manifest_id: &ManifestId) -> Result<bool, SystemError> {
         let prefix_bytes = manifest_id.storage_key();
-        self.store
+        self.sql
+            .store()
             .exists_by_index(0, &prefix_bytes)
             .map_err(|e| SystemError::Storage(e.to_string()))
     }
@@ -323,31 +258,6 @@ impl ManifestTableProvider {
         }
 
         Ok(count)
-    }
-
-    fn scan_to_batch_filtered(
-        &self,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> Result<RecordBatch, SystemError> {
-        // Check for primary key equality filter → O(1) point lookup
-        if let Some(cache_key_str) = extract_filter_value(filters, "cache_key") {
-            let manifest_id = ManifestId::from(cache_key_str.as_str());
-            if let Ok(Some(row)) = self.store.get(&manifest_id) {
-                let entry = Self::decode_manifest_row(&row)?;
-                return self.build_single_entry_batch(&manifest_id, &entry);
-            }
-            // Empty result
-            return Ok(RecordBatch::new_empty(manifest_arrow_schema()));
-        }
-
-        // With limit: use iterator with early termination
-        if let Some(lim) = limit {
-            return self.scan_to_record_batch_limited(lim);
-        }
-
-        // No filters/limit: full scan
-        self.scan_to_record_batch()
     }
 
     fn encode_manifest_row(entry: &ManifestCacheEntry) -> Result<SystemTableRow, SystemError> {
@@ -407,21 +317,81 @@ impl ManifestTableProvider {
     }
 }
 
-crate::impl_system_table_provider_metadata!(
-    simple,
-    provider = ManifestTableProvider,
-    table_name = kalamdb_commons::SystemTable::Manifest.table_name(),
-    schema = manifest_arrow_schema()
-);
+fn manifest_in_memory(checker: &RwLock<Option<InMemoryChecker>>, cache_key: &str) -> bool {
+    if let Ok(guard) = checker.read() {
+        if let Some(check) = guard.as_ref() {
+            return check(cache_key);
+        }
+    }
+    false
+}
 
-crate::impl_simple_system_table_provider!(
-    provider = ManifestTableProvider,
-    key = ManifestId,
-    value = SystemTableRow,
-    definition = provider_definition,
-    scan_all = scan_to_record_batch,
-    scan_filtered = scan_to_batch_filtered
-);
+fn scan_manifest_entries(
+    store: &IndexedEntityStore<ManifestId, SystemTableRow>,
+    limit: Option<usize>,
+) -> Result<Vec<(ManifestId, ManifestCacheEntry)>, SystemError> {
+    let iter = store
+        .scan_iterator(None, None)
+        .map_err(|e| SystemError::Storage(e.to_string()))?;
+
+    let mut entries = Vec::with_capacity(limit.unwrap_or(256));
+    let mut count = 0usize;
+    for row in iter {
+        if limit.is_some_and(|lim| count >= lim) {
+            break;
+        }
+        let (key, raw_row) = row.map_err(|e| SystemError::Storage(e.to_string()))?;
+        let entry = ManifestTableProvider::decode_manifest_row(&raw_row)?;
+        entries.push((key, entry));
+        count += 1;
+    }
+    Ok(entries)
+}
+
+fn build_manifest_batch(
+    checker: &RwLock<Option<InMemoryChecker>>,
+    entries: Vec<(ManifestId, ManifestCacheEntry)>,
+) -> Result<RecordBatch, SystemError> {
+    crate::build_record_batch!(
+        schema: manifest_arrow_schema(),
+        entries: entries,
+        columns: [
+            cache_keys => OptionalString(|entry| Some(entry.0.as_str())),
+            namespace_ids => OptionalString(|entry| Some(entry.0.table_id().namespace_id().as_str())),
+            table_names => OptionalString(|entry| Some(entry.0.table_id().table_name().as_str())),
+            scopes => OptionalString(|entry| Some(entry.0.scope_str())),
+            etags => OptionalString(|entry| entry.1.etag.as_deref()),
+            last_refreshed_vals => Timestamp(|entry| Some(entry.1.last_refreshed_millis())),
+            // last_accessed currently follows last_refreshed; the memory layer does not persist access timestamps.
+            last_accessed_vals => Timestamp(|entry| Some(entry.1.last_refreshed_millis())),
+            in_memory_vals => OptionalBoolean(|entry| Some(manifest_in_memory(checker, &entry.0.as_str()))),
+            sync_states => OptionalString(|entry| Some(entry.1.sync_state.to_string())),
+            manifest_jsons => OptionalString(|entry| Some(entry.1.manifest_json()))
+        ]
+    )
+    .into_arrow_error("Failed to create RecordBatch")
+}
+
+fn manifest_filtered_scan(
+    store: &IndexedEntityStore<ManifestId, SystemTableRow>,
+    checker: &RwLock<Option<InMemoryChecker>>,
+    filters: &[Expr],
+    limit: Option<usize>,
+) -> Result<RecordBatch, SystemError> {
+    if let Some(cache_key_str) = extract_filter_value(filters, "cache_key") {
+        let manifest_id = ManifestId::from(cache_key_str.as_str());
+        if let Ok(Some(row)) = store.get(&manifest_id) {
+            let entry = ManifestTableProvider::decode_manifest_row(&row)?;
+            return build_manifest_batch(checker, vec![(manifest_id, entry)]);
+        }
+        return Ok(RecordBatch::new_empty(manifest_arrow_schema()));
+    }
+
+    let entries = scan_manifest_entries(store, limit)?;
+    build_manifest_batch(checker, entries)
+}
+
+crate::impl_keyed_table_provider!(ManifestTableProvider);
 
 #[cfg(test)]
 mod tests {
@@ -466,7 +436,7 @@ mod tests {
 
         let key = ManifestId::from("ns1:tbl1:shared");
         let row = ManifestTableProvider::encode_manifest_row(&entry).unwrap();
-        provider.store.put(&key, &row).unwrap();
+        provider.sql.store().put(&key, &row).unwrap();
 
         let batch = provider.scan_to_record_batch().unwrap();
         assert_eq!(batch.num_rows(), 1);

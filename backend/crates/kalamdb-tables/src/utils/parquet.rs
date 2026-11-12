@@ -1,14 +1,7 @@
-use datafusion::{
-    arrow::{datatypes::SchemaRef, record_batch::RecordBatch},
-    logical_expr::Expr,
-};
+use datafusion::{arrow::record_batch::RecordBatch, logical_expr::Expr};
 use kalamdb_commons::{
     constants::SystemColumnNames,
-    models::{
-        schemas::{TableDefinition, TableType},
-        UserId,
-    },
-    TableId,
+    models::{schemas::TableDefinition, UserId},
 };
 
 use crate::{
@@ -22,71 +15,49 @@ use crate::{
     },
 };
 
-#[derive(Debug)]
 pub(crate) struct ParquetScanResult {
-    pub batch: RecordBatch,
-    pub stats: ParquetScanStats,
+    read: crate::manifest::planner::ColdBatchRead,
 }
 
-/// Async helper for loading Parquet batches via ManifestAccessPlanner.
-///
-/// Uses async file I/O to avoid blocking the tokio runtime.
-pub(crate) async fn scan_parquet_files_as_batch_async(
-    core: &TableProviderCore,
-    table_id: &TableId,
-    table_type: TableType,
-    user_id: Option<&UserId>,
-    schema: SchemaRef,
-    filter: Option<&Expr>,
-    columns: Option<&[String]>,
-) -> Result<RecordBatch, KalamDbError> {
-    Ok(scan_parquet_files_as_result_async(
-        core, table_id, table_type, user_id, schema, filter, columns,
-    )
-    .await?
-    .batch)
+impl ParquetScanResult {
+    pub(crate) async fn next_batch(&mut self) -> Option<Result<RecordBatch, KalamDbError>> {
+        self.read.next_batch().await
+    }
+
+    /// File stats. Drain [`Self::next_batch`] first.
+    pub(crate) async fn stats(self) -> crate::manifest::ParquetScanStats {
+        self.read.stats().await
+    }
 }
 
-pub(crate) async fn scan_parquet_files_as_result_async(
+pub(crate) async fn scan_provider_parquet_result(
     core: &TableProviderCore,
-    table_id: &TableId,
-    table_type: TableType,
     user_id: Option<&UserId>,
-    schema: SchemaRef,
     filter: Option<&Expr>,
     columns: Option<&[String]>,
 ) -> Result<ParquetScanResult, KalamDbError> {
-    scan_parquet_files_internal_async(
-        core, table_id, table_type, user_id, schema, filter, columns, false,
-    )
-    .await
+    scan_parquet_files_internal_async(core, user_id, filter, columns, false).await
 }
 
-pub(crate) async fn scan_parquet_files_with_stats_async(
+pub(crate) async fn scan_provider_parquet_stats(
     core: &TableProviderCore,
-    table_id: &TableId,
-    table_type: TableType,
     user_id: Option<&UserId>,
-    schema: SchemaRef,
     filter: Option<&Expr>,
     columns: Option<&[String]>,
 ) -> Result<ParquetScanResult, KalamDbError> {
-    scan_parquet_files_internal_async(
-        core, table_id, table_type, user_id, schema, filter, columns, true,
-    )
-    .await
+    scan_parquet_files_internal_async(core, user_id, filter, columns, true).await
 }
 
 async fn scan_parquet_files_internal_async(
     core: &TableProviderCore,
-    table_id: &TableId,
-    table_type: TableType,
     user_id: Option<&UserId>,
-    schema: SchemaRef,
     filter: Option<&Expr>,
     columns: Option<&[String]>,
     record_visited_files: bool,
 ) -> Result<ParquetScanResult, KalamDbError> {
+    let table_id = core.table_id();
+    let table_type = core.table_type();
+    let schema = core.schema_ref();
     let cache_result = core.services.manifest_service.get_or_load_async(table_id, user_id).await;
 
     // Fast path: if manifest loaded successfully and has no segments,
@@ -94,8 +65,7 @@ async fn scan_parquet_files_internal_async(
     if let Ok(Some(entry)) = &cache_result {
         if entry.manifest.segments.is_empty() {
             return Ok(ParquetScanResult {
-                batch: RecordBatch::new_empty(schema),
-                stats: ParquetScanStats::default(),
+                read: crate::manifest::planner::ColdBatchRead::ready(ParquetScanStats::default()),
             });
         }
     }
@@ -210,7 +180,7 @@ async fn scan_parquet_files_internal_async(
     let table_def = core.schema_registry().get_table_if_exists(table_id).ok().flatten();
     let pruning = cold_scan_pruning(filter, table_def.as_deref());
 
-    let (combined, stats) = planner
+    let read = planner
         .scan_parquet_files_async(
             manifest_entry.as_ref().map(|entry| &entry.manifest),
             storage_cached,
@@ -227,33 +197,13 @@ async fn scan_parquet_files_internal_async(
         .await?;
 
     log::trace!(
-        "[PARQUET_SCAN_ASYNC] Scan complete: table={} {} total_batches={} skipped={} scanned={} \
-         rows={} use_degraded_mode={}",
+        "[PARQUET_SCAN_ASYNC] cold read started: table={} {} use_degraded_mode={}",
         table_id,
         scope_label,
-        stats.total_files,
-        stats.skipped_files,
-        stats.scanned_files,
-        combined.num_rows(),
         use_degraded_mode
     );
 
-    if stats.total_files > 0 {
-        log::trace!(
-            "[Manifest Pruning] table={} {} batches_total={} skipped={} scanned={} rows={}",
-            table_id,
-            scope_label,
-            stats.total_files,
-            stats.skipped_files,
-            stats.scanned_files,
-            combined.num_rows()
-        );
-    }
-
-    Ok(ParquetScanResult {
-        batch: combined,
-        stats,
-    })
+    Ok(ParquetScanResult { read })
 }
 
 fn cold_scan_pruning(

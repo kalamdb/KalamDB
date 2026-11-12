@@ -102,7 +102,7 @@ pub mod secondary_index;
 pub mod seek;
 
 pub use extractor::{FunctionExtractor, IndexKeyExtractor};
-pub use prefix::{PrefixIndex, PrefixIndexedKey, PrefixIndexedValue};
+pub use prefix::{IndexRole, PrefixIndex, PrefixIndexedKey, PrefixIndexedValue};
 pub use secondary_index::SecondaryIndex;
 #[cfg(feature = "datafusion")]
 pub use seek::IndexScanPlan;

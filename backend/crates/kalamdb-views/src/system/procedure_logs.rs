@@ -22,11 +22,9 @@ use datafusion::arrow::{
     record_batch::RecordBatch,
 };
 use kalamdb_commons::SystemTable;
+use kalamdb_macros::table;
 
-use super::common::{
-    int_col, nullable_text_col, system_view_definition, text_col, view_provider_with,
-    SystemViewProvider,
-};
+use super::common::{view_provider_with, SystemViewProvider};
 use crate::{
     error::RegistryError,
     jsonl_tail::{keep_newest_by, parse_json_log_line, read_jsonl_tail, JsonlTailLimits},
@@ -37,23 +35,44 @@ crate::memoized_view_schema!(procedure_logs_schema, ProcedureLogsView);
 
 const LOG_TAIL: JsonlTailLimits = JsonlTailLimits::DEFAULT;
 
+#[table(
+    name = "procedure_logs",
+    view = true,
+    comment = "Disk-backed procedure invocation, V8 console/ctx.log, and error records (no bodies or secrets)"
+)]
 #[derive(Debug)]
 struct ProcedureLogEntry {
+    /// RFC 3339 timestamp
     timestamp: String,
+    /// Node that wrote the record
     node_id: String,
+    /// Root execution identifier
     execution_id: String,
+    /// Request transaction id
     request_id: String,
+    /// Schema-qualified procedure name
     procedure_id: String,
+    /// Module when implementation is module
     module_id: Option<String>,
+    /// Pinned module revision
     revision_id: Option<String>,
+    /// Calling user id
     actor: String,
+    /// sql | http | topic | schedule | runtime
     origin: String,
+    /// ok | error | log
     outcome: String,
+    /// invocation | console | ctx.log
     channel: String,
+    /// debug | info | warn | error
     level: String,
+    /// Typed procedure error code
     error_code: Option<String>,
+    /// V8 console/ctx.log text or sanitized error
     message: Option<String>,
+    /// Root invocation duration; 0 for V8 log lines
     duration_ms: i64,
+    /// Schedule identity when origin is schedule
     schedule_id: Option<String>,
 }
 
@@ -130,29 +149,7 @@ impl ProcedureLogsView {
     }
 
     pub fn definition() -> kalamdb_commons::schemas::TableDefinition {
-        system_view_definition(
-            SystemTable::ProcedureLogs,
-            vec![
-                text_col(1, "timestamp", "RFC 3339 timestamp"),
-                text_col(2, "node_id", "Node that wrote the record"),
-                text_col(3, "execution_id", "Root execution identifier"),
-                text_col(4, "request_id", "Request transaction id"),
-                text_col(5, "procedure_id", "Schema-qualified procedure name"),
-                nullable_text_col(6, "module_id", "Module when implementation is module"),
-                nullable_text_col(7, "revision_id", "Pinned module revision"),
-                text_col(8, "actor", "Calling user id"),
-                text_col(9, "origin", "sql | http | topic | schedule | runtime"),
-                text_col(10, "outcome", "ok | error | log"),
-                text_col(11, "channel", "invocation | console | ctx.log"),
-                text_col(12, "level", "debug | info | warn | error"),
-                nullable_text_col(13, "error_code", "Typed procedure error code"),
-                nullable_text_col(14, "message", "V8 console/ctx.log text or sanitized error"),
-                int_col(15, "duration_ms", "Root invocation duration; 0 for V8 log lines"),
-                nullable_text_col(16, "schedule_id", "Schedule identity when origin is schedule"),
-            ],
-            "Disk-backed procedure invocation, V8 console/ctx.log, and error records (no bodies \
-             or secrets)",
-        )
+        ProcedureLogEntry::definition()
     }
 
     fn log_paths(&self) -> Vec<PathBuf> {

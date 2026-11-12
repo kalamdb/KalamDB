@@ -18,6 +18,7 @@ use kalamdb_configs::ServerConfig;
 use kalamdb_raft::CommandExecutor;
 use kalamdb_session_datafusion::secure_provider;
 use kalamdb_system::SystemTablesRegistry;
+pub use kalamdb_views::catalog_provider::ComputedCatalogProvider;
 use kalamdb_views::{
     active_procedure_runs::{ActiveProcedureRunsTableProvider, ActiveProcedureRunsView},
     cluster::create_cluster_provider,
@@ -38,8 +39,6 @@ use kalamdb_views::{
     transactions::{TransactionsTableProvider, TransactionsView},
     view_base::ViewTableProvider,
 };
-#[allow(deprecated)]
-use kalamdb_views::{create_columns_provider, create_tables_provider};
 use parking_lot::RwLock;
 
 use crate::schema_registry::SchemaRegistry;
@@ -243,16 +242,6 @@ impl SystemSchemaProvider {
                 let provider = Arc::new(DatatypesTableProvider::new(datatypes_view));
                 provider as Arc<dyn TableProvider>
             },
-            #[allow(deprecated)]
-            SystemTable::Tables => {
-                let provider = Arc::new(create_tables_provider(Arc::clone(&self.system_tables)));
-                provider as Arc<dyn TableProvider>
-            },
-            #[allow(deprecated)]
-            SystemTable::Columns => {
-                let provider = Arc::new(create_columns_provider(Arc::clone(&self.system_tables)));
-                provider as Arc<dyn TableProvider>
-            },
             SystemTable::Describe => {
                 let view = Arc::new(DescribeView::new());
                 let provider = Arc::new(ViewTableProvider::new(view));
@@ -380,8 +369,8 @@ mod tests {
         assert!(names.contains(&"stats".to_string()));
         assert!(names.contains(&"settings".to_string()));
         assert!(names.contains(&"datatypes".to_string()));
-        assert!(names.contains(&"tables".to_string()));
-        assert!(names.contains(&"columns".to_string()));
+        assert!(!names.contains(&"tables".to_string()));
+        assert!(!names.contains(&"columns".to_string()));
     }
 
     #[test]
@@ -425,22 +414,6 @@ mod tests {
 
         let datatypes = provider.table("datatypes").await.unwrap();
         assert!(datatypes.is_some());
-    }
-
-    #[tokio::test]
-    async fn test_tables_view_lazy_load() {
-        let provider = create_test_provider();
-
-        let tables = provider.table("tables").await.unwrap();
-        assert!(tables.is_some());
-    }
-
-    #[tokio::test]
-    async fn test_columns_view_lazy_load() {
-        let provider = create_test_provider();
-
-        let columns = provider.table("columns").await.unwrap();
-        assert!(columns.is_some());
     }
 
     #[tokio::test]

@@ -137,11 +137,13 @@ impl KalamQueryParser {
             }
         }
 
-        if let Some(describe_sql) =
-            metadata.parsed_dml.as_deref().and_then(kalamdb_sql::returning_describe_sql)
+        if let Some(describe) = metadata
+            .parsed_dml
+            .as_deref()
+            .and_then(kalamdb_sql::returning_describe_statement)
         {
             if let Ok(plan) =
-                self.sql_executor.logical_plan_for_session(&describe_sql, exec_ctx).await
+                self.sql_executor.logical_plan_for_statement(&describe, exec_ctx).await
             {
                 let parameter_types = (0..count)
                     .map(|index| {

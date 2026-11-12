@@ -16,6 +16,7 @@ use kalamdb_backend::manager::BackendSessionManager;
 use kalamdb_commons::{
     constants::{ColumnFamilyNames, SYSTEM_NAMESPACE},
     models::{SchemaId, TransactionOrigin, UserId},
+    websocket::ChangeNotification,
     NodeId, TableId,
 };
 use kalamdb_configs::ServerConfig;
@@ -27,7 +28,10 @@ use kalamdb_live::{
 use kalamdb_raft::CommandExecutor;
 use kalamdb_sharding::{GroupId, ShardRouter};
 use kalamdb_store::StorageBackend;
-use kalamdb_system::{ClusterCoordinator, Namespace, SystemTablesRegistry};
+use kalamdb_system::{
+    ClusterCoordinator, Namespace, NotificationService as SystemNotificationService,
+    SystemTablesRegistry,
+};
 use kalamdb_tables::{SharedTableStore, UserTableStore};
 use kalamdb_views::{
     information_schema::KalamInformationSchemaProvider,
@@ -40,7 +44,7 @@ use once_cell::sync::OnceCell;
 use crate::{
     applier::UnifiedApplier,
     error::KalamDbError,
-    job_waker::JobWaker,
+    job_waker::{JobCapability, JobWaker},
     live_adapters::SchemaRegistryLookup,
     metrics::runtime::collect_runtime_metrics,
     schema_registry::{SchemaRegistry, TablesSchemaRegistryAdapter},
@@ -113,9 +117,8 @@ pub struct AppContext {
     storage_backend: Arc<dyn StorageBackend>,
 
     // ===== Managers =====
-    /// Type-erased job manager (concrete type is `kalamdb_jobs::JobsManager`).
-    /// Consumers downcast via the `kalamdb_jobs::AppContextJobsExt` trait.
-    job_manager: OnceCell<Arc<dyn std::any::Any + Send + Sync>>,
+    /// Typed job capability. `kalamdb-jobs` installs the concrete manager.
+    job_manager: OnceCell<Arc<dyn JobCapability>>,
     /// Lightweight waker so the Raft applier can notify the job loop.
     job_waker: OnceCell<Arc<dyn JobWaker>>,
     live_query_manager: OnceCell<Arc<LiveQueryManager>>,
@@ -192,7 +195,7 @@ impl std::fmt::Debug for AppContext {
             .field("user_table_store", &"Arc<UserTableStore>")
             .field("shared_table_store", &"Arc<SharedTableStore>")
             .field("storage_backend", &"Arc<dyn StorageBackend>")
-            .field("job_manager", &"OnceCell<Arc<dyn Any>>")
+            .field("job_manager", &"OnceCell<Arc<dyn JobCapability>>")
             .field("job_waker", &"OnceCell<Arc<dyn JobWaker>>")
             .field("live_query_manager", &"OnceCell<Arc<LiveQueryManager>>")
             .field("connection_registry", &"Arc<ConnectionsManager>")
@@ -327,6 +330,8 @@ impl AppContext {
 
             // Create system schema provider (views created lazily on first access,
             // stored in SchemaRegistry's CachedTableData)
+            debug_assert!(kalamdb_views::catalog_provider::computed_catalog_provider_name()
+                .contains("ComputedCatalogProvider"));
             let system_schema = Arc::new(SystemSchemaProvider::new(
                 Arc::clone(&schema_registry),
                 Arc::clone(&system_tables),
@@ -566,6 +571,7 @@ impl AppContext {
                 cached_user_repo: OnceCell::new(),
                 server_start_time,
             });
+            install_users_direct_write_notifier(app_ctx.system_tables(), &notification_service);
 
             // Register vector_search with AppContext-backed runtime.
             // This overrides the bootstrap placeholder and allows scope-aware lookup.
@@ -1039,6 +1045,7 @@ impl AppContext {
             cached_user_repo: OnceCell::new(),
             server_start_time,
         });
+        install_users_direct_write_notifier(app_ctx.system_tables(), &notification_service);
 
         // Register vector_search with AppContext-backed runtime for tests.
         app_ctx.base_session_context.register_udtf(
@@ -1118,13 +1125,14 @@ impl AppContext {
         let Some(provider) = self.schema_registry().get_provider(table_id) else {
             return Ok(false);
         };
-        let Some(shared) = (provider.as_ref() as &dyn std::any::Any)
-            .downcast_ref::<kalamdb_tables::SharedTableProvider>()
-        else {
+        let Some(shared) = kalamdb_tables::as_kalam_table(provider.as_ref()) else {
             return Ok(false);
         };
+        if !shared.is_shared() {
+            return Ok(false);
+        }
         shared
-            .select_authorizes_file_path(user_id, role, subfolder, stored_name)
+            .shared_select_authorizes_file_path(user_id, role, subfolder, stored_name)
             .await
             .map_err(KalamDbError::from)
     }
@@ -1145,20 +1153,17 @@ impl AppContext {
         self.job_manager.get().is_some()
     }
 
-    pub fn job_manager_raw(&self) -> &Arc<dyn std::any::Any + Send + Sync> {
-        self.job_manager.get().expect("JobsManager not initialized")
+    pub fn job_capability(&self) -> &Arc<dyn JobCapability> {
+        self.job_manager.get().expect("job capability is not registered")
     }
 
-    /// Set the type-erased job manager and its waker.
+    /// Install the typed job capability and its waker.
     ///
-    /// Called once from `kalamdb-jobs` initialization (typically in lifecycle.rs).
-    pub fn set_job_manager(
-        &self,
-        mgr: Arc<dyn std::any::Any + Send + Sync>,
-        waker: Arc<dyn JobWaker>,
-    ) {
-        if self.job_manager.set(mgr).is_err() {
-            panic!("JobsManager already initialized");
+    /// Called once from `kalamdb-jobs` during startup. Both values are the same
+    /// concrete manager coerced at the jobs crate, where the concrete type is known.
+    pub fn set_job_capability(&self, capability: Arc<dyn JobCapability>, waker: Arc<dyn JobWaker>) {
+        if self.job_manager.set(capability).is_err() {
+            panic!("job capability is already registered");
         }
         if self.job_waker.set(waker).is_err() {
             panic!("JobWaker already initialized");
@@ -1223,6 +1228,15 @@ impl AppContext {
     /// Check if this node is running in cluster mode
     pub fn is_cluster_mode(&self) -> bool {
         self.config.cluster.is_some()
+    }
+
+    /// Use the same shard counts as the Raft manager in each deployment mode.
+    pub fn shard_router(&self) -> ShardRouter {
+        self.config
+            .cluster
+            .as_ref()
+            .map(ShardRouter::from_cluster_config)
+            .unwrap_or_else(|| ShardRouter::new(1, 1))
     }
 
     // ===== Leadership Check Methods (Spec 021 - Raft Replication Semantics) =====
@@ -1300,7 +1314,7 @@ impl AppContext {
         let cached = self.schema_registry().get(table_id).ok_or_else(|| {
             KalamDbError::InvalidOperation(format!("Unknown shared table '{}'", table_id))
         })?;
-        ShardRouter::from_optional_cluster_config(self.config.cluster.as_ref())
+        self.shard_router()
             .shared_group_id(&cached.table)
             .map_err(KalamDbError::InvalidOperation)
     }
@@ -1331,7 +1345,7 @@ impl AppContext {
     ///
     /// Maps user_id → shard number → GroupId using consistent hashing.
     fn user_shard_group_id(&self, user_id: &UserId) -> GroupId {
-        let router = ShardRouter::from_optional_cluster_config(self.config.cluster.as_ref());
+        let router = self.shard_router();
         router.user_group_id(user_id)
     }
 
@@ -1627,4 +1641,14 @@ impl ClusterCoordinator for AppContext {
             .map_err(|error| error.to_string())?;
         Ok(response.rows_affected())
     }
+}
+
+fn install_users_direct_write_notifier(
+    system_tables: Arc<SystemTablesRegistry>,
+    notification_service: &Arc<NotificationService>,
+) {
+    system_tables
+        .users()
+        .install_direct_write_notifier(Arc::clone(notification_service)
+            as Arc<dyn SystemNotificationService<Notification = ChangeNotification> + Send + Sync>);
 }

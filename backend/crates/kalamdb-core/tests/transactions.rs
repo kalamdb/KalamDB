@@ -27,6 +27,8 @@ mod transaction_cluster_failover;
 mod transaction_cluster_group_rejection;
 #[path = "transaction_commit_live_fanout.rs"]
 mod transaction_commit_live_fanout;
+#[path = "transaction_commit_replay.rs"]
+mod transaction_commit_replay;
 #[path = "transaction_ddl_rejection.rs"]
 mod transaction_ddl_rejection;
 #[path = "transaction_races.rs"]

@@ -194,7 +194,7 @@ pub async fn prepare_components(
     }
 
     // Initialize job system (executors, manager, waker) — extracted to kalamdb-jobs crate
-    kalamdb_jobs::init_job_manager(&app_context);
+    kalamdb_jobs::init_job_manager(&app_context)?;
 
     let rate_limiter = Arc::new(RateLimiter::with_config(&config.rate_limit));
     let connection_registry = app_context.connection_registry();

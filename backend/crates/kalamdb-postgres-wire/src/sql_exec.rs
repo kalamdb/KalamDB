@@ -16,7 +16,7 @@ use pgwire::{
 
 use crate::{
     connection::WireConnectionState,
-    row_encoder::execution_result_to_responses_with_format,
+    row_encoder::execution_result_to_responses_with_format_async,
     tx_control::{execute_transaction_control, WireTransactionControl, WireTransactionOutcome},
 };
 
@@ -39,6 +39,8 @@ pub(crate) fn execution_context_for_wire(
     )
     .with_request_id(format!("wire:{}", state.session_id()))
     .with_session_config(state.session_config());
+    // `with_postgres_star` is the plan-cache boundary. HTTP SQL leaves the flag
+    // unset, so the two `SELECT *` plans stay distinct in either warmup order.
     if app_context.config().postgres_wire.show_system_columns {
         context
     } else {
@@ -122,7 +124,8 @@ impl WireSqlExecutor {
                                 self.session_manager.recover_failed_transaction(state.session_id());
                         }
                         let _span = kalamdb_observability::kdb_info_span_entered!("wire.encode");
-                        execution_result_to_responses_with_format(result, column_format)
+                        execution_result_to_responses_with_format_async(result, column_format)
+                            .await
                     },
                     Err(error) => {
                         self.mark_statement_failed_if_in_block(state);

@@ -75,7 +75,7 @@ echo "==> Running dart analyze..."
 dart analyze lib
 
 echo "==> Running tests..."
-flutter test || true   # warn but don't block (live-server tests may require a running server)
+bash ./test-offline.sh
 
 if $DRY_RUN; then
   echo "==> Dry run — validating package (no upload)..."
@@ -84,5 +84,5 @@ if $DRY_RUN; then
   echo "Dry run complete. Run './publish.sh' (without --dry-run) to publish."
 else
   echo "==> Publishing kalam_link to pub.dev..."
-  echo "y" | flutter pub publish
+  flutter pub publish --force
 fi

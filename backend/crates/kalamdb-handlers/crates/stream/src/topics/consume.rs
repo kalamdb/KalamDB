@@ -14,8 +14,8 @@ use kalamdb_core::{
     },
 };
 use kalamdb_observability::{heartbeat_pubsub_consumer, track_pubsub_consumer};
+use kalamdb_publisher::topic_message_schema;
 use kalamdb_sql::ddl::{ConsumePosition, ConsumeStatement};
-use kalamdb_tables::topics::topic_message_schema::topic_message_schema;
 
 use super::name_resolution::{resolve_topic_id, resolve_topic_name};
 

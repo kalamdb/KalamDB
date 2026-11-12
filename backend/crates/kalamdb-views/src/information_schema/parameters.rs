@@ -2,255 +2,138 @@
 
 use std::{collections::BTreeMap, sync::Arc};
 
-use async_trait::async_trait;
 use datafusion::{
-    arrow::{
-        array::{ArrayRef, BooleanBuilder, StringBuilder, UInt64Builder, UInt8Builder},
-        datatypes::{DataType, Field, Schema, SchemaRef},
-        record_batch::RecordBatch,
-    },
-    catalog::Session,
-    datasource::{TableProvider, TableType},
+    catalog::CatalogProviderList,
     error::{DataFusionError, Result as DataFusionResult},
-    execution::context::SessionState,
-    logical_expr::{Expr, TableProviderFilterPushDown},
-    physical_plan::ExecutionPlan,
 };
-use kalamdb_commons::constants::LOGICAL_DATABASE_NAME;
-use kalamdb_datafusion_sources::{
-    exec::{finalize_deferred_batch, DeferredBatchExec, DeferredBatchSource},
-    provider::combined_filter,
-};
+use kalamdb_commons::{constants::LOGICAL_DATABASE_NAME, models::RoutineParameterMode};
+use kalamdb_macros::table;
 use kalamdb_system::{CatalogRoutine, SystemTablesRegistry};
 
-use crate::{
-    information_schema::extend::{
-        append_nullable_uint64_column, cast_batch_to_schema, collect_inner_batch, concat_or_either,
-        load_inner_table, schema_with_field,
-    },
-    pg_catalog::proc::parameter_sql_type,
-};
-const CHARACTER_MAXIMUM_LENGTH: &str = "character_maximum_length";
+use super::relation::{InformationSchemaRelation, NullUint64Column};
+use crate::{catalog_provider::CatalogScanCtx, pg_catalog::proc::parameter_sql_type};
 
-/// Wraps DataFusion's `information_schema.parameters`, adds `character_maximum_length`,
-/// and appends CALL-able procedure arguments from `system.routine_parameters`.
+#[table(
+    name = "parameters_extra",
+    namespace = SchemaId::information_schema(),
+    view = true,
+    comment = "Kalam procedure arguments unioned into information_schema.parameters"
+)]
+#[derive(Clone, Debug)]
+pub(crate) struct ParameterExtra {
+    /// Specific catalog
+    specific_catalog: String,
+    /// Specific schema
+    specific_schema: String,
+    /// Specific name
+    specific_name: String,
+    /// 1-based argument position
+    ordinal_position: i64,
+    /// IN, OUT, INOUT, or VARIADIC
+    parameter_mode: String,
+    /// Argument name
+    parameter_name: Option<String>,
+    /// Argument SQL type
+    data_type: String,
+    /// Default expression
+    parameter_default: Option<String>,
+    /// Whether the argument is variadic
+    is_variadic: bool,
+    /// Routine group key used by DataFusion
+    rid: i16,
+}
+
+/// Appends `character_maximum_length` and Kalam procedure arguments.
 #[derive(Debug)]
-pub struct ExtendedInformationSchemaParametersProvider {
-    inner: Arc<dyn TableProvider>,
-    schema: SchemaRef,
-    inner_schema: SchemaRef,
+pub(crate) struct ParametersRelation {
+    catalog_list: Arc<dyn CatalogProviderList>,
     system_tables: Arc<SystemTablesRegistry>,
 }
 
-impl ExtendedInformationSchemaParametersProvider {
+impl ParametersRelation {
+    /// Relation backed by the process catalog list and system registry.
     pub fn new(
-        catalog_list: Arc<dyn datafusion::catalog::CatalogProviderList>,
+        catalog_list: Arc<dyn CatalogProviderList>,
         system_tables: Arc<SystemTablesRegistry>,
     ) -> Self {
-        let inner = load_inner_table(catalog_list, "parameters");
-        let inner_schema = inner.schema();
-        let schema = schema_with_field(&inner_schema, CHARACTER_MAXIMUM_LENGTH);
         Self {
-            inner,
-            schema,
-            inner_schema,
+            catalog_list,
             system_tables,
         }
     }
-
-    async fn collect_extended_batch(&self, state: &SessionState) -> DataFusionResult<RecordBatch> {
-        let inner_batch = collect_inner_batch(&self.inner, state, &[], None).await?;
-        let inner_extended = if inner_batch.num_rows() == 0 {
-            RecordBatch::new_empty(Arc::clone(&self.schema))
-        } else {
-            append_nullable_uint64_column(&inner_batch, &self.schema, CHARACTER_MAXIMUM_LENGTH)?
-        };
-        let kalam_batch =
-            kalam_parameter_batch(&self.system_tables, &self.inner_schema, &self.schema)?;
-        concat_or_either(&self.schema, inner_extended, kalam_batch)
-    }
 }
 
-struct ExtendedParametersScanSource {
-    provider: Arc<ExtendedInformationSchemaParametersProvider>,
-    session_state: SessionState,
-    physical_filter: Option<Arc<dyn datafusion::physical_expr::PhysicalExpr>>,
-    projection: Option<Vec<usize>>,
-    limit: Option<usize>,
-    output_schema: SchemaRef,
-}
+impl InformationSchemaRelation for ParametersRelation {
+    type Ext = NullUint64Column;
+    type Extra = ParameterExtra;
 
-#[async_trait]
-impl DeferredBatchSource for ExtendedParametersScanSource {
-    fn source_name(&self) -> &'static str {
-        "information_schema_parameters_extended"
+    const NAME: &'static str = "parameters";
+    const STOCK: Option<&'static str> = Some("parameters");
+
+    fn catalog_list(&self) -> Option<Arc<dyn CatalogProviderList>> {
+        Some(Arc::clone(&self.catalog_list))
     }
 
-    fn schema(&self) -> SchemaRef {
-        Arc::clone(&self.output_schema)
+    fn system_tables(&self) -> Option<&SystemTablesRegistry> {
+        Some(&self.system_tables)
     }
 
-    async fn produce_batch(&self) -> DataFusionResult<RecordBatch> {
-        let batch = self.provider.collect_extended_batch(&self.session_state).await?;
-        finalize_deferred_batch(
-            batch,
-            self.physical_filter.as_ref(),
-            self.projection.as_deref(),
-            self.limit,
-            self.source_name(),
-        )
-    }
-}
-
-#[async_trait]
-impl TableProvider for ExtendedInformationSchemaParametersProvider {
-    fn schema(&self) -> SchemaRef {
-        Arc::clone(&self.schema)
+    fn push_filters(&self) -> bool {
+        false
     }
 
-    fn table_type(&self) -> TableType {
-        TableType::View
+    fn push_limit(&self) -> bool {
+        false
     }
 
-    async fn scan(
-        &self,
-        state: &dyn Session,
-        projection: Option<&Vec<usize>>,
-        filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        let session_state = state
-            .as_any()
-            .downcast_ref::<SessionState>()
-            .ok_or_else(|| DataFusionError::Plan("expected SessionState".to_string()))?
-            .clone();
-
-        let output_schema = match projection {
-            Some(indices) => self
-                .schema()
-                .project(indices)
-                .map(Arc::new)
-                .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?,
-            None => self.schema(),
-        };
-
-        let physical_filter = if let Some(filter) = combined_filter(filters) {
-            let df_schema = datafusion::common::DFSchema::try_from(self.schema())?;
-            Some(state.create_physical_expr(filter, &df_schema)?)
-        } else {
-            None
-        };
-
-        Ok(Arc::new(DeferredBatchExec::new(Arc::new(ExtendedParametersScanSource {
-            provider: Arc::new(ExtendedInformationSchemaParametersProvider {
-                inner: Arc::clone(&self.inner),
-                schema: Arc::clone(&self.schema),
-                inner_schema: Arc::clone(&self.inner_schema),
-                system_tables: Arc::clone(&self.system_tables),
-            }),
-            session_state,
-            physical_filter,
-            projection: projection.cloned(),
-            limit,
-            output_schema,
-        }))))
+    fn inexact_filters(&self) -> bool {
+        true
     }
 
-    fn supports_filters_pushdown(
-        &self,
-        filters: &[&Expr],
-    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
-        Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
-    }
-}
-
-fn kalam_parameter_batch(
-    system_tables: &SystemTablesRegistry,
-    inner_schema: &SchemaRef,
-    output_schema: &SchemaRef,
-) -> DataFusionResult<RecordBatch> {
-    let mut routines: BTreeMap<String, CatalogRoutine> = BTreeMap::new();
-    for routine in system_tables.catalog_stores().list_routines().map_err(|error| {
-        DataFusionError::Execution(format!("failed to list system.routines: {error}"))
-    })? {
-        if routine.language.as_deref() == Some("INTERNAL") {
-            continue;
+    fn extra_rows(&self, _ctx: &CatalogScanCtx<'_>) -> DataFusionResult<Vec<Self::Extra>> {
+        let mut routines: BTreeMap<String, CatalogRoutine> = BTreeMap::new();
+        for routine in self.system_tables.catalog_stores().list_routines().map_err(|error| {
+            DataFusionError::Execution(format!("failed to list system.routines: {error}"))
+        })? {
+            if routine.language.as_deref() == Some("INTERNAL") {
+                continue;
+            }
+            routines.insert(routine.routine_id.as_str().to_string(), routine);
         }
-        routines.insert(routine.routine_id.as_str().to_string(), routine);
+
+        let mut parameters =
+            self.system_tables.catalog_stores().list_all_parameters().map_err(|error| {
+                DataFusionError::Execution(format!(
+                    "failed to list system.routine_parameters: {error}"
+                ))
+            })?;
+        parameters.sort_by(|left, right| {
+            left.routine_id
+                .as_str()
+                .cmp(right.routine_id.as_str())
+                .then_with(|| left.ordinal.cmp(&right.ordinal))
+        });
+
+        let mut rows = Vec::new();
+        for parameter in parameters {
+            let Some(routine) = routines.get(parameter.routine_id.as_str()) else {
+                continue;
+            };
+            let data_type = parameter_sql_type(&parameter);
+            let is_variadic = parameter.mode == RoutineParameterMode::Variadic;
+            rows.push(ParameterExtra {
+                specific_catalog: LOGICAL_DATABASE_NAME.to_string(),
+                specific_schema: routine.namespace_id.as_str().to_string(),
+                specific_name: routine.routine_id.as_str().to_string(),
+                ordinal_position: i64::from(parameter.ordinal.max(0)) + 1,
+                parameter_mode: parameter.mode.as_str().to_string(),
+                parameter_name: Some(parameter.name),
+                data_type,
+                parameter_default: parameter.default_expr,
+                is_variadic,
+                rid: 0,
+            });
+        }
+        Ok(rows)
     }
-
-    let mut parameters = system_tables.catalog_stores().list_all_parameters().map_err(|error| {
-        DataFusionError::Execution(format!("failed to list system.routine_parameters: {error}"))
-    })?;
-    parameters.sort_by(|left, right| {
-        left.routine_id
-            .as_str()
-            .cmp(right.routine_id.as_str())
-            .then_with(|| left.ordinal.cmp(&right.ordinal))
-    });
-
-    let mut specific_catalog = StringBuilder::new();
-    let mut specific_schema = StringBuilder::new();
-    let mut specific_name = StringBuilder::new();
-    let mut ordinal_position = UInt64Builder::new();
-    let mut parameter_mode = StringBuilder::new();
-    let mut parameter_name = StringBuilder::new();
-    let mut data_type = StringBuilder::new();
-    let mut parameter_default = StringBuilder::new();
-    let mut is_variadic = BooleanBuilder::new();
-    let mut rid = UInt8Builder::new();
-
-    for parameter in parameters {
-        let Some(routine) = routines.get(parameter.routine_id.as_str()) else {
-            continue;
-        };
-        specific_catalog.append_value(LOGICAL_DATABASE_NAME);
-        specific_schema.append_value(routine.namespace_id.as_str());
-        specific_name.append_value(routine.routine_id.as_str());
-        ordinal_position.append_value((parameter.ordinal.max(0) as u64) + 1);
-        parameter_mode.append_value(parameter.mode.as_str());
-        parameter_name.append_value(&parameter.name);
-        data_type.append_value(parameter_sql_type(&parameter));
-        parameter_default.append_option(parameter.default_expr.as_deref());
-        is_variadic.append_value(
-            parameter.mode == kalamdb_commons::models::RoutineParameterMode::Variadic,
-        );
-        rid.append_value(0);
-    }
-
-    let built_schema = Arc::new(Schema::new(vec![
-        Field::new("specific_catalog", DataType::Utf8, false),
-        Field::new("specific_schema", DataType::Utf8, false),
-        Field::new("specific_name", DataType::Utf8, false),
-        Field::new("ordinal_position", DataType::UInt64, false),
-        Field::new("parameter_mode", DataType::Utf8, false),
-        Field::new("parameter_name", DataType::Utf8, true),
-        Field::new("data_type", DataType::Utf8, false),
-        Field::new("parameter_default", DataType::Utf8, true),
-        Field::new("is_variadic", DataType::Boolean, false),
-        Field::new("rid", DataType::UInt8, false),
-    ]));
-
-    let utf8_batch = RecordBatch::try_new(
-        built_schema,
-        vec![
-            Arc::new(specific_catalog.finish()) as ArrayRef,
-            Arc::new(specific_schema.finish()) as ArrayRef,
-            Arc::new(specific_name.finish()) as ArrayRef,
-            Arc::new(ordinal_position.finish()) as ArrayRef,
-            Arc::new(parameter_mode.finish()) as ArrayRef,
-            Arc::new(parameter_name.finish()) as ArrayRef,
-            Arc::new(data_type.finish()) as ArrayRef,
-            Arc::new(parameter_default.finish()) as ArrayRef,
-            Arc::new(is_variadic.finish()) as ArrayRef,
-            Arc::new(rid.finish()) as ArrayRef,
-        ],
-    )
-    .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?;
-
-    let inner_typed = cast_batch_to_schema(utf8_batch, inner_schema)?;
-    if inner_typed.num_rows() == 0 {
-        return Ok(RecordBatch::new_empty(Arc::clone(output_schema)));
-    }
-    append_nullable_uint64_column(&inner_typed, output_schema, CHARACTER_MAXIMUM_LENGTH)
 }

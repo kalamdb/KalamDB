@@ -4,7 +4,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     sync::{
         atomic::{AtomicU16, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
 
@@ -36,7 +36,10 @@ use kalamdb_core::{
         },
     },
 };
-use kalamdb_store::test_utils::TestDb;
+use kalamdb_store::{
+    storage_trait::{KvIterator, Operation, Partition, StorageBackend, StorageStats},
+    test_utils::TestDb,
+};
 use kalamdb_system::{providers::storages::models::StorageType, Storage};
 use uuid::Uuid;
 
@@ -68,6 +71,47 @@ pub async fn create_cluster_app_context() -> (Arc<AppContext>, TestDb) {
     create_cluster_app_context_with_config(ServerConfig::default()).await
 }
 
+pub async fn create_standalone_app_context() -> (Arc<AppContext>, TestDb) {
+    let test_db = TestDb::with_system_tables().expect("create test db");
+    let storage_path = test_db.storage_dir().expect("storage dir").to_string_lossy().into_owned();
+    let app_ctx = AppContext::create_isolated(
+        test_db.backend(),
+        NodeId::new(1),
+        storage_path.clone(),
+        ServerConfig::default(),
+    );
+    app_ctx.executor().start().await.expect("start standalone executor");
+    app_ctx
+        .executor()
+        .initialize_cluster()
+        .await
+        .expect("initialize standalone executor");
+    app_ctx.wire_raft_appliers();
+    let storages = app_ctx.system_tables().storages();
+    if storages
+        .get_storage_by_id(&StorageId::from("local"))
+        .expect("read local storage")
+        .is_none()
+    {
+        storages
+            .create_storage(Storage {
+                storage_id: StorageId::from("local"),
+                storage_name: "Local Storage".to_string(),
+                description: Some("Default local storage for tests".to_string()),
+                storage_type: StorageType::Filesystem,
+                base_directory: storage_path,
+                credentials: None,
+                config_json: None,
+                shared_tables_template: "shared/{namespace}/{table}".to_string(),
+                user_tables_template: "user/{namespace}/{table}/{userId}".to_string(),
+                created_at: Utc::now().timestamp_millis(),
+                updated_at: Utc::now().timestamp_millis(),
+            })
+            .expect("create local storage");
+    }
+    (app_ctx, test_db)
+}
+
 pub async fn create_cluster_app_context_with_config(
     config: ServerConfig,
 ) -> (Arc<AppContext>, TestDb) {
@@ -78,6 +122,166 @@ pub async fn create_cluster_app_context_with_shared_shards(
     config: ServerConfig,
     shared_shards: u32,
 ) -> (Arc<AppContext>, TestDb) {
+    let (app_ctx, test_db, _counter) = start_cluster_app(config, shared_shards, false).await;
+    (app_ctx, test_db)
+}
+
+/// Cluster app whose storage backend counts `StorageBackend::batch` calls per partition.
+pub async fn create_counting_cluster_app_context() -> (Arc<AppContext>, TestDb, Arc<BatchCounter>) {
+    let (app_ctx, test_db, counter) = start_cluster_app(ServerConfig::default(), 1, true).await;
+    (app_ctx, test_db, counter.expect("counting storage backend"))
+}
+
+/// Counts atomic storage batches by the partitions they touch.
+pub struct BatchCounter {
+    inner: Arc<dyn StorageBackend>,
+    touches: Mutex<HashMap<String, usize>>,
+    fail_next: Mutex<Vec<String>>,
+}
+
+impl BatchCounter {
+    fn wrap(inner: Arc<dyn StorageBackend>) -> Arc<Self> {
+        Arc::new(Self {
+            inner,
+            touches: Mutex::new(HashMap::new()),
+            fail_next: Mutex::new(Vec::new()),
+        })
+    }
+
+    pub fn batches_touching(&self, partition: &str) -> usize {
+        self.touches.lock().expect("batch counter").get(partition).copied().unwrap_or(0)
+    }
+
+    /// Fail the next durable batch that touches `partition`. Absorbed coalesce
+    /// calls are not durable and are left alone.
+    pub fn fail_next_durable_batch_touching(&self, partition: &str) {
+        self.fail_next.lock().expect("batch counter").push(partition.to_string());
+    }
+
+    pub fn pending_durable_failures(&self) -> usize {
+        self.fail_next.lock().expect("batch counter").len()
+    }
+}
+
+impl StorageBackend for BatchCounter {
+    fn get(
+        &self,
+        partition: &Partition,
+        key: &[u8],
+    ) -> kalamdb_store::storage_trait::Result<Option<Vec<u8>>> {
+        self.inner.get(partition, key)
+    }
+
+    fn get_many(
+        &self,
+        partition: &Partition,
+        keys: &[Vec<u8>],
+    ) -> kalamdb_store::storage_trait::Result<Vec<Option<Vec<u8>>>> {
+        self.inner.get_many(partition, keys)
+    }
+
+    fn put(
+        &self,
+        partition: &Partition,
+        key: &[u8],
+        value: &[u8],
+    ) -> kalamdb_store::storage_trait::Result<()> {
+        self.inner.put(partition, key, value)
+    }
+
+    fn delete(
+        &self,
+        partition: &Partition,
+        key: &[u8],
+    ) -> kalamdb_store::storage_trait::Result<()> {
+        self.inner.delete(partition, key)
+    }
+
+    fn batch(&self, operations: Vec<Operation>) -> kalamdb_store::storage_trait::Result<()> {
+        // Calls inside a coalesce session are absorbed and flushed once later.
+        if !kalamdb_store::coalesce_session_active() {
+            let mut names = Vec::new();
+            for operation in &operations {
+                let partition = match operation {
+                    Operation::Put { partition, .. } | Operation::Delete { partition, .. } => {
+                        partition.name()
+                    },
+                };
+                if !names.iter().any(|name: &String| name == partition) {
+                    names.push(partition.to_string());
+                }
+            }
+            let mut fail_next = self.fail_next.lock().expect("batch counter");
+            let injected = names.iter().any(|name| fail_next.iter().any(|pending| pending == name));
+            if injected {
+                fail_next.retain(|pending| !names.iter().any(|name| name == pending));
+                return Err(kalamdb_store::storage_trait::StorageError::Other(
+                    "injected durable batch failure".to_string(),
+                ));
+            }
+            drop(fail_next);
+            let mut touches = self.touches.lock().expect("batch counter");
+            for name in names {
+                *touches.entry(name).or_insert(0) += 1;
+            }
+        }
+        self.inner.batch(operations)
+    }
+
+    fn scan(
+        &self,
+        partition: &Partition,
+        prefix: Option<&[u8]>,
+        start_key: Option<&[u8]>,
+        limit: Option<usize>,
+    ) -> kalamdb_store::storage_trait::Result<KvIterator<'_>> {
+        self.inner.scan(partition, prefix, start_key, limit)
+    }
+
+    fn scan_reverse(
+        &self,
+        partition: &Partition,
+        prefix: Option<&[u8]>,
+        start_key: Option<&[u8]>,
+        limit: Option<usize>,
+    ) -> kalamdb_store::storage_trait::Result<KvIterator<'_>> {
+        self.inner.scan_reverse(partition, prefix, start_key, limit)
+    }
+
+    fn partition_exists(&self, partition: &Partition) -> bool {
+        self.inner.partition_exists(partition)
+    }
+
+    fn create_partition(&self, partition: &Partition) -> kalamdb_store::storage_trait::Result<()> {
+        self.inner.create_partition(partition)
+    }
+
+    fn list_partitions(&self) -> kalamdb_store::storage_trait::Result<Vec<Partition>> {
+        self.inner.list_partitions()
+    }
+
+    fn drop_partition(&self, partition: &Partition) -> kalamdb_store::storage_trait::Result<()> {
+        self.inner.drop_partition(partition)
+    }
+
+    fn compact_partition(&self, partition: &Partition) -> kalamdb_store::storage_trait::Result<()> {
+        self.inner.compact_partition(partition)
+    }
+
+    fn flush_all_memtables(&self) -> kalamdb_store::storage_trait::Result<()> {
+        self.inner.flush_all_memtables()
+    }
+
+    fn stats(&self) -> StorageStats {
+        self.inner.stats()
+    }
+}
+
+async fn start_cluster_app(
+    config: ServerConfig,
+    shared_shards: u32,
+    counting: bool,
+) -> (Arc<AppContext>, TestDb, Option<Arc<BatchCounter>>) {
     let caller_supplied_cluster = config.cluster.is_some();
     let mut config = config;
     let mut last_bind_error = String::new();
@@ -108,15 +312,20 @@ pub async fn create_cluster_app_context_with_shared_shards(
         let test_db = TestDb::with_system_tables().expect("create test db");
         let storage_base_path = test_db.storage_dir().expect("storage dir");
         let storage_path = storage_base_path.to_string_lossy().into_owned();
+        let counter = counting.then(|| BatchCounter::wrap(test_db.backend()));
+        let backend = counter
+            .clone()
+            .map(|counter| counter as Arc<dyn StorageBackend>)
+            .unwrap_or_else(|| test_db.backend());
         let app_ctx = AppContext::create_isolated(
-            test_db.backend(),
+            backend,
             NodeId::new(1),
             storage_path.clone(),
             config.clone(),
         );
         match app_ctx.executor().start().await {
             Ok(()) => {
-                started = Some((app_ctx, test_db, storage_path));
+                started = Some((app_ctx, test_db, storage_path, counter));
                 break;
             },
             Err(error) if !caller_supplied_cluster && raft_bind_in_use(&error) => {
@@ -125,11 +334,11 @@ pub async fn create_cluster_app_context_with_shared_shards(
             Err(error) => panic!("start raft: {error}"),
         }
     }
-    let (app_ctx, test_db, storage_base_path) =
+    let (app_ctx, test_db, storage_base_path, counter) =
         started.unwrap_or_else(|| panic!("start raft: {last_bind_error}"));
     app_ctx.executor().initialize_cluster().await.expect("initialize raft cluster");
     app_ctx.wire_raft_appliers();
-    kalamdb_jobs::init_job_manager(&app_ctx);
+    kalamdb_jobs::init_job_manager(&app_ctx).expect("job capability");
     let _ = kalamdb_jobs::JobsManagerRuntime::start(
         kalamdb_jobs::AppContextJobsExt::job_manager(app_ctx.as_ref()),
         4,
@@ -155,7 +364,7 @@ pub async fn create_cluster_app_context_with_shared_shards(
             .expect("create default local storage");
     }
 
-    (app_ctx, test_db)
+    (app_ctx, test_db, counter)
 }
 
 pub fn unique_namespace(prefix: &str) -> SchemaId {
@@ -166,6 +375,15 @@ pub async fn create_shared_table(
     app_ctx: &Arc<AppContext>,
     namespace: &SchemaId,
     table_name: &str,
+) -> TableId {
+    create_shared_table_in_shard(app_ctx, namespace, table_name, 0).await
+}
+
+pub async fn create_shared_table_in_shard(
+    app_ctx: &Arc<AppContext>,
+    namespace: &SchemaId,
+    table_name: &str,
+    shared_shard_id: u32,
 ) -> TableId {
     let table_id = TableId::new(namespace.clone(), TableName::new(table_name));
     let id_col = ColumnDefinition::new(
@@ -181,7 +399,10 @@ pub async fn create_shared_table(
     );
     let name_col = ColumnDefinition::simple(2, "name", 2, KalamDataType::Text);
 
-    let table_options = TableOptions::shared();
+    let mut table_options = TableOptions::shared();
+    if let TableOptions::Shared(options) = &mut table_options {
+        options.shared_shard_id = shared_shard_id;
+    }
 
     let mut table_def = TableDefinition::new(
         namespace.clone(),
@@ -387,12 +608,20 @@ pub fn observer_exec_ctx(app_ctx: &Arc<AppContext>) -> ExecutionContext {
     ExecutionContext::new(UserId::from("sql-observer"), Role::Dba, app_ctx.base_session_context())
 }
 
+/// Drain [`ExecutionResult::StreamingRows`] so assertions can match on collected rows.
+pub async fn materialize_result(result: ExecutionResult) -> ExecutionResult {
+    result
+        .into_materialized_rows()
+        .await
+        .unwrap_or_else(|error| panic!("materialize execution result: {error}"))
+}
+
 pub async fn execute_ok(
     executor: &SqlExecutor,
     exec_ctx: &ExecutionContext,
     sql: &str,
 ) -> ExecutionResult {
-    executor.execute(sql, exec_ctx, vec![]).await.expect(sql)
+    materialize_result(executor.execute(sql, exec_ctx, vec![]).await.expect(sql)).await
 }
 
 pub async fn execute_ok_with_params(
@@ -401,7 +630,7 @@ pub async fn execute_ok_with_params(
     sql: &str,
     params: Vec<ScalarValue>,
 ) -> ExecutionResult {
-    executor.execute(sql, exec_ctx, params).await.expect(sql)
+    materialize_result(executor.execute(sql, exec_ctx, params).await.expect(sql)).await
 }
 
 pub async fn execute_err(executor: &SqlExecutor, exec_ctx: &ExecutionContext, sql: &str) -> String {
@@ -416,7 +645,7 @@ pub async fn execute_err(executor: &SqlExecutor, exec_ctx: &ExecutionContext, sq
 pub fn result_rows(result: ExecutionResult) -> Vec<HashMap<String, KalamCellValue>> {
     let result = result
         .into_arrow_rows()
-        .unwrap_or_else(|error| panic!("scalar rows to arrow: {error}"));
+        .unwrap_or_else(|error| panic!("scalar/stream rows to arrow: {error}"));
     let ExecutionResult::Rows {
         batches, row_count, ..
     } = result

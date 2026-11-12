@@ -201,12 +201,16 @@ impl RocksDBBackend {
     }
 
     fn get_cf(&self, partition: &Partition) -> Result<Arc<BoundColumnFamily<'_>>> {
-        // New hot partitions own a CF. Existing prefix-based partitions remain
-        // readable in their original CF without an implicit data migration.
-        if let Some(cf) = self.db.cf_handle(partition.name()) {
-            return Ok(cf);
-        }
-        let cf_name = physical_cf_for_partition(partition.name());
+        // Only hot data/index partitions own dedicated physical families.
+        // System metadata, system indexes, and Raft always use their canonical CFs.
+        let physical = physical_cf_for_partition(partition.name());
+        let cf_name = if matches!(physical, "hot_data" | "hot_index")
+            && partition.name() != physical
+        {
+            partition.name()
+        } else {
+            physical
+        };
         self.db
             .cf_handle(cf_name)
             .ok_or_else(|| StorageError::PartitionNotFound(cf_name.to_string()))
@@ -364,10 +368,22 @@ impl StorageBackend for RocksDBBackend {
             physical_cf = physical_cf_for_partition(partition.name())
         );
         let cf = self.get_cf(partition)?;
+        kalamdb_observability::dml_stage::add_count(
+            kalamdb_observability::dml_stage::DmlCount::BackendLookup,
+            1,
+        );
         let physical_key = physical_key(partition.name(), key);
         self.db
             .get_pinned_cf(&cf, physical_key)
-            .map(|value| value.map(|slice| slice.to_vec()))
+            .map(|value| {
+                value.map(|slice| {
+                    kalamdb_observability::dml_stage::add_count(
+                        kalamdb_observability::dml_stage::DmlCount::FetchedBytes,
+                        slice.len() as u64,
+                    );
+                    slice.to_vec()
+                })
+            })
             .map_err(|e| StorageError::IoError(e.to_string()))
     }
 
@@ -376,13 +392,29 @@ impl StorageBackend for RocksDBBackend {
             return Ok(Vec::new());
         }
         let cf = self.get_cf(partition)?;
+        kalamdb_observability::dml_stage::add_count(
+            kalamdb_observability::dml_stage::DmlCount::BackendLookup,
+            keys.len() as u64,
+        );
         let physical_keys: Vec<Vec<u8>> =
             keys.iter().map(|key| physical_key(partition.name(), key)).collect();
         let lookups = physical_keys.iter().map(|key| (&cf, key.as_slice()));
         self.db
             .multi_get_cf(lookups)
             .into_iter()
-            .map(|value| value.map_err(|error| StorageError::IoError(error.to_string())))
+            .map(|value| {
+                value
+                    .map(|bytes| {
+                        if let Some(bytes) = bytes.as_ref() {
+                            kalamdb_observability::dml_stage::add_count(
+                                kalamdb_observability::dml_stage::DmlCount::FetchedBytes,
+                                bytes.len() as u64,
+                            );
+                        }
+                        bytes
+                    })
+                    .map_err(|error| StorageError::IoError(error.to_string()))
+            })
             .collect()
     }
 
@@ -425,6 +457,26 @@ impl StorageBackend for RocksDBBackend {
         let Some(operations) = crate::write_coalesce::buffer_operations(operations) else {
             return Ok(());
         };
+        let _backend = kalamdb_observability::dml_stage::stage_guard(
+            kalamdb_observability::dml_stage::DmlStage::BackendSubmit,
+        );
+        if kalamdb_observability::dml_stage::tracing_enabled() {
+            let submitted_bytes = operations
+                .iter()
+                .map(|op| match op {
+                    Operation::Put { key, value, .. } => key.len() + value.len(),
+                    Operation::Delete { key, .. } => key.len(),
+                })
+                .sum::<usize>() as u64;
+            kalamdb_observability::dml_stage::add_units(
+                kalamdb_observability::dml_stage::DmlStage::BackendSubmit,
+                operations.len() as u64,
+            );
+            kalamdb_observability::dml_stage::add_count(
+                kalamdb_observability::dml_stage::DmlCount::SubmittedBytes,
+                submitted_bytes,
+            );
+        }
         let _span = kalamdb_observability::kdb_debug_span_entered!(
             "rocksdb.batch",
             op_count = operations.len()
@@ -450,13 +502,16 @@ impl StorageBackend for RocksDBBackend {
             };
 
             let partition_name = partition.name();
-            let cache_entry = match partition_cache.entry(partition_name.to_string()) {
-                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    let cf = self.get_cf(&partition)?;
-                    entry.insert((cf, partition_key_prefix(partition_name)))
-                },
-            };
+            if !partition_cache.contains_key(partition_name) {
+                let cf = self.get_cf(&partition)?;
+                partition_cache.insert(
+                    partition_name.to_string(),
+                    (cf, partition_key_prefix(partition_name)),
+                );
+            }
+            let cache_entry = partition_cache.get(partition_name).expect(
+                "partition handle is inserted before the batch writes that partition",
+            );
             let physical_key = prefixed_physical_key(&cache_entry.1, &key);
 
             match value {
@@ -521,12 +576,17 @@ impl StorageBackend for RocksDBBackend {
             partition_prefix: Vec<u8>,
             user_prefix: Option<Vec<u8>>,
             remaining: Option<usize>,
+            trace: bool,
+            started: Option<std::time::Instant>,
         }
 
         impl<'a, D: rocksdb::DBAccess> Iterator for SnapshotScanIter<'a, D> {
             type Item = (Vec<u8>, Vec<u8>);
 
             fn next(&mut self) -> Option<Self::Item> {
+                if self.trace && self.started.is_none() {
+                    self.started = Some(std::time::Instant::now());
+                }
                 if let Some(0) = self.remaining {
                     return None;
                 }
@@ -547,10 +607,32 @@ impl StorageBackend for RocksDBBackend {
                                 *left -= 1;
                             }
                         }
+                        if self.trace {
+                            kalamdb_observability::dml_stage::add_count(
+                                kalamdb_observability::dml_stage::DmlCount::BackendLookup,
+                                1,
+                            );
+                            kalamdb_observability::dml_stage::add_count(
+                                kalamdb_observability::dml_stage::DmlCount::FetchedBytes,
+                                v.len() as u64,
+                            );
+                        }
                         Some((logical_key.to_vec(), v.to_vec()))
                     },
                     Err(_) => None,
                 }
+            }
+        }
+
+        impl<'a, D: rocksdb::DBAccess> Drop for SnapshotScanIter<'a, D> {
+            fn drop(&mut self) {
+                let Some(start) = self.started else {
+                    return;
+                };
+                kalamdb_observability::dml_stage::record_elapsed(
+                    kalamdb_observability::dml_stage::DmlStage::ScanFilter,
+                    start.elapsed(),
+                );
             }
         }
 
@@ -560,6 +642,8 @@ impl StorageBackend for RocksDBBackend {
             partition_prefix,
             user_prefix,
             remaining: limit,
+            trace: kalamdb_observability::dml_stage::tracing_enabled(),
+            started: None,
         };
 
         Ok(Box::new(iter))
@@ -668,19 +752,16 @@ impl StorageBackend for RocksDBBackend {
 
     fn create_partition(&self, partition: &Partition) -> Result<()> {
         let physical = physical_cf_for_partition(partition.name());
-        if self.partition_exists(partition)
-            && (self.db.cf_handle(partition.name()).is_some()
-                || self.db.cf_handle(physical).is_some())
-        {
-            return Ok(());
+        let dedicated_hot = matches!(physical, "hot_data" | "hot_index")
+            && partition.name() != physical;
+        let target = if dedicated_hot { partition.name() } else { physical };
+        if self.partition_exists(partition) {
+            if self.db.cf_handle(target).is_some() {
+                return Ok(());
+            }
+            return Err(StorageError::PartitionNotFound(target.to_string()));
         }
-        let isolated_hot =
-            matches!(physical, "hot_data" | "hot_index") && !self.partition_exists(partition);
-        self.ensure_physical_cf(if isolated_hot {
-            partition.name()
-        } else {
-            physical
-        })?;
+        self.ensure_physical_cf(target)?;
         self.persist_logical_partition(partition.name())?;
         self.track_logical_partition(partition.name());
         Ok(())
@@ -698,11 +779,14 @@ impl StorageBackend for RocksDBBackend {
 
     fn drop_partition(&self, partition: &Partition) -> Result<()> {
         let physical = physical_cf_for_partition(partition.name());
-        let has_isolated_cf =
-            self.db.cf_handle(partition.name()).is_some() && partition.name() != physical;
+        let dedicated_hot = matches!(physical, "hot_data" | "hot_index")
+            && partition.name() != physical;
         let was_tracked = self.partition_exists(partition);
 
-        if has_isolated_cf {
+        if dedicated_hot && !was_tracked {
+            return Ok(());
+        }
+        if dedicated_hot {
             self.db
                 .drop_cf(partition.name())
                 .map_err(|e| StorageError::IoError(e.to_string()))?;
@@ -716,10 +800,6 @@ impl StorageBackend for RocksDBBackend {
             if was_tracked {
                 self.remove_logical_partition(partition.name())?;
             }
-            return Ok(());
-        }
-
-        if !was_tracked && matches!(physical, "hot_data" | "hot_index") {
             return Ok(());
         }
 
@@ -970,6 +1050,46 @@ mod tests {
     }
 
     #[test]
+    fn all_system_tables_share_one_physical_meta_cf() {
+        use kalamdb_commons::system_tables::SystemTable;
+
+        let temp = TempDir::new().unwrap();
+        let init = RocksDbInit::with_defaults(temp.path().to_string_lossy());
+        let db = init.open().unwrap();
+        let backend = RocksDBBackend::new(Arc::clone(&db));
+
+        for (index, table) in SystemTable::all_tables().iter().enumerate() {
+            let partition = table.partition().expect("persisted system table has partition");
+            backend.create_partition(partition).unwrap();
+            assert_eq!(physical_cf_for_partition(partition.name()), SYSTEM_META_CF);
+            assert!(db.cf_handle(partition.name()).is_none(), "dedicated system CF: {}", partition.name());
+            backend.put(partition, b"key", index.to_string().as_bytes()).unwrap();
+        }
+
+        for (index, table) in SystemTable::all_tables().iter().enumerate() {
+            let partition = table.partition().unwrap();
+            assert_eq!(
+                backend.get(partition, b"key").unwrap(),
+                Some(index.to_string().into_bytes()),
+                "system partition isolation: {}",
+                partition.name()
+            );
+        }
+    }
+
+    #[test]
+    fn missing_dedicated_hot_cf_does_not_fall_back_to_shared_hot_cf() {
+        let temp = TempDir::new().unwrap();
+        let init = RocksDbInit::with_defaults(temp.path().to_string_lossy());
+        let db = init.open().unwrap();
+        let backend = RocksDBBackend::new(Arc::clone(&db));
+        let partition = Partition::new("shared_gc:missing_hot");
+        assert!(backend.get(&partition, b"key").is_err());
+        backend.create_partition(&partition).unwrap();
+        assert!(db.cf_handle(partition.name()).is_some());
+    }
+
+    #[test]
     fn hot_partitions_have_independent_column_families() {
         let temp = TempDir::new().unwrap();
         let init = RocksDbInit::with_defaults(temp.path().to_string_lossy());
@@ -984,21 +1104,6 @@ mod tests {
         }
         backend.drop_partition(&orders).unwrap();
         assert_eq!(backend.get(&inbox, b"key").unwrap(), Some(b"value".to_vec()));
-    }
-
-    #[test]
-    fn legacy_hot_partition_stays_in_shared_cf() {
-        let temp = TempDir::new().unwrap();
-        let init = RocksDbInit::with_defaults(temp.path().to_string_lossy());
-        let db = init.open().unwrap();
-        let backend = RocksDBBackend::new(Arc::clone(&db));
-        let partition = Partition::new("shared_gc:legacy");
-        backend.persist_logical_partition(partition.name()).unwrap();
-        backend.track_logical_partition(partition.name());
-        backend.put(&partition, b"key", b"legacy").unwrap();
-        backend.create_partition(&partition).unwrap();
-        assert!(db.cf_handle(partition.name()).is_none());
-        assert_eq!(backend.get(&partition, b"key").unwrap(), Some(b"legacy".to_vec()));
     }
 
     #[test]

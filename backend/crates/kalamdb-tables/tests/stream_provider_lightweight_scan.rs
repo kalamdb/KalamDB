@@ -25,8 +25,8 @@ use kalamdb_system::{
     SystemColumnsService,
 };
 use kalamdb_tables::{
-    new_stream_table_store, utils::TableServices, BaseTableProvider, StreamTableProvider,
-    StreamTableStorageMode, StreamTableStoreConfig, TableProviderCore,
+    new_stream_table_store, utils::TableServices, StreamTableEngine, StreamTableStorageMode,
+    StreamTableStoreConfig, TableProviderCore,
 };
 use kalamdb_transactions::CommitSequenceSource;
 use tempfile::TempDir;
@@ -365,7 +365,7 @@ async fn stream_provider_planning_stays_lightweight_until_execution() {
         },
         kalamdb_tables::storage_schema_for_table(&table_def).expect("stream storage schema"),
     ));
-    let provider = StreamTableProvider::new(
+    let provider = StreamTableEngine::new(
         Arc::new(TableProviderCore::new(
             table_def,
             Arc::clone(&services.services),

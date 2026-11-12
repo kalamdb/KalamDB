@@ -5,12 +5,14 @@
 
 use std::sync::Arc;
 
-use datafusion::arrow::{
-    compute::cast,
-    datatypes::{DataType, Schema, SchemaRef},
-    record_batch::RecordBatch,
+use datafusion::{
+    arrow::{
+        compute::cast,
+        datatypes::{DataType, Schema, SchemaRef},
+        record_batch::RecordBatch,
+    },
+    common::ScalarValue,
 };
-use datafusion::common::ScalarValue;
 use futures_util::{StreamExt, TryStreamExt};
 use kalamdb_commons::{
     constants::SystemColumnNames, ids::SeqId, models::UserId, schemas::TableType, TableId,
@@ -22,6 +24,9 @@ use crate::{error::KalamDbError, error_extensions::KalamDbResultExt};
 
 const MAX_RECORDED_COLD_FILES: usize = 16;
 const MAX_COLD_FILE_OPENS: usize = 8;
+/// Unread Parquet batches the scanner may hold. The consumer drops each batch
+/// before the next send can complete.
+const COLD_BATCH_READ_AHEAD: usize = 1;
 
 /// Planned selection for a single Parquet file
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +53,47 @@ pub struct ParquetScanStats {
     pub skipped_files: usize,
     pub scanned_files: usize,
     pub visited_files: Vec<String>,
+}
+
+/// Cold batches delivered one at a time.
+///
+/// Drain [`Self::next_batch`] before [`Self::stats`]. The reader blocks after
+/// one unread batch, and waiting for stats first deadlocks that reader.
+pub(crate) struct ColdBatchRead {
+    batches: tokio::sync::mpsc::Receiver<Result<RecordBatch, KalamDbError>>,
+    stats: tokio::sync::oneshot::Receiver<ParquetScanStats>,
+}
+
+impl ColdBatchRead {
+    pub(crate) fn ready(stats: ParquetScanStats) -> Self {
+        let (batch_tx, batches) = tokio::sync::mpsc::channel(COLD_BATCH_READ_AHEAD);
+        drop(batch_tx);
+        let (stats_tx, stats_rx) = tokio::sync::oneshot::channel();
+        let _ = stats_tx.send(stats);
+        Self {
+            batches,
+            stats: stats_rx,
+        }
+    }
+
+    pub(crate) async fn next_batch(&mut self) -> Option<Result<RecordBatch, KalamDbError>> {
+        self.batches.recv().await
+    }
+
+    pub(crate) async fn stats(self) -> ParquetScanStats {
+        self.stats.await.unwrap_or_default()
+    }
+
+    pub(crate) async fn collect(
+        mut self,
+    ) -> Result<(Vec<RecordBatch>, ParquetScanStats), KalamDbError> {
+        let mut batches = Vec::new();
+        while let Some(batch) = self.next_batch().await {
+            batches.push(batch?);
+        }
+        let stats = self.stats().await;
+        Ok((batches, stats))
+    }
 }
 
 /// Optional seq-range, indexed-column equality, and Bloom prune for a cold scan.
@@ -106,11 +152,9 @@ impl SchemaAdaptPlan {
                 kalamdb_commons::conversions::read_kalam_missing_default(field.as_ref())
             {
                 let scalar = kalamdb_commons::conversions::json_value_to_scalar(&default_json);
-                let coerced = kalamdb_commons::conversions::coerce_scalar_to_field(
-                    scalar,
-                    field.as_ref(),
-                )
-                .map_err(KalamDbError::InvalidOperation)?;
+                let coerced =
+                    kalamdb_commons::conversions::coerce_scalar_to_field(scalar, field.as_ref())
+                        .map_err(KalamDbError::InvalidOperation)?;
                 columns.push(AdaptedColumn::Default(coerced));
             } else if field.is_nullable() {
                 columns.push(AdaptedColumn::Null(field.data_type().clone()));
@@ -130,13 +174,12 @@ impl SchemaAdaptPlan {
             let array = match column {
                 AdaptedColumn::Copy(index) => Arc::clone(batch.column(*index)),
                 AdaptedColumn::Cast(index, data_type) => {
-                    cast(batch.column(*index).as_ref(), data_type).into_arrow_error_ctx(
-                        &format!("Failed to cast column to {data_type:?}"),
-                    )?
+                    cast(batch.column(*index).as_ref(), data_type)
+                        .into_arrow_error_ctx(&format!("Failed to cast column to {data_type:?}"))?
                 },
-                AdaptedColumn::Default(scalar) => scalar.to_array_of_size(batch.num_rows()).into_arrow_error_ctx(
-                    "Failed to materialize missing column default array",
-                )?,
+                AdaptedColumn::Default(scalar) => scalar
+                    .to_array_of_size(batch.num_rows())
+                    .into_arrow_error_ctx("Failed to materialize missing column default array")?,
                 AdaptedColumn::Null(data_type) => {
                     datafusion::arrow::array::new_null_array(data_type, batch.num_rows())
                 },
@@ -151,14 +194,18 @@ impl SchemaAdaptPlan {
     }
 }
 
-fn append_record_batch(
-    combined: Option<RecordBatch>,
-    next: RecordBatch,
+/// Join cold batches with one copy of each input.
+///
+/// Point lookups and count scans still need one batch. A full MVCC scan walks
+/// the vector and drops each batch after that batch is resolved.
+pub(crate) fn concat_cold_batches(
+    batches: Vec<RecordBatch>,
     schema: &SchemaRef,
 ) -> Result<RecordBatch, KalamDbError> {
-    match combined {
-        None => Ok(next),
-        Some(existing) => datafusion::arrow::compute::concat_batches(schema, &[existing, next])
+    match batches.len() {
+        0 => Ok(RecordBatch::new_empty(Arc::clone(schema))),
+        1 => Ok(batches.into_iter().next().expect("one cold batch")),
+        _ => datafusion::arrow::compute::concat_batches(schema, &batches)
             .into_arrow_error_ctx("Failed to concatenate Parquet batches"),
     }
 }
@@ -280,7 +327,7 @@ impl ManifestAccessPlanner {
     ///
     /// Uses async file I/O to avoid blocking the tokio runtime.
     #[allow(clippy::too_many_arguments)]
-    pub async fn scan_parquet_files_async(
+    pub(crate) async fn scan_parquet_files_async(
         &self,
         manifest_opt: Option<&Manifest>,
         storage_cached: Arc<StorageCached>,
@@ -293,7 +340,7 @@ impl ManifestAccessPlanner {
         schema_registry: &dyn SchemaRegistryTrait<Error = KalamDbError>,
         columns: Option<&[String]>,
         record_visited_files: bool,
-    ) -> Result<(RecordBatch, ParquetScanStats), KalamDbError> {
+    ) -> Result<ColdBatchRead, KalamDbError> {
         // Compute a projected schema when column projection is requested.
         // This is used for schema evolution and batch concatenation.
         let effective_schema = if let Some(cols) = columns {
@@ -339,24 +386,22 @@ impl ManifestAccessPlanner {
 
         // Return empty batch if no files found
         if cold_files.is_empty() {
-            return Ok((
-                RecordBatch::new_empty(effective_schema),
-                ParquetScanStats {
-                    total_files: total_batches,
-                    skipped_files: skipped,
-                    scanned_files: scanned,
-                    visited_files: Vec::new(),
-                },
-            ));
+            return Ok(ColdBatchRead::ready(ParquetScanStats {
+                total_files: total_batches,
+                skipped_files: skipped,
+                scanned_files: scanned,
+                visited_files: Vec::new(),
+            }));
         }
 
         let col_names: Option<Vec<String>> = columns.map(|c| c.to_vec());
         let seq_range_for_read = pruning.seq_range.map(|(min, max)| (min.as_i64(), max.as_i64()));
         let bloom_for_read = pruning.bloom.clone();
         let table_id_owned = table_id.clone();
+        let table_id_for_read = table_id_owned.clone();
         let user_id_owned = user_id.cloned();
         let mut opens = futures_util::stream::iter(cold_files.into_iter().map(
-            |(parquet_file, schema_version)| {
+            move |(parquet_file, schema_version)| {
                 let sc = storage_cached.clone();
                 let cols = col_names.clone();
                 let bloom = bloom_for_read.clone();
@@ -398,64 +443,116 @@ impl ManifestAccessPlanner {
             .get_table_if_exists(table_id)?
             .map(|table_def| table_def.schema_version)
             .unwrap_or(1);
-
-        let mut combined = None;
-        let mut visited_files = Vec::new();
-        while let Some((parquet_file, file_schema_version, opened)) = opens.next().await {
-            let mut stream = match opened {
-                Ok(stream) => stream,
-                Err(err) if is_missing_parquet_file_error(&err) => {
-                    log::warn!(
-                        "[PARQUET_SCAN_ASYNC] skipping missing parquet file '{}' for table {}: {}",
-                        parquet_file,
-                        table_id,
-                        err
-                    );
-                    skipped = skipped.saturating_add(1);
-                    scanned = scanned.saturating_sub(1);
-                    continue;
-                },
-                Err(err) => return Err(err),
-            };
-            if record_visited_files && visited_files.len() < MAX_RECORDED_COLD_FILES {
-                visited_files.push(parquet_file);
-            }
-
-            let mut adapt_plan = None;
-            while let Some(batch) =
-                stream.try_next().await.into_kalamdb_error("Failed to read Parquet batch")?
-            {
-                let needs_evolution = file_schema_version != current_version
-                    || (columns.is_some() && batch.schema().fields() != effective_schema.fields());
-                let projected_batch = if needs_evolution {
-                    if adapt_plan.is_none() {
-                        adapt_plan = Some(SchemaAdaptPlan::prepare(
-                            batch.schema().as_ref(),
-                            &effective_schema,
-                            table_id,
-                        )?);
-                    }
-                    adapt_plan
-                        .as_ref()
-                        .expect("schema adapt plan")
-                        .apply(batch, &effective_schema)?
-                } else {
-                    batch
+        let project_columns = columns.is_some();
+        let (batch_tx, batches) = tokio::sync::mpsc::channel(COLD_BATCH_READ_AHEAD);
+        let (stats_tx, stats_rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let mut visited_files = Vec::new();
+            let mut cold_rows = 0usize;
+            while let Some((parquet_file, file_schema_version, opened)) = opens.next().await {
+                let mut stream = match opened {
+                    Ok(stream) => stream,
+                    Err(err) if is_missing_parquet_file_error(&err) => {
+                        log::warn!(
+                            "[PARQUET_SCAN_ASYNC] skipping missing parquet file '{}' for table {}: {}",
+                            parquet_file,
+                            table_id_for_read,
+                            err
+                        );
+                        skipped = skipped.saturating_add(1);
+                        scanned = scanned.saturating_sub(1);
+                        continue;
+                    },
+                    Err(err) => {
+                        let _ = batch_tx.send(Err(err)).await;
+                        let _ = stats_tx.send(ParquetScanStats {
+                            total_files: total_batches,
+                            skipped_files: skipped,
+                            scanned_files: scanned,
+                            visited_files,
+                        });
+                        return;
+                    },
                 };
-                combined =
-                    Some(append_record_batch(combined, projected_batch, &effective_schema)?);
-            }
-        }
+                if record_visited_files && visited_files.len() < MAX_RECORDED_COLD_FILES {
+                    visited_files.push(parquet_file);
+                }
 
-        Ok((
-            combined.unwrap_or_else(|| RecordBatch::new_empty(effective_schema)),
-            ParquetScanStats {
+                let mut adapt_plan = None;
+                let read_result = async {
+                    while let Some(batch) = stream
+                        .try_next()
+                        .await
+                        .into_kalamdb_error("Failed to read Parquet batch")?
+                    {
+                        let needs_evolution = file_schema_version != current_version
+                            || (project_columns
+                                && batch.schema().fields() != effective_schema.fields());
+                        let projected_batch = if needs_evolution {
+                            if adapt_plan.is_none() {
+                                adapt_plan = Some(SchemaAdaptPlan::prepare(
+                                    batch.schema().as_ref(),
+                                    &effective_schema,
+                                    &table_id_for_read,
+                                )?);
+                            }
+                            adapt_plan
+                                .as_ref()
+                                .expect("schema adapt plan")
+                                .apply(batch, &effective_schema)?
+                        } else {
+                            batch
+                        };
+                        cold_rows += projected_batch.num_rows();
+                        if batch_tx.send(Ok(projected_batch)).await.is_err() {
+                            return Ok(false);
+                        }
+                    }
+                    Ok(true)
+                }
+                .await;
+                match read_result {
+                    Ok(true) => {},
+                    Ok(false) => {
+                        let _ = stats_tx.send(ParquetScanStats {
+                            total_files: total_batches,
+                            skipped_files: skipped,
+                            scanned_files: scanned,
+                            visited_files,
+                        });
+                        return;
+                    },
+                    Err(err) => {
+                        let _ = batch_tx.send(Err(err)).await;
+                        let _ = stats_tx.send(ParquetScanStats {
+                            total_files: total_batches,
+                            skipped_files: skipped,
+                            scanned_files: scanned,
+                            visited_files,
+                        });
+                        return;
+                    },
+                }
+            }
+            log::trace!(
+                "[PARQUET_SCAN_ASYNC] Scan complete: table={} total_batches={} skipped={} scanned={} rows={}",
+                table_id_for_read,
+                total_batches,
+                skipped,
+                scanned,
+                cold_rows
+            );
+            let _ = stats_tx.send(ParquetScanStats {
                 total_files: total_batches,
                 skipped_files: skipped,
                 scanned_files: scanned,
                 visited_files,
-            },
-        ))
+            });
+        });
+        Ok(ColdBatchRead {
+            batches,
+            stats: stats_rx,
+        })
     }
 
     /// Plan files that may contain an indexed-column equality (PK or scalar index).
@@ -576,7 +673,7 @@ mod tests {
     use std::{collections::HashMap, fs, path::Path, sync::Arc};
 
     use datafusion::arrow::{
-        array::{BooleanArray, Int64Array, StringArray},
+        array::{Array, BooleanArray, Int64Array, StringArray},
         datatypes::{DataType, Field, Schema},
     };
     use kalamdb_commons::{
@@ -1140,7 +1237,7 @@ mod tests {
         };
 
         let planner = ManifestAccessPlanner::new();
-        let (combined, stats) = planner
+        let read = planner
             .scan_parquet_files_async(
                 Some(&manifest),
                 storage_cached,
@@ -1156,12 +1253,61 @@ mod tests {
             )
             .await
             .expect("planner should not open manifest-pruned invalid parquet");
+        let (batches, stats) = read.collect().await.expect("collect cold batches");
 
         assert_eq!(stats.total_files, 2);
         assert_eq!(stats.skipped_files, 1);
         assert_eq!(stats.scanned_files, 1);
         assert_eq!(stats.visited_files, vec!["batch-in-range.parquet".to_string()]);
-        assert_eq!(combined.num_rows(), 2);
+        assert_eq!(batches.iter().map(|batch| batch.num_rows()).sum::<usize>(), 2);
+    }
+
+    fn id_batch(values: &[i64]) -> RecordBatch {
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        RecordBatch::try_new(schema, vec![Arc::new(Int64Array::from(values.to_vec()))])
+            .expect("id batch")
+    }
+
+    fn id_values(batch: &RecordBatch) -> Vec<i64> {
+        batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("id column")
+            .values()
+            .to_vec()
+    }
+
+    #[test]
+    fn concat_cold_batches_matches_inputs_once() {
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        let empty = concat_cold_batches(Vec::new(), &schema).expect("empty concat");
+        assert_eq!(empty.num_rows(), 0);
+
+        for batch_count in [1_usize, 10, 100, 1_000] {
+            let per_batch: Vec<RecordBatch> = (0..batch_count)
+                .map(|index| {
+                    let start = (index as i64) * 2;
+                    id_batch(&[start, start + 1])
+                })
+                .collect();
+            let combined = concat_cold_batches(per_batch, &schema).expect("fixed rows per batch");
+            let expected: Vec<i64> = (0..batch_count as i64 * 2).collect();
+            assert_eq!(id_values(&combined), expected);
+
+            let total_rows = 1_000_usize;
+            let width = total_rows / batch_count;
+            let fixed_total: Vec<RecordBatch> = (0..batch_count)
+                .map(|index| {
+                    let start = (index * width) as i64;
+                    let values: Vec<i64> = (start..start + width as i64).collect();
+                    id_batch(&values)
+                })
+                .collect();
+            let combined = concat_cold_batches(fixed_total, &schema).expect("fixed total rows");
+            let expected: Vec<i64> = (0..total_rows as i64).collect();
+            assert_eq!(id_values(&combined), expected);
+        }
     }
 
     #[test]

@@ -172,6 +172,14 @@ impl ExecutionContext {
         self
     }
 
+    /// Whether `SELECT *` omits storage columns.
+    ///
+    /// This is the `postgres_star` dimension of [`kalamdb_plan_cache::PlanCacheKey`].
+    /// PostgreSQL wire and the extension bridge set it. HTTP SQL leaves it false.
+    pub fn hides_storage_star(&self) -> bool {
+        self.hide_storage_star
+    }
+
     /// Share connection-scoped GUC storage with this request's DataFusion session.
     pub fn with_session_config(mut self, session_config: SessionConfigValues) -> Self {
         self.session_config = Some(session_config);

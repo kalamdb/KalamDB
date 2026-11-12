@@ -17,6 +17,9 @@ use std::{
     },
 };
 
+#[cfg(test)]
+use std::cell::Cell;
+
 use tokio::task_local;
 
 use crate::storage_trait::{Operation, Partition};
@@ -89,6 +92,14 @@ where
     (value, CoalescedBatch { ops, after_persist })
 }
 
+/// Whether this task is inside [`with_write_coalesce`].
+///
+/// `StorageBackend::batch` calls from that scope are absorbed and are not a
+/// durable submission. The caller writes the buffered operations once.
+pub fn coalesce_session_active() -> bool {
+    COALESCE_ID.try_with(|_| ()).is_ok()
+}
+
 /// Run `hook` after the active coalesce batch persists.
 ///
 /// Outside a coalesce session the hook runs immediately.
@@ -114,8 +125,40 @@ pub fn defer_after_persist(hook: impl FnOnce() + Send + 'static) {
     }
 }
 
+// Copies of a key or value made while building a buffered operation.
+// Counting is per thread and stays off unless a test enables it, so parallel
+// coalesce tests do not share one total.
+#[cfg(test)]
+thread_local! {
+    static COUNT_PAYLOAD_COPIES: Cell<bool> = const { Cell::new(false) };
+    static BUFFER_PAYLOAD_COPIES: Cell<u64> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+fn record_payload_copies(count: u64) {
+    if COUNT_PAYLOAD_COPIES.with(Cell::get) {
+        BUFFER_PAYLOAD_COPIES.with(|copies| copies.set(copies.get() + count));
+    }
+}
+
+#[cfg(test)]
+fn payload_copy_count() -> u64 {
+    BUFFER_PAYLOAD_COPIES.with(Cell::get)
+}
+
+#[cfg(test)]
+fn reset_payload_copy_count() {
+    COUNT_PAYLOAD_COPIES.with(|flag| flag.set(true));
+    BUFFER_PAYLOAD_COPIES.with(|copies| copies.set(0));
+}
+
 /// Buffer a put if a coalesce session is active on this task.
 pub fn buffer_put(partition: &Partition, key: &[u8], value: &[u8]) -> bool {
+    if !coalesce_session_active() {
+        return false;
+    }
+    #[cfg(test)]
+    record_payload_copies(2);
     buffer_operation(Operation::Put {
         partition: partition.clone(),
         key: key.to_vec(),
@@ -125,6 +168,11 @@ pub fn buffer_put(partition: &Partition, key: &[u8], value: &[u8]) -> bool {
 
 /// Buffer a delete if a coalesce session is active on this task.
 pub fn buffer_delete(partition: &Partition, key: &[u8]) -> bool {
+    if !coalesce_session_active() {
+        return false;
+    }
+    #[cfg(test)]
+    record_payload_copies(1);
     buffer_operation(Operation::Delete {
         partition: partition.clone(),
         key: key.to_vec(),
@@ -252,5 +300,42 @@ mod tests {
         backend.create_partition(&partition).unwrap();
         backend.put(&partition, b"k", b"v").unwrap();
         assert_eq!(backend.get(&partition, b"k").unwrap(), Some(b"v".to_vec()));
+    }
+
+    #[test]
+    fn inactive_buffer_helpers_return_before_copying_payloads() {
+        let partition = Partition::new("direct");
+        let key = vec![1_u8; 64];
+        let value = vec![2_u8; 256];
+        reset_payload_copy_count();
+        for _ in 0..10_000 {
+            assert!(!buffer_put(&partition, &key, &value));
+            assert!(!buffer_delete(&partition, &key));
+        }
+        assert_eq!(payload_copy_count(), 0);
+        let returned = buffer_operations(vec![Operation::Put {
+            partition: partition.clone(),
+            key: key.clone(),
+            value: value.clone(),
+        }])
+        .expect("inactive batch stays a direct write");
+        assert_eq!(returned.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn active_buffer_put_still_copies_into_the_session() {
+        let partition = Partition::new("coalesce");
+        let key = vec![1_u8; 64];
+        let value = vec![2_u8; 256];
+        let (copies, batch) = with_write_coalesce(async {
+            reset_payload_copy_count();
+            for _ in 0..10_000 {
+                assert!(buffer_put(&partition, &key, &value));
+            }
+            payload_copy_count()
+        })
+        .await;
+        assert_eq!(batch.ops.len(), 10_000);
+        assert_eq!(copies, 20_000);
     }
 }

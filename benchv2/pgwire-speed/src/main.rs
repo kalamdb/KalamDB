@@ -42,7 +42,7 @@ struct TimingFile {
     checks: Vec<ScriptCheck>,
 }
 
-/// Compact result of one script. Cell values other than `count` are not stored.
+/// Compact result of one script. The digest covers every returned cell.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ScriptCheck {
     /// `CommandComplete` row count for every statement, in order.
@@ -51,6 +51,10 @@ struct ScriptCheck {
     columns: Vec<Vec<String>>,
     /// `count` column values, one list per result set. Parallel to `columns`.
     counts: Vec<Vec<i64>>,
+    /// Order-independent digest of returned cells, computed after the timer stops.
+    /// Missing on older timing files.
+    #[serde(default)]
+    content_digest: String,
 }
 
 #[tokio::main]
@@ -201,7 +205,10 @@ fn print_report(postgres_path: &Path, kalam_path: &Path) -> Result<()> {
         "{:<4} {:<46} {postgres_total:10.3} {kalam_total:10.3} {total_ratio:>8}",
         "", "total"
     );
-    println!("result check: columns exist on both sides, and row counts and count(*) values match");
+    println!(
+        "result check: columns exist on both sides, row counts and count(*) values match, \
+         and returned-cell digests match"
+    );
     println!();
     Ok(())
 }
@@ -210,6 +217,7 @@ fn summarize_messages(messages: &[SimpleQueryMessage]) -> Result<ScriptCheck> {
     let mut row_counts = Vec::new();
     let mut columns = Vec::new();
     let mut counts = Vec::new();
+    let mut returned_rows = Vec::new();
     let mut pending_columns: Option<Vec<String>> = None;
     let mut pending_counts = Vec::new();
     let mut count_index: Option<usize> = None;
@@ -238,6 +246,11 @@ fn summarize_messages(messages: &[SimpleQueryMessage]) -> Result<ScriptCheck> {
                     bail!("data row has {} columns, description has {}", row.len(), names.len());
                 }
                 data_rows += 1;
+                let mut cells = Vec::with_capacity(names.len());
+                for index in 0..names.len() {
+                    cells.push(row.try_get(index).context("read result cell")?.map(str::to_string));
+                }
+                returned_rows.push(cells);
                 if let Some(index) = count_index {
                     let cell = row.try_get(index).context("read count column")?;
                     pending_counts.push(parse_count(cell)?);
@@ -267,6 +280,7 @@ fn summarize_messages(messages: &[SimpleQueryMessage]) -> Result<ScriptCheck> {
         row_counts,
         columns,
         counts,
+        content_digest: content_digest(&returned_rows),
     })
 }
 
@@ -332,6 +346,14 @@ fn compare_checks(postgres: &[ScriptCheck], kalam: &[ScriptCheck]) -> Vec<String
                 );
             }
         }
+        if !postgres_check.content_digest.is_empty()
+            && postgres_check.content_digest != kalam_check.content_digest
+        {
+            mismatches.push(format!(
+                "test {phase_id} ({name}): returned-cell digest postgres {}, kalamdb {}",
+                postgres_check.content_digest, kalam_check.content_digest
+            ));
+        }
         if mismatches.len() >= 8 {
             mismatches.push("further mismatches omitted".to_string());
             break;
@@ -364,6 +386,42 @@ fn push_count_mismatch<T: std::fmt::Display + PartialEq>(
             kalam[index]
         ));
     }
+}
+
+fn content_digest(rows: &[Vec<Option<String>>]) -> String {
+    let mut lines = Vec::with_capacity(rows.len());
+    for row in rows {
+        let line = row
+            .iter()
+            .map(|cell| canonical_cell(cell.as_deref()))
+            .collect::<Vec<_>>()
+            .join("\t");
+        lines.push(line);
+    }
+    lines.sort();
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for line in &lines {
+        for byte in line.as_bytes() {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash ^= 0xff;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}:{}", lines.len())
+}
+
+fn canonical_cell(cell: Option<&str>) -> String {
+    let Some(text) = cell else {
+        return "NULL".to_string();
+    };
+    if let Ok(value) = text.parse::<f64>() {
+        if value.is_finite() {
+            let scaled = (value * 1_000_000.0).round() as i64;
+            return format!("n:{scaled}");
+        }
+    }
+    format!("s:{text}")
 }
 
 fn is_count_column(name: &str) -> bool {
@@ -407,7 +465,23 @@ mod tests {
             row_counts,
             columns,
             counts,
+            content_digest: String::new(),
         }
+    }
+
+    #[test]
+    fn content_digest_ignores_row_order_and_float_spelling() {
+        let left = vec![
+            vec![Some("12".to_string()), Some("1.5".to_string())],
+            vec![None, Some("b".to_string())],
+        ];
+        let right = vec![
+            vec![None, Some("b".to_string())],
+            vec![Some("12.0".to_string()), Some("1.5000001".to_string())],
+        ];
+        assert_eq!(content_digest(&left), content_digest(&right));
+        let changed = vec![vec![Some("13".to_string()), Some("1.5".to_string())]];
+        assert_ne!(content_digest(&left), content_digest(&changed));
     }
 
     #[test]

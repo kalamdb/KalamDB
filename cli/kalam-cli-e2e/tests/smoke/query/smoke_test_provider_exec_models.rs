@@ -48,7 +48,7 @@ fn smoke_test_provider_exec_models() {
             vec![
                 "logical_plan | TableScan: system.datatypes",
                 "physical_plan | CooperativeExec",
-                "DeferredBatchExec: source=view_scan",
+                "DeferredBatchExec: source=catalog_scan",
             ],
         ),
         (

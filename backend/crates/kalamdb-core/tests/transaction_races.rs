@@ -2,6 +2,11 @@ use crate::support;
 
 use std::{sync::Arc, time::Duration};
 
+use crate::support::{
+    create_cluster_app_context, create_cluster_app_context_with_config, create_executor,
+    create_user_table, execute_ok, insert_sql, observer_exec_ctx, request_exec_ctx,
+    request_transaction_state, row, select_names, unique_namespace,
+};
 use kalamdb_commons::{
     models::{pg_operations::InsertRequest, UserId},
     TableType,
@@ -10,11 +15,6 @@ use kalamdb_configs::ServerConfig;
 use kalamdb_core::transactions::ExecutionOwnerKey;
 use kalamdb_pg::OperationExecutor;
 use kalamdb_pg_bridge::OperationService;
-use crate::support::{
-    create_cluster_app_context, create_cluster_app_context_with_config, create_executor,
-    create_user_table, execute_ok, insert_sql, observer_exec_ctx, request_exec_ctx,
-    request_transaction_state, row, select_names, unique_namespace,
-};
 
 #[tokio::test]
 #[ntest::timeout(6000)]

@@ -98,7 +98,7 @@ mod tests {
 
     async fn ready_app() -> Arc<AppContext> {
         let app_ctx = test_app_context_simple();
-        init_job_manager(&app_ctx);
+        init_job_manager(&app_ctx).expect("job capability");
         app_ctx.executor().start().await.unwrap();
         app_ctx.executor().initialize_cluster().await.unwrap();
         app_ctx.wire_raft_appliers();

@@ -445,11 +445,8 @@ mod tests {
 
     #[test]
     fn reject_index_with_more_than_four_columns() {
-        let err = parse_create_index_on(
-            "CREATE INDEX idx_five ON events (a, b, c, d, e)",
-            &ns(),
-        )
-        .unwrap_err();
+        let err = parse_create_index_on("CREATE INDEX idx_five ON events (a, b, c, d, e)", &ns())
+            .unwrap_err();
         assert!(err.contains("at most four columns"), "{err}");
         let err = parse_alter_table_scalar_index(
             "ALTER TABLE events CREATE INDEX idx_five (a, b, c, d, e)",

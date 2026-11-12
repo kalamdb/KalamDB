@@ -20,13 +20,11 @@
 
 pub mod base;
 pub(crate) mod scope_writer;
-pub mod shared;
-pub mod users;
+mod versioned;
 
 pub use base::{
     config, helpers, FlushDedupStats, FlushJobResult, FlushMetadata, FlushScopeHint,
     FlushScopeHook, FlushTableMetadata, NoopFlushScopeHook, SharedTableFlushMetadata, TableFlush,
     UserTableFlushMetadata,
 };
-pub use shared::SharedTableFlushJob;
-pub use users::UserTableFlushJob;
+pub use versioned::{SharedTableFlushJob, UserTableFlushJob, VersionedTableFlushJob};

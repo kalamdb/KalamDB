@@ -24,7 +24,7 @@ use kalamdb_live::{
 use kalamdb_raft::{GroupId, RaftExecutor};
 use kalamdb_rls::LiveAuthorizationRoute;
 use kalamdb_sharding::ShardRouter;
-use kalamdb_tables::{BoundLiveAuthorization, SharedTableProvider, TableError};
+use kalamdb_tables::{BoundLiveAuthorization, TableError};
 
 use crate::{
     app_context::AppContext,
@@ -33,6 +33,11 @@ use crate::{
         context::{ExecutionContext, ExecutionResult},
         executor::SqlExecutor,
     },
+};
+
+pub use kalamdb_system::{
+    classify_live_history, live_history_gap_message, live_notify_scope, publish_live_table_change,
+    LiveHistoryDecision, LiveReadContract,
 };
 
 /// Adapts [`SchemaRegistry`] to the [`LiveSchemaLookup`] trait.
@@ -108,17 +113,15 @@ impl LiveAuthorizationBinder for LiveAuthorizationBinderAdapter {
         let provider = self
             .app_context
             .schema_registry()
-            .get_provider(table_id)
+            .get_kalam_provider(table_id)
             .ok_or_else(|| LiveError::TableNotFound(table_id.to_string()))?;
-        let provider = (provider.as_ref() as &dyn std::any::Any)
-            .downcast_ref::<SharedTableProvider>()
-            .ok_or_else(|| {
-                LiveError::InvalidOperation(format!(
-                    "Shared-table RLS provider unavailable for {table_id}"
-                ))
-            })?;
+        if !provider.is_shared() {
+            return Err(LiveError::InvalidOperation(format!(
+                "Shared-table RLS provider unavailable for {table_id}"
+            )));
+        }
         let bound = provider
-            .bind_live_authorization(user_id, role)
+            .bind_shared_live_authorization(user_id, role)
             .await
             .map_err(live_authorization_bind_error)?;
         let live_route = match bound.live_route().map_err(LiveError::InvalidOperation)? {
@@ -178,7 +181,11 @@ impl LiveSqlExecutor for SqlExecutorAdapter {
             .await
             .map_err(|e| LiveError::ExecutionError(e.to_string()))?;
 
-        let result = result.into_arrow_rows().map_err(|e| LiveError::ExecutionError(e))?;
+        let result = result
+            .into_materialized_rows()
+            .await
+            .map_err(LiveError::ExecutionError)?;
+        let result = result.into_arrow_rows().map_err(LiveError::ExecutionError)?;
 
         match result {
             ExecutionResult::Rows { batches, .. } => Ok(batches),
@@ -255,7 +262,39 @@ impl LiveApplyBarrier for RaftApplyBarrierAdapter {
 
 #[cfg(test)]
 mod tests {
+    use kalamdb_commons::TableType;
+
     use super::*;
+
+    #[test]
+    fn complete_event_expiry_is_distinct_from_latest_state() {
+        let expired = classify_live_history(LiveReadContract::CompleteEvents, true);
+        let latest = classify_live_history(LiveReadContract::LatestStateSinceCursor, false);
+        let latest_expired = classify_live_history(LiveReadContract::LatestStateSinceCursor, true);
+
+        assert_eq!(
+            live_history_gap_message(&expired),
+            Some("complete-event history expired; resynchronize")
+        );
+        assert!(matches!(
+            latest,
+            LiveHistoryDecision::Ready(LiveReadContract::LatestStateSinceCursor)
+        ));
+        assert_eq!(
+            live_history_gap_message(&latest_expired),
+            Some("latest-state cursor expired; resynchronize")
+        );
+        assert_ne!(live_history_gap_message(&expired), live_history_gap_message(&latest_expired));
+    }
+
+    #[test]
+    fn live_notify_scope_covers_user_shared_stream_and_system() {
+        let user = UserId::new("alice");
+        assert_eq!(live_notify_scope(TableType::User, Some(&user)).as_ref(), Some(&user));
+        assert_eq!(live_notify_scope(TableType::Stream, Some(&user)).as_ref(), Some(&user));
+        assert!(live_notify_scope(TableType::Shared, Some(&user)).is_none());
+        assert!(live_notify_scope(TableType::System, None).is_none());
+    }
 
     #[test]
     fn authorization_binding_preserves_non_permission_failures() {

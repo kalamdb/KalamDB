@@ -11,7 +11,7 @@ use once_cell::sync::Lazy;
 /// and prevents typos in table/view names.
 ///
 /// ## Tables vs Views
-/// - **Tables**: Persisted in RocksDB, have a column family
+/// - **Tables**: Persisted in logical partitions sharing the physical `system_meta` CF
 /// - **Views**: Computed on-demand, no storage backing
 use crate::constants::ColumnFamilyNames;
 use crate::{models::TableId, storage::Partition};
@@ -312,22 +312,6 @@ const SYSTEM_TABLE_METADATA: &[SystemTableMetadata] = &[
         is_view: true,
         column_family_name: None,
     },
-    SystemTableMetadata {
-        #[allow(deprecated)]
-        table: SystemTable::Tables,
-        sql_name: "tables",
-        aliases: &["tables", "system_tables"],
-        is_view: true,
-        column_family_name: None,
-    },
-    SystemTableMetadata {
-        #[allow(deprecated)]
-        table: SystemTable::Columns,
-        sql_name: "columns",
-        aliases: &["columns", "system_columns"],
-        is_view: true,
-        column_family_name: None,
-    },
 ];
 
 fn system_table_metadata(table: SystemTable) -> &'static SystemTableMetadata {
@@ -340,7 +324,7 @@ fn system_table_metadata(table: SystemTable) -> &'static SystemTableMetadata {
 /// Memory/performance profile applied to a storage partition or physical RocksDB CF.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ColumnFamilyProfile {
-    /// System metadata tables and compatibility partitions.
+    /// System metadata tables and their logical partitions.
     SystemMeta,
     /// System-maintained secondary indexes.
     SystemIndex,
@@ -439,18 +423,6 @@ pub enum SystemTable {
     Datatypes,
     /// system.describe - DESCRIBE TABLE functionality (computed on-demand)
     Describe,
-    /// Deprecated. Use `information_schema.tables` (`kdb_*` columns).
-    #[deprecated(
-        since = "0.5.4-rc.1",
-        note = "use `information_schema.tables` with `kdb_*` columns instead"
-    )]
-    Tables,
-    /// Deprecated. Use `information_schema.columns` (`kdb_*` columns).
-    #[deprecated(
-        since = "0.5.4-rc.1",
-        note = "use `information_schema.columns` with `kdb_*` columns instead"
-    )]
-    Columns,
 }
 
 impl SystemTable {
@@ -522,7 +494,6 @@ impl SystemTable {
     }
 
     /// Get all system views (computed on-demand)
-    #[allow(deprecated)]
     pub fn all_views() -> &'static [SystemTable] {
         &[
             SystemTable::Stats,
@@ -542,13 +513,10 @@ impl SystemTable {
             SystemTable::ClusterGroups,
             SystemTable::Datatypes,
             SystemTable::Describe,
-            SystemTable::Tables,
-            SystemTable::Columns,
         ]
     }
 
     /// Get all system tables and views
-    #[allow(deprecated)]
     pub fn all() -> &'static [SystemTable] {
         &[
             // Tables
@@ -594,8 +562,6 @@ impl SystemTable {
             SystemTable::ClusterGroups,
             SystemTable::Datatypes,
             SystemTable::Describe,
-            SystemTable::Tables,
-            SystemTable::Columns,
         ]
     }
 
@@ -609,7 +575,6 @@ impl SystemTable {
     ///
     /// Allocates each Partition once and returns a reference,
     /// avoiding repeated String allocations across the codebase.
-    #[allow(deprecated)]
     pub fn partition(&self) -> Option<&'static crate::storage::Partition> {
         static USERS: Lazy<Partition> = Lazy::new(|| Partition::new("system_users"));
         static NAMESPACES: Lazy<Partition> = Lazy::new(|| Partition::new("system_namespaces"));
@@ -687,9 +652,7 @@ impl SystemTable {
             | SystemTable::Cluster
             | SystemTable::ClusterGroups
             | SystemTable::Datatypes
-            | SystemTable::Describe
-            | SystemTable::Tables
-            | SystemTable::Columns => None,
+            | SystemTable::Describe => None,
         }
     }
 }
@@ -864,7 +827,6 @@ impl std::fmt::Display for SystemTable {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
 
@@ -1039,8 +1001,6 @@ mod tests {
         assert!(all.contains(&SystemTable::Cluster));
         assert!(all.contains(&SystemTable::ClusterGroups));
         assert!(all.contains(&SystemTable::Datatypes));
-        assert!(all.contains(&SystemTable::Tables));
-        assert!(all.contains(&SystemTable::Columns));
     }
 
     #[test]

@@ -1,11 +1,12 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, BooleanBuilder, StringBuilder},
-    datatypes::{DataType, Field, Schema, SchemaRef},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use kalamdb_commons::Role;
+use kalamdb_macros::table;
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
@@ -13,22 +14,34 @@ use crate::{
     pg_catalog::{primary_key_attnums, relation_is_view, visible_table_definitions, PgCatalogView},
 };
 
+#[table(
+    name = "pg_tables",
+    namespace = SchemaId::pg_catalog(),
+    view = true,
+    comment = "Tables"
+)]
+#[derive(Debug)]
+struct PgTablesRow {
+    /// Schema name
+    schemaname: String,
+    /// Table name
+    tablename: String,
+    /// Table owner
+    tableowner: String,
+    /// Tablespace name
+    tablespace: Option<String>,
+    /// Whether the table has indexes
+    hasindexes: bool,
+    /// Whether the table has rules
+    hasrules: bool,
+    /// Whether the table has triggers
+    hastriggers: bool,
+    /// Whether row security is enabled
+    rowsecurity: bool,
+}
+
 fn schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("schemaname", DataType::Utf8, false),
-                Field::new("tablename", DataType::Utf8, false),
-                Field::new("tableowner", DataType::Utf8, false),
-                Field::new("tablespace", DataType::Utf8, true),
-                Field::new("hasindexes", DataType::Boolean, false),
-                Field::new("hasrules", DataType::Boolean, false),
-                Field::new("hastriggers", DataType::Boolean, false),
-                Field::new("rowsecurity", DataType::Boolean, false),
-            ]))
-        })
-        .clone()
+    PgTablesRow::arrow_schema()
 }
 
 #[derive(Debug)]

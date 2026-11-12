@@ -18,14 +18,10 @@ use datafusion::arrow::{
     array::{ArrayRef, BooleanArray, Int32Array, Int64Array, RecordBatch, StringBuilder},
     datatypes::SchemaRef,
 };
-use kalamdb_commons::{
-    datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
-    TableId,
-};
+use kalamdb_commons::{schemas::TableDefinition, TableId};
+use kalamdb_macros::table;
 use kalamdb_system::SystemTable;
 
-use super::common::system_view_definition;
 use crate::{error::RegistryError, view_base::VirtualView};
 
 crate::memoized_view_schema!(describe_schema, DescribeView);
@@ -33,6 +29,33 @@ crate::memoized_view_schema!(describe_schema, DescribeView);
 /// Callback type for fetching table definition
 /// Returns the TableDefinition for the specified table
 pub type DescribeCallback = Arc<dyn Fn(&TableId) -> Option<TableDefinition> + Send + Sync>;
+
+#[table(
+    name = "describe",
+    view = true,
+    comment = "Virtual view for DESCRIBE TABLE functionality"
+)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DescribeRow {
+    /// Name of the column
+    pub column_name: String,
+    /// Position of column in SELECT * (1-indexed)
+    pub ordinal_position: i32,
+    /// Stable column ID (Parquet field_id)
+    pub column_id: i64,
+    /// Column data type
+    pub data_type: String,
+    /// Whether NULL values are allowed
+    pub is_nullable: bool,
+    /// Whether column is part of primary key
+    pub is_primary_key: bool,
+    /// Default value expression
+    pub column_default: Option<String>,
+    /// Column description/comment
+    pub column_comment: Option<String>,
+    /// Schema version when column was added (1 = original)
+    pub schema_version: i32,
+}
 
 /// Virtual view that provides DESCRIBE TABLE functionality
 ///
@@ -72,113 +95,7 @@ impl DescribeView {
     /// - column_comment TEXT (nullable)
     /// - schema_version INT NOT NULL (version when column was added)
     pub fn definition() -> TableDefinition {
-        let columns = vec![
-            ColumnDefinition::new(
-                1,
-                "column_name",
-                1,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Name of the column".to_string()),
-            ),
-            ColumnDefinition::new(
-                2,
-                "ordinal_position",
-                2,
-                KalamDataType::Int,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Position of column in SELECT * (1-indexed)".to_string()),
-            ),
-            ColumnDefinition::new(
-                3,
-                "column_id",
-                3,
-                KalamDataType::BigInt,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Stable column ID (Parquet field_id)".to_string()),
-            ),
-            ColumnDefinition::new(
-                4,
-                "data_type",
-                4,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Column data type".to_string()),
-            ),
-            ColumnDefinition::new(
-                5,
-                "is_nullable",
-                5,
-                KalamDataType::Boolean,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Whether NULL values are allowed".to_string()),
-            ),
-            ColumnDefinition::new(
-                6,
-                "is_primary_key",
-                6,
-                KalamDataType::Boolean,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Whether column is part of primary key".to_string()),
-            ),
-            ColumnDefinition::new(
-                7,
-                "column_default",
-                7,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Default value expression".to_string()),
-            ),
-            ColumnDefinition::new(
-                8,
-                "column_comment",
-                8,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Column description/comment".to_string()),
-            ),
-            ColumnDefinition::new(
-                9,
-                "schema_version",
-                9,
-                KalamDataType::Int,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Schema version when column was added (1 = original)".to_string()),
-            ),
-        ];
-
-        system_view_definition(
-            SystemTable::Describe,
-            columns,
-            "Virtual view for DESCRIBE TABLE functionality",
-        )
+        DescribeRow::definition()
     }
 
     /// Create a new describe view without a callback (placeholder mode)
@@ -288,7 +205,8 @@ impl VirtualView for DescribeView {
 #[cfg(test)]
 mod tests {
     use kalamdb_commons::{
-        schemas::{TableOptions, TableType},
+        datatypes::KalamDataType,
+        schemas::{ColumnDefinition, TableOptions, TableType},
         SchemaId, TableName,
     };
 

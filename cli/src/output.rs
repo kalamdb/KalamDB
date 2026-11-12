@@ -306,7 +306,7 @@ impl WorkflowOutput {
             let plain = format!("{label}  {value}");
             if self.emits_human_status() {
                 let formatted = if self.use_color {
-                    format!("{}  {value}", label.cyan().bold())
+                    format!("{}  {}", label.cyan().bold(), linked_value(value))
                 } else {
                     plain.clone()
                 };
@@ -593,6 +593,20 @@ enum TerminalLineKind {
     Service,
 }
 
+fn linked_value(value: &str) -> String {
+    if !is_linkable_url(value) {
+        return value.to_string();
+    }
+    format!("\u{1b}]8;;{value}\u{1b}\\{}\u{1b}]8;;\u{1b}\\", value.underline())
+}
+
+fn is_linkable_url(value: &str) -> bool {
+    value.starts_with("http://")
+        || value.starts_with("https://")
+        || value.starts_with("postgres://")
+        || value.starts_with("postgresql://")
+}
+
 fn format_cli_line(line: &str) -> String {
     format!("[cli] {line}")
 }
@@ -644,6 +658,20 @@ mod tests {
         machine.fields(&[("User", "root".into())]);
         machine.bootstrap_password("bootstrap-secret");
         assert!(machine.buffered_terminal_lines().is_empty());
+    }
+
+    #[test]
+    fn fields_link_http_and_postgres_urls() {
+        let output = WorkflowOutput::new(true, WorkflowLoggingPolicy::disabled());
+        output.fields(&[
+            ("Admin UI", "http://localhost:2900/ui".into()),
+            ("Postgres", "postgres://localhost:5432".into()),
+            ("Config", "/server.toml".into()),
+        ]);
+        let lines = output.buffered_terminal_lines();
+        assert!(lines[0].contains("\u{1b}]8;;http://localhost:2900/ui\u{1b}\\"));
+        assert!(lines[1].contains("\u{1b}]8;;postgres://localhost:5432\u{1b}\\"));
+        assert!(!lines[2].contains("\u{1b}]8;;"));
     }
 
     #[test]

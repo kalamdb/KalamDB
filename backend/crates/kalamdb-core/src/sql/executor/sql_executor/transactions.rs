@@ -12,6 +12,7 @@ use kalamdb_sql::classifier::{SqlStatement, SqlStatementKind};
 use kalamdb_transactions::{
     primary_key_claims, TransactionQueryContext, TransactionQueryExtension,
 };
+use sqlparser::ast::Statement;
 use uuid::Uuid;
 
 use crate::{
@@ -30,35 +31,17 @@ use crate::{
     transactions::CoordinatorAccessValidator,
 };
 
-fn extract_select_from_table_id(sql: &str, default_namespace: &SchemaId) -> Option<TableId> {
-    let lowered = sql.to_ascii_lowercase();
-    let from_idx = lowered.find(" from ")?;
-    let rest = sql[from_idx + 6..].trim_start();
-    let ident: String = rest
-        .chars()
-        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '.')
-        .collect();
-    if ident.is_empty() {
-        return None;
-    }
-    let mut parts = ident.split('.');
-    match (parts.next(), parts.next(), parts.next()) {
-        (Some(table), None, None) => {
-            Some(TableId::from_namespace(default_namespace.clone(), table))
-        },
-        (Some(namespace), Some(table), None) => Some(TableId::from_strings(namespace, table)),
-        _ => None,
-    }
+fn table_id_from_statement(statement: &Statement, default_namespace: &SchemaId) -> Option<TableId> {
+    kalamdb_sql::extract_dml_table_id_from_statement(statement, default_namespace).or_else(|| {
+        kalamdb_sql::extract_query_table_id_from_statement(statement, default_namespace)
+    })
 }
 
 fn extract_sql_target_table_id(sql: &str, default_namespace: &SchemaId) -> Option<TableId> {
-    let trimmed = sql.trim_start();
-    if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("select") {
-        return extract_select_from_table_id(trimmed, default_namespace);
-    }
-    kalamdb_sql::extract_dml_table_id_fast(sql, default_namespace)
-        .or_else(|| kalamdb_sql::extract_dml_table_id(sql, default_namespace))
-        .or_else(|| extract_select_from_table_id(sql, default_namespace))
+    kalamdb_sql::extract_dml_table_id_fast(sql, default_namespace).or_else(|| {
+        let statement = kalamdb_sql::parser::KalamParser::parse_one(sql).ok()?;
+        table_id_from_statement(&statement, default_namespace)
+    })
 }
 
 impl SqlExecutor {
@@ -545,23 +528,31 @@ impl SqlExecutor {
         if matches!(self.resolve_prepared_table_type(metadata).await?, Some(TableType::Stream)) {
             return Ok(true);
         }
-        self.is_stream_target_sql(metadata.sql.as_str(), metadata.table_id.as_ref(), exec_ctx)
-            .await
+        self.is_stream_target_sql(
+            metadata.sql.as_str(),
+            metadata.table_id.as_ref(),
+            metadata.parsed_dml.as_deref().or(metadata.datafusion_statement.as_deref()),
+            exec_ctx,
+        )
+        .await
     }
 
     pub(super) async fn is_stream_target_sql(
         &self,
         sql: &str,
         table_id: Option<&TableId>,
+        statement: Option<&Statement>,
         exec_ctx: &ExecutionContext,
     ) -> Result<bool, KalamDbError> {
         if !exec_ctx.allows_stream_autocommit() {
             return Ok(false);
         }
-        let Some(table_id) = table_id
-            .cloned()
-            .or_else(|| extract_sql_target_table_id(sql, &exec_ctx.default_namespace()))
-        else {
+        let namespace = exec_ctx.default_namespace();
+        let Some(table_id) = table_id.cloned().or_else(|| {
+            statement
+                .and_then(|statement| table_id_from_statement(statement, &namespace))
+                .or_else(|| extract_sql_target_table_id(sql, &namespace))
+        }) else {
             return Ok(false);
         };
         if let Some(cached) = self.app_context.schema_registry().get(&table_id) {

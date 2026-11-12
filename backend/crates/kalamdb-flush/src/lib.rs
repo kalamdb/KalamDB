@@ -15,7 +15,7 @@ pub use error::{FlushError, Result};
 pub use flush::{
     FlushDedupStats, FlushJobResult, FlushMetadata, FlushScopeHint, FlushScopeHook,
     FlushTableMetadata, NoopFlushScopeHook, SharedTableFlushJob, SharedTableFlushMetadata,
-    TableFlush, UserTableFlushJob, UserTableFlushMetadata,
+    TableFlush, UserTableFlushJob, UserTableFlushMetadata, VersionedTableFlushJob,
 };
 pub use flush_helper::FlushManifestHelper;
 pub use service::ManifestService;

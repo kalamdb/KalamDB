@@ -349,9 +349,7 @@ pub(crate) fn encode_value(
 
 fn scale_timestamp(value: i64, factor: i64) -> Result<i64> {
     value.checked_mul(factor).ok_or_else(|| {
-        SerializationError::Decode(format!(
-            "timestamp {value} overflows when scaled by {factor}"
-        ))
+        SerializationError::Decode(format!("timestamp {value} overflows when scaled by {factor}"))
     })
 }
 
@@ -431,12 +429,10 @@ pub(crate) fn decode_value(
         (TAG_TS_MS, StorageDataType::TimestampMicrosecond) => Ok(
             ScalarValue::TimestampMicrosecond(Some(scale_timestamp(reader.i64()?, 1_000)?), None),
         ),
-        (TAG_TS_MS, StorageDataType::TimestampNanosecond) => {
-            Ok(ScalarValue::TimestampNanosecond(
-                Some(scale_timestamp(reader.i64()?, 1_000_000)?),
-                None,
-            ))
-        },
+        (TAG_TS_MS, StorageDataType::TimestampNanosecond) => Ok(ScalarValue::TimestampNanosecond(
+            Some(scale_timestamp(reader.i64()?, 1_000_000)?),
+            None,
+        )),
         (TAG_TS_US, StorageDataType::TimestampMillisecond) => {
             Ok(ScalarValue::TimestampMillisecond(Some(reader.i64()? / 1_000), None))
         },

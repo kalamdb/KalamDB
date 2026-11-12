@@ -1,11 +1,12 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, Float64Builder, Int64Builder, StringBuilder},
-    datatypes::{DataType, Field, Schema, SchemaRef},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use kalamdb_commons::Role;
+use kalamdb_macros::table;
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
@@ -17,19 +18,44 @@ use crate::{
     },
 };
 
+#[table(
+    name = "pg_class",
+    namespace = SchemaId::pg_catalog(),
+    view = true,
+    comment = "Relations and indexes"
+)]
+#[derive(Debug)]
+struct PgClassRow {
+    /// Relation oid
+    oid: i64,
+    /// Relation name
+    relname: String,
+    /// Namespace oid
+    relnamespace: i64,
+    /// Relation kind
+    relkind: String,
+    /// Estimated row count
+    reltuples: f64,
+}
+
 fn schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("oid", DataType::Int64, false),
-                Field::new("relname", DataType::Utf8, false),
-                Field::new("relnamespace", DataType::Int64, false),
-                Field::new("relkind", DataType::Utf8, false),
-                Field::new("reltuples", DataType::Float64, false),
-            ]))
-        })
-        .clone()
+    PgClassRow::arrow_schema()
+}
+
+pub(crate) fn column_order() -> &'static [&'static str] {
+    PgClassRow::ordinal_column_order()
+}
+
+#[cfg(test)]
+mod schema_order {
+    use super::*;
+
+    #[test]
+    fn schema_follows_table_macro() {
+        let schema = schema();
+        let names: Vec<_> = schema.fields().iter().map(|field| field.name().as_str()).collect();
+        assert_eq!(names, PgClassRow::ordinal_column_order());
+    }
 }
 
 #[derive(Debug)]

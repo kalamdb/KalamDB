@@ -1,9 +1,6 @@
 use std::{marker::PhantomData, sync::Arc};
 
-use kalamdb_core::{
-    app_context::AppContext,
-    providers::{base::find_row_by_pk, SharedTableProvider},
-};
+use kalamdb_core::app_context::AppContext;
 
 use crate::{
     error::{DbaError, Result},
@@ -78,11 +75,11 @@ impl<M: RepositoryModel> SharedTableRepository<M> {
         let provider = self
             .app_context
             .schema_registry()
-            .get_provider(&table_id)
+            .get_kalam_provider(&table_id)
             .ok_or_else(|| DbaError::ProviderMismatch(table_id.to_string()))?;
-        let shared_provider = (provider.as_ref() as &dyn std::any::Any)
-            .downcast_ref::<SharedTableProvider>()
-            .ok_or_else(|| DbaError::ProviderMismatch(table_id.to_string()))?;
-        Ok(find_row_by_pk(shared_provider, None, primary_key).await?.is_some())
+        if !provider.is_shared() {
+            return Err(DbaError::ProviderMismatch(table_id.to_string()));
+        }
+        Ok(provider.shared_row_by_pk_value(primary_key).await?.is_some())
     }
 }

@@ -9,15 +9,15 @@ use std::{collections::HashMap, fs, time::Duration};
 use async_trait::async_trait;
 use bytes::Bytes;
 use kalamdb_commons::{models::UserId, schemas::TableType, JobId, TableId};
-use kalamdb_core::{error::KalamDbError, providers::UserTableProvider};
+use kalamdb_core::error::KalamDbError;
 use kalamdb_store::EntityStore;
 use kalamdb_system::{
     providers::jobs::models::JobFilter, JobStatus, JobType, Manifest, SegmentStatus,
 };
 use kalamdb_transfer::{
     import_segment_filename, is_safe_transfer_id, parse_transfer_user_id,
-    read_table_export_archive, validate_table_transfer_scope, write_table_export_zip,
-    TableExportArchive, TableExportArchiveMetadata, TableExportSegmentData,
+    validate_table_transfer_scope, StreamingTableExport, TableExportArchiveMetadata,
+    TableExportArchiveReader, TableExportSegmentData,
 };
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
@@ -42,7 +42,8 @@ pub struct TableExportParams {
 
 impl JobParams for TableExportParams {
     fn validate(&self) -> Result<(), KalamDbError> {
-        validate_table_transfer_scope(self.table_type, self.user_id.as_deref())?;
+        validate_table_transfer_scope(self.table_type, self.user_id.as_deref())
+            .map_err(super::transfer_error)?;
         if self.export_id.is_empty() {
             return Err(KalamDbError::InvalidOperation("export_id cannot be empty".to_string()));
         }
@@ -67,7 +68,8 @@ pub struct TableImportParams {
 
 impl JobParams for TableImportParams {
     fn validate(&self) -> Result<(), KalamDbError> {
-        validate_table_transfer_scope(self.table_type, self.user_id.as_deref())?;
+        validate_table_transfer_scope(self.table_type, self.user_id.as_deref())
+            .map_err(super::transfer_error)?;
         if self.import_id.is_empty() {
             return Err(KalamDbError::InvalidOperation("import_id cannot be empty".to_string()));
         }
@@ -110,7 +112,8 @@ impl JobExecutor for TableExportExecutor {
 
     async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
         let params = ctx.params();
-        let target_user_id = parse_transfer_user_id(params.table_type, params.user_id.as_deref())?;
+        let target_user_id = parse_transfer_user_id(params.table_type, params.user_id.as_deref())
+            .map_err(super::transfer_error)?;
         let table_label = params.table_id.full_name();
 
         ctx.log_info(&format!(
@@ -164,46 +167,13 @@ impl JobExecutor for TableExportExecutor {
             .segments
             .retain(|segment| segment.status == SegmentStatus::Committed);
 
-        let mut segments = Vec::with_capacity(export_manifest.segments.len());
-
-        for segment in &export_manifest.segments {
-            let get_result = match storage_cached
-                .get(params.table_type, &params.table_id, target_user_id.as_ref(), &segment.path)
-                .await
-            {
-                Ok(result) => result,
-                Err(error) => {
-                    let wrapped = KalamDbError::InvalidOperation(format!(
-                        "Failed to read Parquet segment '{}' for {}: {}",
-                        segment.path, table_label, error
-                    ));
-                    if is_missing_parquet_file_error(&wrapped) {
-                        ctx.log_warn(&format!(
-                            "Skipping missing Parquet segment '{}' for {} during export: {}",
-                            segment.path, table_label, error
-                        ));
-                        continue;
-                    }
-                    return Err(wrapped);
-                },
-            };
-
-            segments.push(TableExportSegmentData {
-                source_path: segment.path.clone(),
-                data: get_result.data.to_vec(),
-            });
-        }
-
         let metadata = TableExportArchiveMetadata::new(
             params.table_id.clone(),
             params.table_type,
             target_user_id.clone(),
             table_def.as_ref().clone(),
-            export_manifest,
+            export_manifest.clone(),
         );
-
-        let zip = write_table_export_zip(metadata, segments)?;
-        let zip_size = zip.bytes.len();
 
         let exports_dir = ctx.app_ctx.config().storage.exports_dir().join("tables");
         fs::create_dir_all(&exports_dir).map_err(|error| {
@@ -214,13 +184,73 @@ impl JobExecutor for TableExportExecutor {
             ))
         })?;
         let zip_path = exports_dir.join(format!("{}.zip", params.export_id));
-        fs::write(&zip_path, &zip.bytes).map_err(|error| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to write table export ZIP '{}': {}",
-                zip_path.display(),
-                error
-            ))
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<TableExportSegmentData>(1);
+        let zip_path_for_writer = zip_path.clone();
+        let writer = tokio::task::spawn_blocking(move || {
+            let mut export = StreamingTableExport::create(&zip_path_for_writer)?;
+            while let Some(segment) = rx.blocking_recv() {
+                export.write_segment(&segment.source_path, &segment.data)?;
+            }
+            export.finish(metadata)
+        });
+
+        let produced = async {
+            for segment in &export_manifest.segments {
+                let get_result = match storage_cached
+                    .get(
+                        params.table_type,
+                        &params.table_id,
+                        target_user_id.as_ref(),
+                        &segment.path,
+                    )
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(error) => {
+                        let wrapped = KalamDbError::InvalidOperation(format!(
+                            "Failed to read Parquet segment '{}' for {}: {}",
+                            segment.path, table_label, error
+                        ));
+                        if is_missing_parquet_file_error(&wrapped) {
+                            ctx.log_warn(&format!(
+                                "Skipping missing Parquet segment '{}' for {} during export: {}",
+                                segment.path, table_label, error
+                            ));
+                            continue;
+                        }
+                        return Err(wrapped);
+                    },
+                };
+                tx.send(TableExportSegmentData {
+                    source_path: segment.path.clone(),
+                    data: get_result.data.to_vec(),
+                })
+                .await
+                .map_err(|_| {
+                    KalamDbError::InvalidOperation(
+                        "table export writer stopped before the archive was finished".to_string(),
+                    )
+                })?;
+            }
+            Ok(())
+        }
+        .await;
+        drop(tx);
+        let written = writer.await.map_err(|error| {
+            KalamDbError::InvalidOperation(format!("table export task failed: {error}"))
         })?;
+        let zip = match (produced, written) {
+            (Ok(()), Ok(stats)) => stats,
+            (_, Err(error)) => {
+                let _ = fs::remove_file(&zip_path);
+                return Err(super::transfer_error(error));
+            },
+            (Err(error), Ok(_)) => {
+                let _ = fs::remove_file(&zip_path);
+                return Err(error);
+            },
+        };
+        let zip_size = zip.zip_bytes;
 
         ctx.log_info(&format!(
             "Table export complete: {} Parquet files, {} raw bytes, ZIP {} bytes written to {}",
@@ -260,7 +290,8 @@ impl JobExecutor for TableImportExecutor {
 
     async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
         let params = ctx.params();
-        let target_user_id = parse_transfer_user_id(params.table_type, params.user_id.as_deref())?;
+        let target_user_id = parse_transfer_user_id(params.table_type, params.user_id.as_deref())
+            .map_err(super::transfer_error)?;
         let table_label = params.table_id.full_name();
 
         ctx.log_info(&format!(
@@ -288,15 +319,16 @@ impl JobExecutor for TableImportExecutor {
 
         let imports_dir = ctx.app_ctx.config().storage.exports_dir().join("imports");
         let zip_path = imports_dir.join(format!("{}.zip", params.import_id));
-        let zip_bytes = fs::read(&zip_path).map_err(|error| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to read staged import ZIP '{}': {}",
-                zip_path.display(),
-                error
-            ))
-        })?;
-
-        let TableExportArchive { metadata, files } = read_table_export_archive(zip_bytes)?;
+        let zip_path_for_reader = zip_path.clone();
+        let mut reader = tokio::task::spawn_blocking(move || {
+            TableExportArchiveReader::open(&zip_path_for_reader)
+        })
+        .await
+        .map_err(|error| {
+            KalamDbError::InvalidOperation(format!("table import task failed: {error}"))
+        })?
+        .map_err(super::transfer_error)?;
+        let metadata = reader.metadata().clone();
 
         if metadata.source_table_type != params.table_type {
             return Err(KalamDbError::InvalidOperation(format!(
@@ -334,10 +366,24 @@ impl JobExecutor for TableImportExecutor {
 
         let mut imported_segments = Vec::new();
         let mut total_bytes = 0usize;
+        let mut file_count = 0usize;
 
-        for (index, file) in files.iter().enumerate() {
-            let data = &file.data;
-
+        loop {
+            let read = tokio::task::spawn_blocking(move || {
+                let next = reader.read_next_file();
+                (reader, next)
+            })
+            .await
+            .map_err(|error| {
+                KalamDbError::InvalidOperation(format!("table import task failed: {error}"))
+            })?;
+            reader = read.0;
+            let Some(file) = read.1.map_err(super::transfer_error)? else {
+                break;
+            };
+            let index = file_count;
+            file_count += 1;
+            let data_len = file.data.len();
             let target_filename =
                 import_segment_filename(&params.import_id, index, &file.metadata.source_path);
             storage_cached
@@ -346,7 +392,7 @@ impl JobExecutor for TableImportExecutor {
                     &params.table_id,
                     target_user_id.as_ref(),
                     &target_filename,
-                    Bytes::from(data.clone()),
+                    Bytes::from(file.data),
                 )
                 .await
                 .map_err(|error| {
@@ -369,10 +415,10 @@ impl JobExecutor for TableImportExecutor {
                 format!("import-{}-{:05}-{}", params.import_id, index, uuid::Uuid::new_v4());
             segment.path = target_filename;
             segment.schema_version = table_def.schema_version;
-            segment.size_bytes = data.len() as u64;
+            segment.size_bytes = data_len as u64;
             segment.status = SegmentStatus::Committed;
             imported_segments.push(segment);
-            total_bytes += data.len();
+            total_bytes += data_len;
         }
 
         if imported_segments.is_empty() {
@@ -415,9 +461,7 @@ impl JobExecutor for TableImportExecutor {
         Ok(JobDecision::Completed {
             message: Some(format!(
                 "Imported {} Parquet files ({} bytes) into {}",
-                files.len(),
-                total_bytes,
-                table_label
+                file_count, total_bytes, table_label
             )),
         })
     }
@@ -555,16 +599,12 @@ fn user_table_has_hot_rows(
     table_id: &TableId,
     user_id: &UserId,
 ) -> bool {
-    let Some(provider_arc) = ctx.app_ctx.schema_registry().get_provider(table_id) else {
+    let Some(provider_arc) = ctx.app_ctx.schema_registry().get_kalam_provider(table_id) else {
         return false;
     };
-    let Some(provider) =
-        (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
-    else {
+    let Some(store) = provider_arc.user_store() else {
         return true;
     };
-
-    let store = provider.store();
     let user_prefix = kalamdb_commons::ids::UserTableRowId::user_prefix(user_id);
     let partition = store.partition();
     store

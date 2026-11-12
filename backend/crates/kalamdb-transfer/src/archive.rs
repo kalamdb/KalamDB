@@ -1,10 +1,11 @@
 use std::{
     fs::{self, File},
+    io::{BufReader, BufWriter, Write},
     path::{Component, Path, PathBuf},
 };
 
+use crate::error::TransferError;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
-use kalamdb_core::error::KalamDbError;
 use tar::{Archive, Builder};
 use uuid::Uuid;
 
@@ -16,10 +17,10 @@ pub fn is_tar_gz_path(path: &Path) -> bool {
 pub fn create_archive_staging_dir(
     archive_path: &Path,
     purpose: &str,
-) -> Result<PathBuf, KalamDbError> {
+) -> Result<PathBuf, TransferError> {
     let parent = archive_path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent).map_err(|error| {
-        KalamDbError::InvalidOperation(format!(
+        TransferError::InvalidOperation(format!(
             "Failed to create archive staging parent '{}': {}",
             parent.display(),
             error
@@ -33,7 +34,7 @@ pub fn create_archive_staging_dir(
     let staging_dir = parent.join(format!(".{}.{}-{}", file_name, purpose, Uuid::new_v4()));
 
     fs::create_dir_all(&staging_dir).map_err(|error| {
-        KalamDbError::InvalidOperation(format!(
+        TransferError::InvalidOperation(format!(
             "Failed to create archive staging directory '{}': {}",
             staging_dir.display(),
             error
@@ -43,10 +44,10 @@ pub fn create_archive_staging_dir(
     Ok(staging_dir)
 }
 
-pub fn create_tar_gz_archive(src_dir: &Path, archive_path: &Path) -> Result<(), KalamDbError> {
+pub fn create_tar_gz_archive(src_dir: &Path, archive_path: &Path) -> Result<(), TransferError> {
     if let Some(parent) = archive_path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
-            KalamDbError::InvalidOperation(format!(
+            TransferError::InvalidOperation(format!(
                 "Failed to create archive output directory '{}': {}",
                 parent.display(),
                 error
@@ -56,14 +57,14 @@ pub fn create_tar_gz_archive(src_dir: &Path, archive_path: &Path) -> Result<(), 
 
     if archive_path.exists() {
         if archive_path.is_dir() {
-            return Err(KalamDbError::InvalidOperation(format!(
+            return Err(TransferError::InvalidOperation(format!(
                 "Archive output path '{}' is a directory",
                 archive_path.display()
             )));
         }
 
         fs::remove_file(archive_path).map_err(|error| {
-            KalamDbError::InvalidOperation(format!(
+            TransferError::InvalidOperation(format!(
                 "Failed to replace existing archive '{}': {}",
                 archive_path.display(),
                 error
@@ -71,25 +72,28 @@ pub fn create_tar_gz_archive(src_dir: &Path, archive_path: &Path) -> Result<(), 
         })?;
     }
 
-    let archive_file = File::create(archive_path).map_err(|error| {
-        KalamDbError::InvalidOperation(format!(
-            "Failed to create archive '{}': {}",
-            archive_path.display(),
-            error
-        ))
-    })?;
+    let archive_file = BufWriter::with_capacity(
+        crate::TRANSFER_STREAM_BUFFER_BYTES,
+        File::create(archive_path).map_err(|error| {
+            TransferError::InvalidOperation(format!(
+                "Failed to create archive '{}': {}",
+                archive_path.display(),
+                error
+            ))
+        })?,
+    );
     let encoder = GzEncoder::new(archive_file, Compression::default());
     let mut builder = Builder::new(encoder);
 
     for entry_result in fs::read_dir(src_dir).map_err(|error| {
-        KalamDbError::InvalidOperation(format!(
+        TransferError::InvalidOperation(format!(
             "Failed to read archive staging directory '{}': {}",
             src_dir.display(),
             error
         ))
     })? {
         let entry = entry_result.map_err(|error| {
-            KalamDbError::InvalidOperation(format!("Directory entry error: {}", error))
+            TransferError::InvalidOperation(format!("Directory entry error: {}", error))
         })?;
         let src_path = entry.path();
         let name = entry.file_name();
@@ -97,7 +101,7 @@ pub fn create_tar_gz_archive(src_dir: &Path, archive_path: &Path) -> Result<(), 
 
         if src_path.is_dir() {
             builder.append_dir_all(archive_name, &src_path).map_err(|error| {
-                KalamDbError::InvalidOperation(format!(
+                TransferError::InvalidOperation(format!(
                     "Failed to archive directory '{}': {}",
                     src_path.display(),
                     error
@@ -105,14 +109,14 @@ pub fn create_tar_gz_archive(src_dir: &Path, archive_path: &Path) -> Result<(), 
             })?;
         } else {
             let mut file = File::open(&src_path).map_err(|error| {
-                KalamDbError::InvalidOperation(format!(
+                TransferError::InvalidOperation(format!(
                     "Failed to open archive input '{}': {}",
                     src_path.display(),
                     error
                 ))
             })?;
             builder.append_file(archive_name, &mut file).map_err(|error| {
-                KalamDbError::InvalidOperation(format!(
+                TransferError::InvalidOperation(format!(
                     "Failed to archive file '{}': {}",
                     src_path.display(),
                     error
@@ -122,22 +126,29 @@ pub fn create_tar_gz_archive(src_dir: &Path, archive_path: &Path) -> Result<(), 
     }
 
     builder.finish().map_err(|error| {
-        KalamDbError::InvalidOperation(format!(
+        TransferError::InvalidOperation(format!(
             "Failed to finish archive '{}': {}",
             archive_path.display(),
             error
         ))
     })?;
     let encoder = builder.into_inner().map_err(|error| {
-        KalamDbError::InvalidOperation(format!(
+        TransferError::InvalidOperation(format!(
             "Failed to finalize archive '{}': {}",
             archive_path.display(),
             error
         ))
     })?;
-    encoder.finish().map_err(|error| {
-        KalamDbError::InvalidOperation(format!(
+    let mut buffered = encoder.finish().map_err(|error| {
+        TransferError::InvalidOperation(format!(
             "Failed to flush archive '{}': {}",
+            archive_path.display(),
+            error
+        ))
+    })?;
+    buffered.flush().map_err(|error| {
+        TransferError::InvalidOperation(format!(
+            "Failed to flush archive buffer '{}': {}",
             archive_path.display(),
             error
         ))
@@ -146,52 +157,55 @@ pub fn create_tar_gz_archive(src_dir: &Path, archive_path: &Path) -> Result<(), 
     Ok(())
 }
 
-pub fn extract_tar_gz_archive(archive_path: &Path, output_dir: &Path) -> Result<(), KalamDbError> {
+pub fn extract_tar_gz_archive(archive_path: &Path, output_dir: &Path) -> Result<(), TransferError> {
     fs::create_dir_all(output_dir).map_err(|error| {
-        KalamDbError::InvalidOperation(format!(
+        TransferError::InvalidOperation(format!(
             "Failed to create archive extraction directory '{}': {}",
             output_dir.display(),
             error
         ))
     })?;
 
-    let archive_file = File::open(archive_path).map_err(|error| {
-        KalamDbError::InvalidOperation(format!(
-            "Failed to open archive '{}': {}",
-            archive_path.display(),
-            error
-        ))
-    })?;
+    let archive_file = BufReader::with_capacity(
+        crate::TRANSFER_STREAM_BUFFER_BYTES,
+        File::open(archive_path).map_err(|error| {
+            TransferError::InvalidOperation(format!(
+                "Failed to open archive '{}': {}",
+                archive_path.display(),
+                error
+            ))
+        })?,
+    );
     let decoder = GzDecoder::new(archive_file);
     let mut archive = Archive::new(decoder);
 
     for entry_result in archive.entries().map_err(|error| {
-        KalamDbError::InvalidOperation(format!(
+        TransferError::InvalidOperation(format!(
             "Failed to enumerate archive '{}': {}",
             archive_path.display(),
             error
         ))
     })? {
         let mut entry = entry_result.map_err(|error| {
-            KalamDbError::InvalidOperation(format!("Archive entry error: {}", error))
+            TransferError::InvalidOperation(format!("Archive entry error: {}", error))
         })?;
 
         let entry_type = entry.header().entry_type();
         if entry_type.is_symlink() || entry_type.is_hard_link() {
-            return Err(KalamDbError::InvalidOperation(
+            return Err(TransferError::InvalidOperation(
                 "Archive cannot contain symlinks".to_string(),
             ));
         }
 
         let raw_path = entry.path_bytes().to_vec();
         let relative_path = Path::new(std::str::from_utf8(&raw_path).map_err(|error| {
-            KalamDbError::InvalidOperation(format!("Invalid archive path bytes: {}", error))
+            TransferError::InvalidOperation(format!("Invalid archive path bytes: {}", error))
         })?);
 
         if relative_path.components().any(|component| {
             matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_))
         }) {
-            return Err(KalamDbError::InvalidOperation(
+            return Err(TransferError::InvalidOperation(
                 "Archive contains an unsafe path".to_string(),
             ));
         }
@@ -199,7 +213,7 @@ pub fn extract_tar_gz_archive(archive_path: &Path, output_dir: &Path) -> Result<
         let output_path = output_dir.join(relative_path);
         if let Some(parent) = output_path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
-                KalamDbError::InvalidOperation(format!(
+                TransferError::InvalidOperation(format!(
                     "Failed to create extraction path '{}': {}",
                     parent.display(),
                     error
@@ -208,7 +222,7 @@ pub fn extract_tar_gz_archive(archive_path: &Path, output_dir: &Path) -> Result<
         }
 
         entry.unpack(&output_path).map_err(|error| {
-            KalamDbError::InvalidOperation(format!(
+            TransferError::InvalidOperation(format!(
                 "Failed to extract '{}' from archive: {}",
                 relative_path.display(),
                 error
@@ -219,13 +233,13 @@ pub fn extract_tar_gz_archive(archive_path: &Path, output_dir: &Path) -> Result<
     Ok(())
 }
 
-pub fn copy_dir_to_dir(src: &Path, dst: &Path) -> Result<u64, KalamDbError> {
+pub fn copy_dir_to_dir(src: &Path, dst: &Path) -> Result<u64, TransferError> {
     if !src.exists() {
         return Ok(0);
     }
 
     fs::create_dir_all(dst).map_err(|error| {
-        KalamDbError::InvalidOperation(format!(
+        TransferError::InvalidOperation(format!(
             "Failed to create directory '{}': {}",
             dst.display(),
             error
@@ -234,14 +248,14 @@ pub fn copy_dir_to_dir(src: &Path, dst: &Path) -> Result<u64, KalamDbError> {
 
     let mut bytes_copied = 0u64;
     for entry_result in fs::read_dir(src).map_err(|error| {
-        KalamDbError::InvalidOperation(format!(
+        TransferError::InvalidOperation(format!(
             "Failed to read directory '{}': {}",
             src.display(),
             error
         ))
     })? {
         let entry = entry_result.map_err(|error| {
-            KalamDbError::InvalidOperation(format!("Directory entry error: {}", error))
+            TransferError::InvalidOperation(format!("Directory entry error: {}", error))
         })?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
@@ -249,7 +263,7 @@ pub fn copy_dir_to_dir(src: &Path, dst: &Path) -> Result<u64, KalamDbError> {
             bytes_copied += copy_dir_to_dir(&src_path, &dst_path)?;
         } else {
             fs::copy(&src_path, &dst_path).map_err(|error| {
-                KalamDbError::InvalidOperation(format!(
+                TransferError::InvalidOperation(format!(
                     "Failed to copy '{}' to '{}': {}",
                     src_path.display(),
                     dst_path.display(),

@@ -1,5 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
+use crate::support::{create_cluster_app_context, create_shared_table, row, unique_namespace};
 use kalamdb_commons::{
     models::{rows::Row, ConnectionId, LiveQueryId, OperationKind, TransactionOrigin, UserId},
     websocket::ChangeType,
@@ -10,7 +11,6 @@ use kalamdb_live::models::{
     LiveRoute, NotificationSender, SubscriptionFlowControl, SubscriptionHandle,
     SubscriptionRuntimeMetadata,
 };
-use crate::support::{create_cluster_app_context, create_shared_table, row, unique_namespace};
 use tokio::sync::mpsc;
 
 fn make_shared_handle(

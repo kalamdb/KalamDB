@@ -912,14 +912,16 @@ async fn invoke_sql_routine_body(
             if routine.kind == RoutineKind::Procedure && !has_out_params {
                 if matches!(
                     result,
-                    ExecutionResult::Rows { .. } | ExecutionResult::ScalarRows { .. }
+                    ExecutionResult::Rows { .. }
+                        | ExecutionResult::ScalarRows { .. }
+                        | ExecutionResult::StreamingRows { .. }
                 ) {
-                    super::convert::execution_result_to_routine(result)
+                    super::convert::execution_result_to_routine(result).await
                 } else {
                     Ok(RoutineValue::new(ScalarValue::Null))
                 }
             } else {
-                super::convert::execution_result_to_routine(result)
+                super::convert::execution_result_to_routine(result).await
             }
         },
         None => Ok(RoutineValue::new(ScalarValue::Null)),

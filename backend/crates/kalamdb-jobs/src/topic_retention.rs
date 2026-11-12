@@ -155,7 +155,7 @@ mod tests {
     async fn test_scheduler_creates_one_idempotent_job_per_topic_with_pending_cleanup() {
         let app_ctx = test_app_context();
         if catch_unwind(AssertUnwindSafe(|| app_ctx.job_manager())).is_err() {
-            init_job_manager(&app_ctx);
+            init_job_manager(&app_ctx).expect("job capability");
         }
 
         let unique = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);

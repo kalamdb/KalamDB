@@ -24,11 +24,11 @@ use kalamdb_commons::{
     schemas::{TableOptions, TableType},
     JobId, TableId,
 };
-use kalamdb_core::{error::KalamDbError, providers::UserTableProvider};
+use kalamdb_core::error::KalamDbError;
 use kalamdb_store::EntityStore;
 use kalamdb_system::{JobStatus, JobType};
 use kalamdb_transfer::{
-    is_safe_transfer_id, user_export_zip_path, UserDataExportZip, UserDataExportZipBuilder,
+    is_safe_transfer_id, user_export_zip_path, UserDataExportFile, UserDataExportStats,
 };
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
@@ -149,12 +149,9 @@ impl JobExecutor for UserExportExecutor {
             // If not, skip the flush job entirely. The Parquet files (if any) will
             // still be copied in Phase 4.
             let has_rocksdb_data = {
-                let provider_opt = schema_registry.get_provider(&table_id);
+                let provider_opt = schema_registry.get_kalam_provider(&table_id);
                 if let Some(provider_arc) = provider_opt {
-                    if let Some(provider) = (provider_arc.as_ref() as &dyn std::any::Any)
-                        .downcast_ref::<UserTableProvider>()
-                    {
-                        let store = provider.store();
+                    if let Some(store) = provider_arc.user_store() {
                         // Scan with the user-specific prefix to check only this user's data
                         let user_prefix = UserTableRowId::user_prefix(&user_id);
                         let partition = store.partition();
@@ -286,10 +283,42 @@ impl JobExecutor for UserExportExecutor {
             }
         }
 
-        // ── Phase 4: Read raw Parquet files and build ZIP ────────────────────
+        // ── Phase 4: Stream Parquet files into a ZIP on disk ─────────────────
         ctx.log_info("Reading Parquet files and building ZIP archive…");
 
-        let mut zip_builder = UserDataExportZipBuilder::new();
+        let exports_dir = ctx.app_ctx.config().storage.exports_dir();
+        let user_exports_dir = exports_dir.join(params.user_id.as_str());
+        fs::create_dir_all(&user_exports_dir).map_err(|e| {
+            KalamDbError::InvalidOperation(format!(
+                "Failed to create exports directory '{}': {}",
+                user_exports_dir.display(),
+                e
+            ))
+        })?;
+        let zip_filename = format!("{}.zip", export_id);
+        let zip_path = user_export_zip_path(&exports_dir, params.user_id.as_str(), export_id);
+
+        struct ExportChunk {
+            namespace_id: String,
+            table_name: String,
+            file_name: String,
+            data: Vec<u8>,
+        }
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<ExportChunk>(1);
+        let zip_path_for_writer = zip_path.clone();
+        let writer = tokio::task::spawn_blocking(move || {
+            let mut export = UserDataExportFile::create(&zip_path_for_writer)?;
+            while let Some(chunk) = rx.blocking_recv() {
+                export.add_file(
+                    &chunk.namespace_id,
+                    &chunk.table_name,
+                    &chunk.file_name,
+                    &chunk.data,
+                )?;
+            }
+            export.finish()
+        });
 
         let storage_registry = ctx.app_ctx.storage_registry();
 
@@ -351,50 +380,43 @@ impl JobExecutor for UserExportExecutor {
                     },
                 };
 
-                zip_builder.add_file(
-                    table_def.namespace_id.as_str(),
-                    table_def.table_name.as_str(),
-                    filename,
-                    &get_result.data,
-                )?;
+                tx.send(ExportChunk {
+                    namespace_id: table_def.namespace_id.as_str().to_string(),
+                    table_name: table_def.table_name.as_str().to_string(),
+                    file_name: filename.clone(),
+                    data: get_result.data.to_vec(),
+                })
+                .await
+                .map_err(|_| {
+                    KalamDbError::InvalidOperation(
+                        "user export writer stopped before the archive was finished".to_string(),
+                    )
+                })?;
             }
         }
 
-        let UserDataExportZip {
-            bytes: zip_bytes,
+        drop(tx);
+        let written = writer.await.map_err(|error| {
+            KalamDbError::InvalidOperation(format!("user export task failed: {error}"))
+        })?;
+        let UserDataExportStats {
             raw_bytes: total_bytes,
             file_count: total_files,
-        } = zip_builder.finish()?;
+            zip_bytes: zip_size,
+        } = match written {
+            Ok(stats) => stats,
+            Err(error) => {
+                let _ = fs::remove_file(&zip_path);
+                return Err(super::transfer_error(error));
+            },
+        };
 
         if total_files == 0 {
+            let _ = fs::remove_file(&zip_path);
             return Ok(JobDecision::Completed {
                 message: Some("No data found for this user in any table".to_string()),
             });
         }
-
-        // ── Phase 5: Flush ZIP to disk ───────────────────────────────────────
-        let zip_size = zip_bytes.len();
-
-        let exports_dir = ctx.app_ctx.config().storage.exports_dir();
-        let user_exports_dir = exports_dir.join(params.user_id.as_str());
-        fs::create_dir_all(&user_exports_dir).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to create exports directory '{}': {}",
-                user_exports_dir.display(),
-                e
-            ))
-        })?;
-
-        let zip_filename = format!("{}.zip", export_id);
-        let zip_path = user_export_zip_path(&exports_dir, params.user_id.as_str(), export_id);
-
-        fs::write(&zip_path, &zip_bytes).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to write export ZIP '{}': {}",
-                zip_path.display(),
-                e
-            ))
-        })?;
 
         ctx.log_info(&format!(
             "Export complete: {} Parquet files, {} raw bytes, ZIP {} bytes written to {}",

@@ -587,7 +587,10 @@ impl StorageCached {
             .complete()
             .await
             .map_err(|error| FilestoreError::ObjectStore(error.to_string()))?;
-        Ok(PutResult::new(path_result.full_path, usize::try_from(size_bytes).unwrap_or(usize::MAX)))
+        Ok(PutResult::new(
+            path_result.full_path,
+            usize::try_from(size_bytes).unwrap_or(usize::MAX),
+        ))
     }
 
     /// List Parquet filenames under a table's storage path (sorted, deduplicated).
@@ -791,11 +794,6 @@ impl StorageCached {
     /// Invalidate the cached `ObjectStore` (forces rebuild on next use).
     pub fn invalidate_object_store(&self) {
         *self.object_store.write() = None;
-    }
-
-    /// Check if `ObjectStore` has been initialized.
-    pub fn is_object_store_initialized(&self) -> bool {
-        self.object_store.read().is_some()
     }
 }
 
