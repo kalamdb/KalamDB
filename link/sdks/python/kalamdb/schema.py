@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import Any, Dict, Iterator, List, Mapping, Tuple
 
@@ -10,6 +11,8 @@ __all__ = [
     "Column",
     "Table",
     "KTable",
+    "COMPRESSION_CODECS",
+    "EVICTION_STRATEGIES",
     "bigint",
     "boolean",
     "bytes_",
@@ -24,6 +27,22 @@ __all__ = [
     "timestamp",
     "uuid",
 ]
+
+
+COMPRESSION_CODECS = ("none", "snappy", "zstd")
+EVICTION_STRATEGIES = ("time_based", "size_based", "hybrid")
+
+_STORAGE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_OPTION_ORDER = (
+    "STORAGE_ID",
+    "USE_USER_STORAGE",
+    "FLUSH_POLICY",
+    "COMPRESSION",
+    "DELETED_RETENTION_HOURS",
+    "TTL_SECONDS",
+    "EVICTION_STRATEGY",
+    "MAX_STREAM_SIZE_BYTES",
+)
 
 
 class TableKind(Enum):
@@ -123,6 +142,7 @@ class Table:
         self.qualified_name = qualified_name
         self.kind = kind
         self.columns = columns
+        self.options: Dict[str, str] = {}
 
     def column(self, name: str) -> Column:
         for col in self.columns:
@@ -130,11 +150,112 @@ class Table:
                 return col
         raise KeyError(f"{self.qualified_name} has no column {name!r}")
 
+    def storage_id(self, storage_id: str) -> "Table":
+        """Named storage backend holding this table's segments."""
+        self._require_kind("STORAGE_ID", TableKind.USER, TableKind.SHARED)
+        if not _STORAGE_ID_RE.match(storage_id):
+            raise ValueError(
+                f"invalid storage id {storage_id!r}: letters, digits, underscore and "
+                "hyphen only"
+            )
+        return self._set("STORAGE_ID", f"'{storage_id}'")
+
+    def use_user_storage(self, enabled: bool = True) -> "Table":
+        """Write each user's rows to that user's own storage backend."""
+        self._require_kind("USE_USER_STORAGE", TableKind.USER)
+        return self._set("USE_USER_STORAGE", "true" if enabled else "false")
+
+    def flush_policy(self, rows: int = 0, interval_seconds: int = 0) -> "Table":
+        """When buffered rows move to cold storage. Set either bound or both."""
+        self._require_kind("FLUSH_POLICY", TableKind.USER, TableKind.SHARED)
+        if rows < 0 or interval_seconds < 0:
+            raise ValueError("flush policy bounds must not be negative")
+        parts = []
+        if rows:
+            parts.append(f"rows:{rows}")
+        if interval_seconds:
+            parts.append(f"interval:{interval_seconds}")
+        if not parts:
+            raise ValueError("flush policy needs rows or interval_seconds above zero")
+        return self._set("FLUSH_POLICY", f"'{','.join(parts)}'")
+
+    def compression(self, codec: str) -> "Table":
+        """Parquet compression codec for cold segments."""
+        self._require_kind("COMPRESSION", TableKind.USER, TableKind.SHARED)
+        normalized = codec.strip().lower()
+        if normalized not in COMPRESSION_CODECS:
+            raise ValueError(
+                f"invalid compression {codec!r}: expected one of "
+                f"{', '.join(COMPRESSION_CODECS)}"
+            )
+        return self._set("COMPRESSION", f"'{normalized}'")
+
+    def deleted_retention_hours(self, hours: int) -> "Table":
+        """How long deleted rows stay readable before cleanup drops them."""
+        self._require_kind(
+            "DELETED_RETENTION_HOURS", TableKind.USER, TableKind.SHARED, TableKind.STREAM
+        )
+        if hours < 0:
+            raise ValueError("deleted retention hours must not be negative")
+        return self._set("DELETED_RETENTION_HOURS", str(hours))
+
+    def ttl_seconds(self, seconds: int) -> "Table":
+        """Row lifetime. Required on every STREAM table."""
+        self._require_kind("TTL_SECONDS", TableKind.STREAM)
+        if seconds <= 0:
+            raise ValueError("ttl seconds must be positive")
+        return self._set("TTL_SECONDS", str(seconds))
+
+    def eviction_strategy(self, strategy: str) -> "Table":
+        """Which bound expires stream rows: age, size, or both."""
+        self._require_kind("EVICTION_STRATEGY", TableKind.STREAM)
+        normalized = strategy.strip().lower()
+        if normalized not in EVICTION_STRATEGIES:
+            raise ValueError(
+                f"invalid eviction strategy {strategy!r}: expected one of "
+                f"{', '.join(EVICTION_STRATEGIES)}"
+            )
+        return self._set("EVICTION_STRATEGY", f"'{normalized}'")
+
+    def max_stream_size_bytes(self, size: int) -> "Table":
+        """Size bound used by the size_based and hybrid eviction strategies."""
+        self._require_kind("MAX_STREAM_SIZE_BYTES", TableKind.STREAM)
+        if size <= 0:
+            raise ValueError("max stream size bytes must be positive")
+        return self._set("MAX_STREAM_SIZE_BYTES", str(size))
+
     def create_table_sql(self, if_not_exists: bool = True) -> str:
-        kind = "" if self.kind is TableKind.SYSTEM else f"{self.kind.value} "
         guard = "IF NOT EXISTS " if if_not_exists else ""
         body = ",\n  ".join(col.ddl() for col in self.columns)
-        return f"CREATE {kind}TABLE {guard}{self.qualified_name} (\n  {body}\n)"
+        sql = f"CREATE TABLE {guard}{self.qualified_name} (\n  {body}\n)"
+        options = self.options_sql()
+        return f"{sql}\nWITH ({options})" if options else sql
+
+    def options_sql(self) -> str:
+        """The WITH clause body. Empty for SYSTEM tables, which take no options."""
+        if self.kind is TableKind.SYSTEM:
+            return ""
+        if self.kind is TableKind.STREAM and "TTL_SECONDS" not in self.options:
+            raise ValueError(
+                f"{self.qualified_name} is a STREAM table, so it needs ttl_seconds(...)"
+            )
+        rendered = [f"TYPE = '{self.kind.value}'"]
+        rendered.extend(
+            f"{name} = {self.options[name]}" for name in _OPTION_ORDER if name in self.options
+        )
+        return ", ".join(rendered)
+
+    def _set(self, option: str, literal: str) -> "Table":
+        self.options[option] = literal
+        return self
+
+    def _require_kind(self, option: str, *kinds: TableKind) -> None:
+        if self.kind not in kinds:
+            allowed = " and ".join(kind.value for kind in kinds)
+            raise ValueError(
+                f"{option} is only supported for {allowed} tables, and "
+                f"{self.qualified_name} is {self.kind.value}"
+            )
 
     def insert_sql(self, data: Mapping[str, Any]) -> Tuple[str, List[Any]]:
         """Parameterised INSERT, skipping server-filled columns."""
