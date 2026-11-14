@@ -9,6 +9,20 @@ use std::collections::{HashMap, HashSet};
 use kalamdb_commons::ids::{VersionDomain, VersionId};
 use serde::{Deserialize, Serialize};
 
+/// Decimal JSON encoding of 64-bit queue positions is required for WASM.
+mod decimal_u64 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &u64, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        value.parse::<u64>().map_err(serde::de::Error::custom)
+    }
+}
+
 /// Mirrors the durable outbox state persisted by platform-specific adapters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -26,6 +40,8 @@ pub struct OutboxCandidate {
     pub id: String,
     pub account_key: String,
     pub ordering_key: Option<String>,
+    /// Decimal string: JS numbers lose precision beyond 2^53-1.
+    #[serde(with = "decimal_u64")]
     pub queue_position: u64,
     pub status: OutboxStatus,
     /// UTC epoch milliseconds, not a row VersionId.
@@ -427,6 +443,7 @@ mod tests {
         let mut req = request(vec![action("a", "chat", u64::MAX - 1, OutboxStatus::Queued)]);
         req.max_claims = 1;
         let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\\\"18446744073709551614\\\""));
         let result: OutboxPlan = serde_json::from_str(&plan_outbox_json(&json).unwrap()).unwrap();
         assert_eq!(result.action_ids, ["a"]);
     }
