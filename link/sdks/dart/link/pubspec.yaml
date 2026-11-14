@@ -1,8 +1,16 @@
 name: kalam_link
-description: KalamDB client SDK for Dart and Flutter — queries, live subscriptions, and authentication
+description: Flutter database client for KalamDB with realtime SQL subscriptions, typed queries, and JWT/OIDC authentication.
 version: 0.8.0
-homepage: https://github.com/kalamdb/KalamDB
+homepage: https://kalamdb.org
 repository: https://github.com/kalamdb/KalamDB
+issue_tracker: https://github.com/kalamdb/KalamDB/issues
+documentation: https://kalamdb.org/docs/dart-sdk/setup
+topics:
+  - realtime
+  - database
+  - sql
+  - websocket
+  - flutter
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
