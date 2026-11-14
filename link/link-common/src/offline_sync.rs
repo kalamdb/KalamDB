@@ -443,7 +443,7 @@ mod tests {
         let mut req = request(vec![action("a", "chat", u64::MAX - 1, OutboxStatus::Queued)]);
         req.max_claims = 1;
         let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("\\\"18446744073709551614\\\""));
+        assert!(json.contains(r#""18446744073709551614""#));
         let result: OutboxPlan = serde_json::from_str(&plan_outbox_json(&json).unwrap()).unwrap();
         assert_eq!(result.action_ids, ["a"]);
     }
