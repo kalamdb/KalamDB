@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json as _json
+import mimetypes
 import re
 from enum import Enum
-from typing import Any, Dict, Iterator, List, Mapping, Tuple
+from pathlib import Path
+from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 __all__ = [
     "TableKind",
@@ -84,6 +87,39 @@ class Column:
         self.default_expr = expr
         return self
 
+    @property
+    def is_file(self) -> bool:
+        """FILE columns hold uploads, so their values travel as multipart
+        attachments rather than as query parameters."""
+        return self.sql_type == "FILE"
+
+    @property
+    def base_type(self) -> str:
+        """The SQL type without its parameters: EMBEDDING(384) is EMBEDDING."""
+        return self.sql_type.split("(", 1)[0]
+
+    def parse(self, value: Any) -> Any:
+        """Coerce one value coming back from the server to the type this column
+        declares. A value that does not fit is returned untouched, so a parsed
+        row never loses data."""
+        if value is None:
+            return None
+        base = self.base_type
+        try:
+            if base in ("INT", "BIGINT"):
+                return int(value)
+            if base == "DOUBLE":
+                return float(value)
+            if base == "BOOLEAN":
+                if isinstance(value, bool):
+                    return value
+                return str(value).strip().lower() in ("true", "t", "1")
+            if base in ("JSON", "EMBEDDING"):
+                return _json.loads(value) if isinstance(value, str) else value
+        except (TypeError, ValueError):
+            return value
+        return value
+
     def ddl(self) -> str:
         parts = [self.name, self.sql_type]
         if self.is_not_null:
@@ -126,6 +162,37 @@ def embedding(name: str, dimensions: int) -> Column:
     return Column(name, f"EMBEDDING({dimensions})")
 
 
+def _as_upload(column: Column, value: Any) -> Optional[Tuple[str, bytes, str]]:
+    """Normalise a FILE column value into a (filename, data, mime) upload.
+
+    Returns None when the value is an ordinary parameter — a stored file
+    reference, or anything on a column that is not FILE.
+    """
+    if not column.is_file:
+        return None
+
+    if isinstance(value, Path):
+        mime, _ = mimetypes.guess_type(value.name)
+        return (value.name, value.read_bytes(), mime or "application/octet-stream")
+
+    if isinstance(value, tuple) and len(value) in (2, 3):
+        name, data = value[0], value[1]
+        if isinstance(name, str) and isinstance(data, (bytes, bytearray)):
+            if len(value) == 3:
+                mime = value[2]
+            else:
+                mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+            return (name, bytes(data), mime)
+
+    if isinstance(value, (bytes, bytearray)):
+        raise ValueError(
+            f"{column.name} is a FILE column, so an upload needs a filename: pass "
+            "(filename, data) or (filename, data, mime_type), or a pathlib.Path"
+        )
+
+    return None
+
+
 class Table:
     """A declared table. Build one through :class:`KTable`."""
 
@@ -149,6 +216,21 @@ class Table:
             if col.name == name:
                 return col
         raise KeyError(f"{self.qualified_name} has no column {name!r}")
+
+    @property
+    def primary_key_column(self) -> Optional[Column]:
+        """The column declared ``primary_key()``, or None if the table has none."""
+        for col in self.columns:
+            if col.is_primary_key:
+                return col
+        return None
+
+    def bind(self, client: Any) -> "BoundTable":
+        """Pair this definition with a connected client so the generated SQL can
+        be executed. See :class:`kalamdb.binding.BoundTable`."""
+        from .binding import BoundTable
+
+        return BoundTable(self, client)
 
     def storage_id(self, storage_id: str) -> "Table":
         """Named storage backend holding this table's segments."""
@@ -231,6 +313,9 @@ class Table:
         options = self.options_sql()
         return f"{sql}\nWITH ({options})" if options else sql
 
+    def drop_table_sql(self, if_exists: bool = True) -> str:
+        return f"DROP TABLE {'IF EXISTS ' if if_exists else ''}{self.qualified_name}"
+
     def options_sql(self) -> str:
         """The WITH clause body. Empty for SYSTEM tables, which take no options."""
         if self.kind is TableKind.SYSTEM:
@@ -257,18 +342,33 @@ class Table:
                 f"{self.qualified_name} is {self.kind.value}"
             )
 
-    def insert_sql(self, data: Mapping[str, Any]) -> Tuple[str, List[Any]]:
-        """Parameterised INSERT, skipping server-filled columns."""
+    def _insert_parts(
+        self, data: Mapping[str, Any], uploads: bool, first_param: int = 1
+    ) -> Tuple[List[str], List[str], List[Any], Dict[str, Tuple[str, bytes, str]]]:
+        """Column names, value placeholders, parameters and pending uploads.
+
+        ``first_param`` numbers the placeholders, so several rows can share one
+        parameter list. With ``uploads`` off, FILE values stay plain parameters.
+        """
         unknown = set(data) - {col.name for col in self.columns}
         if unknown:
             raise KeyError(f"{self.qualified_name} has no column(s): {sorted(unknown)}")
 
         names: List[str] = []
+        placeholders: List[str] = []
         params: List[Any] = []
+        files: Dict[str, Tuple[str, bytes, str]] = {}
         for col in self.columns:
             if col.name in data:
+                value = data[col.name]
+                upload = _as_upload(col, value) if uploads else None
                 names.append(col.name)
-                params.append(data[col.name])
+                if upload is None:
+                    params.append(value)
+                    placeholders.append(f"${first_param + len(params) - 1}")
+                else:
+                    files[col.name] = upload
+                    placeholders.append(f"FILE('{col.name}')")
             elif col.has_server_default:
                 continue
             elif col.is_not_null:
@@ -277,15 +377,124 @@ class Table:
                     "default, so it must be supplied"
                 )
 
-        placeholders = ", ".join(f"${i}" for i in range(1, len(params) + 1))
+        return names, placeholders, params, files
+
+    def insert_sql(self, data: Mapping[str, Any]) -> Tuple[str, List[Any]]:
+        """Parameterised INSERT, skipping server-filled columns."""
+        names, placeholders, params, _ = self._insert_parts(data, uploads=False)
         return (
-            f"INSERT INTO {self.qualified_name} ({', '.join(names)}) VALUES ({placeholders})",
+            f"INSERT INTO {self.qualified_name} ({', '.join(names)}) "
+            f"VALUES ({', '.join(placeholders)})",
             params,
         )
 
-    def select_sql(self, where: str = "") -> str:
-        sql = f"SELECT * FROM {self.qualified_name}"
+    def insert_with_files_sql(
+        self, data: Mapping[str, Any]
+    ) -> Tuple[str, List[Any], Dict[str, Tuple[str, bytes, str]]]:
+        """INSERT where FILE columns given a (filename, data[, mime]) tuple or a
+        ``pathlib.Path`` become ``FILE('column')`` placeholders. Returns the SQL,
+        the remaining parameters, and the uploads keyed by column name — the
+        shape ``KalamClient.query_with_files`` expects."""
+        names, placeholders, params, files = self._insert_parts(data, uploads=True)
+        return (
+            f"INSERT INTO {self.qualified_name} ({', '.join(names)}) "
+            f"VALUES ({', '.join(placeholders)})",
+            params,
+            files,
+        )
+
+    def insert_many_sql(
+        self, rows: Iterable[Mapping[str, Any]]
+    ) -> Tuple[str, List[Any]]:
+        """One INSERT carrying several rows. Every row must fill the same
+        columns, so the statement has a single column list. FILE uploads are not
+        supported here — insert those rows one at a time."""
+        batch = list(rows)
+        if not batch:
+            raise ValueError(f"insert into {self.qualified_name} needs at least one row")
+
+        expected: Optional[List[str]] = None
+        groups: List[str] = []
+        params: List[Any] = []
+        for index, row in enumerate(batch):
+            names, placeholders, row_params, _ = self._insert_parts(
+                row, uploads=False, first_param=len(params) + 1
+            )
+            if expected is None:
+                expected = names
+            elif names != expected:
+                raise ValueError(
+                    f"row {index} fills {names} but row 0 fills {expected}; every row "
+                    "in one insert must fill the same columns"
+                )
+            groups.append(f"({', '.join(placeholders)})")
+            params.extend(row_params)
+
+        return (
+            f"INSERT INTO {self.qualified_name} ({', '.join(expected or [])}) "
+            f"VALUES {', '.join(groups)}",
+            params,
+        )
+
+    def select_sql(
+        self,
+        where: str = "",
+        *,
+        columns: Optional[Sequence[str]] = None,
+        order_by: str = "",
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> str:
+        """SELECT over this table. ``columns`` are checked against the
+        declaration; ``where`` and ``order_by`` are emitted as written, so bind
+        user input through $1, $2, ... rather than formatting it in."""
+        if columns:
+            for name in columns:
+                self.column(name)
+            projection = ", ".join(columns)
+        else:
+            projection = "*"
+
+        sql = f"SELECT {projection} FROM {self.qualified_name}"
+        if where:
+            sql += f" WHERE {where}"
+        if order_by:
+            sql += f" ORDER BY {order_by}"
+        if limit is not None:
+            if limit <= 0:
+                raise ValueError("limit must be positive")
+            sql += f" LIMIT {limit}"
+        if offset is not None:
+            if offset < 0:
+                raise ValueError("offset must not be negative")
+            sql += f" OFFSET {offset}"
+        return sql
+
+    def count_sql(self, where: str = "") -> str:
+        sql = f"SELECT COUNT(*) FROM {self.qualified_name}"
         return f"{sql} WHERE {where}" if where else sql
+
+    def delete_by_pk_sql(self, value: Any) -> Tuple[str, List[Any]]:
+        """Parameterised DELETE matching the declared primary key."""
+        pk = self.primary_key_column
+        if pk is None:
+            raise ValueError(
+                f"{self.qualified_name} declares no primary_key() column, so a row "
+                "cannot be addressed by id"
+            )
+        return (f"DELETE FROM {self.qualified_name} WHERE {pk.name} = $1", [value])
+
+    def parse_row(self, row: Mapping[str, Any]) -> Dict[str, Any]:
+        """Coerce a server row to the declared Python types. Keys the table does
+        not declare — system columns, aggregates — pass through untouched."""
+        parsed = dict(row)
+        for col in self.columns:
+            if col.name in parsed:
+                parsed[col.name] = col.parse(parsed[col.name])
+        return parsed
+
+    def parse_rows(self, rows: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+        return [self.parse_row(row) for row in rows]
 
     def __iter__(self) -> Iterator[Column]:
         return iter(self.columns)

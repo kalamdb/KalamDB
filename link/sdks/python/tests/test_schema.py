@@ -6,6 +6,8 @@ from kalamdb.schema import (
     KTable,
     TableKind,
     bigint,
+    boolean,
+    double,
     embedding,
     file,
     json,
@@ -197,3 +199,144 @@ def test_column_lookup():
     assert notes.column("body").sql_type == "TEXT"
     with pytest.raises(KeyError):
         notes.column("missing")
+
+
+def test_drop_table_sql_guards_on_existence_by_default():
+    notes = notes_table()
+    assert notes.drop_table_sql() == "DROP TABLE IF EXISTS playground.notes"
+    assert notes.drop_table_sql(if_exists=False) == "DROP TABLE playground.notes"
+
+
+def test_select_sql_renders_projection_order_limit_and_offset():
+    notes = notes_table()
+    assert notes.select_sql(
+        "author = $1",
+        columns=["id", "body"],
+        order_by="created_at DESC",
+        limit=10,
+        offset=20,
+    ) == (
+        "SELECT id, body FROM playground.notes WHERE author = $1 "
+        "ORDER BY created_at DESC LIMIT 10 OFFSET 20"
+    )
+
+
+def test_select_sql_rejects_an_undeclared_projection():
+    with pytest.raises(KeyError, match="subject"):
+        notes_table().select_sql(columns=["subject"])
+
+
+def test_select_sql_rejects_nonsense_bounds():
+    notes = notes_table()
+    with pytest.raises(ValueError, match="limit"):
+        notes.select_sql(limit=0)
+    with pytest.raises(ValueError, match="offset"):
+        notes.select_sql(offset=-1)
+
+
+def test_count_sql_with_and_without_a_predicate():
+    notes = notes_table()
+    assert notes.count_sql() == "SELECT COUNT(*) FROM playground.notes"
+    assert notes.count_sql("author = $1") == (
+        "SELECT COUNT(*) FROM playground.notes WHERE author = $1"
+    )
+
+
+def test_primary_key_column_is_the_declared_one():
+    assert notes_table().primary_key_column.name == "id"
+    assert KTable.user("playground.loose", body=text("body")).primary_key_column is None
+
+
+def test_delete_by_pk_sql_binds_the_value():
+    sql, params = notes_table().delete_by_pk_sql(7)
+    assert sql == "DELETE FROM playground.notes WHERE id = $1"
+    assert params == [7]
+
+
+def test_delete_by_pk_sql_needs_a_primary_key():
+    loose = KTable.user("playground.loose", body=text("body"))
+    with pytest.raises(ValueError, match="no primary_key"):
+        loose.delete_by_pk_sql(7)
+
+
+def test_insert_many_sql_shares_one_column_list():
+    sql, params = notes_table().insert_many_sql(
+        [{"author": "alice", "body": "one"}, {"author": "bob", "body": "two"}]
+    )
+    assert sql == (
+        "INSERT INTO playground.notes (author, body) VALUES ($1, $2), ($3, $4)"
+    )
+    assert params == ["alice", "one", "bob", "two"]
+
+
+def test_insert_many_sql_rejects_rows_filling_different_columns():
+    with pytest.raises(ValueError, match="same columns"):
+        notes_table().insert_many_sql(
+            [{"author": "a", "body": "b"}, {"id": 1, "author": "c", "body": "d"}]
+        )
+
+
+def test_insert_many_sql_rejects_an_empty_batch():
+    with pytest.raises(ValueError, match="at least one row"):
+        notes_table().insert_many_sql([])
+
+
+def uploads_table():
+    return KTable.user(
+        "playground.uploads",
+        id=bigint("id").primary_key().server_default("SNOWFLAKE_ID()"),
+        label=text("label").not_null(),
+        attachment=file("attachment"),
+    )
+
+
+def test_insert_with_files_sql_turns_uploads_into_file_placeholders():
+    sql, params, files = uploads_table().insert_with_files_sql(
+        {"label": "demo", "attachment": ("demo.txt", b"body", "text/plain")}
+    )
+    assert sql == (
+        "INSERT INTO playground.uploads (label, attachment) "
+        "VALUES ($1, FILE('attachment'))"
+    )
+    assert params == ["demo"]
+    assert files == {"attachment": ("demo.txt", b"body", "text/plain")}
+
+
+def test_insert_with_files_sql_leaves_ordinary_values_as_params():
+    sql, params, files = uploads_table().insert_with_files_sql(
+        {"label": "demo", "attachment": "files/demo.txt"}
+    )
+    assert sql.endswith("VALUES ($1, $2)")
+    assert params == ["demo", "files/demo.txt"]
+    assert files == {}
+
+
+def test_insert_sql_keeps_treating_tuples_as_plain_params():
+    _, params = uploads_table().insert_sql(
+        {"label": "demo", "attachment": ("demo.txt", b"body")}
+    )
+    assert params == ["demo", ("demo.txt", b"body")]
+
+
+def test_column_parse_coerces_declared_types():
+    assert bigint("id").parse("12") == 12
+    assert double("ratio").parse("0.25") == 0.25
+    assert boolean("active").parse("true") is True
+    assert boolean("active").parse("false") is False
+    assert json("payload").parse('{"a": 1}') == {"a": 1}
+    assert embedding("vec", 2).parse("[0.5, 0.25]") == [0.5, 0.25]
+    assert text("body").parse("hello") == "hello"
+
+
+def test_column_parse_keeps_values_it_cannot_coerce():
+    assert bigint("id").parse("not-a-number") == "not-a-number"
+    assert json("payload").parse("{nope") == "{nope"
+    assert timestamp("created_at").parse("2026-11-14T10:00:00Z") == (
+        "2026-11-14T10:00:00Z"
+    )
+    assert bigint("id").parse(None) is None
+
+
+def test_parse_row_leaves_undeclared_keys_alone():
+    parsed = notes_table().parse_row({"id": "7", "body": "hi", "_version": "3"})
+    assert parsed == {"id": 7, "body": "hi", "_version": "3"}

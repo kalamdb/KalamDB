@@ -91,6 +91,98 @@ await client.query_with_files(
 
 The `files` dict maps each placeholder to a tuple of `(filename, bytes)` or `(filename, bytes, mime_type)`.
 
+## Table Definitions
+
+Declare a table once with `KTable` and the SDK renders its DDL, INSERTs and SELECTs
+for you. `KTable.user`, `.shared`, `.stream` and `.system` pick the table kind, and
+the chained options become the `WITH (...)` clause:
+
+```python
+from kalamdb.schema import KTable, bigint, file, text, timestamp
+
+notes = KTable.shared(
+    "app.notes",
+    id=bigint("id").primary_key().server_default("SNOWFLAKE_ID()"),
+    author=text("author").not_null(),
+    body=text("body").not_null(),
+    created_at=timestamp("created_at").not_null().server_default("NOW()"),
+).compression("zstd").flush_policy(rows=1000, interval_seconds=60)
+
+print(notes.create_table_sql())
+# CREATE TABLE IF NOT EXISTS app.notes (
+#   id BIGINT DEFAULT SNOWFLAKE_ID() PRIMARY KEY,
+#   ...
+# )
+# WITH (TYPE = 'SHARED', FLUSH_POLICY = 'rows:1000,interval:60', COMPRESSION = 'zstd')
+```
+
+Columns marked `server_default()` are optional on insert and are left out of
+generated INSERTs, so the server fills them.
+
+### Running a declared table
+
+`table.bind(client)` pairs a definition with a connected client, so nothing after
+this point repeats the table name, its columns, or its primary key:
+
+```python
+async with KalamClient(url, Auth.basic("admin", password)) as client:
+    db = notes.bind(client)
+
+    await db.create()
+    await db.insert({"author": "alice", "body": "hello"})
+    await db.insert_many([
+        {"author": "bob", "body": "one"},
+        {"author": "carol", "body": "two"},
+    ])
+
+    recent = await db.select(order_by="created_at DESC", limit=10)
+    mine = await db.select("author = $1", ["alice"], columns=["id", "body"])
+    row = await db.get(12345)          # matches the declared primary key
+    total = await db.count("author = $1", ["alice"])
+
+    await db.delete(12345)
+    await db.drop()
+```
+
+Rows come back coerced to the declared types — `BIGINT` as `int`, `BOOLEAN` as
+`bool`, `JSON` and `EMBEDDING` parsed — while system columns and aggregates pass
+through untouched. Pass `parse=False` to read exactly what the server sent. A
+value that does not fit its declared type is left alone rather than dropped.
+
+`where` and `order_by` are emitted as written, so bind user input through `$1`,
+`$2`, ... instead of formatting it into the string.
+
+FILE columns upload with the statement when you hand them a tuple or a `Path`:
+
+```python
+from pathlib import Path
+
+profiles = KTable.user(
+    "app.profiles",
+    id=bigint("id").primary_key().server_default("SNOWFLAKE_ID()"),
+    display_name=text("display_name").not_null(),
+    avatar=file("avatar"),
+).use_user_storage()
+
+people = profiles.bind(client)
+await people.create()
+await people.insert({"display_name": "alice", "avatar": Path("avatar.png")})
+await people.insert({"display_name": "bob", "avatar": ("b.png", data, "image/png")})
+```
+
+A FILE column given a string is treated as a reference to a file that already
+exists, not as an upload.
+
+Live subscriptions start from the same definition, keyed on the declared primary
+key so updates replace rows instead of stacking up. Live predicates carry no
+parameters, so write the value into the clause:
+
+```python
+async with await db.live("author = 'alice'", last_rows=20) as live:
+    async for rows in live:
+        print(len(rows), "notes")
+```
+
 ## Error Handling
 
 The SDK raises typed exceptions you can catch individually:
