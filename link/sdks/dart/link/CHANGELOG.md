@@ -5,7 +5,12 @@ All notable changes to the `kalam_link` package will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.0-dev.0] - Unreleased
+## [0.8.0] - Documentation refresh
+
+- Improved pub.dev package discovery metadata, documentation links, and mobile platform guidance.
+- Clarified the difference between the connected SDK and the offline-first `kalam_sync` package.
+
+## [0.7.0-dev.0] - Earlier development notes
 
 ### Added
 - `KalamClient.exchangeOidcToken()` exchanges a Keycloak/OIDC ID token for KalamDB JWTs (`POST /v1/api/auth/oidc/exchange-token`).
