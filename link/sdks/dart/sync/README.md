@@ -1,16 +1,21 @@
-# kalam_sync
+# kalam_sync — Offline-first Flutter database and realtime synchronization
 
-Local-first Flutter sync for [KalamDB](https://kalamdb.org). One Drift cache, live SQL, optimistic rows, and an offline action outbox on top of [`kalam_link`](https://pub.dev/packages/kalam_link).
+Build **offline-first Flutter apps** with a local SQLite/Drift database that stays usable without a network connection. [`kalam_sync`](https://pub.dev/packages/kalam_sync) synchronizes local rows with [KalamDB](https://kalamdb.org) live SQL subscriptions and queues writes for retry.
+
+**What you get**
+
+- **Offline reads:** reactive streams over rows already cached locally.
+- **Optimistic writes:** update local rows immediately and enqueue database operations atomically.
+- **Durable outbox:** persist pending writes across restarts and retry after reconnection.
+- **Realtime updates:** consume live SQL changes and keep durable resume checkpoints.
+- **Typed tables:** use schema-generated Dart row models and table specifications.
+- **Account isolation:** local data is partitioned by server, namespace, and signed-in subject.
+
+Use [`kalam_link`](https://pub.dev/packages/kalam_link) alone for connected SQL queries and WebSocket subscriptions without offline persistence. **`kalam_sync` already depends on `kalam_link`.**
+
+**Requirements:** a KalamDB server for initial synchronization and remote writes; cached data remains readable when disconnected. The underlying `kalam_link` package currently declares Android and iOS. Automatic operating-system background syncing is not guaranteed; use explicit `Kalam.catchUp()` for scheduled/headless catch-up when your app supplies the required execution context.
 
 → **[Docs](https://kalamdb.org/docs/dart-sdk/sync)** · [Offline actions](https://kalamdb.org/docs/dart-sdk/sync-actions) · [kalam_link](https://pub.dev/packages/kalam_link) · [GitHub](https://github.com/kalamdb/KalamDB)
-
-## Shutdown and replay load
-
-Always await `Kalam.dispose()` before clearing application projection data. It
-drains active consumer callbacks and action executions before closing SQLite.
-The outbox runs at most eight independent ordering keys concurrently; queued
-work remains durable when a session is disposed. Standalone action runners must
-likewise await `KalamActionRunner.dispose()` before closing their store.
 
 ## Install
 
@@ -41,7 +46,7 @@ Future<void> main() async {
 
   final kalam = await Kalam.open(
     url: 'http://localhost:2900',
-    subject: 'dev-user',
+    subject: 'root', // replace with the authenticated account ID
     authProvider: () async => Auth.basic('root', 'kalamdb123'),
   );
 
@@ -49,7 +54,7 @@ Future<void> main() async {
 }
 ```
 
-`subject` is required. Cached rows and queued actions are keyed by server URL, namespace, and authenticated user.
+`subject` is required and must match the authenticated account identity. Cached rows and queued actions are keyed by server URL, namespace, and subject; do not reuse a cache across users. Example credentials are only for local development. For a physical phone, `localhost` refers to the device, so provide a reachable server URL.
 
 ## Sync a table
 
@@ -115,6 +120,14 @@ Walkthrough: [Offline actions](https://kalamdb.org/docs/dart-sdk/sync-actions).
 - Docs: [https://kalamdb.org/docs/dart-sdk/sync](https://kalamdb.org/docs/dart-sdk/sync)
 - Chat example: [`example/`](example)
 - License: Apache-2.0
+
+## Shutdown and replay load
+
+Always await `Kalam.dispose()` before clearing application projection data. It
+drains active consumer callbacks and action executions before closing SQLite.
+The outbox runs at most eight independent ordering keys concurrently; queued
+work remains durable when a session is disposed. Standalone action runners must
+likewise await `KalamActionRunner.dispose()` before closing their store.
 
 ## Durable retries and checkpoint initialization
 
