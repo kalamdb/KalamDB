@@ -83,13 +83,13 @@ final class KalamTableBinding<T> {
 
   /// Creates a durable consumer that starts only when a widget/service uses it.
   KalamEventConsumer consumer({
-    required String sql,
+    String? sql,
     int? batchSize,
     List<Object?>? params,
   }) {
     return KalamEventConsumer(
       id: spec.subscriptionId,
-      sql: sql,
+      sql: sql ?? spec.liveSql,
       apply: applyRemoteChange,
       batchSize: batchSize,
       params: params,
@@ -180,13 +180,26 @@ final class KalamTableBinding<T> {
     } else {
       _applyingSnapshot = false;
     }
-    final row = spec.decode(remote.row);
+    if (remote.kind == KalamChangeKind.delete) {
+      final key = remote.row[spec.keyColumn];
+      if (key == null) {
+        throw FormatException('Delete event is missing ${spec.keyColumn}');
+      }
+      return _applyChange(
+        KalamChange<T>(
+          kind: remote.kind,
+          rowKey: key.toString(),
+          seq: remote.seq,
+        ),
+      );
+    }
+    final row = spec.decode({...?remote.oldRow, ...remote.row});
     return _applyChange(
       KalamChange(
         kind: remote.kind,
         rowKey: spec.keyOf(row),
         seq: remote.seq,
-        row: remote.kind == KalamChangeKind.delete ? null : row,
+        row: row,
       ),
     );
   }

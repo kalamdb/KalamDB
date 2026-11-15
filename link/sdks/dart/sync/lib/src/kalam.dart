@@ -29,6 +29,17 @@ typedef KalamDatabaseConstructor =
 typedef KalamExecutorOpener =
     Future<QueryExecutor> Function(KalamAccountIdentity identity);
 
+/// Selects how a bounded catch-up gets its initial data.
+enum KalamCatchUpMode {
+  /// Resume the event stream. The server may deliver replay after its snapshot
+  /// marker, so the deadline or row limit bounds this mode.
+  replay,
+
+  /// Read a current-state snapshot, filtering rows by the local checkpoint.
+  /// This cannot reconstruct deleted rows or intermediate updates.
+  snapshot,
+}
+
 /// One account-scoped local-first KalamDB session.
 final class Kalam {
   Kalam._({
@@ -116,13 +127,16 @@ final class Kalam {
     int rowLimit = 100,
     Duration timeout = const Duration(seconds: 30),
     bool flushOutbox = false,
+    KalamCatchUpMode mode = KalamCatchUpMode.replay,
     KalamDatabaseFactory databaseFactory = const KalamFlutterDatabaseFactory(),
     Duration? keepaliveInterval,
     KalamSyncTransport? transport,
     KalamTransportFactory? transportFactory,
     GeneratedDatabase? database,
   }) async {
-    await ensureInitialized();
+    if (transport == null && transportFactory == null) {
+      await ensureInitialized();
+    }
     final identity = KalamAccountIdentity(
       serverUrl: url,
       subject: subject,
@@ -171,6 +185,7 @@ final class Kalam {
           context: context,
           rowLimit: rowLimit,
           deadline: deadline,
+          mode: mode,
         );
         appliedByConsumer[consumer.id] = result.applied;
         appliedCount += result.applied;
@@ -362,6 +377,7 @@ Future<_CatchUpConsumerResult> _catchUpConsumer({
   required KalamConsumeContext context,
   required int rowLimit,
   required DateTime deadline,
+  required KalamCatchUpMode mode,
 }) async {
   final checkpoint = await store.readCheckpoint(
     accountKey: accountKey,
@@ -382,6 +398,7 @@ Future<_CatchUpConsumerResult> _catchUpConsumer({
   var timedOut = false;
   final done = Completer<void>();
   late final StreamSubscription<KalamRemoteBatch> subscription;
+  Completer<void>? inFlight;
 
   Future<void> stop() async {
     await subscription.cancel();
@@ -392,13 +409,15 @@ Future<_CatchUpConsumerResult> _catchUpConsumer({
       .subscribe(
         sql: consumer.sql,
         subscriptionId: consumer.id,
-        from: checkpoint?.seq,
+        from: mode == KalamCatchUpMode.snapshot ? null : checkpoint?.seq,
         batchSize: batchSize,
         params: consumer.params,
       )
       .listen(
         (batch) async {
           subscription.pause();
+          final work = Completer<void>();
+          inFlight = work;
           try {
             final committed = await store.readCheckpoint(
               accountKey: accountKey,
@@ -434,17 +453,19 @@ Future<_CatchUpConsumerResult> _catchUpConsumer({
                 await stop();
                 return;
               }
-              if (count < batchSize) {
-                await stop();
-                return;
-              }
             } else {
               await batch.acknowledge();
+            }
+            if (mode == KalamCatchUpMode.snapshot && batch.snapshotComplete) {
+              await stop();
+              return;
             }
           } catch (error, stackTrace) {
             if (!done.isCompleted) done.completeError(error, stackTrace);
             await subscription.cancel();
             return;
+          } finally {
+            work.complete();
           }
           if (!done.isCompleted) subscription.resume();
         },
@@ -462,6 +483,8 @@ Future<_CatchUpConsumerResult> _catchUpConsumer({
   } on TimeoutException {
     timedOut = true;
     await subscription.cancel();
+  } finally {
+    await inFlight?.future;
   }
 
   return _CatchUpConsumerResult(

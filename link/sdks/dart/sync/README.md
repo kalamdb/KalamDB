@@ -12,6 +12,24 @@ The outbox runs at most eight independent ordering keys concurrently; queued
 work remains durable when a session is disposed. Standalone action runners must
 likewise await `KalamActionRunner.dispose()` before closing their store.
 
+## Durable consumer actions
+
+Inside `KalamEventConsumer.consume`, use `context.enqueueForEvent` for work
+caused by a row change. Provide the stable consumer ID, row primary key, and
+`change.seq`; the SDK derives an account-scoped action ID and deduplicates an
+identical replay. Existing explicitly named actions remain untouched. A replay
+with a genuinely different request still raises a conflict.
+
+```dart
+await context.enqueueForEvent(
+  actionKey: 'refresh-conversation',
+  consumerId: 'user-updates',
+  rowKey: change.row['id'] as String,
+  version: change.seq,
+  payload: {'targetId': change.row['target_id']},
+);
+```
+
 ## Install
 
 ```bash
@@ -28,7 +46,11 @@ flutter pub add kalam_sync
 
 ## Get started
 
-One account uses one Drift database. `Kalam.open` creates it, builds it with your database constructor, or adopts a database you already opened. To share the app database, mix `KalamSyncTablesMixin` into that `GeneratedDatabase`, include `kalamSyncSchema` in `allSchemaEntities`, and pass the opened database to `Kalam.open` and `Kalam.catchUp`. An adopted database stays open after `dispose`. `spec.liveSql` is the remote `SELECT`. `decodeChange` separates a full row, a partial patch, and a delete. `seedCheckpointIfAbsent` and `resetProjection` update the existing checkpoint and action tables. `planKalamSession` keeps the session when only the token changes.
+The starter commands above create a project with a schema and generated Dart
+models. For an existing app, add a Kalam project and schema first, run schema
+generation, and import its generated `lib/generated/kalam.dart` file. The
+examples below use a generated `app.todos` table; replace its name and fields
+with your own schema.
 
 Open an account-scoped cache. The WebSocket stays lazy until a consumer or queued action needs it.
 
@@ -49,7 +71,11 @@ Future<void> main() async {
 }
 ```
 
-`subject` is required. Cached rows and queued actions are keyed by server URL, namespace, and authenticated user.
+`subject` must be the stable authenticated user ID, not the token or a shared
+device ID. Cached rows and queued actions are keyed by server URL, namespace,
+and subject. Use real user credentials in production; the root credentials here
+are only an example for a local development server. On Android emulators,
+`localhost` refers to the emulator, so use an address reachable by the device.
 
 ## Sync a table
 
@@ -58,9 +84,7 @@ Future<void> main() async {
 ```dart
 final todos = kalam.table(KalamTables.todos);
 
-await kalam.subscribe(
-  todos.consumer(sql: 'SELECT * FROM app.todos'),
-);
+final todoSync = await kalam.subscribe(todos.consumer());
 
 await todos.insert(
   Todos(id: Kalam.id(), title: 'Ship it', completed: false),
@@ -88,7 +112,11 @@ StreamBuilder<List<KalamSyncedRow<Todos>>>(
 )
 ```
 
-Cancel the subscription when the widget unloads: `sync?.cancel()`.
+Keep the subscription handle for as long as the screen or service needs live
+updates, then call `await todoSync.cancel()`. Call `await kalam.dispose()` when
+the account session ends. `KalamScope` manages app pause/resume but does not
+dispose the session. For a filtered remote subscription, pass `sql` and `params`
+to `consumer`; a local `watch()` reads the cached projection.
 
 ## Custom actions
 
@@ -162,3 +190,41 @@ get row codecs, but no sync spec or guessed key. Composite primary keys are reje
 by schema compilation to match current server support. Array codecs preserve null
 arrays and encode/decode each supported scalar, enum, composite, and timestamp
 element; null array elements are not represented by the current contract.
+## Background catch-up
+
+Use `Kalam.catchUp` for a bounded background pass, such as an FCM wake. Pass
+the same account identity, database and consumers used by the foreground:
+
+```dart
+final result = await Kalam.catchUp(
+  url: serverUrl,
+  subject: userId,
+  namespace: 'public',
+  authProvider: loadAuth,
+  database: database,
+  consumers: consumers,
+  mode: KalamCatchUpMode.snapshot,
+  rowLimit: 100,
+  timeout: const Duration(seconds: 30),
+  flushOutbox: false,
+);
+```
+
+Snapshot mode reads the current table snapshot and applies only rows newer
+than the durable checkpoint. It stops after the server's final initial batch,
+including an empty batch. It can scan older rows and does not reconstruct
+hard-deleted rows or intermediate changes, so use it only for projections that
+can recover from current state. Replay mode preserves event history but the
+server can deliver replay after the initial snapshot marker; it is bounded by
+the deadline or row limit, and may return `timedOut`. Consumers run in order.
+The owned transport is closed after the pass;
+an explicitly supplied database or transport remains owned by its caller.
+Check `timedOut`, `hasMore`, and `appliedByConsumer`: a timeout or row limit
+means the pass may be incomplete and another catch-up is needed. A row limit
+is applied per consumer, not across the entire pass. `flushOutbox: false`
+leaves queued actions for a later foreground session.
+At the deadline, an in-flight consumer finishes its database transaction before
+the pass returns, so cleanup can take longer than the configured timeout.
+
+Avoid wrapping the pass in another timeout with the same deadline: Dart's
+`Future.timeout` does not cancel the underlying sync and can race cleanup.

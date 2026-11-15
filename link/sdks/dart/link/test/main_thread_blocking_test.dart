@@ -468,7 +468,7 @@ void main() {
       await client.dispose();
     });
 
-    test('reconnectWebSocket reuses current JWT without refreshing auth',
+    test('reconnectWebSocket refreshes auth before connecting',
         () async {
       final client = await KalamClient.connect(
         url: 'https://test.example.com',
@@ -479,8 +479,8 @@ void main() {
 
       expect(mockApi.connectCalls, 1,
           reason: 'manual reconnect should attempt one websocket connect');
-      expect(mockApi.updateAuthCalls, 0,
-          reason: 'manual reconnect should reuse the current JWT first');
+      expect(mockApi.updateAuthCalls, 1,
+          reason: 'manual reconnect should resolve fresh credentials first');
 
       await client.dispose();
     });
@@ -498,9 +498,8 @@ void main() {
 
       expect(mockApi.connectCalls, 2,
           reason: 'manual reconnect should retry once after auth refresh');
-      expect(mockApi.updateAuthCalls, 1,
-          reason:
-              'auth refresh should only happen after an auth-related reconnect failure');
+      expect(mockApi.updateAuthCalls, 2,
+          reason: 'refresh before connecting and again after authentication failure');
 
       await client.dispose();
     });

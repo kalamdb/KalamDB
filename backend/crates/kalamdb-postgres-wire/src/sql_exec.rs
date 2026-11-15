@@ -123,9 +123,12 @@ impl WireSqlExecutor {
                             let _ =
                                 self.session_manager.recover_failed_transaction(state.session_id());
                         }
-                        let _span = kalamdb_observability::kdb_info_span_entered!("wire.encode");
-                        execution_result_to_responses_with_format_async(result, column_format)
-                            .await
+                        // `entered()` guards are !Send. Instrument the encode future so
+                        // the wire handler stays Send under the traceability feature.
+                        kalamdb_observability::kdb_await_in_info_span!(
+                            execution_result_to_responses_with_format_async(result, column_format),
+                            "wire.encode"
+                        )
                     },
                     Err(error) => {
                         self.mark_statement_failed_if_in_block(state);

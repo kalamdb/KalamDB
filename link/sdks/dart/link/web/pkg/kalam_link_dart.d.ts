@@ -647,12 +647,12 @@ export interface InitOutput {
     readonly wasmtimestampformatter_formatRelative: (a: number, b: number, c: number) => void;
     readonly wasmtimestampformatter_new: () => number;
     readonly wasmtimestampformatter_withFormat: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_1974: (a: number, b: number, c: number, d: any) => void;
-    readonly __wasm_bindgen_func_elem_1976: (a: number, b: number, c: any, d: any) => void;
-    readonly __wasm_bindgen_func_elem_653: (a: number, b: number, c: any) => void;
-    readonly __wasm_bindgen_func_elem_653_53: (a: number, b: number, c: any) => void;
-    readonly __wasm_bindgen_func_elem_653_54: (a: number, b: number, c: any) => void;
-    readonly __wasm_bindgen_func_elem_652: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_1987: (a: number, b: number, c: number, d: any) => void;
+    readonly __wasm_bindgen_func_elem_1989: (a: number, b: number, c: any, d: any) => void;
+    readonly __wasm_bindgen_func_elem_656: (a: number, b: number, c: any) => void;
+    readonly __wasm_bindgen_func_elem_656_53: (a: number, b: number, c: any) => void;
+    readonly __wasm_bindgen_func_elem_656_54: (a: number, b: number, c: any) => void;
+    readonly __wasm_bindgen_func_elem_655: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number) => void;
     readonly __wbindgen_export2: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;

@@ -53,12 +53,12 @@ export const wasmtimestampformatter_format: (a: number, b: number, c: number, d:
 export const wasmtimestampformatter_formatRelative: (a: number, b: number, c: number) => void;
 export const wasmtimestampformatter_new: () => number;
 export const wasmtimestampformatter_withFormat: (a: number, b: number, c: number) => void;
-export const __wasm_bindgen_func_elem_1974: (a: number, b: number, c: number, d: any) => void;
-export const __wasm_bindgen_func_elem_1976: (a: number, b: number, c: any, d: any) => void;
-export const __wasm_bindgen_func_elem_653: (a: number, b: number, c: any) => void;
-export const __wasm_bindgen_func_elem_653_53: (a: number, b: number, c: any) => void;
-export const __wasm_bindgen_func_elem_653_54: (a: number, b: number, c: any) => void;
-export const __wasm_bindgen_func_elem_652: (a: number, b: number) => void;
+export const __wasm_bindgen_func_elem_1987: (a: number, b: number, c: number, d: any) => void;
+export const __wasm_bindgen_func_elem_1989: (a: number, b: number, c: any, d: any) => void;
+export const __wasm_bindgen_func_elem_656: (a: number, b: number, c: any) => void;
+export const __wasm_bindgen_func_elem_656_53: (a: number, b: number, c: any) => void;
+export const __wasm_bindgen_func_elem_656_54: (a: number, b: number, c: any) => void;
+export const __wasm_bindgen_func_elem_655: (a: number, b: number) => void;
 export const __wbindgen_export: (a: number) => void;
 export const __wbindgen_export2: () => number;
 export const __wbindgen_externrefs: WebAssembly.Table;

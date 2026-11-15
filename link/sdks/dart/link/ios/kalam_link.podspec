@@ -10,7 +10,7 @@ Pod::Spec.new do |s|
   s.platform         = :ios, '12.0'
 
   s.static_framework = true
-  s.vendored_libraries = 'Frameworks/libkalam_link_dart.a'
+  s.vendored_frameworks = 'Frameworks/kalam_link_dart.xcframework'
 
   # Dummy Swift file so CocoaPods creates the module map. This is required for
   # Flutter's ffiPlugin: true machinery.

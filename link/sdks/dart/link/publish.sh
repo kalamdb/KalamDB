@@ -33,7 +33,9 @@ if ! $SKIP_NATIVE_CHECK; then
   check_native android/src/main/jniLibs/arm64-v8a/libkalam_link_dart.so "android/arm64-v8a"
   check_native android/src/main/jniLibs/x86_64/libkalam_link_dart.so    "android/x86_64"
   # iOS
-  check_native ios/Frameworks/libkalam_link_dart.a                       "ios"
+  check_native ios/Frameworks/kalam_link_dart.xcframework/Info.plist "ios/metadata"
+  check_native ios/Frameworks/kalam_link_dart.xcframework/ios-arm64/libkalam_link_dart.a "ios/device"
+  check_native ios/Frameworks/kalam_link_dart.xcframework/ios-arm64-simulator/libkalam_link_dart.a "ios/simulator"
   # Web WASM
   check_native web/pkg/kalam_link_dart_bg.wasm                           "web/wasm"
 

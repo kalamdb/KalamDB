@@ -88,18 +88,20 @@ void main() {
     }
   });
 
-  test('iOS static library stays under GitHub 50MB recommendation', () {
-    final lib = File(
-      '${Directory.current.path}/ios/Frameworks/libkalam_link_dart.a',
-    );
-    expect(lib.existsSync(), isTrue, reason: 'Missing ${lib.path}');
-    const githubWarningBytes = 50 * 1024 * 1024;
+  test('iOS XCFramework includes device and simulator libraries', () {
+    final root =
+        '${Directory.current.path}/ios/Frameworks/kalam_link_dart.xcframework';
+    final podspec = File('${Directory.current.path}/ios/kalam_link.podspec');
     expect(
-      lib.lengthSync(),
-      lessThan(githubWarningBytes),
-      reason:
-          'libkalam_link_dart.a is ${lib.lengthSync()} bytes; GitHub warns above 50 MB. '
-          'Rebuild with ./build.sh ios so bitcode/debug are stripped from the archive.',
-    );
+        podspec.readAsStringSync(),
+        contains(
+            "vendored_frameworks = 'Frameworks/kalam_link_dart.xcframework'"));
+    expect(File('$root/Info.plist').existsSync(), isTrue);
+    for (final variant in ['ios-arm64', 'ios-arm64-simulator']) {
+      final lib = File('$root/$variant/libkalam_link_dart.a');
+      expect(lib.existsSync(), isTrue, reason: 'Missing ${lib.path}');
+      expect(lib.lengthSync(), lessThan(50 * 1024 * 1024),
+          reason: '${lib.path} exceeds GitHub’s 50 MB recommendation');
+    }
   });
 }

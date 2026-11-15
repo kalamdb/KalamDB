@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:drift/drift.dart';
 import 'package:kalam_link/kalam_link.dart';
@@ -39,7 +40,7 @@ final class KalamSyncStore {
             existing.actionKey != draft.actionKey ||
             existing.version != draft.version ||
             existing.kind != draft.kind ||
-            existing.payloadJson != draft.payloadJson ||
+            !_sameJson(existing.payloadJson, draft.payloadJson) ||
             existing.orderingKey != draft.orderingKey ||
             existing.rowTableId != optimisticRow?.tableId ||
             existing.rowKey != optimisticRow?.rowKey) {
@@ -483,14 +484,16 @@ final class KalamSyncStore {
         subscriptionId: subscriptionId,
       );
       if (existing != null) return false;
-      await database.into(_tables.kalamCheckpoints).insert(
-        KalamCheckpointsCompanion.insert(
-          accountKey: accountKey,
-          subscriptionId: subscriptionId,
-          seq: seq.toString(),
-          updatedAt: _clock(),
-        ),
-      );
+      await database
+          .into(_tables.kalamCheckpoints)
+          .insert(
+            KalamCheckpointsCompanion.insert(
+              accountKey: accountKey,
+              subscriptionId: subscriptionId,
+              seq: seq.toString(),
+              updatedAt: _clock(),
+            ),
+          );
       return true;
     });
   }
@@ -674,4 +677,38 @@ final class KalamSyncStore {
       ),
     );
   }
+}
+
+// Action payloads are JSON values: object member order is not significant.
+// Keep malformed legacy payloads comparable by their exact bytes only.
+bool _sameJson(String left, String right) {
+  if (left == right) return true;
+  try {
+    return _sameJsonValue(jsonDecode(left), jsonDecode(right));
+  } on FormatException {
+    return false;
+  }
+}
+
+bool _sameJsonValue(Object? left, Object? right) {
+  if (left is Map && right is Map) {
+    if (left.length != right.length) return false;
+    for (final key in left.keys) {
+      if (!right.containsKey(key) || !_sameJsonValue(left[key], right[key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (left is List && right is List) {
+    if (left.length != right.length) return false;
+    for (var i = 0; i < left.length; i++) {
+      if (!_sameJsonValue(left[i], right[i])) return false;
+    }
+    return true;
+  }
+  if (left is num && right is num && left.runtimeType != right.runtimeType) {
+    return false;
+  }
+  return left == right;
 }

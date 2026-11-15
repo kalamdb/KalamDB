@@ -10,10 +10,14 @@ final class KalamRemoteBatch {
     required this.changes,
     required this.checkpoint,
     required Future<void> Function() acknowledge,
+    this.snapshotComplete = false,
   }) : _acknowledge = acknowledge;
 
   final List<KalamRemoteChange> changes;
   final VersionId? checkpoint;
+
+  /// True after the server has delivered the final initial snapshot batch.
+  final bool snapshotComplete;
   final Future<void> Function() _acknowledge;
   Future<void>? _acknowledgement;
 

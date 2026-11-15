@@ -117,7 +117,7 @@ New Flutter apps: `kalam init --languages dart`. See [`example/README.md`](examp
 
 ## License
 
-Apache-2.0. See [LICENSE.txt](LICENSE.txt).
+Apache-2.0. See [LICENSE](LICENSE).
 
 ## SDK checks and release troubleshooting
 

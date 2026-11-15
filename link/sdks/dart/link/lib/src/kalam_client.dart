@@ -827,8 +827,9 @@ class KalamClient {
         .map((info) => SubscriptionInfo(
               id: info.id,
               query: info.query,
-              lastVersionId:
-                  info.lastSeqId == null ? null : VersionId.parse(info.lastSeqId!),
+              lastVersionId: info.lastSeqId == null
+                  ? null
+                  : VersionId.parse(info.lastSeqId!),
               lastEventTimeMs: info.lastEventTimeMs,
               createdAtMs: info.createdAtMs,
               closed: info.closed,
@@ -865,7 +866,10 @@ class KalamClient {
   /// Re-establish the shared WebSocket connection after a manual
   /// [disconnectWebSocket] or if the automatic reconnection was exhausted.
   Future<void> reconnectWebSocket() async {
-    await _ensureJwtForBasicAuth();
+    // The native connect call may return before WebSocket authentication
+    // finishes, so a rejected stale token is not necessarily thrown here.
+    // Resolve credentials before reconnecting instead of relying on a retry.
+    await _prepareManualReconnect();
 
     try {
       await bridge.dartConnect(client: _handle);
@@ -1121,7 +1125,8 @@ class KalamClient {
     if (maxVersionId == null) {
       return null;
     }
-    return LiveCheckpoint(subscriptionId: subscriptionId, lastVersionId: maxVersionId);
+    return LiveCheckpoint(
+        subscriptionId: subscriptionId, lastVersionId: maxVersionId);
   }
 
   static List<Map<String, KalamCellValue>> _decodeTypedRows(

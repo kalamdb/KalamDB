@@ -17,7 +17,8 @@ class KalamRoutineException implements Exception {
   String toString() => 'KalamRoutineException($code, $statusCode): $message';
 }
 
-KalamRoutineException routineExceptionFromPayload(int statusCode, Object? payload) {
+KalamRoutineException routineExceptionFromPayload(
+    int statusCode, Object? payload) {
   final record = payload is Map ? payload : const <String, Object?>{};
   final code = record['code']?.toString();
   final message = record['message']?.toString();
