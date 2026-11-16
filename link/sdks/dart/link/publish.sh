@@ -71,11 +71,11 @@ fi
 echo "==> Running flutter pub get..."
 flutter pub get
 
-echo "==> Running dart analyze..."
-dart analyze lib
+echo "==> Running full package static analysis..."
+dart analyze --fatal-infos .
 
-echo "==> Running tests..."
-flutter test || true   # warn but don't block (live-server tests may require a running server)
+echo "==> Running tests (fail release on failing tests)..."
+flutter test
 
 if $DRY_RUN; then
   echo "==> Dry run — validating package (no upload)..."
