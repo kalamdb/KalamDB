@@ -22,6 +22,8 @@ pub mod models;
 #[cfg(feature = "client-core")]
 pub mod query;
 pub mod routine_frame;
+/// Portable offline replay and outbox decisions shared by Dart, Rust, and WASM.
+pub mod offline_sync;
 #[cfg(feature = "client-core")]
 pub mod seq_tracking;
 #[cfg(feature = "client-core")]
