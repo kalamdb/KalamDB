@@ -115,7 +115,7 @@ impl TopicOffsetsTableProvider {
         let entries = self
             .sql
             .store()
-            .scan_with_raw_prefix(prefix.as_bytes(), None, 10_000)
+            .scan_with_raw_prefix(prefix.as_bytes(), None, usize::MAX)
             .into_system_error("prefix scan topic offsets")?;
         entries.into_iter().map(|(_, row)| Self::decode_offset_row(&row)).collect()
     }
@@ -129,7 +129,7 @@ impl TopicOffsetsTableProvider {
         let entries = self
             .sql
             .store()
-            .scan_with_raw_prefix(prefix.as_bytes(), None, 10_000)
+            .scan_with_raw_prefix(prefix.as_bytes(), None, usize::MAX)
             .into_system_error("prefix scan topic offsets")?;
         entries.into_iter().map(|(_, row)| Self::decode_offset_row(&row)).collect()
     }
@@ -201,14 +201,16 @@ impl TopicOffsetsTableProvider {
 
     /// Delete all offsets for a topic (all consumer groups and partitions)
     pub fn delete_topic_offsets(&self, topic_id: &TopicId) -> Result<usize, SystemError> {
-        let offsets = self.get_topic_offsets(topic_id)?;
-        let count = offsets.len();
-
-        for offset in offsets {
-            let key = Self::make_key(&offset.topic_id, &offset.group_id, offset.partition_id);
-            self.sql.store().delete(&key).into_system_error("delete offset error")?;
+        // One atomic batch; no full-row decoding or per-key storage commit.
+        let prefix = format!("{}:", topic_id.as_str());
+        let keys = self
+            .sql
+            .store()
+            .scan_keys_with_raw_prefix(prefix.as_bytes(), None, usize::MAX)?;
+        let count = keys.len();
+        if !keys.is_empty() {
+            self.sql.store().delete_batch(&keys)?;
         }
-
         Ok(count)
     }
 

@@ -380,7 +380,7 @@ fn manifest_filtered_scan(
 ) -> Result<RecordBatch, SystemError> {
     if let Some(cache_key_str) = extract_filter_value(filters, "cache_key") {
         let manifest_id = ManifestId::from(cache_key_str.as_str());
-        if let Ok(Some(row)) = store.get(&manifest_id) {
+        if let Some(row) = store.get(&manifest_id)? {
             let entry = ManifestTableProvider::decode_manifest_row(&row)?;
             return build_manifest_batch(checker, vec![(manifest_id, entry)]);
         }
