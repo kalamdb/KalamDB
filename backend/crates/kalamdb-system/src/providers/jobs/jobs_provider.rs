@@ -243,7 +243,11 @@ impl JobsTableProvider {
             // Status prefixes are individually ordered by CreatedAt, not
             // globally ordered across multiple statuses.
             if multiple_statuses {
-                jobs.sort_by_key(|job| (job.created_at, job.job_id.clone()));
+                jobs.sort_by(|left, right| {
+                    left.created_at
+                        .cmp(&right.created_at)
+                        .then_with(|| left.job_id.as_str().cmp(right.job_id.as_str()))
+                });
                 jobs.truncate(limit);
             }
             return Ok(jobs);
