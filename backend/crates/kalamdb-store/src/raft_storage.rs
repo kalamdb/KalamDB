@@ -469,20 +469,24 @@ impl RaftPartitionStore {
 
     /// Returns the last (highest) log index, or None if log is empty.
     pub fn last_log_index(&self) -> Result<Option<u64>> {
-        // Scan all log entries and find the max index
+        // Raft log keys are zero-padded and lexicographically ordered.
+        // One reverse seek is independent of the length of retained history.
         let prefix = self.make_key("log:");
+        let mut iter = self.backend.scan_reverse(
+            &self.partition,
+            Some(&prefix),
+            None,
+            Some(1),
+        )?;
 
-        let iter = self.backend.scan(&self.partition, Some(&prefix), None, None)?;
-
-        // Get the last entry (keys are sorted, so last is highest)
-        let mut last_index: Option<u64> = None;
-        for (key, _) in iter {
-            if let Some(index) = Self::parse_log_index_from_key(&key) {
-                last_index = Some(index);
-            }
+        match iter.next() {
+            Some((key, _)) => Self::parse_log_index_from_key(&key)
+                .map(Some)
+                .ok_or_else(|| StorageError::SerializationError(
+                    "Invalid Raft log index key".to_string(),
+                )),
+            None => Ok(None),
         }
-
-        Ok(last_index)
     }
 
     fn parse_log_index_from_key(key: &[u8]) -> Option<u64> {

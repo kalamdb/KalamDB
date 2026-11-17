@@ -842,21 +842,40 @@ where
             return Ok(());
         }
 
-        let has_indexes = !self.indexes.is_empty();
-        // Estimate: 1 main delete + N index deletes per key
-        let ops_per_key = 1 + self.indexes.len();
-        let mut operations = Vec::with_capacity(keys.len() * ops_per_key);
+        let mut operations = Vec::with_capacity(keys.len() * (1 + self.indexes.len()));
 
-        for key in keys {
-            // Main entity delete is always needed
-            operations.push(Operation::Delete {
-                partition: self.main_partition.clone(),
-                key: key.storage_key(),
-            });
+        // Plain keyed system tables need no old-row reads for deletion.
+        if self.indexes.is_empty() {
+            for key in keys {
+                operations.push(Operation::Delete {
+                    partition: self.main_partition.clone(),
+                    key: key.storage_key(),
+                });
+            }
+            return self.backend.batch(operations);
+        }
 
-            // Index cleanup requires fetching the entity to extract index keys
-            if has_indexes {
-                if let Some(entity) = self.get(key)? {
+        // Batch old-row reads instead of performing N individual RocksDB gets.
+        // Build one atomic WriteBatch for the entire delete operation.
+        const READ_BATCH_SIZE: usize = 128;
+        for chunk in keys.chunks(READ_BATCH_SIZE) {
+            let storage_keys: Vec<Vec<u8>> = chunk.iter().map(K::storage_key).collect();
+            let old_rows = self.backend.get_many(&self.main_partition, &storage_keys)?;
+            if old_rows.len() != chunk.len() {
+                return Err(StorageError::Other(
+                    "batch delete received an incomplete get_many response".into(),
+                ));
+            }
+
+            for ((key, storage_key), old_bytes) in
+                chunk.iter().zip(storage_keys).zip(old_rows)
+            {
+                operations.push(Operation::Delete {
+                    partition: self.main_partition.clone(),
+                    key: storage_key,
+                });
+                if let Some(bytes) = old_bytes {
+                    let entity = self.codec.decode(key, &bytes)?;
                     for (index, index_partition) in
                         self.indexes.iter().zip(self.index_partitions.iter())
                     {
@@ -1018,26 +1037,9 @@ where
         prefix: Option<&[u8]>,
         limit: Option<usize>,
     ) -> Result<Vec<(K, V)>> {
-        let index_partition = self
-            .index_partitions
-            .get(index_idx)
-            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?
-            .clone();
-        let iter = self.backend.scan(&index_partition, prefix, None, limit)?;
-
-        let mut results = Vec::with_capacity(limit.unwrap_or(0));
-        for (_index_key, primary_key_bytes) in iter {
-            // Deserialize primary key from index value
-            let primary_key = K::from_storage_key(&primary_key_bytes)
-                .map_err(StorageError::SerializationError)?;
-
-            // Fetch actual entity
-            if let Some(entity) = self.get(&primary_key)? {
-                results.push((primary_key, entity));
-            }
-        }
-
-        Ok(results)
+        // Reuse the iterator's bounded MultiGet batches instead of fetching
+        // every index hit with an independent RocksDB point lookup.
+        self.scan_by_index_iter(index_idx, prefix, limit)?.collect()
     }
 
     /// Scans an index by prefix and returns matching entities as an iterator.
