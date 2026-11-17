@@ -745,6 +745,90 @@ impl FileStreamLogStore {
         Ok(rows)
     }
 
+    /// Walk matching segments once. Cursor, TTL, and the page size are applied
+    /// before a row is counted, and each page is handed off before the next.
+    pub fn walk_ordered(
+        &self,
+        user_id: &UserId,
+        start_time: u64,
+        end_time: u64,
+        start_seq: Option<i64>,
+        ttl_ms: Option<u64>,
+        now_ms: u64,
+        page_rows: usize,
+        max_rows: Option<usize>,
+        mut on_page: impl FnMut(Vec<(StreamTableRowId, StreamTableRow)>) -> Result<bool>,
+    ) -> Result<()> {
+        if page_rows == 0 {
+            return Ok(());
+        }
+        let entries = self.list_log_files_for_user_in_range(user_id, start_time, end_time)?;
+        let mut deleted: HashSet<i64> = HashSet::new();
+        for entry in &entries {
+            self.flush_segment(&entry.path);
+            self.visit_records(&entry.path, |record| {
+                if let StreamLogRecord::Delete { row_id, .. } = record {
+                    deleted.insert(row_id.version().as_i64());
+                }
+                Ok(true)
+            })?;
+        }
+        let mut page = Vec::with_capacity(page_rows.min(1024));
+        let mut emitted = 0usize;
+        let mut failed = None;
+        for entry in &entries {
+            if failed.is_some() {
+                break;
+            }
+            self.flush_segment(&entry.path);
+            let should_continue = self.visit_records(&entry.path, |record| {
+                match record {
+                    StreamLogRecord::Put { row_id, row } => {
+                        let version = row_id.version().as_i64();
+                        if deleted.contains(&version) {
+                            return Ok(true);
+                        }
+                        if start_seq.is_some_and(|seq| version < seq) {
+                            return Ok(true);
+                        }
+                        if ttl_ms.is_some_and(|ttl| {
+                            (row._timestamp as u64).saturating_add(ttl) <= now_ms
+                        }) {
+                            return Ok(true);
+                        }
+                        page.push((row_id, row));
+                        emitted += 1;
+                        if page.len() >= page_rows {
+                            match on_page(std::mem::take(&mut page)) {
+                                Ok(true) => {},
+                                Ok(false) => return Ok(false),
+                                Err(error) => {
+                                    failed = Some(error);
+                                    return Ok(false);
+                                },
+                            }
+                        }
+                        if max_rows.is_some_and(|max| emitted >= max) {
+                            return Ok(false);
+                        }
+                    },
+                    StreamLogRecord::Delete { .. } => {},
+                }
+                Ok(true)
+            })?;
+            if !should_continue {
+                break;
+            }
+        }
+        if let Some(error) = failed {
+            return Err(error);
+        }
+        if !page.is_empty() {
+            on_page(page)?;
+        }
+        Ok(())
+    }
+
     fn read_range_internal(
         &self,
         user_id: &UserId,

@@ -211,7 +211,10 @@ where
     let mut decoded_any = false;
     let mut visited = 0usize;
 
-    for (key_bytes, value_bytes) in iter {
+    for item in iter {
+        let (key_bytes, value_bytes) = item.map_err(|error| {
+            KalamDbError::InvalidOperation(format!("columnar hot scan failed: {error}"))
+        })?;
         visited += 1;
         let Some(version) = decode_version(&key_bytes) else {
             log::warn!("Skipping hot row with a malformed key");

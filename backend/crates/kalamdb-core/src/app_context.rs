@@ -1641,6 +1641,22 @@ impl ClusterCoordinator for AppContext {
             .map_err(|error| error.to_string())?;
         Ok(response.rows_affected())
     }
+
+    async fn propose_shared_statement(
+        &self,
+        mutations: Vec<kalamdb_transactions::StagedMutation>,
+    ) -> Result<usize, String> {
+        if mutations.is_empty() {
+            return Ok(0);
+        }
+        let transaction_id = mutations[0].transaction_id.clone();
+        let response = self
+            .applier()
+            .commit_transaction(transaction_id, mutations)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(response.rows_affected())
+    }
 }
 
 fn install_users_direct_write_notifier(

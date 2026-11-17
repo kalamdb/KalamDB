@@ -314,14 +314,6 @@ where
             }
         };
 
-        // log::trace!(
-        //     "[MvccScan] scan_rows resolved {} row(s) for table={} scope={} subject={}",
-        //     kvs.len(),
-        //     self.table_id(),
-        //     scope_label,
-        //     subject_user
-        // );
-
         let mut authorized_rows = if self.requires_row_authorization(scan_context) {
             self.authorize_resolved_rows(scan_context, scan_result.rows).await?
         } else {

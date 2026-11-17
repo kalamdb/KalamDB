@@ -27,6 +27,12 @@ impl fmt::Display for TransactionIdValidationError {
 impl std::error::Error for TransactionIdValidationError {}
 
 impl TransactionId {
+    /// A new UUID v7 identifier for one autocommit statement.
+    #[cfg(feature = "conversions")]
+    pub fn fresh() -> Self {
+        Self::new(uuid::Uuid::now_v7().to_string())
+    }
+
     /// Create a new transaction identifier, panicking on invalid input.
     #[inline]
     pub fn new(id: impl Into<String>) -> Self {

@@ -402,6 +402,71 @@ impl MemoryStreamLogStore {
 
         Ok(results)
     }
+
+    /// Walk one user's log in key order, applying the cursor, TTL, and page size
+    /// while the iterator moves. `on_page` sees each page and the rows are not
+    /// retained after it returns.
+    pub fn walk_ordered(
+        &self,
+        user_id: &UserId,
+        start_time: u64,
+        end_time: u64,
+        start_seq: Option<i64>,
+        ttl_ms: Option<u64>,
+        now_ms: u64,
+        page_rows: usize,
+        max_rows: Option<usize>,
+        mut on_page: impl FnMut(Vec<(StreamTableRowId, StreamTableRow)>) -> Result<bool>,
+    ) -> Result<()> {
+        if page_rows == 0 {
+            return Ok(());
+        }
+        let state = self
+            .state
+            .read()
+            .map_err(|e| StreamLogError::Io(format!("Failed to acquire read lock: {}", e)))?;
+        let start = (user_id.as_str().to_string(), start_time, vec![0; 8]);
+        let end = (user_id.as_str().to_string(), end_time, vec![u8::MAX; 8]);
+        let mut deleted: HashSet<i64> = HashSet::new();
+        for ((_user, _ts, seq_bytes), record) in state.data.range(start.clone()..=end.clone()) {
+            if matches!(record, StreamLogRecord::Delete { .. }) {
+                deleted.insert(Self::version_from_key(seq_bytes));
+            }
+        }
+        let mut page = Vec::with_capacity(page_rows.min(1024));
+        let mut emitted = 0usize;
+        for ((_user, _ts, seq_bytes), record) in state.data.range(start..=end) {
+            match record {
+                StreamLogRecord::Put { row_id, row } => {
+                    let version = Self::version_from_key(seq_bytes);
+                    if deleted.contains(&version) {
+                        continue;
+                    }
+                    if start_seq.is_some_and(|seq| version < seq) {
+                        continue;
+                    }
+                    if ttl_ms
+                        .is_some_and(|ttl| (row._timestamp as u64).saturating_add(ttl) <= now_ms)
+                    {
+                        continue;
+                    }
+                    page.push((row_id.clone(), row.clone()));
+                    emitted += 1;
+                    if page.len() >= page_rows && !on_page(std::mem::take(&mut page))? {
+                        break;
+                    }
+                    if max_rows.is_some_and(|max| emitted >= max) {
+                        break;
+                    }
+                },
+                StreamLogRecord::Delete { .. } => {},
+            }
+        }
+        if !page.is_empty() {
+            let _ = on_page(page)?;
+        }
+        Ok(())
+    }
 }
 
 impl StreamLogStore for MemoryStreamLogStore {

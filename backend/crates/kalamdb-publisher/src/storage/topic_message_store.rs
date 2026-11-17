@@ -107,10 +107,12 @@ impl TopicMessageStore {
         let prefix = TopicMessageId::prefix_for_partition(topic_id, partition_id);
         let partition = self.partition();
         let mut iter = self.backend().scan_reverse(&partition, Some(&prefix), None, Some(1))?;
-        iter.next()
-            .map(|(key, _)| TopicMessageId::from_storage_key(&key).map(|msg_id| msg_id.offset))
-            .transpose()
-            .map_err(kalamdb_store::StorageError::SerializationError)
+        match iter.next().transpose()? {
+            Some((key, _)) => TopicMessageId::from_storage_key(&key)
+                .map(|msg_id| Some(msg_id.offset))
+                .map_err(kalamdb_store::StorageError::SerializationError),
+            None => Ok(None),
+        }
     }
 
     /// Get the earliest retained offset for a topic partition.
@@ -139,13 +141,13 @@ impl TopicMessageStore {
         let primary_keys: Vec<Vec<u8>> = self
             .backend()
             .scan(&partition, Some(&prefix), None, None)?
-            .map(|(key, _)| key)
-            .collect();
+            .map(|item| item.map(|(key, _)| key))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
         let retention_keys: Vec<Vec<u8>> = self
             .backend()
             .scan(&retention_partition, Some(&prefix), None, None)?
-            .map(|(key, _)| key)
-            .collect();
+            .map(|item| item.map(|(key, _)| key))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
         let count = primary_keys.len();
         let mut operations = Vec::with_capacity(primary_keys.len() + retention_keys.len());
@@ -272,7 +274,8 @@ impl TopicMessageStore {
         let retention_partition = self.retention_partition();
         let iter = self.backend().scan(&retention_partition, Some(prefix), start_key, limit)?;
 
-        iter.map(|(key_bytes, value_bytes)| {
+        iter.map(|item| {
+            let (key_bytes, value_bytes) = item?;
             let key = TopicRetentionIndexKey::from_storage_key(&key_bytes)
                 .map_err(kalamdb_store::StorageError::SerializationError)?;
             let entry = decode_entity(&value_bytes)?;

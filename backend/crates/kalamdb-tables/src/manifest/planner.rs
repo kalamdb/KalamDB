@@ -84,6 +84,7 @@ impl ColdBatchRead {
         self.stats.await.unwrap_or_default()
     }
 
+    #[cfg(test)]
     pub(crate) async fn collect(
         mut self,
     ) -> Result<(Vec<RecordBatch>, ParquetScanStats), KalamDbError> {
@@ -198,6 +199,7 @@ impl SchemaAdaptPlan {
 ///
 /// Point lookups and count scans still need one batch. A full MVCC scan walks
 /// the vector and drops each batch after that batch is resolved.
+#[cfg(test)]
 pub(crate) fn concat_cold_batches(
     batches: Vec<RecordBatch>,
     schema: &SchemaRef,
@@ -452,17 +454,6 @@ impl ManifestAccessPlanner {
             while let Some((parquet_file, file_schema_version, opened)) = opens.next().await {
                 let mut stream = match opened {
                     Ok(stream) => stream,
-                    Err(err) if is_missing_parquet_file_error(&err) => {
-                        log::warn!(
-                            "[PARQUET_SCAN_ASYNC] skipping missing parquet file '{}' for table {}: {}",
-                            parquet_file,
-                            table_id_for_read,
-                            err
-                        );
-                        skipped = skipped.saturating_add(1);
-                        scanned = scanned.saturating_sub(1);
-                        continue;
-                    },
                     Err(err) => {
                         let _ = batch_tx.send(Err(err)).await;
                         let _ = stats_tx.send(ParquetScanStats {
@@ -658,14 +649,6 @@ impl ManifestAccessPlanner {
         // Can't compare, conservatively include
         true
     }
-}
-
-fn is_missing_parquet_file_error(err: &KalamDbError) -> bool {
-    let msg = err.to_string().to_ascii_lowercase();
-    msg.contains("not found")
-        && (msg.contains("object at location")
-            || msg.contains("no such file or directory")
-            || msg.contains("failed to open parquet stream"))
 }
 
 #[cfg(test)]

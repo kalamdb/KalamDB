@@ -150,7 +150,8 @@ where
                     self.backend().scan(&partition, None, start_bytes.as_deref(), Some(limit))?;
 
                 let mut rows = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
-                for (key_bytes, value_bytes) in iter {
+                for item in iter {
+                    let (key_bytes, value_bytes) = item?;
                     let key = K::from_storage_key(&key_bytes)
                         .map_err(StorageError::SerializationError)?;
                     let entity = self.deserialize(&key, &value_bytes)?;
@@ -177,7 +178,8 @@ where
                 )?;
 
                 let mut rows = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
-                for (key_bytes, value_bytes) in iter {
+                for item in iter {
+                    let (key_bytes, value_bytes) = item?;
                     if let Some(start) = &start_bytes {
                         if key_bytes.as_slice() >= start.as_slice() {
                             continue;
@@ -214,7 +216,8 @@ where
             None,
         )?;
 
-        let mapped = iter.map(|(key_bytes, value_bytes)| {
+        let mapped = iter.map(|item| {
+            let (key_bytes, value_bytes) = item?;
             let key = K::from_storage_key(&key_bytes).map_err(StorageError::SerializationError)?;
             let value = decode_entity(&value_bytes)?;
             Ok((key, value))
@@ -362,7 +365,8 @@ where
         )?;
 
         let mut results = Vec::new();
-        for (key_bytes, value_bytes) in iter {
+        for item in iter {
+            let (key_bytes, value_bytes) = item?;
             let key = match K::from_storage_key(&key_bytes) {
                 Ok(k) => k,
                 Err(e) => {
@@ -425,7 +429,8 @@ where
         )?;
 
         let mut results = Vec::new();
-        for (key_bytes, value_bytes) in iter {
+        for item in iter {
+            let (key_bytes, value_bytes) = item?;
             let key = match K::from_storage_key(&key_bytes) {
                 Ok(k) => k,
                 Err(e) => {
@@ -485,7 +490,8 @@ where
         let iter = self.backend().scan(&partition, Some(prefix), start_key, Some(limit))?;
 
         let mut results = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
-        for (key_bytes, value_bytes) in iter {
+        for item in iter {
+            let (key_bytes, value_bytes) = item?;
             let key = match K::from_storage_key(&key_bytes) {
                 Ok(k) => k,
                 Err(e) => {
@@ -540,7 +546,8 @@ where
         )?;
 
         let mut results = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
-        for (key_bytes, value_bytes) in iter {
+        for item in iter {
+            let (key_bytes, value_bytes) = item?;
             let key = match K::from_storage_key(&key_bytes) {
                 Ok(k) => k,
                 Err(e) => {
@@ -588,7 +595,8 @@ where
         )?;
 
         let mut keys = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
-        for (key_bytes, _) in iter {
+        for item in iter {
+            let (key_bytes, _) = item?;
             let key = match K::from_storage_key(&key_bytes) {
                 Ok(k) => k,
                 Err(e) => {
@@ -636,7 +644,8 @@ where
         let iter = self.backend().scan(&partition, Some(prefix), start_key, Some(limit))?;
 
         let mut keys = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
-        for (key_bytes, _) in iter {
+        for item in iter {
+            let (key_bytes, _) = item?;
             let key = match K::from_storage_key(&key_bytes) {
                 Ok(k) => k,
                 Err(e) => {
@@ -675,7 +684,8 @@ where
                     self.backend().scan(&partition, None, start_bytes.as_deref(), Some(limit))?;
 
                 let mut keys = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
-                for (key_bytes, _) in iter {
+                for item in iter {
+                    let (key_bytes, _) = item?;
                     let key = K::from_storage_key(&key_bytes)
                         .map_err(StorageError::SerializationError)?;
                     keys.push(key);
@@ -701,7 +711,8 @@ where
                 )?;
 
                 let mut keys = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
-                for (key_bytes, _) in iter {
+                for item in iter {
+                    let (key_bytes, _) = item?;
                     if let Some(start) = &start_bytes {
                         if key_bytes.as_slice() >= start.as_slice() {
                             continue;
@@ -728,7 +739,8 @@ where
         let partition = self.partition();
         let iter = self.backend().scan(&partition, None, None, Some(MAX_COUNT_LIMIT))?;
         let mut count = 0usize;
-        for _ in iter {
+        for item in iter {
+            item?;
             count += 1;
         }
         Ok(count)

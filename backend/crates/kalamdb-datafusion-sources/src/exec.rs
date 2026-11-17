@@ -503,6 +503,153 @@ where
     .collect()
 }
 
+struct HeldRow<K, R> {
+    version: VersionId,
+    deleted: bool,
+    row: (K, R),
+}
+
+/// Latest visible version of each primary key.
+///
+/// Hot rows and each cold batch update this map in place. A tombstone stays
+/// until [`Self::into_rows`] so an older live version in a later batch cannot
+/// resurrect a deleted key. Cold field payloads are built only when that cold
+/// row becomes the current winner.
+pub struct MvccRowAccumulator<K, R> {
+    winners: HashMap<PkBucketKey, HeldRow<K, R>>,
+    snapshot: Option<VersionId>,
+}
+
+impl<K, R> MvccRowAccumulator<K, R>
+where
+    R: VersionedRow,
+{
+    pub fn new(snapshot: Option<VersionId>, capacity: usize) -> Self {
+        Self {
+            winners: HashMap::with_capacity(capacity),
+            snapshot,
+        }
+    }
+
+    pub fn absorb_row(&mut self, pk_name: &str, key: K, row: R) {
+        let version = row.version();
+        let deleted = row.deleted();
+        self.consider(candidate_pk_key(pk_name, &row), version, deleted, (key, row));
+    }
+
+    pub fn absorb_rows(&mut self, pk_name: &str, rows: impl IntoIterator<Item = (K, R)>) {
+        for (key, row) in rows {
+            self.absorb_row(pk_name, key, row);
+        }
+    }
+
+    pub fn contains_displayed_pk(&self, pk: &str) -> bool {
+        if self.winners.contains_key(&PkBucketKey::Text(pk.to_string())) {
+            return true;
+        }
+        if let Ok(value) = pk.parse::<i64>() {
+            if self.winners.contains_key(&PkBucketKey::Int(value)) {
+                return true;
+            }
+        }
+        if let Ok(value) = pk.parse::<u64>() {
+            if self.winners.contains_key(&PkBucketKey::UInt(value)) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Fold one Parquet batch. Only a cold row that beats the current winner is decoded.
+    pub fn absorb_cold_batch<F>(
+        &mut self,
+        pk_name: &str,
+        cold_batch: &RecordBatch,
+        build_cold_row: F,
+    ) -> DataFusionResult<()>
+    where
+        F: Fn(ParquetRowData) -> DataFusionResult<(K, R)>,
+    {
+        if cold_batch.num_rows() == 0 {
+            return Ok(());
+        }
+        let decoder = ParquetBatchDecoder::new(cold_batch, Some(pk_name))?;
+        let mut chosen: HashMap<PkBucketKey, (usize, VersionId, bool)> =
+            HashMap::with_capacity(cold_batch.num_rows());
+        for row_idx in 0..cold_batch.num_rows() {
+            let Ok(version) = decoder.version_at(row_idx) else {
+                continue;
+            };
+            if !is_visible_at_snapshot(version, self.snapshot) {
+                continue;
+            }
+            let pk_key = decoder.pk_bucket_at(row_idx, version);
+            if let Some(current) = self.winners.get(&pk_key) {
+                if !prefers_version(version, current.version) {
+                    continue;
+                }
+            }
+            let deleted = decoder.deleted_at(row_idx);
+            match chosen.entry(pk_key) {
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    if prefers_version(version, entry.get().1) {
+                        entry.insert((row_idx, version, deleted));
+                    }
+                },
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert((row_idx, version, deleted));
+                },
+            }
+        }
+        for (pk_key, (row_idx, version, deleted)) in chosen {
+            if let Some(current) = self.winners.get(&pk_key) {
+                if !prefers_version(version, current.version) {
+                    continue;
+                }
+            }
+            let row = build_cold_row(decoder.row_at(row_idx)?)?;
+            self.consider(pk_key, version, deleted, row);
+        }
+        Ok(())
+    }
+
+    pub fn into_rows(self, keep_deleted: bool) -> Vec<(K, R)> {
+        self.winners
+            .into_values()
+            .filter(|held| keep_deleted || !held.deleted)
+            .map(|held| held.row)
+            .collect()
+    }
+
+    pub fn live_count(self) -> usize {
+        self.winners.into_values().filter(|held| !held.deleted).count()
+    }
+
+    fn consider(&mut self, pk_key: PkBucketKey, version: VersionId, deleted: bool, row: (K, R)) {
+        if !is_visible_at_snapshot(version, self.snapshot) {
+            return;
+        }
+        match self.winners.entry(pk_key) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                if prefers_version(version, entry.get().version) {
+                    entry.insert(HeldRow {
+                        version,
+                        deleted,
+                        row,
+                    });
+                }
+            },
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(HeldRow {
+                    version,
+                    deleted,
+                    row,
+                });
+            },
+        }
+    }
+}
+
 pub fn resolve_latest_kvs_from_cold_batch<K, R, I, F>(
     pk_name: &str,
     hot_rows: I,
@@ -514,41 +661,13 @@ pub fn resolve_latest_kvs_from_cold_batch<K, R, I, F>(
 where
     I: IntoIterator<Item = (K, R)>,
     F: Fn(ParquetRowData) -> DataFusionResult<(K, R)>,
-    K: Clone,
     R: VersionedRow,
 {
-    let decoder = ParquetBatchDecoder::new(cold_batch, Some(pk_name))?;
-    let winners = select_latest_versions(
-        hot_rows.into_iter().map(|(key, row)| {
-            let pk_key = candidate_pk_key(pk_name, &row);
-            let version = row.version();
-            let deleted = row.deleted();
-            VersionCandidate::new(pk_key, version, deleted, (key, row))
-        }),
-        (0..cold_batch.num_rows()).filter_map(|row_idx| {
-            let version = decoder.version_at(row_idx).ok()?;
-            Some(VersionCandidate::new(
-                decoder.pk_bucket_at(row_idx, version),
-                version,
-                decoder.deleted_at(row_idx),
-                row_idx,
-            ))
-        }),
-        snapshot_version,
-        keep_deleted,
-    );
-
-    let mut resolved = Vec::with_capacity(winners.len());
-    for winner in winners {
-        match winner {
-            SelectedVersion::Hot(row) => resolved.push(row),
-            SelectedVersion::Cold(row_idx) => {
-                resolved.push(build_cold_row(decoder.row_at(row_idx)?)?)
-            },
-        }
-    }
-
-    Ok(resolved)
+    let hot_rows = hot_rows.into_iter();
+    let mut winners = MvccRowAccumulator::new(snapshot_version, hot_rows.size_hint().0);
+    winners.absorb_rows(pk_name, hot_rows);
+    winners.absorb_cold_batch(pk_name, cold_batch, build_cold_row)?;
+    Ok(winners.into_rows(keep_deleted))
 }
 
 /// Decode a Parquet batch into full row payloads for version-resolution callers.

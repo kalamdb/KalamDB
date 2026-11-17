@@ -971,8 +971,22 @@ where
             }
             for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
                 let old_index_key = index.extract_key(old_key, old_entity);
+                let new_index_key = index.extract_key(new_key, new_entity);
+                let unchanged = match (&old_index_key, &new_index_key) {
+                    (Some(old_key_bytes), Some(new_key_bytes)) => {
+                        same_key
+                            && old_key_bytes == new_key_bytes
+                            && index.index_value(old_key, old_entity)
+                                == index.index_value(new_key, new_entity)
+                    },
+                    (None, None) => same_key,
+                    _ => false,
+                };
+                if unchanged {
+                    continue;
+                }
                 let drop_old = if same_key {
-                    old_index_key != index.extract_key(new_key, new_entity)
+                    old_index_key != new_index_key
                 } else {
                     true
                 };
@@ -987,6 +1001,13 @@ where
                         });
                     }
                 }
+                if let Some(index_key) = new_index_key {
+                    operations.push(Operation::Put {
+                        partition: index_partition.clone(),
+                        key: index_key,
+                        value: index.index_value(new_key, new_entity),
+                    });
+                }
             }
         }
 
@@ -996,14 +1017,15 @@ where
             key: new_storage,
             value,
         });
-        for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
-            if let Some(index_key) = index.extract_key(new_key, new_entity) {
-                let index_value = index.index_value(new_key, new_entity);
-                operations.push(Operation::Put {
-                    partition: index_partition.clone(),
-                    key: index_key,
-                    value: index_value,
-                });
+        if previous.is_none() {
+            for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
+                if let Some(index_key) = index.extract_key(new_key, new_entity) {
+                    operations.push(Operation::Put {
+                        partition: index_partition.clone(),
+                        key: index_key,
+                        value: index.index_value(new_key, new_entity),
+                    });
+                }
             }
         }
         Ok(())
@@ -1080,7 +1102,10 @@ where
             }
             let mut keys = Vec::new();
             while keys.len() < 32 && remaining > keys.len() {
-                let Some((_index_key, primary_key_bytes)) = iter.next() else {
+                let Some((_index_key, primary_key_bytes)) = (match iter.next().transpose() {
+                    Ok(pair) => pair,
+                    Err(error) => return Some(Err(error)),
+                }) else {
                     break;
                 };
                 match K::from_storage_key(&primary_key_bytes) {
@@ -1154,7 +1179,7 @@ where
                 Err(StorageError::PartitionNotFound(_)) => return Ok(None),
                 Err(error) => return Err(error),
             };
-        let Some((_index_key, primary_key_bytes)) = iter.next() else {
+        let Some((_index_key, primary_key_bytes)) = iter.next().transpose()? else {
             return Ok(None);
         };
         let primary_key =
@@ -1222,7 +1247,10 @@ where
             }
             let mut keys = Vec::new();
             while keys.len() < 32 && remaining > keys.len() {
-                let Some((index_key, primary_key_bytes)) = iter.next() else {
+                let Some((index_key, primary_key_bytes)) = (match iter.next().transpose() {
+                    Ok(pair) => pair,
+                    Err(error) => return Some(Err(error)),
+                }) else {
                     break;
                 };
                 if plan.is_past_end(&index_key) {
@@ -1292,7 +1320,7 @@ where
         let mut sum = 0i128;
         let mut keys = Vec::new();
         let mut values = Vec::new();
-        while let Some((index_key, primary_key_bytes)) = iter.next() {
+        while let Some((index_key, primary_key_bytes)) = iter.next().transpose()? {
             if plan.is_past_end(&index_key) {
                 break;
             }
@@ -1383,7 +1411,7 @@ where
                 Err(error) => return Err(error),
             };
 
-        while let Some((_index_key, primary_key_bytes)) = iter.next() {
+        while let Some((_index_key, primary_key_bytes)) = iter.next().transpose()? {
             let primary_key = K::from_storage_key(&primary_key_bytes)
                 .map_err(StorageError::SerializationError)?;
 
@@ -1396,6 +1424,97 @@ where
         }
 
         Ok(None)
+    }
+
+    /// Newest row for each index prefix.
+    ///
+    /// Prefix seeks stay inside this call. The row bodies are one `get_many`.
+    /// A missing index partition is a miss for that prefix, not a failed batch.
+    pub fn get_latest_many_by_index_prefixes(
+        &self,
+        index_idx: usize,
+        prefixes: &[Vec<u8>],
+    ) -> Result<Vec<Option<(K, V)>>> {
+        if prefixes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let index_partition = self
+            .index_partitions
+            .get(index_idx)
+            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?
+            .clone();
+        let mut row_keys = Vec::with_capacity(prefixes.len());
+        for prefix in prefixes {
+            let mut iter =
+                match self.backend.scan_reverse(&index_partition, Some(prefix), None, Some(1)) {
+                    Ok(iter) => iter,
+                    Err(StorageError::PartitionNotFound(_)) => {
+                        row_keys.push(None);
+                        continue;
+                    },
+                    Err(error) => return Err(error),
+                };
+            let key = match iter.next().transpose()? {
+                Some((_index_key, primary_key_bytes)) => Some(
+                    K::from_storage_key(&primary_key_bytes)
+                        .map_err(StorageError::SerializationError)?,
+                ),
+                None => None,
+            };
+            row_keys.push(key);
+        }
+        let encoded: Vec<Vec<u8>> =
+            row_keys.iter().filter_map(|key| key.as_ref().map(K::storage_key)).collect();
+        let fetched = if encoded.is_empty() {
+            Vec::new()
+        } else {
+            match self.backend.get_many(&self.main_partition, &encoded) {
+                Ok(fetched) => fetched,
+                Err(StorageError::PartitionNotFound(_)) => {
+                    return Ok((0..prefixes.len()).map(|_| None).collect());
+                },
+                Err(error) => return Err(error),
+            }
+        };
+        let mut fetched = fetched.into_iter();
+        let mut rows = Vec::with_capacity(prefixes.len());
+        for key in row_keys {
+            let Some(key) = key else {
+                rows.push(None);
+                continue;
+            };
+            match fetched.next() {
+                Some(Some(bytes)) => {
+                    let entity = self.codec.decode(&key, &bytes)?;
+                    rows.push(Some((key, entity)));
+                },
+                _ => rows.push(None),
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Load `keys` with one multi-get. Missing keys are `None` in order.
+    pub fn get_many_entities(&self, keys: &[K]) -> Result<Vec<Option<V>>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let encoded: Vec<Vec<u8>> = keys.iter().map(K::storage_key).collect();
+        let fetched = match self.backend.get_many(&self.main_partition, &encoded) {
+            Ok(fetched) => fetched,
+            Err(StorageError::PartitionNotFound(_)) => {
+                return Ok((0..keys.len()).map(|_| None).collect());
+            },
+            Err(error) => return Err(error),
+        };
+        fetched
+            .into_iter()
+            .zip(keys)
+            .map(|(bytes, key)| match bytes {
+                Some(bytes) => self.codec.decode(key, &bytes).map(Some),
+                None => Ok(None),
+            })
+            .collect()
     }
 
     /// Like [`Self::get_latest_by_index_prefix`], decoding only `ordinals`.
@@ -1418,7 +1537,7 @@ where
                 Err(error) => return Err(error),
             };
 
-        while let Some((_index_key, primary_key_bytes)) = iter.next() {
+        while let Some((_index_key, primary_key_bytes)) = iter.next().transpose()? {
             let primary_key = K::from_storage_key(&primary_key_bytes)
                 .map_err(StorageError::SerializationError)?;
 
@@ -1456,7 +1575,7 @@ where
         let mut iter = self.backend.scan(&index_partition, Some(prefix), None, Some(1))?;
 
         // If we got any result, the prefix exists
-        Ok(iter.next().is_some())
+        Ok(iter.next().transpose()?.is_some())
     }
 
     /// Scans an index returning (index_key, primary_key) pairs with typed primary key.
@@ -1475,7 +1594,8 @@ where
         let iter = self.backend.scan(&index_partition, prefix, start_key, limit)?;
 
         let trace_index = kalamdb_observability::dml_stage::tracing_enabled();
-        let mapped = iter.map(move |(index_key, primary_key_bytes)| {
+        let mapped = iter.map(move |item| {
+            let (index_key, primary_key_bytes) = item?;
             if trace_index {
                 kalamdb_observability::dml_stage::add_count(
                     kalamdb_observability::dml_stage::DmlCount::IndexEntries,
@@ -1507,7 +1627,8 @@ where
         let iter = self.backend.scan(&index_partition, prefix, None, limit)?;
 
         let trace_index = kalamdb_observability::dml_stage::tracing_enabled();
-        let mapped = iter.map(move |(_index_key, primary_key_bytes)| {
+        let mapped = iter.map(move |item| {
+            let (_index_key, primary_key_bytes) = item?;
             if trace_index {
                 kalamdb_observability::dml_stage::add_count(
                     kalamdb_observability::dml_stage::DmlCount::IndexEntries,
@@ -1572,7 +1693,8 @@ where
         )?;
 
         let codec = Arc::clone(&self.codec);
-        let mapped = iter.map(move |(key_bytes, value_bytes)| {
+        let mapped = iter.map(move |item| {
+            let (key_bytes, value_bytes) = item?;
             let key = K::from_storage_key(&key_bytes).map_err(StorageError::SerializationError)?;
             let value = codec.decode(&key, &value_bytes)?;
             Ok((key, value))

@@ -1,6 +1,9 @@
 //! Cold-storage primary-key lookup and uniqueness checks.
 
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use datafusion::{arrow::datatypes::DataType, logical_expr::Expr, scalar::ScalarValue};
 use kalamdb_commons::{
@@ -38,66 +41,92 @@ where
     P: BaseTableProvider<K, V>,
     K: StorageKey,
 {
+    let mut found =
+        find_rows_by_pks(provider, scope, std::slice::from_ref(&pk_value.to_string())).await?;
+    Ok(found.remove(pk_value))
+}
+
+/// Latest cold row for each primary key.
+///
+/// The winning version is chosen across every matching segment, including
+/// tombstones. A newer delete hides an older live row. Full fields are built
+/// only for a live winner.
+pub(crate) async fn find_rows_by_pks<P, K, V>(
+    provider: &P,
+    scope: Option<&UserId>,
+    pk_values: &[String],
+) -> Result<HashMap<String, (K, V)>, KalamDbError>
+where
+    P: BaseTableProvider<K, V>,
+    K: StorageKey,
+{
     use datafusion::prelude::col;
 
     use crate::utils::version_resolution::{parquet_batch_to_rows, ParquetRowData};
 
+    if pk_values.is_empty() {
+        return Ok(HashMap::new());
+    }
+
     let pk_name = provider.primary_key_field_name();
     let user_scope = resolve_user_scope(scope);
-
     let core = provider.core();
     let schema = provider.schema_ref();
-
-    // UUID keys are stored as FixedSizeBinary(16). A text literal does not
-    // compare equal to that type, so parse the key into the column type.
     let pk_type = schema
         .field_with_name(pk_name)
         .map(|field| field.data_type().clone())
         .unwrap_or(DataType::Utf8);
-    let pk_scalar = parse_string_as_scalar(pk_value, &pk_type)
-        .unwrap_or_else(|_| ScalarValue::Utf8(Some(pk_value.to_owned())));
-    let filter: Expr = col(pk_name).eq(Expr::Literal(pk_scalar, None));
+    let mut literals = Vec::with_capacity(pk_values.len());
+    for pk_value in pk_values {
+        let pk_scalar = parse_string_as_scalar(pk_value, &pk_type)
+            .unwrap_or_else(|_| ScalarValue::Utf8(Some(pk_value.clone())));
+        literals.push(Expr::Literal(pk_scalar, None));
+    }
+    let filter = if literals.len() == 1 {
+        col(pk_name).eq(literals.pop().expect("one primary key literal"))
+    } else {
+        col(pk_name).in_list(literals, false)
+    };
 
-    // Scan cold storage for this PK value using async I/O. Keep only the
-    // newest matching live row so later files do not copy earlier batches.
+    let wanted: HashSet<&str> = pk_values.iter().map(String::as_str).collect();
     let mut read = scan_provider_parquet_result(core, scope, Some(&filter), None).await?;
-    let mut latest: Option<ParquetRowData> = None;
+    let mut latest: HashMap<String, ParquetRowData> = HashMap::with_capacity(pk_values.len());
     while let Some(batch) = read.next_batch().await {
         let batch = batch?;
         if batch.num_rows() == 0 {
             continue;
         }
         for row_data in parquet_batch_to_rows(&batch)? {
-            if row_data.deleted {
-                continue;
-            }
             let Some(row_pk) = row_data.fields.values.get(pk_name) else {
                 continue;
             };
             let Ok(row_pk_key) = try_pk_bucket_key(row_pk) else {
                 continue;
             };
-            if row_pk_key.to_string() != pk_value {
+            let display = row_pk_key.to_string();
+            if !wanted.contains(display.as_str()) {
                 continue;
             }
-            if latest
-                .as_ref()
-                .map(|current| prefers_version(row_data.version, current.version))
-                .unwrap_or(true)
-            {
-                latest = Some(row_data);
+            match latest.get(&display) {
+                Some(current) if !prefers_version(row_data.version, current.version) => {},
+                _ => {
+                    latest.insert(display, row_data);
+                },
             }
         }
     }
     let _stats = read.stats().await;
 
-    // Convert ParquetRowData to the provider's (K, V) types
-    if let Some(row_data) = latest {
-        let result = provider.construct_row_from_parquet_data(user_scope, &row_data)?;
-        return Ok(result);
+    let mut found = HashMap::with_capacity(latest.len());
+    for (pk_value, row_data) in latest {
+        if row_data.deleted {
+            continue;
+        }
+        if let Some(row) = provider.construct_row_from_parquet_data(user_scope, &row_data)? {
+            found.insert(pk_value, row);
+        }
     }
-
-    Ok(None)
+    Ok(found)
 }
 
 fn resolve_storage_cached_for_pk(
@@ -344,20 +373,31 @@ pub async fn pk_exists_in_cold(
 
     let namespace = table_id.namespace_id();
     let table = table_id.table_name();
-    // Scan pruned Parquet files and check for PK using StorageCached.
-    // Manifest paths are just filenames (e.g., "batch-0.parquet"), so prepend storage_path
+    // The newest version across every candidate segment decides existence.
+    // A tombstone in a later file hides a live row in an earlier file.
+    let mut best: Option<(i64, bool, String)> = None;
+    let mut wanted = HashSet::with_capacity(1);
+    wanted.insert(pk_value);
     for file_name in files {
-        if crate::utils::pk::pk_exists_in_parquet_file(
+        let versions = crate::utils::pk::pk_versions_in_parquet_file(
             storage.as_ref(),
             table_type,
             table_id,
             user_id,
             &file_name,
             pk_column,
-            pk_value,
+            &wanted,
         )
-        .await?
-        {
+        .await?;
+        for (seq, deleted) in versions.into_values() {
+            let replace = best.as_ref().is_none_or(|(current_seq, _, _)| seq > *current_seq);
+            if replace {
+                best = Some((seq, deleted, file_name.clone()));
+            }
+        }
+    }
+    match best {
+        Some((_, false, file_name)) => {
             log::trace!(
                 "[pk_exists_in_cold] Found PK {} in {} for {}.{} {}",
                 pk_value,
@@ -366,11 +406,10 @@ pub async fn pk_exists_in_cold(
                 table.as_str(),
                 scope_label
             );
-            return Ok(Some(file_name));
-        }
+            Ok(Some(file_name))
+        },
+        _ => Ok(None),
     }
-
-    Ok(None)
 }
 
 /// Batch check if any PK values exist in cold storage (Parquet files) (async).
@@ -410,8 +449,9 @@ pub async fn pk_exists_batch_in_cold(
     let namespace = table_id.namespace_id();
     let table = table_id.table_name();
     let pk_set: HashSet<&str> = pk_values.iter().map(|value| value.as_str()).collect();
+    let mut best: HashMap<String, (i64, bool)> = HashMap::new();
     for file_name in files {
-        if let Some(found_pk) = crate::utils::pk::first_existing_pk_in_parquet_file(
+        let versions = crate::utils::pk::pk_versions_in_parquet_file(
             storage.as_ref(),
             table_type,
             table_id,
@@ -420,17 +460,30 @@ pub async fn pk_exists_batch_in_cold(
             pk_column,
             &pk_set,
         )
-        .await?
-        {
+        .await?;
+        for (pk, (seq, deleted)) in versions {
+            match best.get_mut(&pk) {
+                Some((current_seq, current_deleted)) if seq > *current_seq => {
+                    *current_seq = seq;
+                    *current_deleted = deleted;
+                },
+                None => {
+                    best.insert(pk, (seq, deleted));
+                },
+                _ => {},
+            }
+        }
+    }
+    for pk_value in pk_values {
+        if best.get(pk_value).is_some_and(|(_, deleted)| !deleted) {
             log::trace!(
-                "[pk_exists_batch_in_cold] Found PK {} in {} for {}.{} {}",
-                found_pk,
-                file_name,
+                "[pk_exists_batch_in_cold] Found PK {} for {}.{} {}",
+                pk_value,
                 namespace.as_str(),
                 table.as_str(),
                 scope_label
             );
-            return Ok(Some(found_pk));
+            return Ok(Some(pk_value.clone()));
         }
     }
 

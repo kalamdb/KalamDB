@@ -146,6 +146,17 @@ pub trait ClusterCoordinator: Send + Sync {
         Err("shared autocommit update is not replicated through this coordinator".into())
     }
 
+    /// Replicate one autocommit statement as a single transaction commit.
+    ///
+    /// Primary-key moves are an insert and a delete. They share this entry so
+    /// a failure cannot leave the new key without removing the old one.
+    async fn propose_shared_statement(
+        &self,
+        _mutations: Vec<kalamdb_transactions::staged_mutation::StagedMutation>,
+    ) -> Result<usize, String> {
+        Err("shared autocommit statement is not replicated through this coordinator".into())
+    }
+
     /// Replicate an autocommit delete. One entry covers every final row.
     async fn propose_shared_delete(
         &self,

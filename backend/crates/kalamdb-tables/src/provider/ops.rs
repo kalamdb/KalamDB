@@ -106,6 +106,31 @@ impl KalamTableProvider {
         Ok(authoritative_baseline(target))
     }
 
+    pub async fn load_user_baselines(
+        &self,
+        user_id: &UserId,
+        pk_values: &[String],
+    ) -> Result<Vec<AuthoritativeBaseline<UserTableRowId, UserTableRow>>, KalamDbError> {
+        let targets = self
+            .as_user()
+            .ok_or_else(not_user)?
+            .load_mutation_targets(Some(user_id), pk_values)
+            .await?;
+        Ok(targets.into_iter().map(authoritative_baseline).collect())
+    }
+
+    pub async fn load_shared_baselines(
+        &self,
+        pk_values: &[String],
+    ) -> Result<Vec<AuthoritativeBaseline<SharedTableRowId, SharedTableRow>>, KalamDbError> {
+        let targets = self
+            .as_shared()
+            .ok_or_else(not_shared)?
+            .load_mutation_targets(None, pk_values)
+            .await?;
+        Ok(targets.into_iter().map(authoritative_baseline).collect())
+    }
+
     pub fn primary_key_field_name(&self) -> &str {
         if let Some(provider) = self.as_user() {
             return provider.primary_key_field_name();

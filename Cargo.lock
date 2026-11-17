@@ -5670,6 +5670,7 @@ dependencies = [
  "kalamdb-serialization",
  "kalamdb-session-datafusion",
  "kalamdb-store",
+ "kalamdb-transactions",
  "log",
  "once_cell",
  "parking_lot",

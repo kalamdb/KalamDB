@@ -124,7 +124,8 @@ pub trait StorageBackend: Send + Sync {
     /// Scans keys in a partition, optionally filtered by prefix and limit.
     ///
     /// Returns an iterator of (key, value) pairs. The iterator should be
-    /// memory-efficient (not loading all data at once).
+    /// memory-efficient (not loading all data at once). A storage error is an
+    /// `Err` item, not the end of the scan.
     ///
     /// ## Parameters
     /// - `prefix`: If Some, only return keys starting with this prefix
@@ -156,8 +157,9 @@ pub trait StorageBackend: Send + Sync {
             return Ok(Box::new(std::iter::empty()));
         }
 
-        let mut items: Vec<(Vec<u8>, Vec<u8>)> =
-            self.scan(partition, prefix, None, None)?.collect();
+        let mut items: Vec<(Vec<u8>, Vec<u8>)> = self
+            .scan(partition, prefix, None, None)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
         if let Some(start) = start_key {
             items.retain(|(key, _)| key.as_slice() <= start);
@@ -173,7 +175,7 @@ pub trait StorageBackend: Send + Sync {
             items.truncate(limit);
         }
 
-        Ok(Box::new(items.into_iter()))
+        Ok(Box::new(items.into_iter().map(Ok)))
     }
 
     /// Checks if a partition exists.
@@ -345,7 +347,7 @@ impl StorageBackendAsync for std::sync::Arc<dyn StorageBackend> {
         let partition = partition.clone();
         tokio::task::spawn_blocking(move || {
             let iter = backend.scan(&partition, prefix.as_deref(), start_key.as_deref(), limit)?;
-            Ok(iter.collect())
+            iter.collect()
         })
         .await
         .map_err(|e| StorageError::Other(format!("spawn_blocking join error: {}", e)))?

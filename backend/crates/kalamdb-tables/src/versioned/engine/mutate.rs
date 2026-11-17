@@ -1,5 +1,7 @@
 //! Insert, update, and delete for both versioned scopes.
 
+use std::collections::{HashMap, HashSet};
+
 use datafusion::arrow::datatypes::SchemaRef;
 use kalamdb_commons::{
     ids::VersionId,
@@ -39,10 +41,10 @@ where
         );
         async move {
             let scope = self.storage_user(actor)?;
-            let entries = self.persist_insert_batch_rows(actor, rows, versions, true).await?;
-            let row_keys = entries.iter().map(|(row_key, _)| row_key.clone()).collect();
+            let (row_keys, retained) =
+                self.persist_insert_batch_rows(actor, rows, versions, true, false).await?;
             crate::versioned::fanout_insert_notifications(&self.core, scope, actor, || {
-                entries.iter().map(|(_, entity)| Self::notification_row(entity)).collect()
+                retained.iter().map(|(_, entity)| Self::notification_row(entity)).collect()
             })
             .await;
             Ok(row_keys)
@@ -66,11 +68,15 @@ where
             deferred_side_effects = true
         );
         async move {
-            let entries = self.persist_insert_batch_rows(actor, rows, versions, false).await?;
+            let (row_ids, retained) =
+                self.persist_insert_batch_rows(actor, rows, versions, false, false).await?;
             let table_id = self.core.table_id().clone();
             let scope = self.storage_user(actor)?;
             let watched = crate::versioned::table_watch(&self.core, scope).any();
-            Ok(entries
+            if retained.is_empty() {
+                return Ok(row_ids.into_iter().map(|row_key| (row_key, None)).collect());
+            }
+            Ok(retained
                 .into_iter()
                 .map(|(row_key, entity)| {
                     let notification = crate::versioned::insert_notification_when_watched(
@@ -99,8 +105,8 @@ where
         ),
         KalamDbError,
     > {
-        let (entries, operations) =
-            self.collect_insert_batch_rows(actor, rows, versions, false).await?;
+        let (_row_ids, entries, operations) =
+            self.collect_insert_batch_rows(actor, rows, versions, false, true).await?;
         let table_id = self.core.table_id().clone();
         let scope = self.storage_user(actor)?;
         let watched = crate::versioned::table_watch(&self.core, scope).any();
@@ -406,12 +412,13 @@ where
         let scope = self.storage_user(actor)?;
         let table_id = self.core.table_id().clone();
         let watched = crate::versioned::table_watch(&self.core, scope).any();
+        let targets = self.load_mutation_targets(actor, pk_values).await?;
         let mut items = Vec::with_capacity(pk_values.len());
         let mut applied = Vec::with_capacity(pk_values.len());
-        for (pk_value, version) in pk_values.iter().zip(versions.iter().copied()) {
-            let Some((previous, latest_row)) = crate::versioned::optional_live_row(
-                self.load_mutation_target(actor, pk_value).await?,
-            ) else {
+        for ((pk_value, version), target) in
+            pk_values.iter().zip(versions.iter().copied()).zip(targets)
+        {
+            let Some((previous, latest_row)) = crate::versioned::optional_live_row(target) else {
                 continue;
             };
             let prior = S::row_fields(&latest_row).clone();
@@ -464,15 +471,14 @@ where
         let table_id = self.core.table_id().clone();
         let watched = crate::versioned::table_watch(&self.core, scope).any();
         let pk_column = self.primary_key_field_name().to_string();
+        let pk_values: Vec<String> = updates.iter().map(|(pk, _, _)| pk.clone()).collect();
+        let targets = self.load_mutation_targets(actor, &pk_values).await?;
         let mut items = Vec::with_capacity(updates.len());
         let mut applied = Vec::with_capacity(updates.len());
-        for (pk_value, update_row, version) in updates {
+        for ((pk_value, update_row, version), target) in updates.iter().zip(targets) {
             let coerced = crate::versioned::coerce_update_row(update_row.clone(), &schema)?;
-            let (previous, latest_row) = crate::versioned::require_live_row(
-                self.load_mutation_target(actor, pk_value).await?,
-                &pk_column,
-                pk_value,
-            )?;
+            let (previous, latest_row) =
+                crate::versioned::require_live_row(target, &pk_column, pk_value)?;
             let Some(new_fields) = crate::versioned::changed_update_fields(
                 S::row_fields(&latest_row),
                 coerced,
@@ -541,17 +547,18 @@ where
             return Ok(());
         }
         let version = S::row_version(&entity);
-        if S::DEFERRED_EFFECTS_BEFORE_ROW {
-            self.stage_persist_effect(actor, scope, version, &entity, effect).await;
-            self.write_replaced_row(previous, row_key, entity, error_context).await?;
-        } else {
-            self.write_replaced_row(previous, row_key, entity.clone(), error_context)
-                .await?;
-            self.stage_persist_effect(actor, scope, version, &entity, effect).await;
-        }
+        self.write_replaced_row(previous, row_key, entity.clone(), error_context)
+            .await?;
+        self.stage_persist_effect(actor, scope, version, &entity, effect).await;
         crate::versioned::mark_table_pending_write(&self.core, scope);
         Ok(())
     }
+}
+
+enum DirectNotice<R> {
+    Insert(R),
+    Update { old: R, new: R },
+    Delete(R),
 }
 
 enum PersistEffect<'a> {
@@ -680,7 +687,7 @@ where
             let new_fields =
                 crate::versioned::merge_row_updates(S::row_fields(&latest_row), coerced);
             if new_fields == *S::row_fields(&latest_row) {
-                if !S::ONE_STATEMENT_COMMIT {
+                if !S::USER_SCOPED_ROWS {
                     tracing::debug!(
                         table_id = %self.core.table_id(),
                         pk = pk_value,
@@ -790,6 +797,272 @@ where
         }
         .instrument(span)
         .await
+    }
+
+    /// Delete every live key in one storage batch.
+    pub(super) async fn commit_direct_deletes(
+        &self,
+        actor: &UserId,
+        pk_values: &[String],
+        commit_seq: u64,
+        ordinal: &mut u32,
+    ) -> Result<u64, KalamDbError> {
+        if pk_values.is_empty() {
+            return Ok(0);
+        }
+        let _guard = self.begin_guard();
+        let scope = self.storage_user(Some(actor))?;
+        let targets = self.load_mutation_targets(Some(actor), pk_values).await?;
+        let mut items = Vec::new();
+        let mut effects = Vec::new();
+        let mut deleted = Vec::new();
+        for (pk_value, target) in pk_values.iter().zip(targets) {
+            let Some((previous, latest_row)) = crate::versioned::optional_live_row(target) else {
+                continue;
+            };
+            let version = crate::utils::base::next_statement_version(commit_seq, ordinal)?;
+            let entity = S::make_row(scope, version, true, S::row_fields(&latest_row).clone());
+            let row_key = S::make_row_id(scope, version);
+            items.push((previous, row_key, entity.clone()));
+            effects.push(crate::versioned::PlannedScopeFinish::Delete {
+                version,
+                pk: pk_value.clone(),
+            });
+            deleted.push((pk_value.clone(), entity));
+        }
+        let deleted_count = deleted.len() as u64;
+        if items.is_empty() {
+            return Ok(0);
+        }
+        self.store.replace_batch_async(items).await.map_err(|error| {
+            KalamDbError::InvalidOperation(format!(
+                "Failed to delete {} table rows: {error}",
+                S::LABEL
+            ))
+        })?;
+        self.finish_planned_scope(Some(actor), &effects).await;
+        for (_pk_value, entity) in deleted {
+            crate::versioned::fanout_row_change(
+                &self.core,
+                scope,
+                Some(actor),
+                kalamdb_commons::models::TopicOp::Delete,
+                || Self::notification_row(&entity),
+                |table_id, row| self.delete_notification(table_id, row),
+            )
+            .await;
+        }
+        Ok(deleted_count)
+    }
+
+    /// Apply primary-key moves and field updates in one storage batch.
+    ///
+    /// The returned count is the number of field updates that changed a row.
+    /// Primary-key moves are counted by the caller.
+    pub(super) async fn commit_direct_updates(
+        &self,
+        actor: &UserId,
+        commit_seq: u64,
+        ordinal: &mut u32,
+        direct_moves: Vec<(String, Row)>,
+        direct_updates: Vec<(String, Row)>,
+    ) -> Result<u64, KalamDbError> {
+        if direct_moves.is_empty() && direct_updates.is_empty() {
+            return Ok(0);
+        }
+        let _guard = self.begin_guard();
+        let scope = self.storage_user(Some(actor))?;
+        let pk_name = self.primary_key_field_name().to_string();
+        let schema = self.core.schema_ref();
+        let mut load_keys = Vec::with_capacity(direct_moves.len() + direct_updates.len());
+        for (pk_value, _) in &direct_moves {
+            load_keys.push(pk_value.clone());
+        }
+        for (pk_value, _) in &direct_updates {
+            load_keys.push(pk_value.clone());
+        }
+        let mut loaded = self.load_mutation_targets(Some(actor), &load_keys).await?;
+        let update_targets = loaded.split_off(direct_moves.len());
+        let move_targets = loaded;
+        let mut items = Vec::new();
+        let mut effects = Vec::new();
+        let mut notices = Vec::new();
+        let mut claimed = HashSet::new();
+        let mut reused: HashMap<String, Option<(S::RowId, S::Row)>> = HashMap::new();
+        let mut prepared = Vec::with_capacity(direct_moves.len());
+        for ((old_pk, inserted_row), target) in direct_moves.into_iter().zip(move_targets) {
+            let new_pk = match crate::versioned::insert_pk_parts(
+                self.core.is_auto_increment_pk(),
+                &inserted_row,
+                &pk_name,
+            )? {
+                Some((_, pk_text)) => {
+                    if !claimed.insert(pk_text.clone()) {
+                        return Err(KalamDbError::AlreadyExists(format!(
+                            "Primary key violation: value '{pk_text}' appears multiple times in \
+                             the statement for column '{pk_name}'"
+                        )));
+                    }
+                    Some(pk_text)
+                },
+                None => None,
+            };
+            crate::utils::datafusion_dml::validate_not_null_with_set(
+                self.core.non_null_columns(),
+                std::slice::from_ref(&inserted_row),
+            )?;
+            let live = crate::versioned::optional_live_row(target);
+            if let Some((previous, _)) = &live {
+                reused.insert(old_pk.clone(), previous.clone());
+            }
+            prepared.push((old_pk, inserted_row, new_pk, live));
+        }
+        let mut early_deletes = Vec::new();
+        let mut inserts = Vec::new();
+        let mut late_deletes = Vec::new();
+        for (old_pk, inserted_row, new_pk, live) in prepared {
+            let predecessor = if let Some(pk_text) = new_pk.as_ref() {
+                if let Some(previous) = reused.get(pk_text) {
+                    previous.clone()
+                } else {
+                    self.insert_predecessor(Some(actor), &inserted_row).await?
+                }
+            } else {
+                self.insert_predecessor(Some(actor), &inserted_row).await?
+            };
+            inserts.push((predecessor, inserted_row));
+            if let Some((previous, latest_row)) = live {
+                let fields = S::row_fields(&latest_row).clone();
+                if reused.contains_key(&old_pk) {
+                    early_deletes.push((previous, fields, old_pk));
+                } else {
+                    late_deletes.push((previous, fields, old_pk));
+                }
+            }
+        }
+        let push_delete = |items: &mut Vec<_>,
+                           effects: &mut Vec<_>,
+                           notices: &mut Vec<_>,
+                           ordinal: &mut u32,
+                           previous,
+                           fields,
+                           pk: String| {
+            let delete_version = crate::utils::base::next_statement_version(commit_seq, ordinal)?;
+            let tombstone = S::make_row(scope, delete_version, true, fields);
+            let delete_key = S::make_row_id(scope, delete_version);
+            items.push((previous, delete_key, tombstone.clone()));
+            effects.push(crate::versioned::PlannedScopeFinish::Delete {
+                version: delete_version,
+                pk,
+            });
+            notices.push(DirectNotice::Delete(tombstone));
+            Ok::<(), KalamDbError>(())
+        };
+        for (previous, fields, pk) in early_deletes {
+            push_delete(&mut items, &mut effects, &mut notices, ordinal, previous, fields, pk)?;
+        }
+        for (predecessor, inserted_row) in inserts {
+            let insert_version = crate::utils::base::next_statement_version(commit_seq, ordinal)?;
+            let inserted = S::make_row(scope, insert_version, false, inserted_row);
+            let insert_key = S::make_row_id(scope, insert_version);
+            items.push((predecessor, insert_key, inserted.clone()));
+            effects.push(crate::versioned::PlannedScopeFinish::Upsert {
+                version: insert_version,
+                row: S::row_fields(&inserted).clone(),
+            });
+            notices.push(DirectNotice::Insert(inserted));
+        }
+        for (previous, fields, pk) in late_deletes {
+            push_delete(&mut items, &mut effects, &mut notices, ordinal, previous, fields, pk)?;
+        }
+        let mut updated = 0u64;
+        for ((pk_value, updates), target) in direct_updates.into_iter().zip(update_targets) {
+            let (previous, latest_row) =
+                crate::versioned::require_live_row(target, &pk_name, &pk_value)?;
+            let coerced = crate::versioned::coerce_update_row(updates, &schema)?;
+            let new_fields =
+                crate::versioned::merge_row_updates(S::row_fields(&latest_row), coerced);
+            if new_fields == *S::row_fields(&latest_row) {
+                continue;
+            }
+            if S::VALIDATE_DIRECT_NOT_NULL {
+                crate::utils::datafusion_dml::validate_not_null_with_set(
+                    self.core.non_null_columns(),
+                    std::slice::from_ref(&new_fields),
+                )?;
+            }
+            let version = crate::utils::base::next_statement_version(commit_seq, ordinal)?;
+            let entity = S::make_row(scope, version, false, new_fields);
+            let row_key = S::make_row_id(scope, version);
+            items.push((previous, row_key, entity.clone()));
+            effects.push(crate::versioned::PlannedScopeFinish::Upsert {
+                version,
+                row: S::row_fields(&entity).clone(),
+            });
+            notices.push(DirectNotice::Update {
+                old: latest_row,
+                new: entity,
+            });
+            updated += 1;
+        }
+        if items.is_empty() {
+            return Ok(0);
+        }
+        self.store.replace_batch_async(items).await.map_err(|error| {
+            KalamDbError::InvalidOperation(format!(
+                "Failed to update {} table rows: {error}",
+                S::LABEL
+            ))
+        })?;
+        self.finish_planned_scope(Some(actor), &effects).await;
+        let pk_column = pk_name;
+        for notice in notices {
+            match notice {
+                DirectNotice::Insert(entity) => {
+                    crate::versioned::fanout_row_change(
+                        &self.core,
+                        scope,
+                        Some(actor),
+                        kalamdb_commons::models::TopicOp::Insert,
+                        || Self::notification_row(&entity),
+                        |table_id, row| {
+                            kalamdb_commons::websocket::ChangeNotification::insert(table_id, row)
+                        },
+                    )
+                    .await;
+                },
+                DirectNotice::Update { old, new } => {
+                    crate::versioned::fanout_row_change(
+                        &self.core,
+                        scope,
+                        Some(actor),
+                        kalamdb_commons::models::TopicOp::Update,
+                        || Self::notification_row(&new),
+                        |table_id, new_row| {
+                            crate::versioned::update_notification(
+                                table_id,
+                                Self::notification_row(&old),
+                                new_row,
+                                pk_column.clone(),
+                            )
+                        },
+                    )
+                    .await;
+                },
+                DirectNotice::Delete(entity) => {
+                    crate::versioned::fanout_row_change(
+                        &self.core,
+                        scope,
+                        Some(actor),
+                        kalamdb_commons::models::TopicOp::Delete,
+                        || Self::notification_row(&entity),
+                        |table_id, row| self.delete_notification(table_id, row),
+                    )
+                    .await;
+                },
+            }
+        }
+        Ok(updated)
     }
 
     pub(super) async fn committed_primary_key_is_live(

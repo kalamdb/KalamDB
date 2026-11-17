@@ -791,31 +791,12 @@ where
         let actor = S::storage_user(Some(user_id))?;
         if let Some((row_id, row)) = self.latest_hot_pk_entry(actor, &pk_value).await? {
             if S::row_deleted(&row) {
-                if S::COLD_PK_SENTINEL {
-                    log::trace!(
-                        "[UserTableProvider] PK {} latest hot version is tombstoned",
-                        id_value
-                    );
-                }
                 return Ok(None);
-            }
-            if S::COLD_PK_SENTINEL {
-                log::trace!("[UserTableProvider] PK collision in hot storage: id={}", id_value);
             }
             return Ok(Some(row_id));
         }
-        if !S::COLD_PK_SENTINEL {
-            return Ok(None);
-        }
-        log::trace!("[UserTableProvider] PK {} not in hot storage, checking cold", id_value);
-        if base::pk_exists_in_cold(&self.core, Some(user_id), id_value).await?.is_some() {
-            log::trace!("[UserTableProvider] PK {} exists in cold storage", id_value);
-            return Ok(Some(S::make_row_id(
-                Some(user_id),
-                VersionId::try_from_i64(1).expect("version"),
-            )));
-        }
-        Ok(None)
+        let found = base::find_rows_by_pks(self, actor, &[id_value.to_string()]).await?;
+        Ok(found.into_values().next().map(|(row_id, _)| row_id))
     }
 
     async fn insert(

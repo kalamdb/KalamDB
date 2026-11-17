@@ -571,13 +571,12 @@ impl DmlExecutor {
                     OperationKind::Update,
                     mutation.payload.as_ref(),
                 );
-                delete_file_refs_best_effort(
-                    self.app_context.as_ref(),
-                    table_id,
-                    TableType::User,
-                    Some(user_id),
-                    &replaced_refs,
-                )
+                self.queue_replaced_files(vec![FileCleanupIntent {
+                    table_id: table_id.clone(),
+                    table_type: TableType::User,
+                    user_id: Some(user_id.clone()),
+                    file_refs: replaced_refs,
+                }])
                 .await;
                 self.defer_observe(table_id, TableType::User, Some(user_id), log_index);
                 Ok(1)
@@ -634,25 +633,24 @@ impl DmlExecutor {
                     .await
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?;
             let deleted_count = applied.len();
+            let mut cleanup = Vec::new();
             for mutation in applied {
                 if let Some(notification) = mutation.notification {
                     self.emit_autocommit_notification(Some(user_id), notification);
                 }
-                let file_refs = self.collect_file_refs_for_prior_row(
-                    table_id,
-                    &mutation.prior,
-                    OperationKind::Delete,
-                    None,
-                );
-                delete_file_refs_best_effort(
-                    self.app_context.as_ref(),
-                    table_id,
-                    TableType::User,
-                    Some(user_id),
-                    &file_refs,
-                )
-                .await;
+                cleanup.push(FileCleanupIntent {
+                    table_id: table_id.clone(),
+                    table_type: TableType::User,
+                    user_id: Some(user_id.clone()),
+                    file_refs: self.collect_file_refs_for_prior_row(
+                        table_id,
+                        &mutation.prior,
+                        OperationKind::Delete,
+                        None,
+                    ),
+                });
             }
+            self.queue_replaced_files(cleanup).await;
             log::debug!("DmlExecutor: Deleted {} rows from {}", deleted_count, table_id);
             if deleted_count > 0 {
                 self.defer_observe(table_id, TableType::User, Some(user_id), log_index);
@@ -800,25 +798,24 @@ impl DmlExecutor {
                 .await
                 .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
             let affected_rows = applied.len();
+            let mut cleanup = Vec::new();
             for mutation in applied {
                 if let Some(notification) = mutation.notification {
                     self.emit_shared_autocommit_notification(actor_user_id, notification);
                 }
-                let replaced_refs = self.collect_file_refs_for_prior_row(
-                    table_id,
-                    &mutation.prior,
-                    OperationKind::Update,
-                    mutation.payload.as_ref(),
-                );
-                delete_file_refs_best_effort(
-                    self.app_context.as_ref(),
-                    table_id,
-                    TableType::Shared,
-                    None,
-                    &replaced_refs,
-                )
-                .await;
+                cleanup.push(FileCleanupIntent {
+                    table_id: table_id.clone(),
+                    table_type: TableType::Shared,
+                    user_id: None,
+                    file_refs: self.collect_file_refs_for_prior_row(
+                        table_id,
+                        &mutation.prior,
+                        OperationKind::Update,
+                        mutation.payload.as_ref(),
+                    ),
+                });
             }
+            self.queue_replaced_files(cleanup).await;
 
             log::debug!("DmlExecutor: Updated {} shared row(s) in {}", affected_rows, table_id);
             if affected_rows > 0 {
@@ -878,25 +875,24 @@ impl DmlExecutor {
                 .await
                 .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?;
             let deleted_count = applied.len();
+            let mut cleanup = Vec::new();
             for mutation in applied {
                 if let Some(notification) = mutation.notification {
                     self.emit_shared_autocommit_notification(actor_user_id, notification);
                 }
-                let file_refs = self.collect_file_refs_for_prior_row(
-                    table_id,
-                    &mutation.prior,
-                    OperationKind::Delete,
-                    None,
-                );
-                delete_file_refs_best_effort(
-                    self.app_context.as_ref(),
-                    table_id,
-                    TableType::Shared,
-                    None,
-                    &file_refs,
-                )
-                .await;
+                cleanup.push(FileCleanupIntent {
+                    table_id: table_id.clone(),
+                    table_type: TableType::Shared,
+                    user_id: None,
+                    file_refs: self.collect_file_refs_for_prior_row(
+                        table_id,
+                        &mutation.prior,
+                        OperationKind::Delete,
+                        None,
+                    ),
+                });
             }
+            self.queue_replaced_files(cleanup).await;
 
             log::debug!("DmlExecutor: Deleted {} shared rows from {}", deleted_count, table_id);
             if deleted_count > 0 {
@@ -1384,40 +1380,45 @@ impl DmlExecutor {
                 provider_arc
             };
             let skip_generated_inserts = provider_arc.is_auto_increment_pk();
-            for request in batch {
-                if skip_generated_inserts && request.insert_only {
-                    continue;
-                }
-                if written.get(&request.key).is_some() {
-                    continue;
-                }
-                let stored = if table_type == TableType::User {
-                    let TableScope::User(user_id) = &request.key.scope else {
-                        return Err(ApplierError::Validation(
-                            "user transaction batch mutation missing user_id".to_string(),
-                        ));
-                    };
-                    StorageBaseline::User(
-                        provider_arc
-                            .load_user_baseline(user_id, &request.primary_key)
-                            .await
-                            .map_err(|error| {
-                                ApplierError::Execution(format!(
-                                    "Failed to resolve row baseline: {error}"
-                                ))
-                            })?,
-                    )
-                } else {
-                    StorageBaseline::Shared(
-                        provider_arc.load_shared_baseline(&request.primary_key).await.map_err(
-                            |error| {
-                                ApplierError::Execution(format!(
-                                    "Failed to resolve row baseline: {error}"
-                                ))
-                            },
-                        )?,
-                    )
+            let pending: Vec<_> = batch
+                .into_iter()
+                .filter(|request| {
+                    !(skip_generated_inserts && request.insert_only)
+                        && written.get(&request.key).is_none()
+                })
+                .collect();
+            if pending.is_empty() {
+                continue;
+            }
+            let primary_keys: Vec<String> =
+                pending.iter().map(|request| request.primary_key.clone()).collect();
+            let baselines = if table_type == TableType::User {
+                let TableScope::User(user_id) = &pending[0].key.scope else {
+                    return Err(ApplierError::Validation(
+                        "user transaction batch mutation missing user_id".to_string(),
+                    ));
                 };
+                provider_arc
+                    .load_user_baselines(user_id, &primary_keys)
+                    .await
+                    .map_err(|error| {
+                        ApplierError::Execution(format!("Failed to resolve row baseline: {error}"))
+                    })?
+                    .into_iter()
+                    .map(StorageBaseline::User)
+                    .collect::<Vec<_>>()
+            } else {
+                provider_arc
+                    .load_shared_baselines(&primary_keys)
+                    .await
+                    .map_err(|error| {
+                        ApplierError::Execution(format!("Failed to resolve row baseline: {error}"))
+                    })?
+                    .into_iter()
+                    .map(StorageBaseline::Shared)
+                    .collect::<Vec<_>>()
+            };
+            for (request, stored) in pending.into_iter().zip(baselines) {
                 written.insert(request.key, CachedTarget::Storage(stored));
             }
         }
@@ -1843,12 +1844,29 @@ impl DmlExecutor {
         Ok(())
     }
 
+    async fn queue_replaced_files(&self, intents: Vec<FileCleanupIntent>) {
+        super::file_cleanup_queue::queue_file_cleanup(Arc::clone(&self.app_context), intents).await;
+    }
+
     async fn submit_prepared_commit(
         &self,
         mut prepared: PreparedCommitBatch,
     ) -> Result<TransactionApplyResult, ApplierError> {
-        if !prepared.storage_operations.is_empty() {
-            let operations = std::mem::take(&mut prepared.storage_operations);
+        let mut operations = std::mem::take(&mut prepared.storage_operations);
+        let cleanup_queued = match super::file_cleanup_queue::cleanup_puts(
+            self.app_context.storage_backend().as_ref(),
+            &prepared.post_commit_effects.file_cleanup_intents,
+        ) {
+            Ok(puts) => {
+                operations.extend(puts);
+                true
+            },
+            Err(error) => {
+                log::warn!("file cleanup intent was not recorded: {error}");
+                false
+            },
+        };
+        if !operations.is_empty() {
             self.app_context.storage_backend().batch(operations).map_err(|error| {
                 ApplierError::Execution(format!("commit batch failed: {error}"))
             })?;
@@ -1861,15 +1879,22 @@ impl DmlExecutor {
             finish.run().await;
         }
         prepared.run_scope_finishes().await;
-        for intent in &prepared.post_commit_effects.file_cleanup_intents {
-            delete_file_refs_best_effort(
-                self.app_context.as_ref(),
-                &intent.table_id,
-                intent.table_type,
-                intent.user_id.as_ref(),
-                &intent.file_refs,
-            )
-            .await;
+        if cleanup_queued && !prepared.post_commit_effects.file_cleanup_intents.is_empty() {
+            let app = Arc::clone(&self.app_context);
+            tokio::spawn(async move {
+                super::file_cleanup_queue::drain_file_cleanup(app).await;
+            });
+        } else {
+            for intent in &prepared.post_commit_effects.file_cleanup_intents {
+                delete_file_refs_best_effort(
+                    self.app_context.as_ref(),
+                    &intent.table_id,
+                    intent.table_type,
+                    intent.user_id.as_ref(),
+                    &intent.file_refs,
+                )
+                .await;
+            }
         }
 
         let notifications_sent = self.defer_observe_and_dispatch(

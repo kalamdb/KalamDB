@@ -29,9 +29,7 @@ use kalamdb_transactions::extract_transaction_query_context;
 use crate::{
     error::KalamDbError,
     utils::{
-        base::{self, BaseTableProvider},
-        datafusion_dml::UpdateChange,
-        dml_provider::TableRowDml,
+        base::BaseTableProvider, datafusion_dml::UpdateChange, dml_provider::TableRowDml,
         row_utils::extract_user_context,
     },
 };
@@ -281,23 +279,19 @@ where
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         self.admit_read(state)?;
-        let overlay = if S::ONE_STATEMENT_COMMIT {
+        let overlay = if S::USER_SCOPED_ROWS {
             let (user_id, _) =
                 extract_user_context(state).map_err(crate::error::into_datafusion)?;
             Some(user_id.clone())
         } else {
             None
         };
-        if S::TRACE_BASE_SCAN {
-            kalamdb_observability::kdb_await_in_info_span!(
-                <Self as BaseTableProvider<S::RowId, S::Row>>::base_scan_with_overlay(
-                    self, state, projection, filters, limit, overlay,
-                ),
-                "table.base_scan"
-            )
-        } else {
-            self.base_scan_with_overlay(state, projection, filters, limit, overlay).await
-        }
+        kalamdb_observability::kdb_await_in_info_span!(
+            <Self as BaseTableProvider<S::RowId, S::Row>>::base_scan_with_overlay(
+                self, state, projection, filters, limit, overlay,
+            ),
+            "table.base_scan"
+        )
     }
 
     async fn insert_into(
@@ -340,13 +334,21 @@ where
             return kalamdb_datafusion_sources::dml::rows_affected_plan(state, inserted).await;
         }
         if self.replicates_shared_writes() {
-            let inserted = self
-                .core
-                .services
-                .cluster_coordinator
-                .propose_shared_insert(self.core.table_id(), user_id, rows)
-                .await
-                .map_err(DataFusionError::Execution)?;
+            let row_count = rows.len();
+            let table_id = self.core.table_id().clone();
+            let inserted = kalamdb_observability::kdb_await_in_info_span!(
+                self.core.services.cluster_coordinator.propose_shared_insert(
+                    &table_id,
+                    user_id,
+                    rows,
+                ),
+                "table.shared_autocommit",
+                op = "insert",
+                table_id = %table_id,
+                rows = row_count
+            )
+            .map_err(DataFusionError::Execution)?;
+            let _ = row_count;
             return kalamdb_datafusion_sources::dml::rows_affected_plan(state, inserted as u64)
                 .await;
         }
@@ -355,10 +357,16 @@ where
             rows.len(),
         )
         .map_err(crate::error::into_datafusion)?;
-        let inserted = self
-            .insert_batch_with_versions(Some(user_id), rows, &versions)
-            .await
-            .map_err(crate::error::into_datafusion)?;
+        let row_count = versions.len();
+        let inserted = kalamdb_observability::kdb_await_in_info_span!(
+            self.insert_batch_with_versions(Some(user_id), rows, &versions),
+            "table.autocommit",
+            op = "insert",
+            table_id = %self.core.table_id(),
+            rows = row_count
+        )
+        .map_err(crate::error::into_datafusion)?;
+        let _ = row_count;
         kalamdb_datafusion_sources::dml::rows_affected_plan(state, inserted.len() as u64).await
     }
 
@@ -377,12 +385,7 @@ where
             return kalamdb_datafusion_sources::dml::rows_affected_plan(state, 0).await;
         }
         let transaction_query_context = extract_transaction_query_context(state);
-        if S::ONE_STATEMENT_COMMIT {
-            return self
-                .delete_one_statement(state, user_id, &pk_values, transaction_query_context)
-                .await;
-        }
-        self.delete_shared_statement(state, user_id, pk_values, transaction_query_context)
+        self.delete_statement(state, user_id, pk_values, transaction_query_context)
             .await
     }
 
@@ -420,8 +423,6 @@ where
         };
         let rls_state = self.rls_state(state, PolicyCommand::Update)?;
         let visit_state: &dyn Session = rls_state.as_ref().map(|state| state as _).unwrap_or(state);
-        let commit_seq = (S::ONE_STATEMENT_COMMIT && transaction_query_context.is_none())
-            .then(|| self.core.services.commit_sequence_source.allocate_next());
         let mut seen = HashSet::new();
         let mut updated: u64 = 0;
         let mut ordinal = 0u32;
@@ -505,27 +506,14 @@ where
         if !matched {
             return kalamdb_datafusion_sources::dml::rows_affected_plan(state, 0).await;
         }
-        if S::ONE_STATEMENT_COMMIT {
-            self.apply_user_updates(
-                state,
-                user_id,
-                commit_seq,
-                &mut ordinal,
-                direct_moves,
-                direct_updates,
-                &mut updated,
-            )
-            .await?;
-        } else {
-            self.apply_shared_updates(
-                user_id,
-                &mut ordinal,
-                direct_moves,
-                direct_updates,
-                &mut updated,
-            )
-            .await?;
-        }
+        self.apply_statement_updates(
+            user_id,
+            &mut ordinal,
+            direct_moves,
+            direct_updates,
+            &mut updated,
+        )
+        .await?;
         if let (Some(transaction_query_context), Some(staged_mutations)) =
             (transaction_query_context, staged_mutations)
         {
@@ -546,64 +534,7 @@ where
         + super::scan::ScopeScan<RowId = S::RowId, Row = S::Row, Context = S::ScanContext>
         + BaseTableProvider<S::RowId, S::Row>,
 {
-    async fn delete_one_statement(
-        &self,
-        state: &dyn Session,
-        user_id: &UserId,
-        pk_values: &[String],
-        transaction_query_context: Option<&kalamdb_transactions::TransactionQueryContext>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        let mut deleted = 0u64;
-        let commit_seq = transaction_query_context
-            .is_none()
-            .then(|| self.core.services.commit_sequence_source.allocate_next());
-        let mut ordinal = 0u32;
-        let mut staged_mutations = transaction_query_context.as_ref().map(|_| Vec::new());
-        for pk_value in pk_values {
-            if let Some(staged_mutations) = staged_mutations.as_mut() {
-                let context = transaction_query_context
-                    .as_ref()
-                    .expect("transaction_query_context must exist when staging DELETE");
-                if crate::utils::datafusion_dml::stage_delete_if_committed_live(
-                    staged_mutations,
-                    context,
-                    self.core.table_id(),
-                    S::TABLE_TYPE,
-                    user_id,
-                    pk_value,
-                    || self.committed_primary_key_is_live(Some(user_id), pk_value),
-                )
-                .await?
-                {
-                    deleted += 1;
-                }
-                continue;
-            }
-            let version = base::next_statement_version(
-                commit_seq.expect("commit_seq must exist for direct DELETE"),
-                &mut ordinal,
-            )
-            .map_err(crate::error::into_datafusion)?;
-            if self
-                .delete_by_pk_value_with_version(user_id, pk_value, version)
-                .await
-                .map_err(crate::error::into_datafusion)?
-            {
-                deleted += 1;
-            }
-        }
-        if let (Some(transaction_query_context), Some(staged_mutations)) =
-            (transaction_query_context, staged_mutations)
-        {
-            crate::utils::datafusion_dml::stage_transaction_mutations(
-                transaction_query_context,
-                staged_mutations,
-            )?;
-        }
-        kalamdb_datafusion_sources::dml::rows_affected_plan(state, deleted).await
-    }
-
-    async fn delete_shared_statement(
+    async fn delete_statement(
         &self,
         state: &dyn Session,
         user_id: &UserId,
@@ -631,7 +562,7 @@ where
                     S::TABLE_TYPE,
                     user_id,
                     &pk_value,
-                    || self.committed_primary_key_is_live(None, &pk_value),
+                    || self.committed_primary_key_is_live(Some(user_id), &pk_value),
                 )
                 .await?
                 {
@@ -643,27 +574,34 @@ where
         }
         if !direct_pks.is_empty() {
             if self.replicates_shared_writes() {
-                let removed = self
-                    .core
-                    .services
-                    .cluster_coordinator
-                    .propose_shared_delete(self.core.table_id(), user_id, direct_pks)
-                    .await
-                    .map_err(DataFusionError::Execution)?;
+                let key_count = direct_pks.len();
+                let table_id = self.core.table_id().clone();
+                let removed = kalamdb_observability::kdb_await_in_info_span!(
+                    self.core.services.cluster_coordinator.propose_shared_delete(
+                        &table_id,
+                        user_id,
+                        direct_pks,
+                    ),
+                    "table.shared_autocommit",
+                    op = "delete",
+                    table_id = %table_id,
+                    rows = key_count
+                )
+                .map_err(DataFusionError::Execution)?;
+                let _ = key_count;
                 deleted += removed as u64;
             } else {
                 let commit_seq = self.core.services.commit_sequence_source.allocate_next();
-                for pk_value in direct_pks {
-                    let version = base::next_statement_version(commit_seq, &mut ordinal)
-                        .map_err(crate::error::into_datafusion)?;
-                    if self
-                        .delete_by_pk_value_with_version(user_id, &pk_value, version)
-                        .await
-                        .map_err(crate::error::into_datafusion)?
-                    {
-                        deleted += 1;
-                    }
-                }
+                let key_count = direct_pks.len();
+                deleted += kalamdb_observability::kdb_await_in_info_span!(
+                    self.commit_direct_deletes(user_id, &direct_pks, commit_seq, &mut ordinal),
+                    "table.autocommit",
+                    op = "delete",
+                    table_id = %self.core.table_id(),
+                    rows = key_count
+                )
+                .map_err(crate::error::into_datafusion)?;
+                let _ = key_count;
             }
         }
         if let (Some(transaction_query_context), Some(staged_mutations)) =
@@ -677,52 +615,7 @@ where
         kalamdb_datafusion_sources::dml::rows_affected_plan(state, deleted).await
     }
 
-    async fn apply_user_updates(
-        &self,
-        _state: &dyn Session,
-        user_id: &UserId,
-        commit_seq: Option<u64>,
-        ordinal: &mut u32,
-        direct_moves: Vec<(String, Row)>,
-        direct_updates: Vec<(String, Row)>,
-        updated: &mut u64,
-    ) -> DataFusionResult<()> {
-        for (pk_value, inserted_row) in direct_moves {
-            let insert_version = base::next_statement_version(
-                commit_seq.expect("commit_seq must exist for direct UPDATE"),
-                ordinal,
-            )
-            .map_err(crate::error::into_datafusion)?;
-            self.insert_batch_with_versions(Some(user_id), vec![inserted_row], &[insert_version])
-                .await
-                .map_err(crate::error::into_datafusion)?;
-            let delete_version = base::next_statement_version(
-                commit_seq.expect("commit_seq must exist for direct UPDATE"),
-                ordinal,
-            )
-            .map_err(crate::error::into_datafusion)?;
-            self.delete_by_pk_value_with_version(user_id, &pk_value, delete_version)
-                .await
-                .map_err(crate::error::into_datafusion)?;
-        }
-        for (pk_value, evaluated_updates) in direct_updates {
-            let version = base::next_statement_version(
-                commit_seq.expect("commit_seq must exist for direct UPDATE"),
-                ordinal,
-            )
-            .map_err(crate::error::into_datafusion)?;
-            let result = self
-                .update_by_pk_value_with_version(user_id, &pk_value, evaluated_updates, version)
-                .await
-                .map_err(crate::error::into_datafusion)?;
-            if result.is_some() {
-                *updated += 1;
-            }
-        }
-        Ok(())
-    }
-
-    async fn apply_shared_updates(
+    async fn apply_statement_updates(
         &self,
         user_id: &UserId,
         ordinal: &mut u32,
@@ -730,73 +623,79 @@ where
         direct_updates: Vec<(String, Row)>,
         updated: &mut u64,
     ) -> DataFusionResult<()> {
-        if !direct_moves.is_empty() {
-            if self.replicates_shared_writes() {
-                let pk_values = direct_moves.iter().map(|(pk, _)| pk.clone()).collect::<Vec<_>>();
-                let rows = direct_moves.into_iter().map(|(_, row)| row).collect::<Vec<_>>();
-                self.core
-                    .services
-                    .cluster_coordinator
-                    .propose_shared_insert(self.core.table_id(), user_id, rows)
-                    .await
-                    .map_err(DataFusionError::Execution)?;
-                self.core
-                    .services
-                    .cluster_coordinator
-                    .propose_shared_delete(self.core.table_id(), user_id, pk_values)
-                    .await
-                    .map_err(DataFusionError::Execution)?;
-            } else {
-                let commit_seq = self.core.services.commit_sequence_source.allocate_next();
-                for (pk_value, inserted_row) in direct_moves {
-                    let insert_version = base::next_statement_version(commit_seq, ordinal)
-                        .map_err(crate::error::into_datafusion)?;
-                    self.insert_batch_with_versions(
-                        Some(user_id),
-                        vec![inserted_row],
-                        &[insert_version],
-                    )
-                    .await
-                    .map_err(crate::error::into_datafusion)?;
-                    let delete_version = base::next_statement_version(commit_seq, ordinal)
-                        .map_err(crate::error::into_datafusion)?;
-                    self.delete_by_pk_value_with_version(user_id, &pk_value, delete_version)
-                        .await
-                        .map_err(crate::error::into_datafusion)?;
+        if self.replicates_shared_writes() {
+            if !direct_moves.is_empty() {
+                let transaction_id = kalamdb_commons::models::TransactionId::fresh();
+                let table_id = self.core.table_id().clone();
+                let pk_column = self.primary_key_field_name().to_string();
+                let update_count = direct_updates.len() as u64;
+                let mut staged = Vec::new();
+                for (old_pk, row) in direct_moves {
+                    crate::utils::datafusion_dml::stage_primary_key_move(
+                        &mut staged,
+                        transaction_id.clone(),
+                        &table_id,
+                        S::TABLE_TYPE,
+                        user_id.clone(),
+                        &pk_column,
+                        old_pk,
+                        row,
+                    )?;
                 }
-            }
-        }
-        if !direct_updates.is_empty() {
-            if self.replicates_shared_writes() {
+                for (pk_value, updates) in direct_updates {
+                    crate::utils::datafusion_dml::stage_field_update(
+                        &mut staged,
+                        transaction_id.clone(),
+                        &table_id,
+                        S::TABLE_TYPE,
+                        user_id.clone(),
+                        pk_value,
+                        updates,
+                    );
+                }
+                for (order, mutation) in staged.iter_mut().enumerate() {
+                    mutation.mutation_order = order as u64;
+                }
+                kalamdb_observability::kdb_await_in_info_span!(
+                    self.core.services.cluster_coordinator.propose_shared_statement(staged),
+                    "table.shared_autocommit",
+                    op = "update",
+                    table_id = %table_id
+                )
+                .map_err(DataFusionError::Execution)?;
+                *updated += update_count;
+            } else if !direct_updates.is_empty() {
                 let (pk_values, updates) = direct_updates.into_iter().unzip();
-                let changed = self
-                    .core
-                    .services
-                    .cluster_coordinator
-                    .propose_shared_update(self.core.table_id(), user_id, pk_values, updates)
-                    .await
-                    .map_err(DataFusionError::Execution)?;
+                let changed = kalamdb_observability::kdb_await_in_info_span!(
+                    self.core.services.cluster_coordinator.propose_shared_update(
+                        self.core.table_id(),
+                        user_id,
+                        pk_values,
+                        updates,
+                    ),
+                    "table.shared_autocommit",
+                    op = "update",
+                    table_id = %self.core.table_id()
+                )
+                .map_err(DataFusionError::Execution)?;
                 *updated += changed as u64;
-            } else {
-                let commit_seq = self.core.services.commit_sequence_source.allocate_next();
-                for (pk_value, evaluated_updates) in direct_updates {
-                    let version = base::next_statement_version(commit_seq, ordinal)
-                        .map_err(crate::error::into_datafusion)?;
-                    let result = self
-                        .update_by_pk_value_with_version(
-                            user_id,
-                            &pk_value,
-                            evaluated_updates,
-                            version,
-                        )
-                        .await
-                        .map_err(crate::error::into_datafusion)?;
-                    if result.is_some() {
-                        *updated += 1;
-                    }
-                }
             }
+            return Ok(());
         }
+        if direct_moves.is_empty() && direct_updates.is_empty() {
+            return Ok(());
+        }
+        let commit_seq = self.core.services.commit_sequence_source.allocate_next();
+        let row_count = direct_moves.len() + direct_updates.len();
+        *updated += kalamdb_observability::kdb_await_in_info_span!(
+            self.commit_direct_updates(user_id, commit_seq, ordinal, direct_moves, direct_updates),
+            "table.autocommit",
+            op = "update",
+            table_id = %self.core.table_id(),
+            rows = row_count
+        )
+        .map_err(crate::error::into_datafusion)?;
+        let _ = row_count;
         Ok(())
     }
 }

@@ -13,8 +13,8 @@ use kalamdb_commons::{
     models::rows::RowMetadata, KSerializable, StorageKey, UserId,
 };
 use kalamdb_datafusion_sources::exec::{
-    merge_row_metadata, parquet_batch_to_metadata, resolve_latest_kvs_from_cold_batch,
-    ParquetBatchDecoder, ParquetRowData, VersionedRow,
+    parquet_batch_to_metadata, MvccRowAccumulator, ParquetBatchDecoder, ParquetRowData,
+    VersionedRow,
 };
 use kalamdb_store::{IndexRole, IndexScanPlan, IndexedEntityStore, StorageError};
 
@@ -67,33 +67,23 @@ where
     Build: Fn(ParquetRowData) -> DataFusionResult<(K, R)>,
 {
     let (hot_result, cold_result) = tokio::join!(hot_future, cold_future);
-    let mut rows = hot_result?;
-    let hot_rows_scanned = rows.len();
+    let hot_rows = hot_result?;
+    let hot_rows_scanned = hot_rows.len();
+    let mut winners = MvccRowAccumulator::new(snapshot_commit_seq, hot_rows_scanned);
+    winners.absorb_rows(pk_name, hot_rows);
     let mut cold_result = cold_result?;
     let mut cold_rows_scanned = 0;
-    let mut merged_with_cold = false;
     while let Some(batch) = cold_result.next_batch().await {
         let batch = batch?;
         if let Some(mask) = mask.as_ref() {
-            append_secondary_delete_masks(mask, &mut rows, &batch).await?;
+            append_secondary_delete_masks(mask, pk_name, &mut winners, &batch).await?;
         }
         cold_rows_scanned += batch.num_rows();
-        rows = resolve_latest_kvs_from_cold_batch(
-            pk_name,
-            rows,
-            &batch,
-            keep_deleted,
-            snapshot_commit_seq,
-            &build_cold_row,
-        )
-        .map_err(|error| KalamDbError::DataFusion(error.to_string()))?;
-        merged_with_cold = true;
+        winners
+            .absorb_cold_batch(pk_name, &batch, &build_cold_row)
+            .map_err(|error| KalamDbError::DataFusion(error.to_string()))?;
     }
-    // Cold merge applies snapshot + tombstone filtering. Hot storage is already
-    // one row per PK, so hot-only only needs visibility + tombstone retain.
-    if !merged_with_cold {
-        filter_hot_only_winners(&mut rows, keep_deleted, snapshot_commit_seq);
-    }
+    let mut rows = winners.into_rows(keep_deleted);
     let cold_stats = cold_result.stats().await;
 
     apply_limit(&mut rows, limit);
@@ -120,26 +110,23 @@ where
     ColdFuture: Future<Output = Result<ParquetScanResult, KalamDbError>>,
 {
     let (hot_result, cold_result) = tokio::join!(hot_future, cold_future);
-    let mut winners = hot_result?;
+    let hot_rows = hot_result?;
+    let mut winners = MvccRowAccumulator::new(snapshot_commit_seq, hot_rows.len());
+    winners.absorb_rows(pk_name, hot_rows.into_iter().map(|row| ((), row)));
     let mut cold_result = cold_result?;
-    let mut merged_with_cold = false;
     while let Some(batch) = cold_result.next_batch().await {
         let batch = batch?;
         let cold_metadata = parquet_batch_to_metadata(&batch, pk_name)
             .map_err(|error| KalamDbError::DataFusion(error.to_string()))?;
-        winners = merge_row_metadata(pk_name, winners, cold_metadata, snapshot_commit_seq);
-        merged_with_cold = true;
+        winners.absorb_rows(pk_name, cold_metadata.into_iter().map(|row| ((), row)));
     }
     let _stats = cold_result.stats().await;
-    // Hot-only counts skip merge_row_metadata, so apply the snapshot bound here.
-    if !merged_with_cold {
-        winners.retain(|row| snapshot_commit_seq.is_none_or(|snapshot| row.version <= snapshot));
-    }
-    Ok(winners.iter().filter(|row| !row.deleted).count())
+    Ok(winners.live_count())
 }
 
 /// Hot storage keeps one row per PK. Without a cold merge, apply the same
 /// snapshot visibility and tombstone rules the merge path would have applied.
+#[cfg(test)]
 fn filter_hot_only_winners<K, R>(
     rows: &mut Vec<(K, R)>,
     keep_deleted: bool,
@@ -177,7 +164,8 @@ where
 
 async fn append_secondary_delete_masks<K, V>(
     mask: &SecondaryDeleteMask<'_, K, V>,
-    hot_rows: &mut Vec<(K, V)>,
+    pk_name: &str,
+    winners: &mut MvccRowAccumulator<K, V>,
     cold_batch: &RecordBatch,
 ) -> Result<(), KalamDbError>
 where
@@ -189,12 +177,6 @@ where
     }
     let decoder = ParquetBatchDecoder::new(cold_batch, Some(mask.pk_name))
         .map_err(|error| KalamDbError::DataFusion(error.to_string()))?;
-    let mut seen = HashSet::with_capacity(hot_rows.len());
-    for (_, row) in hot_rows.iter() {
-        if let Some(pk) = row.pk_value(mask.pk_name) {
-            seen.insert(pk);
-        }
-    }
     let mut missing = Vec::new();
     for row_idx in 0..cold_batch.num_rows() {
         let metadata = decoder
@@ -202,19 +184,21 @@ where
             .map_err(|error| KalamDbError::DataFusion(error.to_string()))?;
         let PkBucketKey::Version(_) = &metadata.pk_bucket else {
             let pk = metadata.pk_bucket.to_string();
-            if seen.insert(pk.clone()) {
+            if !winners.contains_displayed_pk(&pk) {
                 missing.push(pk);
             }
             continue;
         };
     }
+    missing.sort();
+    missing.dedup();
     for pk in missing {
         let scalar = crate::versioned::pk_text_to_scalar(&mask.schema, mask.pk_name, &pk)?;
         let prefix = (mask.prefix_for_pk)(&scalar);
-        if let Some(latest) =
+        if let Some((key, row)) =
             crate::versioned::latest_hot_by_prefix(mask.store, prefix, None).await?
         {
-            hot_rows.push(latest);
+            winners.absorb_row(pk_name, key, row);
         }
     }
     Ok(())

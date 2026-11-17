@@ -2,4 +2,7 @@
 
 pub mod helpers;
 
-pub use helpers::{first_existing_pk_in_parquet_file, parse_pk_value, pk_exists_in_parquet_file};
+pub use helpers::{
+    first_existing_pk_in_parquet_file, parse_pk_value, pk_exists_in_parquet_file,
+    pk_versions_in_parquet_file,
+};

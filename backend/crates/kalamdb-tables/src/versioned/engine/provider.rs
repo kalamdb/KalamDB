@@ -35,6 +35,8 @@ pub(crate) struct VersionedTable<S: TableScope> {
 pub(crate) type UserTableProvider = VersionedTable<UserScope>;
 pub(crate) type SharedTableProvider = VersionedTable<SharedScope>;
 
+const INSERT_PLAN_CHUNK: usize = 1024;
+
 impl MutationGuard for VersionedTable<UserScope> {
     type Guard = ();
 
@@ -290,18 +292,75 @@ where
         Self: super::scan::ScopeScan<RowId = S::RowId, Row = S::Row, Context = S::ScanContext>
             + BaseTableProvider<S::RowId, S::Row>,
     {
+        let owned = [pk_value.to_string()];
+        let mut targets = self.load_mutation_targets(actor, &owned).await?;
+        Ok(targets.pop().unwrap_or(crate::versioned::MutationTarget::Missing))
+    }
+
+    /// Hot prefix seeks for `pk_values`, then one multi-get, then one cold scan
+    /// for the keys hot storage missed.
+    pub(crate) async fn load_mutation_targets(
+        &self,
+        actor: Option<&UserId>,
+        pk_values: &[String],
+    ) -> Result<Vec<crate::versioned::MutationTarget<S::RowId, S::Row>>, KalamDbError>
+    where
+        Self: super::scan::ScopeScan<RowId = S::RowId, Row = S::Row, Context = S::ScanContext>
+            + BaseTableProvider<S::RowId, S::Row>,
+    {
+        if pk_values.is_empty() {
+            return Ok(Vec::new());
+        }
         let scope = self.storage_user(actor)?;
         let pk_name = self.primary_key_field_name();
-        let pk_scalar =
-            crate::versioned::pk_text_to_scalar(&self.core.schema_ref(), pk_name, pk_value)?;
-        let lookup = self.hot_pk_lookup(actor, &pk_scalar).await?;
-        let cold = if matches!(lookup, crate::versioned::HotPkLookup::Missing) {
-            base::find_row_by_pk(self, scope, pk_value).await?.map(|(_, row)| row)
+        let schema = self.core.schema_ref();
+        let mut prefixes = Vec::with_capacity(pk_values.len());
+        for pk_value in pk_values {
+            let pk_scalar = crate::versioned::pk_text_to_scalar(&schema, pk_name, pk_value)?;
+            prefixes.push(S::pk_prefix(&self.pk_index, scope, &pk_scalar));
+        }
+        let store = Arc::clone(&self.store);
+        let hot = if prefixes.len() <= 1 {
+            store.get_latest_many_by_index_prefixes(0, &prefixes).map_err(|error| {
+                KalamDbError::InvalidOperation(format!("PK index scan failed: {error}"))
+            })?
         } else {
-            None
+            tokio::task::spawn_blocking(move || {
+                store.get_latest_many_by_index_prefixes(0, &prefixes)
+            })
+            .await
+            .map_err(|error| {
+                KalamDbError::InvalidOperation(format!("PK index scan failed: {error}"))
+            })?
+            .map_err(|error| {
+                KalamDbError::InvalidOperation(format!("PK index scan failed: {error}"))
+            })?
         };
-        kalamdb_observability::dml_stage::record_baseline_decode();
-        Ok(crate::versioned::mutation_target_from_hot(lookup, cold))
+        let mut missing = Vec::new();
+        let mut lookups = Vec::with_capacity(hot.len());
+        for (index, entry) in hot.into_iter().enumerate() {
+            let lookup = crate::versioned::classify_hot_pk(entry, S::row_deleted);
+            if matches!(lookup, crate::versioned::HotPkLookup::Missing) {
+                missing.push(pk_values[index].clone());
+            }
+            lookups.push(lookup);
+        }
+        let mut cold = if missing.is_empty() {
+            HashMap::new()
+        } else {
+            base::find_rows_by_pks(self, scope, &missing).await?
+        };
+        let mut targets = Vec::with_capacity(lookups.len());
+        for (lookup, pk_value) in lookups.into_iter().zip(pk_values.iter()) {
+            let cold_row = if matches!(lookup, crate::versioned::HotPkLookup::Missing) {
+                cold.remove(pk_value).map(|(_, row)| row)
+            } else {
+                None
+            };
+            kalamdb_observability::dml_stage::record_baseline_decode();
+            targets.push(crate::versioned::mutation_target_from_hot(lookup, cold_row));
+        }
+        Ok(targets)
     }
 
     pub async fn find_by_pk(
@@ -390,42 +449,55 @@ where
         rows: Vec<Row>,
         versions: &[VersionId],
         validate_unique_pk: bool,
-    ) -> Result<(Vec<(S::RowId, S::Row)>, Vec<kalamdb_store::Operation>), KalamDbError> {
+        retain_rows: bool,
+    ) -> Result<(Vec<S::RowId>, Vec<(S::RowId, S::Row)>, Vec<kalamdb_store::Operation>), KalamDbError>
+    {
         if rows.is_empty() {
-            return Ok((Vec::new(), Vec::new()));
+            return Ok((Vec::new(), Vec::new(), Vec::new()));
         }
         let _guard = self.begin_guard();
         let scope = self.storage_user(actor)?;
         ensure_manifest_ready(&self.core, scope, S::PROVIDER_NAME)?;
-        let coerced_rows = crate::versioned::coerce_row_batch(rows, &self.core.schema_ref())?;
+        let mut coerced_rows = crate::versioned::coerce_row_batch(rows, &self.core.schema_ref())?;
         crate::utils::datafusion_dml::validate_not_null_with_set(
             self.core.non_null_columns(),
             &coerced_rows,
         )?;
         let row_count = coerced_rows.len();
-        let replaced_tombstones = if validate_unique_pk {
+        let mut replaced_tombstones = if validate_unique_pk {
             self.validate_insert_batch_rows(actor, coerced_rows.iter()).await?
         } else {
             HashMap::new()
         };
         crate::versioned::require_version_count(versions.len(), row_count)?;
-        let mut entries = Vec::with_capacity(row_count);
-        for (row_data, version) in coerced_rows.into_iter().zip(versions.iter().copied()) {
-            entries.push((
-                S::make_row_id(scope, version),
-                S::make_row(scope, version, false, row_data),
-            ));
-        }
+        let mut row_ids = Vec::with_capacity(row_count);
+        let mut retained = Vec::new();
         let mut operations = Vec::new();
-        crate::versioned::append_insert_batch_ops(
-            &self.store,
-            &entries,
-            replaced_tombstones,
-            self.primary_key_field_name(),
-            S::row_fields,
-            &mut operations,
-        )?;
-        Ok((entries, operations))
+        let mut offset = 0usize;
+        while !coerced_rows.is_empty() {
+            let count = INSERT_PLAN_CHUNK.min(coerced_rows.len());
+            let chunk: Vec<Row> = coerced_rows.drain(..count).collect();
+            let mut entries = Vec::with_capacity(count);
+            for row_data in chunk {
+                let version = versions[offset];
+                offset += 1;
+                let row_id = S::make_row_id(scope, version);
+                row_ids.push(row_id.clone());
+                entries.push((row_id, S::make_row(scope, version, false, row_data)));
+            }
+            crate::versioned::append_insert_batch_ops(
+                &self.store,
+                &entries,
+                &mut replaced_tombstones,
+                self.primary_key_field_name(),
+                S::row_fields,
+                &mut operations,
+            )?;
+            if retain_rows {
+                retained.extend(entries);
+            }
+        }
+        Ok((row_ids, retained, operations))
     }
 
     pub(super) async fn persist_insert_batch_rows(
@@ -434,29 +506,37 @@ where
         rows: Vec<Row>,
         versions: &[VersionId],
         validate_unique_pk: bool,
-    ) -> Result<Vec<(S::RowId, S::Row)>, KalamDbError> {
-        let (entries, operations) = self
-            .collect_insert_batch_rows(actor, rows, versions, validate_unique_pk)
+        keep_rows: bool,
+    ) -> Result<(Vec<S::RowId>, Vec<(S::RowId, S::Row)>), KalamDbError> {
+        let scope = self.storage_user(actor)?;
+        let retain_rows = keep_rows
+            || self.has_vector_columns()
+            || crate::versioned::table_watch(&self.core, scope).any();
+        let (row_ids, retained, operations) = self
+            .collect_insert_batch_rows(actor, rows, versions, validate_unique_pk, retain_rows)
             .await?;
-        if entries.is_empty() {
-            return Ok(entries);
+        if row_ids.is_empty() {
+            return Ok((row_ids, retained));
         }
         self.store.commit_operations(operations).map_err(|error| {
             KalamDbError::InvalidOperation(format!("Failed to batch insert table rows: {error}"))
         })?;
-        self.finish_planned_insert(actor, &entries).await;
-        if S::ONE_STATEMENT_COMMIT {
-            let scope = self.storage_user(actor)?;
+        if retain_rows {
+            self.finish_planned_insert(actor, &retained).await;
+        } else {
+            crate::versioned::mark_table_pending_write(&self.core, scope);
+        }
+        if S::USER_SCOPED_ROWS {
             log::debug!(
                 "Batch inserted {} {} table rows for user {} with _seq range [{}, {}]",
-                entries.len(),
+                row_ids.len(),
                 S::LABEL,
                 scope.map(|user| user.as_str()).unwrap_or(""),
-                entries.first().map(|(key, _)| S::row_id_version(key).as_i64()).unwrap_or(0),
-                entries.last().map(|(key, _)| S::row_id_version(key).as_i64()).unwrap_or(0)
+                row_ids.first().map(|key| S::row_id_version(key).as_i64()).unwrap_or(0),
+                row_ids.last().map(|key| S::row_id_version(key).as_i64()).unwrap_or(0)
             );
         }
-        Ok(entries)
+        Ok((row_ids, retained))
     }
 
     pub async fn insert_encoded_fields_with_versions(
@@ -506,14 +586,6 @@ where
             self.core.non_null_columns(),
             versions,
         )?;
-        if !S::PREENCODE_ORDINAL {
-            let rows = decoded
-                .columns
-                .into_iter()
-                .map(|columns| Row::from_aligned(&decoded.names, columns))
-                .collect();
-            return self.persist_insert_batch_rows(actor, rows, versions, true).await;
-        }
         let names = decoded.names;
         let decoded_columns = decoded.columns;
         let pk_name = self.primary_key_field_name();
@@ -536,7 +608,10 @@ where
                 .into_iter()
                 .map(|columns| Row::from_aligned(&names, columns))
                 .collect();
-            return self.persist_insert_batch_rows(actor, rows, versions, false).await;
+            return self
+                .persist_insert_batch_rows(actor, rows, versions, false, true)
+                .await
+                .map(|(_row_ids, rows)| rows);
         }
         let mut entries = Vec::with_capacity(decoded_columns.len());
         let mut encoded_values = Vec::with_capacity(decoded_columns.len());
@@ -573,7 +648,7 @@ where
     ) -> kalamdb_commons::websocket::ChangeNotification {
         let mut notification =
             kalamdb_commons::websocket::ChangeNotification::delete_soft(table_id, row);
-        if !S::ONE_STATEMENT_COMMIT {
+        if !S::USER_SCOPED_ROWS {
             notification.pk_columns = vec![self.primary_key_field_name().to_string()];
         }
         notification

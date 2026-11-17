@@ -380,7 +380,8 @@ impl RaftPartitionStore {
 
         let cap = limit.min(1024);
         let mut entries = Vec::with_capacity(cap);
-        for (key, value) in iter {
+        for item in iter {
+            let (key, value) = item?;
             if let Some(index) = Self::parse_log_index_from_key(&key) {
                 if index >= end {
                     break;
@@ -405,20 +406,18 @@ impl RaftPartitionStore {
 
         let iter = self.backend.scan(&self.partition, Some(&prefix), None, None)?;
 
-        let ops: Vec<Operation> = iter
-            .filter_map(|(key, _)| {
-                // Parse index and check if < before_index
-                if let Some(index) = Self::parse_log_index_from_key(&key) {
-                    if index < before_index {
-                        return Some(Operation::Delete {
-                            partition: self.partition.clone(),
-                            key,
-                        });
-                    }
+        let mut ops = Vec::new();
+        for item in iter {
+            let (key, _) = item?;
+            if let Some(index) = Self::parse_log_index_from_key(&key) {
+                if index < before_index {
+                    ops.push(Operation::Delete {
+                        partition: self.partition.clone(),
+                        key,
+                    });
                 }
-                None
-            })
-            .collect();
+            }
+        }
 
         if !ops.is_empty() {
             self.backend.batch(ops)?;
@@ -438,14 +437,16 @@ impl RaftPartitionStore {
 
         let iter = self.backend.scan(&self.partition, Some(&prefix), Some(&start_key), None)?;
 
-        let ops: Vec<Operation> = iter
-            .filter_map(|(key, _)| {
-                Self::parse_log_index_from_key(&key).map(|_| Operation::Delete {
+        let mut ops = Vec::new();
+        for item in iter {
+            let (key, _) = item?;
+            if Self::parse_log_index_from_key(&key).is_some() {
+                ops.push(Operation::Delete {
                     partition: self.partition.clone(),
                     key,
-                })
-            })
-            .collect();
+                });
+            }
+        }
 
         if !ops.is_empty() {
             self.backend.batch(ops)?;
@@ -459,7 +460,8 @@ impl RaftPartitionStore {
         let prefix = self.make_key("log:");
         let iter = self.backend.scan(&self.partition, Some(&prefix), None, None)?;
         let mut records = Vec::new();
-        for (key, value) in iter {
+        for item in iter {
+            let (key, value) = item?;
             if let Some(index) = Self::parse_log_index_from_key(&key) {
                 records.push((index, value));
             }
@@ -484,12 +486,10 @@ impl RaftPartitionStore {
             Some(1),
         )?;
 
-        match iter.next() {
-            Some((key, _)) => Self::parse_log_index_from_key(&key)
-                .map(Some)
-                .ok_or_else(|| StorageError::SerializationError(
-                    "Invalid Raft log index key".to_string(),
-                )),
+        match iter.next().transpose()? {
+            Some((key, _)) => Self::parse_log_index_from_key(&key).map(Some).ok_or_else(|| {
+                StorageError::SerializationError("Invalid Raft log index key".to_string())
+            }),
             None => Ok(None),
         }
     }

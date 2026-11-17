@@ -236,10 +236,10 @@ impl SharedTableAuthorization {
             .await?;
         if principal_filter.is_some() {
             // Prefix scan can return stale versions after the principal column
-            // changes. Resolve each PK to the live winner before binding.
+            // changes. Resolve the distinct keys in one batch before binding.
             let pk_name = relation_provider.primary_key_field_name();
             let mut seen = HashSet::new();
-            let mut winners = Vec::new();
+            let mut pk_values = Vec::new();
             for (_, row) in &relation_rows {
                 let Some(pk) = row.fields.get(pk_name) else {
                     continue;
@@ -247,7 +247,15 @@ impl SharedTableAuthorization {
                 if !seen.insert(pk.clone()) {
                     continue;
                 }
-                if let Some((_, winner)) = relation_provider.find_by_pk(None, pk).await? {
+                let Ok(text) = kalamdb_commons::conversions::scalar_to_pk_string(pk) else {
+                    continue;
+                };
+                pk_values.push(text);
+            }
+            let targets = relation_provider.load_mutation_targets(None, &pk_values).await?;
+            let mut winners = Vec::new();
+            for target in targets {
+                if let Some((_, winner)) = crate::versioned::optional_live_row(target) {
                     winners.push(winner.fields);
                 }
             }

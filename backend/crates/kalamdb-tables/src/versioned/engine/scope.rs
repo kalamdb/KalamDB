@@ -59,14 +59,9 @@ pub(crate) trait TableScope: Clone + Send + Sync + 'static {
     const PROVIDER_NAME: &'static str;
     const TABLE_TYPE: TableType;
     const SCAN_SOURCE: &'static str;
-    /// Deferred DML stages vector ops before the row write.
-    const DEFERRED_EFFECTS_BEFORE_ROW: bool;
-    /// One `allocate_next` covers every direct statement mutation.
-    const ONE_STATEMENT_COMMIT: bool;
-    const TRACE_BASE_SCAN: bool;
+    /// Rows are stored under the acting user. Shared rows are not.
+    const USER_SCOPED_ROWS: bool;
     const VALIDATE_DIRECT_NOT_NULL: bool;
-    const COLD_PK_SENTINEL: bool;
-    const PREENCODE_ORDINAL: bool;
 
     fn new_pk_index(table_id: &TableId, pk_field: &str) -> VersionedPkIndex;
     fn new_vector_store(
@@ -114,12 +109,8 @@ impl TableScope for UserScope {
     const PROVIDER_NAME: &'static str = "UserTableProvider";
     const TABLE_TYPE: TableType = TableType::User;
     const SCAN_SOURCE: &'static str = "user_table_scan";
-    const DEFERRED_EFFECTS_BEFORE_ROW: bool = false;
-    const ONE_STATEMENT_COMMIT: bool = true;
-    const TRACE_BASE_SCAN: bool = false;
+    const USER_SCOPED_ROWS: bool = true;
     const VALIDATE_DIRECT_NOT_NULL: bool = true;
-    const COLD_PK_SENTINEL: bool = true;
-    const PREENCODE_ORDINAL: bool = true;
 
     fn new_pk_index(table_id: &TableId, pk_field: &str) -> VersionedPkIndex {
         new_user_pk_index(table_id, pk_field)
@@ -217,12 +208,8 @@ impl TableScope for SharedScope {
     const PROVIDER_NAME: &'static str = "SharedTableProvider";
     const TABLE_TYPE: TableType = TableType::Shared;
     const SCAN_SOURCE: &'static str = "shared_table_scan";
-    const DEFERRED_EFFECTS_BEFORE_ROW: bool = true;
-    const ONE_STATEMENT_COMMIT: bool = false;
-    const TRACE_BASE_SCAN: bool = true;
+    const USER_SCOPED_ROWS: bool = false;
     const VALIDATE_DIRECT_NOT_NULL: bool = false;
-    const COLD_PK_SENTINEL: bool = false;
-    const PREENCODE_ORDINAL: bool = false;
 
     fn new_pk_index(table_id: &TableId, pk_field: &str) -> VersionedPkIndex {
         new_shared_pk_index(table_id, pk_field)

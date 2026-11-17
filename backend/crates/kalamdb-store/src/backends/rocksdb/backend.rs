@@ -24,7 +24,7 @@ use super::{
     restore::{mark_restore_staging_ready, restore_staging_path},
 };
 use crate::storage_trait::{
-    Operation, Partition, Result, StorageBackend, StorageError, StorageStats,
+    KvIterator, Operation, Partition, Result, StorageBackend, StorageError, StorageStats,
 };
 
 const ESTIMATE_NUM_KEYS_PROPERTY: &str = "rocksdb.estimate-num-keys";
@@ -531,7 +531,7 @@ impl StorageBackend for RocksDBBackend {
         prefix: Option<&[u8]>,
         start_key: Option<&[u8]>,
         limit: Option<usize>,
-    ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + Send + '_>> {
+    ) -> Result<KvIterator<'_>> {
         let _span = kalamdb_observability::kdb_trace_span_entered!(
             "rocksdb.scan",
             partition = %partition.name(),
@@ -580,7 +580,7 @@ impl StorageBackend for RocksDBBackend {
         }
 
         impl<'a, D: rocksdb::DBAccess> Iterator for SnapshotScanIter<'a, D> {
-            type Item = (Vec<u8>, Vec<u8>);
+            type Item = Result<(Vec<u8>, Vec<u8>)>;
 
             fn next(&mut self) -> Option<Self::Item> {
                 if self.trace && self.started.is_none() {
@@ -616,9 +616,11 @@ impl StorageBackend for RocksDBBackend {
                                 v.len() as u64,
                             );
                         }
-                        Some((logical_key.to_vec(), v.to_vec()))
+                        Some(Ok((logical_key.to_vec(), v.to_vec())))
                     },
-                    Err(_) => None,
+                    Err(error) => {
+                        Some(Err(StorageError::IoError(format!("rocksdb scan failed: {error}"))))
+                    },
                 }
             }
         }
@@ -654,7 +656,7 @@ impl StorageBackend for RocksDBBackend {
         prefix: Option<&[u8]>,
         start_key: Option<&[u8]>,
         limit: Option<usize>,
-    ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + Send + '_>> {
+    ) -> Result<KvIterator<'_>> {
         let _span = kalamdb_observability::kdb_trace_span_entered!(
             "rocksdb.scan_reverse",
             partition = %partition.name(),
@@ -701,7 +703,7 @@ impl StorageBackend for RocksDBBackend {
         }
 
         impl<'a, D: rocksdb::DBAccess> Iterator for SnapshotReverseScanIter<'a, D> {
-            type Item = (Vec<u8>, Vec<u8>);
+            type Item = Result<(Vec<u8>, Vec<u8>)>;
 
             fn next(&mut self) -> Option<Self::Item> {
                 if let Some(0) = self.remaining {
@@ -724,9 +726,11 @@ impl StorageBackend for RocksDBBackend {
                                 *left -= 1;
                             }
                         }
-                        Some((logical_key.to_vec(), v.to_vec()))
+                        Some(Ok((logical_key.to_vec(), v.to_vec())))
                     },
-                    Err(_) => None,
+                    Err(error) => Some(Err(StorageError::IoError(format!(
+                        "rocksdb reverse scan failed: {error}"
+                    )))),
                 }
             }
         }

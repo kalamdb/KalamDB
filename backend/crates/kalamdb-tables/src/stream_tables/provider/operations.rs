@@ -369,18 +369,40 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableEngine {
 
         let ttl_ms = self.ttl_seconds.map(|s| s * 1000);
         let now_ms = Self::now_millis()?;
-        let scan_limit = limit.unwrap_or(100_000);
-
-        let results = self
-            .store
-            .scan_user_streaming_async(user_id, start_seq, scan_limit, ttl_ms, now_ms)
-            .await
-            .map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "Failed to scan stream table hot storage: {}",
-                    e
-                ))
-            })?;
+        let results = match limit {
+            Some(scan_limit) => {
+                self.store
+                    .scan_user_streaming_async(user_id, start_seq, scan_limit, ttl_ms, now_ms)
+                    .await
+            },
+            None => {
+                let store = self.store.clone();
+                let user_id = user_id.clone();
+                tokio::task::spawn_blocking(move || {
+                    let mut results = Vec::new();
+                    store.for_each_user_streaming_page(
+                        &user_id,
+                        start_seq,
+                        ttl_ms,
+                        now_ms,
+                        8_192,
+                        None,
+                        |page| {
+                            results.extend(page);
+                            Ok(true)
+                        },
+                    )?;
+                    Ok(results)
+                })
+                .await
+                .map_err(|error| {
+                    KalamDbError::InvalidOperation(format!("stream scan task failed: {error}"))
+                })?
+            },
+        }
+        .map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Failed to scan stream table hot storage: {}", e))
+        })?;
 
         // TODO(phase 13.6): Apply filter expression for simple predicates if provided
         Ok(results)

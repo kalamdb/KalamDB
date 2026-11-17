@@ -182,7 +182,7 @@ impl StorageBackend for InMemoryBackend {
             })
             .unwrap_or_default();
 
-        Ok(Box::new(items.into_iter()))
+        Ok(Box::new(items.into_iter().map(Ok)))
     }
 
     fn partition_exists(&self, partition: &Partition) -> bool {

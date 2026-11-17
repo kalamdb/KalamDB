@@ -68,7 +68,9 @@ mod provider;
 mod rows;
 mod versions;
 
-pub(crate) use cold_pk::{ensure_pk_absent_in_cold, find_row_by_pk, validate_pk_update};
+pub(crate) use cold_pk::{
+    ensure_pk_absent_in_cold, find_row_by_pk, find_rows_by_pks, validate_pk_update,
+};
 pub use cold_pk::{pk_exists_batch_in_cold, pk_exists_in_cold};
 pub use deferred::{
     extract_pk_equality_literal, filter_uses_deleted_column, is_count_only_projection,

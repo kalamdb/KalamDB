@@ -246,7 +246,7 @@ pub(crate) fn mutation_applied<K>(
 pub(crate) fn append_insert_batch_ops<K, V>(
     store: &IndexedEntityStore<K, V>,
     entries: &[(K, V)],
-    mut replaced_tombstones: HashMap<String, (K, V)>,
+    replaced_tombstones: &mut HashMap<String, (K, V)>,
     pk_name: &str,
     fields_of: impl Fn(&V) -> &Row,
     operations: &mut Vec<Operation>,
@@ -435,27 +435,16 @@ where
     K: StorageKey,
     V: KSerializable + 'static,
 {
-    let mut tombstones = HashMap::new();
+    let mut tombstone_keys = Vec::new();
     for (pk_str, prefix) in pk_prefixes {
         match store.get_latest_deleted_flag_by_index_prefix(0, prefix) {
             Ok(Some((_, false))) => {
                 return Ok(HotInsertScan {
                     duplicate: Some(pk_str.clone()),
-                    tombstones,
+                    tombstones: HashMap::new(),
                 });
             },
-            Ok(Some((key, true))) => {
-                let row = store.get(&key).map_err(|error| {
-                    KalamDbError::InvalidOperation(format!("PK tombstone load failed: {error}"))
-                })?;
-                let Some(row) = row else {
-                    return Err(KalamDbError::InvalidOperation(format!(
-                        "tombstone for primary key '{pk_str}' disappeared before replacement"
-                    )));
-                };
-                kalamdb_observability::dml_stage::record_baseline_decode();
-                tombstones.insert(pk_str.clone(), (key, row));
-            },
+            Ok(Some((key, true))) => tombstone_keys.push((pk_str.clone(), key)),
             Ok(None) => {},
             Err(error) => {
                 return Err(KalamDbError::InvalidOperation(format!(
@@ -463,6 +452,20 @@ where
                 )));
             },
         }
+    }
+    let keys: Vec<K> = tombstone_keys.iter().map(|(_, key)| key.clone()).collect();
+    let loaded = store.get_many_entities(&keys).map_err(|error| {
+        KalamDbError::InvalidOperation(format!("PK tombstone load failed: {error}"))
+    })?;
+    let mut tombstones = HashMap::with_capacity(tombstone_keys.len());
+    for ((pk_str, key), row) in tombstone_keys.into_iter().zip(loaded) {
+        let Some(row) = row else {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "tombstone for primary key '{pk_str}' disappeared before replacement"
+            )));
+        };
+        kalamdb_observability::dml_stage::record_baseline_decode();
+        tombstones.insert(pk_str, (key, row));
     }
     Ok(HotInsertScan {
         duplicate: None,

@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
+};
 
 use datafusion::{
     arrow::{datatypes::SchemaRef, record_batch::RecordBatch},
@@ -419,29 +422,152 @@ where
     if foreign_keys.is_empty() || rows.is_empty() {
         return Ok(());
     }
-    for (index, row) in rows.iter().enumerate() {
-        for foreign_key in foreign_keys {
+    for foreign_key in foreign_keys {
+        let self_reference = foreign_key.referenced_namespace.as_str()
+            == table_id.namespace_id().as_str()
+            && foreign_key.referenced_table.as_str() == table_id.table_name().as_str();
+        let parents = if self_reference {
+            rows.iter()
+                .filter_map(|row| foreign_key_values(row, &foreign_key.referenced_columns))
+                .collect::<HashSet<_>>()
+        } else {
+            HashSet::new()
+        };
+        let mut pending = Vec::new();
+        let mut seen = HashSet::new();
+        for (index, row) in rows.iter().enumerate() {
             if foreign_key_is_null(row, foreign_key) {
                 continue;
             }
-            if foreign_key.referenced_namespace.as_str() == table_id.namespace_id().as_str()
-                && foreign_key.referenced_table.as_str() == table_id.table_name().as_str()
-                && rows[..=index]
-                    .iter()
-                    .any(|candidate| row_satisfies_foreign_key(candidate, foreign_key, row))
-            {
+            let Some(key) = foreign_key_values(row, &foreign_key.columns) else {
+                continue;
+            };
+            if parents.contains(&key) || !seen.insert(key.clone()) {
                 continue;
             }
-            if !foreign_key_target_exists(registry, state, foreign_key, row).await? {
+            pending.push((index, key));
+        }
+        if pending.is_empty() {
+            continue;
+        }
+        let existing =
+            foreign_keys_present(registry, state, foreign_key, pending.iter().map(|(_, key)| key))
+                .await?;
+        for (index, key) in pending {
+            if !existing.contains(&key) {
                 return Err(DataFusionError::Execution(foreign_key_violation_message(
                     table_id.table_name().as_str(),
                     foreign_key,
-                    row,
+                    &rows[index],
                 )));
             }
         }
     }
     Ok(())
+}
+
+fn foreign_key_values(row: &Row, columns: &[String]) -> Option<Vec<ScalarValue>> {
+    let mut values = Vec::with_capacity(columns.len());
+    for column in columns {
+        let value = row.values.get(column)?;
+        if value.is_null() {
+            return None;
+        }
+        values.push(value.clone());
+    }
+    Some(values)
+}
+
+async fn foreign_keys_present<'a, E>(
+    registry: &dyn kalamdb_system::SchemaRegistry<Error = E>,
+    state: &dyn Session,
+    foreign_key: &kalamdb_commons::models::schemas::ForeignKeyDefinition,
+    keys: impl Iterator<Item = &'a Vec<ScalarValue>>,
+) -> DataFusionResult<HashSet<Vec<ScalarValue>>>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let keys = keys.cloned().collect::<Vec<_>>();
+    if keys.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let referenced_id = TableId::new(
+        foreign_key.referenced_namespace.clone(),
+        foreign_key.referenced_table.clone(),
+    );
+    let Some(provider) = registry.get_table_provider(&referenced_id) else {
+        return Ok(HashSet::new());
+    };
+    let filter = foreign_key_batch_filter(provider.schema(), foreign_key, &keys)?;
+    let matches = collect_matching_rows_with_projection(
+        provider.as_ref(),
+        state,
+        std::slice::from_ref(&filter),
+        None,
+    )
+    .await?;
+    let mut present = HashSet::new();
+    for row in matches {
+        if let Some(key) = foreign_key_values(&row, &foreign_key.referenced_columns) {
+            present.insert(key);
+        }
+    }
+    Ok(present)
+}
+
+fn foreign_key_batch_filter(
+    schema: SchemaRef,
+    foreign_key: &kalamdb_commons::models::schemas::ForeignKeyDefinition,
+    keys: &[Vec<ScalarValue>],
+) -> DataFusionResult<Expr> {
+    use datafusion::logical_expr::{col, lit};
+
+    let df_schema = DFSchema::try_from(Arc::clone(&schema))?;
+    let casted = |column: &str, value: &ScalarValue| -> DataFusionResult<Expr> {
+        let field = schema.as_ref().field_with_name(column).map_err(|error| {
+            DataFusionError::Execution(format!(
+                "foreign key column '{column}' is missing on {}: {error}",
+                foreign_key.referenced_table.as_str()
+            ))
+        })?;
+        lit(value.clone())
+            .cast_to(field.data_type(), &df_schema)
+            .map_err(|error| DataFusionError::Execution(error.to_string()))
+    };
+    if foreign_key.referenced_columns.len() == 1 {
+        let column = &foreign_key.referenced_columns[0];
+        let mut literals = Vec::with_capacity(keys.len());
+        for key in keys {
+            let Some(value) = key.first() else {
+                continue;
+            };
+            literals.push(casted(column, value)?);
+        }
+        return Ok(col(column).in_list(literals, false));
+    }
+    let mut combined: Option<Expr> = None;
+    for key in keys {
+        let mut predicate: Option<Expr> = None;
+        for (column, value) in foreign_key.referenced_columns.iter().zip(key.iter()) {
+            let equals = col(column).eq(casted(column, value)?);
+            predicate = Some(match predicate {
+                Some(existing) => existing.and(equals),
+                None => equals,
+            });
+        }
+        if let Some(predicate) = predicate {
+            combined = Some(match combined {
+                Some(existing) => existing.or(predicate),
+                None => predicate,
+            });
+        }
+    }
+    combined.ok_or_else(|| {
+        DataFusionError::Execution(format!(
+            "foreign key on {} has no columns",
+            foreign_key.referenced_table.as_str()
+        ))
+    })
 }
 
 fn foreign_key_is_null(
@@ -452,64 +578,6 @@ fn foreign_key_is_null(
         .columns
         .iter()
         .any(|column| row.values.get(column).is_none_or(ScalarValue::is_null))
-}
-
-fn row_satisfies_foreign_key(
-    candidate: &Row,
-    foreign_key: &kalamdb_commons::models::schemas::ForeignKeyDefinition,
-    source: &Row,
-) -> bool {
-    foreign_key.columns.iter().zip(foreign_key.referenced_columns.iter()).all(
-        |(local, referenced)| match (source.values.get(local), candidate.values.get(referenced)) {
-            (Some(source_value), Some(candidate_value)) => {
-                source_value == candidate_value && !source_value.is_null()
-            },
-            _ => false,
-        },
-    )
-}
-
-async fn foreign_key_target_exists<E>(
-    registry: &dyn kalamdb_system::SchemaRegistry<Error = E>,
-    state: &dyn Session,
-    foreign_key: &kalamdb_commons::models::schemas::ForeignKeyDefinition,
-    row: &Row,
-) -> DataFusionResult<bool>
-where
-    E: std::error::Error + Send + Sync + 'static,
-{
-    let referenced_id = TableId::new(
-        foreign_key.referenced_namespace.clone(),
-        foreign_key.referenced_table.clone(),
-    );
-    let Some(provider) = registry.get_table_provider(&referenced_id) else {
-        return Ok(false);
-    };
-    let schema = provider.schema();
-    let mut filters = Vec::with_capacity(foreign_key.referenced_columns.len());
-    for (local, referenced) in foreign_key.columns.iter().zip(foreign_key.referenced_columns.iter())
-    {
-        let Some(value) = row.values.get(local) else {
-            return Ok(false);
-        };
-        let field = schema.field_with_name(referenced).map_err(|error| {
-            DataFusionError::Execution(format!(
-                "foreign key column '{}' is missing on {}: {}",
-                referenced,
-                foreign_key.referenced_table.as_str(),
-                error
-            ))
-        })?;
-        let data_type = field.data_type().clone();
-        let df_schema = DFSchema::try_from(Arc::clone(&schema))?;
-        let literal = datafusion::logical_expr::lit(value.clone())
-            .cast_to(&data_type, &df_schema)
-            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
-        filters.push(datafusion::logical_expr::col(referenced).eq(literal));
-    }
-    let matches =
-        collect_matching_rows_with_projection(provider.as_ref(), state, &filters, None).await?;
-    Ok(!matches.is_empty())
 }
 
 fn foreign_key_violation_message(
