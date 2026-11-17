@@ -472,10 +472,15 @@ impl RaftPartitionStore {
         // Raft log keys are zero-padded and lexicographically ordered.
         // One reverse seek is independent of the length of retained history.
         let prefix = self.make_key("log:");
+        // RocksDB's reverse iterator otherwise starts at the end of the entire
+        // shared Raft CF and may stop on a different group's prefix.
+        // Every stored log suffix uses exactly twenty decimal digits.
+        let mut upper_bound = prefix.clone();
+        upper_bound.extend_from_slice(b"99999999999999999999");
         let mut iter = self.backend.scan_reverse(
             &self.partition,
             Some(&prefix),
-            None,
+            Some(&upper_bound),
             Some(1),
         )?;
 
@@ -799,6 +804,23 @@ mod tests {
         assert_eq!(scanned.len(), 1);
         assert_eq!(scanned[0].index, 5);
         assert_eq!(store.last_log_index().unwrap(), Some(7));
+    }
+
+    #[test]
+    fn test_last_log_index_is_isolated_by_raft_group() {
+        let backend = Arc::new(InMemoryBackend::new());
+        backend.create_partition(&Partition::new(RAFT_PARTITION_NAME)).unwrap();
+        let meta = RaftPartitionStore::new(backend.clone(), GroupId::Meta);
+        let user = RaftPartitionStore::new(backend.clone(), GroupId::DataUserShard(5));
+        let shared = RaftPartitionStore::new(backend, GroupId::DataSharedShard(5));
+
+        meta.append_logs(&[RaftLogEntry { index: 3, term: 1, payload: vec![] }]).unwrap();
+        user.append_logs(&[RaftLogEntry { index: 17, term: 1, payload: vec![] }]).unwrap();
+        shared.append_logs(&[RaftLogEntry { index: 42, term: 1, payload: vec![] }]).unwrap();
+
+        assert_eq!(meta.last_log_index().unwrap(), Some(3));
+        assert_eq!(user.last_log_index().unwrap(), Some(17));
+        assert_eq!(shared.last_log_index().unwrap(), Some(42));
     }
 
     #[test]
