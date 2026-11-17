@@ -196,57 +196,61 @@ impl JobsTableProvider {
             && (filter.status.is_some() || filter.statuses.is_some());
 
         if use_index {
-            let mut jobs = Vec::new();
             let limit = filter.limit.unwrap_or(usize::MAX);
+            if limit == 0 {
+                return Ok(Vec::new());
+            }
 
-            // Collect statuses to scan
             let mut statuses = Vec::new();
-            if let Some(s) = filter.status {
-                statuses.push(s);
+            if let Some(status) = filter.status {
+                statuses.push(status);
             }
-            if let Some(ref s_list) = filter.statuses {
-                statuses.extend(s_list.iter().cloned());
+            if let Some(ref selected) = filter.statuses {
+                statuses.extend(selected.iter().copied());
             }
-            // Deduplicate and sort statuses to scan in order (New=0, Queued=1, etc.)
-            statuses.sort_by_key(|s| status_to_u8(*s));
+            statuses.sort_by_key(|status| status_to_u8(*status));
             statuses.dedup();
 
-            // Status index is index 0 (JobStatusCreatedAtIndex)
             const STATUS_INDEX: usize = 0;
-
+            let multiple_statuses = statuses.len() > 1;
+            let mut jobs = Vec::new();
             for status in statuses {
-                if jobs.len() >= limit {
+                if !multiple_statuses && jobs.len() >= limit {
                     break;
                 }
 
-                // Prefix for this status: [status_byte]
-                let prefix = vec![status_to_u8(status)];
-
-                // Scan by index - returns (JobId, Job) pairs
+                let prefix = [status_to_u8(status)];
+                // The secondary predicate may exclude early index hits; never
+                // cap the raw iterator to the requested number of matching jobs.
                 let iter = self
                     .sql
                     .store()
-                    .scan_by_index_iter(STATUS_INDEX, Some(&prefix), Some(limit - jobs.len()))
+                    .scan_by_index_iter(STATUS_INDEX, Some(&prefix), None)
                     .into_system_error("scan_by_index_iter error")?;
 
                 for entry in iter {
-                    let (_job_id, row) = entry.into_system_error("scan_by_index_iter error")?;
+                    let (_, row) = entry.into_system_error("scan_by_index_iter error")?;
                     let job = Self::decode_job_row(&row)?;
-                    // Apply other filters that index doesn't cover
                     if self.matches_filter(&job, filter) {
                         jobs.push(job);
-                        if jobs.len() >= limit {
+                        if !multiple_statuses && jobs.len() >= limit {
                             break;
                         }
                     }
                 }
             }
 
+            // Status prefixes are individually ordered by CreatedAt, not
+            // globally ordered across multiple statuses.
+            if multiple_statuses {
+                jobs.sort_by_key(|job| (job.created_at, job.job_id.clone()));
+                jobs.truncate(limit);
+            }
             return Ok(jobs);
         }
 
         // Fallback to full scan
-        let all_rows = self.sql.store().scan_all_typed(None, None, None)?;
+        let all_rows = self.sql.store().scan_iterator(None, None)?.collect::<Result<Vec<_>, _>>()?;
         let mut jobs: Vec<Job> = all_rows
             .into_iter()
             .map(|(_, row)| Self::decode_job_row(&row))
@@ -283,89 +287,12 @@ impl JobsTableProvider {
         &self,
         filter: JobFilter,
     ) -> Result<Vec<Job>, SystemError> {
-        // Optimization: If filtering by status(es) and sorting by CreatedAt ASC, use the status
-        // index
-        let use_index = filter.sort_by == Some(JobSortField::CreatedAt)
-            && filter.sort_order == Some(SortOrder::Asc)
-            && (filter.status.is_some() || filter.statuses.is_some());
-
-        if use_index {
-            let mut jobs = Vec::new();
-            let limit = filter.limit.unwrap_or(usize::MAX);
-
-            // Collect statuses to scan
-            let mut statuses = Vec::new();
-            if let Some(s) = filter.status {
-                statuses.push(s);
-            }
-            if let Some(ref s_list) = filter.statuses {
-                statuses.extend(s_list.iter().cloned());
-            }
-            statuses.sort_by_key(|s| status_to_u8(*s));
-            statuses.dedup();
-
-            // Status index is index 0 (JobStatusCreatedAtIndex)
-            const STATUS_INDEX: usize = 0;
-
-            for status in statuses {
-                if jobs.len() >= limit {
-                    break;
-                }
-
-                let prefix = vec![status_to_u8(status)];
-                let job_entries = self
-                    .sql
-                    .store()
-                    .scan_by_index_async(STATUS_INDEX, Some(prefix), Some(limit - jobs.len()))
-                    .await
-                    .into_system_error("scan_by_index_async error")?;
-
-                for (_job_id, row) in job_entries {
-                    let job = Self::decode_job_row(&row)?;
-                    if matches_filter_sync(&job, &filter) {
-                        jobs.push(job);
-                        if jobs.len() >= limit {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            return Ok(jobs);
-        }
-
-        // Fallback to full scan
-        let all_jobs: Vec<(Vec<u8>, SystemTableRow)> = self
-            .sql
-            .store()
-            .scan_all_async(None, None, None)
+        // Reuse the single synchronous filtering/sorting implementation.
+        // Move blocking RocksDB work off the Tokio worker thread.
+        let provider = self.clone();
+        tokio::task::spawn_blocking(move || provider.list_jobs_filtered(&filter))
             .await
-            .into_system_error("scan_all_async error")?;
-        let mut jobs: Vec<Job> = all_jobs
-            .into_iter()
-            .map(|(_, row)| Self::decode_job_row(&row))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        jobs.retain(|job| matches_filter_sync(job, &filter));
-
-        if let Some(sort_by) = filter.sort_by {
-            match sort_by {
-                JobSortField::CreatedAt => jobs.sort_by_key(|j| j.created_at),
-                JobSortField::UpdatedAt => jobs.sort_by_key(|j| j.updated_at),
-                JobSortField::Priority => jobs.sort_by_key(|j| j.priority.unwrap_or(0)),
-            }
-            if filter.sort_order == Some(SortOrder::Desc) {
-                jobs.reverse();
-            }
-        }
-
-        if let Some(limit) = filter.limit {
-            if jobs.len() > limit {
-                jobs.truncate(limit);
-            }
-        }
-
-        Ok(jobs)
+            .into_system_error("list_jobs_filtered_async spawn_blocking error")?
     }
 
     fn matches_filter(&self, job: &Job, filter: &JobFilter) -> bool {
@@ -573,41 +500,6 @@ fn validate_job_update(job: &Job) -> Result<(), SystemError> {
     Ok(())
 }
 
-/// Synchronous filter matching helper
-fn matches_filter_sync(job: &Job, filter: &JobFilter) -> bool {
-    if let Some(ref status) = filter.status {
-        if status != &job.status {
-            return false;
-        }
-    }
-    if let Some(ref statuses) = filter.statuses {
-        if !statuses.contains(&job.status) {
-            return false;
-        }
-    }
-    if let Some(ref job_type) = filter.job_type {
-        if job_type != &job.job_type {
-            return false;
-        }
-    }
-    if let Some(ref key) = filter.idempotency_key {
-        if job.idempotency_key.as_ref() != Some(key) {
-            return false;
-        }
-    }
-    if let Some(after) = filter.created_after {
-        if job.created_at < after {
-            return false;
-        }
-    }
-    if let Some(before) = filter.created_before {
-        if job.created_at >= before {
-            return false;
-        }
-    }
-    true
-}
-
 const TERMINAL_JOB_STATUSES: [JobStatus; 4] = [
     JobStatus::Completed,
     JobStatus::Failed,
@@ -695,6 +587,50 @@ mod tests {
             .filter_map(|(kind, partition)| (kind == "scan").then_some(partition))
             .collect();
         assert_eq!(scans, vec!["system_jobs_status_idx".to_string()]);
+    }
+
+    #[test]
+    fn multi_status_index_is_globally_sorted_and_filters_before_limit() {
+        let provider = create_test_provider();
+        let mut running_late = create_test_job("running-late");
+        running_late.created_at = 300;
+        running_late.job_type = JobType::Flush;
+        let mut queued_early = create_test_job("queued-early");
+        queued_early.status = JobStatus::Queued;
+        queued_early.created_at = 100;
+        let mut running_middle = create_test_job("running-middle");
+        running_middle.created_at = 200;
+
+        provider.create_job(running_late).unwrap();
+        provider.create_job(queued_early).unwrap();
+        provider.create_job(running_middle).unwrap();
+
+        let jobs = provider
+            .list_jobs_filtered(&JobFilter {
+                statuses: Some(vec![JobStatus::Running, JobStatus::Queued]),
+                sort_by: Some(JobSortField::CreatedAt),
+                sort_order: Some(SortOrder::Asc),
+                limit: Some(2),
+                ..JobFilter::default()
+            })
+            .unwrap();
+        assert_eq!(
+            jobs.iter().map(|job| job.job_id.as_str()).collect::<Vec<_>>(),
+            vec!["queued-early", "running-middle"]
+        );
+
+        let sparse = provider
+            .list_jobs_filtered(&JobFilter {
+                status: Some(JobStatus::Running),
+                created_after: Some(250),
+                sort_by: Some(JobSortField::CreatedAt),
+                sort_order: Some(SortOrder::Asc),
+                limit: Some(1),
+                ..JobFilter::default()
+            })
+            .unwrap();
+        assert_eq!(sparse.len(), 1);
+        assert_eq!(sparse[0].job_id.as_str(), "running-late");
     }
 
     #[test]
