@@ -32,10 +32,7 @@ impl QueryBatchStream {
 
     pub fn into_inner(
         self,
-    ) -> (
-        SchemaRef,
-        Pin<Box<dyn Stream<Item = Result<RecordBatch, String>> + Send>>,
-    ) {
+    ) -> (SchemaRef, Pin<Box<dyn Stream<Item = Result<RecordBatch, String>> + Send>>) {
         (self.schema, self.inner)
     }
 
@@ -70,11 +67,7 @@ impl QueryBatchStream {
             held_bytes = held_bytes.saturating_add(batch_bytes);
             batches.push(batch);
         }
-        Ok((
-            batches,
-            schema,
-            Reservation::adopt(ledger, MemoryClass::ScanBatch, held_bytes),
-        ))
+        Ok((batches, schema, Reservation::adopt(ledger, MemoryClass::ScanBatch, held_bytes)))
     }
 
     /// Same as [`Self::collect`], then sum row counts.

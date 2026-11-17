@@ -13,24 +13,99 @@ use std::{
 
 use kalamdb_commons::models::NodeId;
 use openraft::{
-    error::{InstallSnapshotError, NetworkError, RPCError, RaftError, RemoteError, Unreachable},
-    network::{
-        RPCOption, RaftNetwork as OpenRaftNetwork, RaftNetworkFactory as OpenRaftNetworkFactory,
-    },
+    error::{NetworkError, RPCError, ReplicationClosed, StreamingError, Unreachable},
+    network::{RPCOption, RaftNetworkFactory as OpenRaftNetworkFactory, RaftNetworkV2},
     raft::{
-        AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,
-        InstallSnapshotResponse, VoteRequest, VoteResponse,
+        AppendEntriesRequest, AppendEntriesResponse, SnapshotResponse, TransferLeaderRequest,
+        TransferLeaderResponse, VoteRequest, VoteResponse,
     },
 };
 use parking_lot::RwLock;
 use serde::{de::DeserializeOwned, Serialize};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 
+use super::snapshot_transfer::{next_snapshot_transfer_id, snapshot_chunk, snapshot_chunk_count};
 use crate::{
     manager::{PeerNode, RpcTlsConfig},
-    storage::{KalamNode, KalamTypeConfig},
+    storage::{
+        KalamEntry, KalamLogId, KalamNode, KalamSnapshot, KalamSnapshotData, KalamStoredMembership,
+        KalamTypeConfig, KalamVote,
+    },
     GroupId,
 };
+
+/// Append request serialized from borrowed entries so a prefix can be measured
+/// and sent without cloning command bytes.
+#[derive(Serialize)]
+struct AppendWire<'a> {
+    vote: &'a KalamVote,
+    prev_log_id: &'a Option<KalamLogId>,
+    entries: &'a [KalamEntry],
+    leader_commit: &'a Option<KalamLogId>,
+}
+
+/// Snapshot chunk serialized from the stored payload. `data` is a slice of that
+/// buffer, so transfer does not allocate a second copy of the whole snapshot.
+#[derive(Serialize)]
+struct SnapshotChunkWire<'a> {
+    vote: &'a KalamVote,
+    last_log_id: &'a Option<KalamLogId>,
+    last_membership: &'a KalamStoredMembership,
+    transfer_id: u64,
+    chunk_index: u32,
+    chunk_count: u32,
+    data: &'a [u8],
+}
+
+fn append_wire<'a>(rpc: &'a AppendEntriesRequest<KalamTypeConfig>, count: usize) -> AppendWire<'a> {
+    AppendWire {
+        vote: &rpc.vote,
+        prev_log_id: &rpc.prev_log_id,
+        entries: &rpc.entries[..count],
+        leader_commit: &rpc.leader_commit,
+    }
+}
+
+fn encoded_append_len(
+    rpc: &AppendEntriesRequest<KalamTypeConfig>,
+    count: usize,
+) -> Result<usize, ConnectionError> {
+    let encoded = crate::state_machine::encode(&append_wire(rpc, count))
+        .map_err(|error| ConnectionError(format!("failed to encode AppendEntries: {error}")))?;
+    Ok(encoded.len())
+}
+
+/// How many leading entries fit in one Raft RPC.
+///
+/// `0` means the first entry alone is over [`RAFT_RPC_MAX_MESSAGE_BYTES`].
+/// The caller rejects that append instead of reporting it replicated.
+fn append_send_count(
+    rpc: &AppendEntriesRequest<KalamTypeConfig>,
+    limit: usize,
+) -> Result<usize, ConnectionError> {
+    let total = rpc.entries.len();
+    if encoded_append_len(rpc, total)? <= limit {
+        return Ok(total);
+    }
+    if total <= 1 {
+        return Ok(0);
+    }
+    let mut low = 1usize;
+    let mut high = total - 1;
+    let mut best = 0usize;
+    while low <= high {
+        let mid = low + (high - low) / 2;
+        if encoded_append_len(rpc, mid)? <= limit {
+            best = mid;
+            low = mid + 1;
+        } else if mid == 1 {
+            break;
+        } else {
+            high = mid - 1;
+        }
+    }
+    Ok(best)
+}
 
 pub type RaftChannelPool = Arc<dashmap::DashMap<NodeId, Channel>>;
 
@@ -85,6 +160,9 @@ pub(crate) struct ConnectionTracker {
     group_id: GroupId,
     retry_interval_ms: Arc<AtomicU64>,
     states: Arc<dashmap::DashMap<u64, ConnectionState>>,
+    /// Targets whose outgoing RPCs fail immediately. Shared with every client
+    /// cloned from this tracker.
+    blocked: Arc<dashmap::DashSet<u64>>,
 }
 
 impl ConnectionTracker {
@@ -93,6 +171,15 @@ impl ConnectionTracker {
             group_id,
             retry_interval_ms: Arc::new(AtomicU64::new(retry_interval.as_millis() as u64)),
             states: Arc::new(dashmap::DashMap::new()),
+            blocked: Arc::new(dashmap::DashSet::new()),
+        }
+    }
+
+    fn set_blocked(&self, target: u64, blocked: bool) {
+        if blocked {
+            self.blocked.insert(target);
+        } else {
+            self.blocked.remove(&target);
         }
     }
 
@@ -105,6 +192,9 @@ impl ConnectionTracker {
     }
 
     fn should_attempt(&self, target: u64) -> bool {
+        if self.blocked.contains(&target) {
+            return false;
+        }
         let now = Instant::now();
         let retry_interval = self.retry_interval();
         let mut entry = self
@@ -227,30 +317,45 @@ impl RaftNetwork {
         Ok(())
     }
 
-    fn build_raft_rpc_request<T: Serialize>(
+    fn build_raft_rpc_request_from_payload(
         &self,
         rpc_kind: crate::network::service::RaftRpcKind,
-        rpc: &T,
+        payload: Vec<u8>,
     ) -> Result<tonic::Request<crate::network::service::RaftRpcRequest>, ConnectionError> {
         let rpc_type = rpc_kind.as_str();
-        let payload = crate::state_machine::encode(rpc)
-            .map_err(|e| ConnectionError(format!("failed to encode {}: {}", rpc_type, e)))?;
+        if payload.len() > crate::network::service::RAFT_RPC_MAX_MESSAGE_BYTES {
+            return Err(ConnectionError(format!(
+                "raft rpc {rpc_type} payload is {} bytes",
+                payload.len()
+            )));
+        }
         let mut request = tonic::Request::new(crate::network::service::RaftRpcRequest {
             group_id: self.group_id.to_string(),
             rpc_type: rpc_type.to_owned(),
             payload,
+            protocol_version: crate::network::service::RAFT_RPC_PROTOCOL_VERSION,
         });
         self.add_outgoing_rpc_metadata(&mut request)?;
         Ok(request)
     }
 
-    async fn send_raft_rpc<T, E>(
+    fn build_raft_rpc_request<T: Serialize>(
+        &self,
+        rpc_kind: crate::network::service::RaftRpcKind,
+        rpc: &T,
+    ) -> Result<tonic::Request<crate::network::service::RaftRpcRequest>, ConnectionError> {
+        let payload = crate::state_machine::encode(rpc).map_err(|e| {
+            ConnectionError(format!("failed to encode {}: {}", rpc_kind.as_str(), e))
+        })?;
+        self.build_raft_rpc_request_from_payload(rpc_kind, payload)
+    }
+
+    async fn send_raft_rpc<T>(
         &mut self,
         rpc_kind: crate::network::service::RaftRpcKind,
         rpc: &T,
-    ) -> Result<crate::network::service::RaftRpcResponse, RPCError<u64, KalamNode, E>>
+    ) -> Result<crate::network::service::RaftRpcResponse, RPCError<KalamTypeConfig>>
     where
-        E: std::error::Error + Send + Sync + 'static,
         T: Serialize,
     {
         if !self.connection_tracker.should_attempt(self.target) {
@@ -265,6 +370,32 @@ impl RaftNetwork {
             .build_raft_rpc_request(rpc_kind, rpc)
             .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
 
+        self.dispatch_raft_rpc(channel, request).await
+    }
+
+    async fn send_encoded_raft_rpc(
+        &mut self,
+        rpc_kind: crate::network::service::RaftRpcKind,
+        payload: Vec<u8>,
+    ) -> Result<crate::network::service::RaftRpcResponse, RPCError<KalamTypeConfig>> {
+        if !self.connection_tracker.should_attempt(self.target) {
+            return Err(RPCError::Unreachable(Unreachable::new(&ConnectionError(
+                "reconnect backoff".to_string(),
+            ))));
+        }
+        let channel =
+            self.get_channel().map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?;
+        let request = self
+            .build_raft_rpc_request_from_payload(rpc_kind, payload)
+            .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
+        self.dispatch_raft_rpc(channel, request).await
+    }
+
+    async fn dispatch_raft_rpc(
+        &mut self,
+        channel: Channel,
+        request: tonic::Request<crate::network::service::RaftRpcRequest>,
+    ) -> Result<crate::network::service::RaftRpcResponse, RPCError<KalamTypeConfig>> {
         let mut client = crate::network::service::raft_client::RaftClient::new(channel);
         let response = match client.raft_rpc(request).await {
             Ok(response) => {
@@ -280,76 +411,170 @@ impl RaftNetwork {
         Ok(response.into_inner())
     }
 
-    fn decode_raft_rpc_response<T, E>(
+    fn decode_raft_rpc_response<T>(
         &self,
         rpc_kind: crate::network::service::RaftRpcKind,
         response: crate::network::service::RaftRpcResponse,
-        remote_error: E,
-    ) -> Result<T, RPCError<u64, KalamNode, E>>
+    ) -> Result<T, RPCError<KalamTypeConfig>>
     where
-        E: std::error::Error + Send + Sync + 'static,
         T: DeserializeOwned,
     {
         if !response.error.is_empty() {
             self.connection_tracker.record_failure(self.target, &response.error);
-            return Err(RPCError::RemoteError(RemoteError::new(self.target, remote_error)));
+            return Err(RPCError::Network(NetworkError::new(&ConnectionError(format!(
+                "{rpc_kind} failed: {}",
+                response.error
+            )))));
         }
 
         crate::state_machine::decode(&response.payload).map_err(|e| {
             self.connection_tracker.record_failure(self.target, &e.to_string());
             RPCError::Network(NetworkError::new(&ConnectionError(format!(
-                "failed to decode {} response: {}",
-                rpc_kind, e
+                "failed to decode {rpc_kind} response: {e}"
             ))))
         })
     }
 }
 
-impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
+impl RaftNetworkV2<KalamTypeConfig> for RaftNetwork {
+    type SnapshotData = KalamSnapshotData;
+
     async fn append_entries(
         &mut self,
         rpc: AppendEntriesRequest<KalamTypeConfig>,
         _option: RPCOption,
-    ) -> Result<AppendEntriesResponse<u64>, RPCError<u64, KalamNode, RaftError<u64>>> {
+    ) -> Result<openraft::raft::AppendResult<KalamTypeConfig>, RPCError<KalamTypeConfig>> {
+        let prev_log_id = rpc.prev_log_id.clone();
+        let limit = crate::network::service::RAFT_RPC_MAX_MESSAGE_BYTES;
+        let encoded = crate::state_machine::encode(&append_wire(&rpc, rpc.entries.len())).map_err(
+            |error| {
+                RPCError::Network(NetworkError::new(&ConnectionError(format!(
+                    "failed to encode AppendEntries: {error}"
+                ))))
+            },
+        )?;
+        let (payload, last_log_id) = if encoded.len() <= limit {
+            let last_log_id = rpc.last_log_id();
+            (encoded, last_log_id)
+        } else if rpc.entries.len() <= 1 {
+            return Err(RPCError::Network(NetworkError::new(&ConnectionError(format!(
+                "append entry exceeds {limit} bytes"
+            )))));
+        } else {
+            let send_count = append_send_count(&rpc, limit)
+                .map_err(|error| RPCError::Network(NetworkError::new(&error)))?;
+            if send_count == 0 {
+                return Err(RPCError::Network(NetworkError::new(&ConnectionError(format!(
+                    "append entry exceeds {limit} bytes"
+                )))));
+            }
+            let payload =
+                crate::state_machine::encode(&append_wire(&rpc, send_count)).map_err(|error| {
+                    RPCError::Network(NetworkError::new(&ConnectionError(format!(
+                        "failed to encode AppendEntries: {error}"
+                    ))))
+                })?;
+            (payload, Some(rpc.entries[send_count - 1].log_id.clone()))
+        };
         let response = self
-            .send_raft_rpc(crate::network::service::RaftRpcKind::AppendEntries, &rpc)
+            .send_encoded_raft_rpc(crate::network::service::RaftRpcKind::AppendEntries, payload)
             .await?;
-        self.decode_raft_rpc_response(
+        let decoded: AppendEntriesResponse<KalamTypeConfig> = self.decode_raft_rpc_response(
             crate::network::service::RaftRpcKind::AppendEntries,
             response,
-            RaftError::Fatal(openraft::error::Fatal::Panicked),
-        )
+        )?;
+        Ok(decoded.into_append_result(prev_log_id, last_log_id))
     }
 
-    async fn install_snapshot(
+    async fn full_snapshot(
         &mut self,
-        rpc: InstallSnapshotRequest<KalamTypeConfig>,
+        vote: KalamVote,
+        snapshot: KalamSnapshot,
+        cancel: impl std::future::Future<Output = ReplicationClosed> + openraft::OptionalSend + 'static,
         _option: RPCOption,
-    ) -> Result<
-        InstallSnapshotResponse<u64>,
-        RPCError<u64, KalamNode, RaftError<u64, InstallSnapshotError>>,
-    > {
+    ) -> Result<SnapshotResponse<KalamTypeConfig>, StreamingError<KalamTypeConfig>> {
+        let data = snapshot.snapshot.into_inner();
+        let chunk_count_usize = snapshot_chunk_count(data.len());
+        let chunk_count = u32::try_from(chunk_count_usize).unwrap_or(u32::MAX);
+        let transfer_id = next_snapshot_transfer_id();
+        tokio::pin!(cancel);
+        let mut last = None;
+        for chunk_index in 0..chunk_count_usize {
+            let message = SnapshotChunkWire {
+                vote: &vote,
+                last_log_id: &snapshot.meta.last_log_id,
+                last_membership: &snapshot.meta.last_membership,
+                transfer_id,
+                chunk_index: chunk_index as u32,
+                chunk_count,
+                data: snapshot_chunk(&data, chunk_index),
+            };
+            let response = {
+                let send = self
+                    .send_raft_rpc(crate::network::service::RaftRpcKind::InstallSnapshot, &message);
+                tokio::pin!(send);
+                tokio::select! {
+                    result = &mut send => result.map_err(StreamingError::from)?,
+                    _ = &mut cancel => {
+                        return Err(StreamingError::Closed(ReplicationClosed::new(
+                            "snapshot cancelled",
+                        )));
+                    }
+                }
+            };
+            last = Some(
+                self.decode_raft_rpc_response(
+                    crate::network::service::RaftRpcKind::InstallSnapshot,
+                    response,
+                )
+                .map_err(|err| match err {
+                    RPCError::Timeout(error) => StreamingError::Timeout(error),
+                    RPCError::Unreachable(error) => StreamingError::Unreachable(error),
+                    RPCError::Network(error) => StreamingError::Network(error),
+                    RPCError::RemoteError(error) => {
+                        StreamingError::Network(NetworkError::new(&error))
+                    },
+                })?,
+            );
+        }
+        last.ok_or_else(|| {
+            StreamingError::Network(NetworkError::new(&ConnectionError(
+                "empty snapshot".to_string(),
+            )))
+        })
+    }
+
+    async fn pre_vote(
+        &mut self,
+        rpc: VoteRequest<KalamTypeConfig>,
+        _option: RPCOption,
+    ) -> Result<VoteResponse<KalamTypeConfig>, RPCError<KalamTypeConfig>> {
+        let response =
+            self.send_raft_rpc(crate::network::service::RaftRpcKind::PreVote, &rpc).await?;
+        self.decode_raft_rpc_response(crate::network::service::RaftRpcKind::PreVote, response)
+    }
+
+    async fn transfer_leader(
+        &mut self,
+        req: TransferLeaderRequest<KalamTypeConfig>,
+        _option: RPCOption,
+    ) -> Result<TransferLeaderResponse<KalamTypeConfig>, RPCError<KalamTypeConfig>> {
         let response = self
-            .send_raft_rpc(crate::network::service::RaftRpcKind::InstallSnapshot, &rpc)
+            .send_raft_rpc(crate::network::service::RaftRpcKind::TransferLeader, &req)
             .await?;
         self.decode_raft_rpc_response(
-            crate::network::service::RaftRpcKind::InstallSnapshot,
+            crate::network::service::RaftRpcKind::TransferLeader,
             response,
-            RaftError::Fatal(openraft::error::Fatal::Panicked),
         )
     }
 
     async fn vote(
         &mut self,
-        rpc: VoteRequest<u64>,
+        rpc: VoteRequest<KalamTypeConfig>,
         _option: RPCOption,
-    ) -> Result<VoteResponse<u64>, RPCError<u64, KalamNode, RaftError<u64>>> {
+    ) -> Result<VoteResponse<KalamTypeConfig>, RPCError<KalamTypeConfig>> {
         let response = self.send_raft_rpc(crate::network::service::RaftRpcKind::Vote, &rpc).await?;
-        self.decode_raft_rpc_response(
-            crate::network::service::RaftRpcKind::Vote,
-            response,
-            RaftError::Fatal(openraft::error::Fatal::Panicked),
-        )
+        self.decode_raft_rpc_response(crate::network::service::RaftRpcKind::Vote, response)
     }
 }
 
@@ -381,6 +606,11 @@ impl RaftNetworkFactory {
         Self::new_with_channel_pool(group_id, Self::new_channel_pool())
     }
 
+    /// Outgoing Raft channels currently held for peers of this node.
+    pub fn outgoing_connection_count(&self) -> usize {
+        self.channels.len()
+    }
+
     /// Create a new network factory backed by a shared channel pool.
     pub fn new_with_channel_pool(group_id: GroupId, channels: RaftChannelPool) -> Self {
         Self {
@@ -391,6 +621,14 @@ impl RaftNetworkFactory {
             auth_identity: Arc::new(RwLock::new(None)),
             tls_material: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Drop outgoing Raft RPCs to `target` until unblocked.
+    ///
+    /// Clients already created from this factory share the tracker, so the
+    /// block applies to in-flight replication as well as new connections.
+    pub fn block_peer(&self, target: NodeId, blocked: bool) {
+        self.connection_tracker.set_blocked(target.as_u64(), blocked);
     }
 
     /// Configure the minimum interval between reconnect attempts
@@ -666,5 +904,97 @@ mod tests {
 
         let nodes = factory.nodes.read();
         assert!(nodes.contains_key(&NodeId::from(1)));
+    }
+
+    fn entry(index: u64, bytes: usize) -> KalamEntry {
+        openraft::Entry {
+            log_id: openraft::LogId::new(
+                openraft::vote::leader_id_std::CommittedLeaderId::new(1),
+                index,
+            ),
+            payload: openraft::EntryPayload::Normal(crate::storage::RaftCommandBytes::new(vec![
+                7;
+                bytes
+            ])),
+        }
+    }
+
+    fn request(sizes: &[usize]) -> AppendEntriesRequest<KalamTypeConfig> {
+        AppendEntriesRequest {
+            vote: KalamVote::new(1, 1),
+            prev_log_id: None,
+            entries: sizes
+                .iter()
+                .enumerate()
+                .map(|(index, size)| entry(index as u64 + 1, *size))
+                .collect(),
+            leader_commit: None,
+        }
+    }
+
+    #[test]
+    fn borrowed_append_matches_the_owned_request_encoding() {
+        let rpc = request(&[4, 8]);
+        let owned = crate::state_machine::encode(&rpc).unwrap();
+        let borrowed = crate::state_machine::encode(&append_wire(&rpc, 2)).unwrap();
+        assert_eq!(owned, borrowed);
+
+        let mut prefix = rpc.clone();
+        prefix.entries.pop();
+        assert_eq!(
+            crate::state_machine::encode(&prefix).unwrap(),
+            crate::state_machine::encode(&append_wire(&rpc, 1)).unwrap()
+        );
+    }
+
+    #[test]
+    fn multi_entry_append_shrinks_to_the_byte_limit() {
+        let rpc = request(&[64, 64, 64]);
+        let one = encoded_append_len(&rpc, 1).unwrap();
+        let two = encoded_append_len(&rpc, 2).unwrap();
+        let three = encoded_append_len(&rpc, 3).unwrap();
+        assert!(one < two && two < three);
+        assert_eq!(append_send_count(&rpc, one).unwrap(), 1);
+        assert_eq!(append_send_count(&rpc, two - 1).unwrap(), 1);
+        assert_eq!(append_send_count(&rpc, two).unwrap(), 2);
+        assert_eq!(append_send_count(&rpc, three).unwrap(), 3);
+    }
+
+    #[test]
+    fn one_entry_over_the_byte_limit_is_not_sent() {
+        let rpc = request(&[32]);
+        let len = encoded_append_len(&rpc, 1).unwrap();
+        assert_eq!(append_send_count(&rpc, len - 1).unwrap(), 0);
+        assert_eq!(append_send_count(&rpc, len).unwrap(), 1);
+    }
+
+    #[test]
+    fn snapshot_chunk_wire_matches_the_owned_chunk() {
+        let vote = KalamVote::new(1, 1);
+        let membership = KalamStoredMembership::default();
+        let last_log_id = None;
+        let data = b"hello world";
+        let owned = crate::network::SnapshotChunk {
+            vote: vote.clone(),
+            last_log_id,
+            last_membership: membership.clone(),
+            transfer_id: 7,
+            chunk_index: 0,
+            chunk_count: 1,
+            data: data.to_vec(),
+        };
+        let wire = SnapshotChunkWire {
+            vote: &vote,
+            last_log_id: &owned.last_log_id,
+            last_membership: &membership,
+            transfer_id: 7,
+            chunk_index: 0,
+            chunk_count: 1,
+            data,
+        };
+        assert_eq!(
+            crate::state_machine::encode(&owned).unwrap(),
+            crate::state_machine::encode(&wire).unwrap()
+        );
     }
 }

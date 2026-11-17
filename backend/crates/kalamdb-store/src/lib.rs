@@ -63,7 +63,8 @@ pub use storage_trait::{
     Operation, Partition, StorageBackend, StorageBackendAsync, StorageError, StorageStats,
 };
 pub use write_coalesce::{
-    coalesce_session_active, defer_after_persist, with_write_coalesce, CoalescedBatch,
+    bind_commit_target, buffer_operations, coalesce_session_active, defer_after_persist,
+    with_write_coalesce, ApplyBatch, CoalescedBatch,
 };
 
 // Make test_utils available for testing in dependent crates

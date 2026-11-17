@@ -292,7 +292,12 @@ mod column_order_tests {
                 "uptime_seconds",
                 "uptime_human",
                 "os",
-                "arch"
+                "arch",
+                "leaders",
+                "followers",
+                "lagging_groups",
+                "worst_lag",
+                "heartbeat_age"
             ]
         );
         assert_eq!(
@@ -311,7 +316,10 @@ mod column_order_tests {
                 "committed",
                 "state",
                 "current_leader",
-                "millis_since_quorum_ack"
+                "millis_since_quorum_ack",
+                "local_committed",
+                "flushed",
+                "lag"
             ]
         );
     }

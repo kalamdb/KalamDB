@@ -4,6 +4,10 @@ Product notes for [GitHub Releases](https://github.com/kalamdb/KalamDB/releases)
 
 When cutting a release, paste the version file into the Release workflow's `release_description` input. That box is one line, so replace each line break with the two characters `\n` before pasting. The workflow turns those into real lines, then GitHub renders the markdown. Leave the input empty to use auto-generated notes. Mark prereleases as prereleases on GitHub.
 
+## Unreleased
+
+The OpenRaft 0.10 upgrade restarts the whole cluster together. Stop every node, install the same build on every node, then start them. A 0.9 node and a 0.10 node cannot share a Raft group: the RPC protocol version is rejected before the payload is decoded. Persisted Raft logs, votes, membership, and snapshot headers from the 0.9 store are read by the new binary. See [Raft replication](../architecture/raft-replication.md#rolling-upgrade).
+
 ## Versions
 
 - [0.8.0](0.8.0.md) — PostgreSQL grammar and wire clients, one binary frame, index seeks

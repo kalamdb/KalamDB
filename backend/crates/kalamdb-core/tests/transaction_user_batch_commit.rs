@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use crate::support::{
     create_cluster_app_context, create_counting_cluster_app_context,
-    create_shared_table_with_public_policy, create_user_table, row, unique_namespace,
+    create_shared_table_with_public_policy, create_standalone_app_context, create_user_table, row,
+    unique_namespace,
 };
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
@@ -487,4 +488,82 @@ async fn explicit_commit_of_25000_shared_rows_is_all_or_nothing() {
     );
     assert_shared_pk(&rejected_provider, 1, false).await;
     assert_shared_pk(&rejected_provider, WIDE_COMMIT_ROWS - 1, false).await;
+}
+
+fn nearest_rank(sorted: &[f64], percentile: f64) -> f64 {
+    let rank = (percentile / 100.0 * sorted.len() as f64).ceil() as usize;
+    sorted[rank.saturating_sub(1).min(sorted.len() - 1)]
+}
+
+async fn time_user_insert_commits(row_count: i64, samples: usize) -> Vec<f64> {
+    let (app_ctx, _test_db) = create_standalone_app_context().await;
+    let service = OperationService::new(Arc::clone(&app_ctx));
+    let user_id = UserId::new(format!("t112-user-{row_count}"));
+    let mut seconds = Vec::with_capacity(samples);
+    for sample in 0..samples {
+        let session_id = format!("pg-{sample}-{row_count:x}");
+        let table_id = create_user_table(
+            &app_ctx,
+            &unique_namespace(&format!("t112_{row_count}_{sample}")),
+            "items",
+        )
+        .await;
+        let transaction_id = service
+            .begin_transaction(&session_id)
+            .await
+            .expect("begin")
+            .expect("transaction id");
+        let rows: Vec<Row> = (1..=row_count).map(|id| row(id, "n")).collect();
+        service
+            .execute_insert(InsertRequest {
+                table_id: table_id.clone(),
+                table_type: TableType::User,
+                session_id: Some(session_id.clone()),
+                user_id: Some(user_id.clone()),
+                rows,
+            })
+            .await
+            .expect("stage rows");
+        let started = std::time::Instant::now();
+        service
+            .commit_transaction(&session_id, &transaction_id)
+            .await
+            .expect("commit")
+            .expect("commit id");
+        seconds.push(started.elapsed().as_secs_f64());
+        if sample + 1 == samples {
+            let provider =
+                app_ctx.schema_registry().get_kalam_provider(&table_id).expect("user provider");
+            load_user_row(&provider, &user_id, row_count).await;
+        }
+    }
+    seconds
+}
+
+/// Dev-profile seconds for one standalone user-table commit of 1,000 rows and one of 25,000.
+/// The timer wraps `commit_transaction` only, after the rows are staged.
+#[tokio::test]
+#[ntest::timeout(600_000)]
+async fn t112_standalone_insert_commit_times() {
+    const SAMPLES: usize = 15;
+    let mut report = String::new();
+    for row_count in [1_000_i64, 25_000] {
+        let mut seconds = time_user_insert_commits(row_count, SAMPLES).await;
+        seconds.sort_by(|left, right| left.total_cmp(right));
+        let line = format!(
+            "rows={row_count} samples={SAMPLES} min={:.6} p50={:.6} p95={:.6} p99={:.6} max={:.6} values={}",
+            seconds[0],
+            nearest_rank(&seconds, 50.0),
+            nearest_rank(&seconds, 95.0),
+            nearest_rank(&seconds, 99.0),
+            seconds[seconds.len() - 1],
+            seconds.iter().map(|value| format!("{value:.6}")).collect::<Vec<_>>().join(",")
+        );
+        println!("{line}");
+        report.push_str(&line);
+        report.push('\n');
+    }
+    let path = std::env::var("T112_INSERT_REPORT")
+        .unwrap_or_else(|_| "/tmp/t112-insert-report.txt".to_string());
+    std::fs::write(&path, report).expect("write insert report");
 }

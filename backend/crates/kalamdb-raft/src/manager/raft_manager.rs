@@ -19,12 +19,12 @@ use kalamdb_commons::{
 use kalamdb_sharding::ShardRouter;
 use kalamdb_store::{raft_storage::RAFT_PARTITION_NAME, Partition, StorageBackend};
 use kalamdb_transactions::StagedMutation;
-use openraft::RaftMetrics;
+use openraft::{Instant as _, RaftMetrics};
 use parking_lot::RwLock;
 use tonic::transport::{Certificate, ClientTlsConfig, Identity};
 
 use crate::{
-    manager::{config::RaftManagerConfig, RaftGroup},
+    manager::{config::RaftManagerConfig, raft_group::GroupServer, RaftGroup},
     network::{
         cluster_service::{cluster_client::ClusterServiceClient, PingRequest},
         RaftNetworkFactory,
@@ -32,7 +32,7 @@ use crate::{
     state_machine::{
         KalamStateMachine, MetaStateMachine, SharedDataStateMachine, UserDataStateMachine,
     },
-    storage::KalamNode,
+    storage::{KalamNode, KalamTypeConfig},
     GroupId, RaftError,
 };
 
@@ -129,6 +129,95 @@ pub struct RaftManager {
 
     /// Handle to the background cluster initialization task
     cluster_init_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
+
+    /// One progress watch set per group, created when the group starts.
+    /// A SQL query reads the cached snapshot and does not call `watch_*`.
+    progress: RwLock<HashMap<GroupId, GroupProgressSource>>,
+}
+
+/// Commit, flush, and apply indexes for one Raft group.
+///
+/// Every index in a snapshot comes from that group. Lag is the cluster commit
+/// index minus the applied index of the same group.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupProgressSnapshot {
+    /// Quorum commit index (`watch_commit_progress`, else metrics cluster commit).
+    pub committed: Option<u64>,
+    /// This node's local commit index.
+    pub local_committed: Option<u64>,
+    /// Last log index flushed by `watch_log_progress`.
+    pub flushed: Option<u64>,
+    /// Last applied index from `watch_apply_progress`.
+    pub applied: Option<u64>,
+    /// Last persisted snapshot index from `watch_snapshot_progress`.
+    pub snapshot: Option<u64>,
+    /// `committed - applied` for this group. Unknown when commit is unknown.
+    pub lag: Option<u64>,
+}
+
+struct WatchedIndexes {
+    committed: Option<u64>,
+    flushed: Option<u64>,
+    applied: Option<u64>,
+    snapshot: Option<u64>,
+}
+
+/// The five OpenRaft progress watches for one group.
+struct GroupProgressSource {
+    read: Box<dyn Fn() -> WatchedIndexes + Send + Sync>,
+}
+
+impl GroupProgressSource {
+    fn from_raft<SM>(raft: &crate::manager::raft_group::RaftInstance<SM>) -> Self
+    where
+        SM: KalamStateMachine + Send + Sync + 'static,
+    {
+        let log = parking_lot::Mutex::new(raft.watch_log_progress());
+        let vote = parking_lot::Mutex::new(raft.watch_vote_progress());
+        let commit = parking_lot::Mutex::new(raft.watch_commit_progress());
+        let apply = parking_lot::Mutex::new(raft.watch_apply_progress());
+        let snapshot = parking_lot::Mutex::new(raft.watch_snapshot_progress());
+        Self {
+            read: Box::new(move || {
+                let _vote = vote.lock().get();
+                WatchedIndexes {
+                    committed: commit.lock().get().as_ref().map(|id| id.index),
+                    flushed: log
+                        .lock()
+                        .get()
+                        .and_then(|point| point.last_log_id.as_ref().map(|id| id.index)),
+                    applied: apply.lock().get().as_ref().map(|id| id.index),
+                    snapshot: snapshot.lock().get().as_ref().map(|id| id.index),
+                }
+            }),
+        }
+    }
+}
+
+impl GroupProgressSnapshot {
+    fn from_metrics_and_watch(
+        metrics: &RaftMetrics<KalamTypeConfig>,
+        watched: Option<&WatchedIndexes>,
+    ) -> Self {
+        let committed = watched
+            .and_then(|watched| watched.committed)
+            .or_else(|| metrics.cluster_committed.as_ref().map(|id| id.index));
+        let local_committed = metrics.local_committed.as_ref().map(|id| id.index);
+        let flushed = watched.and_then(|watched| watched.flushed);
+        let applied = watched
+            .and_then(|watched| watched.applied)
+            .or_else(|| metrics.last_applied.as_ref().map(|id| id.index));
+        let snapshot = watched.and_then(|watched| watched.snapshot);
+        let lag = committed.map(|commit| commit.saturating_sub(applied.unwrap_or(0)));
+        Self {
+            committed,
+            local_committed,
+            flushed,
+            applied,
+            snapshot,
+            lag,
+        }
+    }
 }
 
 impl std::fmt::Debug for RaftManager {
@@ -231,6 +320,7 @@ impl RaftManager {
             user_shards_count,
             shared_shards_count,
             cluster_init_handle: RwLock::new(None),
+            progress: RwLock::new(HashMap::new()),
         }
     }
 
@@ -374,6 +464,7 @@ impl RaftManager {
             user_shards_count,
             shared_shards_count,
             cluster_init_handle: RwLock::new(None),
+            progress: RwLock::new(HashMap::new()),
         })
     }
 
@@ -383,12 +474,24 @@ impl RaftManager {
     }
 
     /// Get OpenRaft metrics for the Meta group
-    pub fn meta_metrics(&self) -> Option<RaftMetrics<u64, KalamNode>> {
+    pub fn meta_metrics(&self) -> Option<RaftMetrics<KalamTypeConfig>> {
         self.meta.metrics()
     }
 
+    /// Milliseconds since this group's last quorum ack.
+    ///
+    /// Absent when the group has no metrics or the leader has not recorded an ack.
+    pub fn quorum_ack_age_ms(&self, group_id: crate::GroupId) -> Option<u64> {
+        self.group_metrics(group_id).and_then(|metrics| {
+            metrics
+                .last_quorum_acked
+                .as_ref()
+                .map(|acked| acked.elapsed().as_millis() as u64)
+        })
+    }
+
     /// Get OpenRaft metrics for a specific Raft group (if started)
-    pub fn group_metrics(&self, group_id: crate::GroupId) -> Option<RaftMetrics<u64, KalamNode>> {
+    pub fn group_metrics(&self, group_id: crate::GroupId) -> Option<RaftMetrics<KalamTypeConfig>> {
         match group_id {
             crate::GroupId::Meta => self.meta.metrics(),
             crate::GroupId::DataUserShard(shard) if shard < self.user_shards_count => {
@@ -399,6 +502,27 @@ impl RaftManager {
             },
             _ => None,
         }
+    }
+
+    fn cache_group_progress<SM>(&self, group_id: GroupId, group: &RaftGroup<SM>)
+    where
+        SM: KalamStateMachine + Send + Sync + 'static,
+    {
+        let Some(raft) = group.raft() else {
+            return;
+        };
+        self.progress.write().insert(group_id, GroupProgressSource::from_raft(&raft));
+    }
+
+    /// Cached commit, flush, and apply indexes for one group.
+    ///
+    /// The OpenRaft progress watches are created once in [`Self::start`]. This
+    /// read does not call `watch_*`.
+    pub fn group_progress(&self, group_id: GroupId) -> Option<GroupProgressSnapshot> {
+        let metrics = self.group_metrics(group_id)?;
+        let progress = self.progress.read();
+        let watched = progress.get(&group_id).map(|source| (source.read)());
+        Some(GroupProgressSnapshot::from_metrics_and_watch(&metrics, watched.as_ref()))
     }
 
     /// Wait until the local replica has applied every log entry already known
@@ -473,12 +597,14 @@ impl RaftManager {
         // Start unified meta group
         log::debug!("Starting unified meta group...");
         self.meta.start(self.node_id, &self.config).await?;
+        self.cache_group_progress(GroupId::Meta, &self.meta);
         log::debug!("  ✓ Meta group started");
 
         // Start all user data shards
         log::debug!("Starting {} user data shards...", self.user_data_shards.len());
         for (i, shard) in self.user_data_shards.iter().enumerate() {
             shard.start(self.node_id, &self.config).await?;
+            self.cache_group_progress(GroupId::DataUserShard(i as u32), shard);
             log::debug!("  ✓ UserDataShard[{}] started", i);
         }
 
@@ -486,6 +612,7 @@ impl RaftManager {
         log::debug!("Starting {} shared data shards...", self.shared_data_shards.len());
         for (i, shard) in self.shared_data_shards.iter().enumerate() {
             shard.start(self.node_id, &self.config).await?;
+            self.cache_group_progress(GroupId::DataSharedShard(i as u32), shard);
             log::debug!("  ✓ SharedDataShard[{}] started", i);
         }
 
@@ -1178,9 +1305,9 @@ impl RaftManager {
         leader
     }
 
-    /// Get the current Meta group's last applied index
+    /// Meta→Data materialization watermark.
     ///
-    /// This is the watermark used for Meta→Data ordering:
+    /// This is the meta coordinator cursor, not a data group's Raft applied id.
     /// - Leaders stamp data commands with this index at proposal time
     /// - Followers buffer data commands until their local meta catches up
     pub fn current_meta_index(&self) -> u64 {
@@ -1503,6 +1630,11 @@ impl RaftManager {
         1 + self.user_shards_count as usize + self.shared_shards_count as usize
     }
 
+    /// Outgoing Raft channels on this node. Groups share one pool.
+    pub fn outgoing_connection_count(&self) -> usize {
+        self.meta.outgoing_connection_count()
+    }
+
     /// Get the number of user data shards
     pub fn user_shards(&self) -> u32 {
         self.user_shards_count
@@ -1663,33 +1795,19 @@ impl RaftManager {
 
     // === Raft RPC Handlers (for receiving RPCs from other nodes) ===
 
-    /// Get the Raft instance for a specific group
-    fn get_raft_instance(
-        &self,
-        group_id: GroupId,
-    ) -> Result<crate::manager::raft_group::RaftInstance, RaftError> {
+    fn group_server(&self, group_id: GroupId) -> Result<&dyn GroupServer, RaftError> {
         match group_id {
-            GroupId::Meta => self
-                .meta
-                .raft()
-                .ok_or_else(|| RaftError::NotStarted(format!("Group {:?} not started", group_id))),
-            GroupId::DataUserShard(shard) => {
-                let group = self
-                    .user_data_shards
-                    .get(shard as usize)
-                    .ok_or_else(|| RaftError::Internal(format!("Invalid user shard: {}", shard)))?;
-                group.raft().ok_or_else(|| {
-                    RaftError::NotStarted(format!("Group {:?} not started", group_id))
-                })
-            },
-            GroupId::DataSharedShard(shard) => {
-                let group = self.shared_data_shards.get(shard as usize).ok_or_else(|| {
-                    RaftError::Internal(format!("Invalid shared shard: {}", shard))
-                })?;
-                group.raft().ok_or_else(|| {
-                    RaftError::NotStarted(format!("Group {:?} not started", group_id))
-                })
-            },
+            GroupId::Meta => Ok(self.meta.as_ref()),
+            GroupId::DataUserShard(shard) => self
+                .user_data_shards
+                .get(shard as usize)
+                .map(|group| group.as_ref() as &dyn GroupServer)
+                .ok_or_else(|| RaftError::Internal(format!("Invalid user shard: {}", shard))),
+            GroupId::DataSharedShard(shard) => self
+                .shared_data_shards
+                .get(shard as usize)
+                .map(|group| group.as_ref() as &dyn GroupServer)
+                .ok_or_else(|| RaftError::Internal(format!("Invalid shared shard: {}", shard))),
         }
     }
 
@@ -1699,19 +1817,25 @@ impl RaftManager {
         group_id: GroupId,
         payload: &[u8],
     ) -> Result<Vec<u8>, RaftError> {
-        use openraft::raft::VoteRequest;
+        self.group_server(group_id)?.vote_rpc(payload).await
+    }
 
-        use crate::state_machine::{decode, encode};
+    /// Handle an incoming pre-vote. It does not persist a vote.
+    pub async fn handle_pre_vote(
+        &self,
+        group_id: GroupId,
+        payload: &[u8],
+    ) -> Result<Vec<u8>, RaftError> {
+        self.group_server(group_id)?.pre_vote_rpc(payload).await
+    }
 
-        let raft = self.get_raft_instance(group_id)?;
-        let request: VoteRequest<u64> = decode(payload)?;
-
-        let response = raft
-            .vote(request)
-            .await
-            .map_err(|e| RaftError::Internal(format!("Vote RPC failed: {:?}", e)))?;
-
-        encode(&response)
+    /// Handle a leadership-transfer request for one group.
+    pub async fn handle_transfer_leader(
+        &self,
+        group_id: GroupId,
+        payload: &[u8],
+    ) -> Result<Vec<u8>, RaftError> {
+        self.group_server(group_id)?.transfer_leader_rpc(payload).await
     }
 
     /// Handle incoming append entries request
@@ -1720,46 +1844,40 @@ impl RaftManager {
         group_id: GroupId,
         payload: &[u8],
     ) -> Result<Vec<u8>, RaftError> {
-        use openraft::raft::AppendEntriesRequest;
-
-        use crate::{
-            state_machine::{decode, encode},
-            storage::KalamTypeConfig,
-        };
-
-        let raft = self.get_raft_instance(group_id)?;
-        let request: AppendEntriesRequest<KalamTypeConfig> = decode(payload)?;
-
-        let response = raft
-            .append_entries(request)
-            .await
-            .map_err(|e| RaftError::Internal(format!("AppendEntries RPC failed: {:?}", e)))?;
-
-        encode(&response)
+        self.group_server(group_id)?.append_entries_rpc(payload).await
     }
 
-    /// Handle incoming install snapshot request
+    /// Handle a full snapshot sent as one RPC.
     pub async fn handle_install_snapshot(
         &self,
         group_id: GroupId,
         payload: &[u8],
     ) -> Result<Vec<u8>, RaftError> {
-        use openraft::raft::InstallSnapshotRequest;
+        use std::io::Cursor;
 
         use crate::{
+            network::{assemble_snapshot_chunk, SnapshotChunk},
             state_machine::{decode, encode},
-            storage::KalamTypeConfig,
+            storage::{KalamSnapshot, KalamSnapshotMeta},
         };
 
-        let raft = self.get_raft_instance(group_id)?;
-        let request: InstallSnapshotRequest<KalamTypeConfig> = decode(payload)?;
-
-        let response = raft
-            .install_snapshot(request)
-            .await
-            .map_err(|e| RaftError::Internal(format!("InstallSnapshot RPC failed: {:?}", e)))?;
-
-        encode(&response)
+        let chunk: SnapshotChunk = decode(payload)?;
+        let ack_vote = chunk.vote.clone();
+        let Some(message) = assemble_snapshot_chunk(&group_id.to_string(), chunk)
+            .map_err(RaftError::Serialization)?
+        else {
+            use openraft::raft::SnapshotResponse;
+            return encode(&SnapshotResponse::<crate::storage::KalamTypeConfig>::new(ack_vote));
+        };
+        let vote = message.vote;
+        let snapshot = KalamSnapshot {
+            meta: KalamSnapshotMeta {
+                last_log_id: message.last_log_id,
+                last_membership: message.last_membership,
+            },
+            snapshot: Cursor::new(std::sync::Arc::<[u8]>::from(message.data)),
+        };
+        self.group_server(group_id)?.install_snapshot_rpc(vote, snapshot).await
     }
 
     /// Trigger snapshots for all Raft groups
@@ -1965,8 +2083,7 @@ impl RaftManager {
 
     /// Best-effort data leader rebalance.
     ///
-    /// OpenRaft 0.9 does not expose a targeted leadership-transfer API here, so this asks local
-    /// leaders for user/shared data groups to step down and lets Raft elect replacements.
+    /// Each local data-group leader transfers to the voter with the greatest matching log.
     pub async fn rebalance_data_leaders(&self) -> Result<Vec<ClusterActionResult>, RaftError> {
         Ok(self.run_action_for_data_groups(ClusterAction::StepDown).await)
     }
@@ -2000,69 +2117,19 @@ impl RaftManager {
 
         if groups_leading > 0 {
             log::debug!(
-                "[CLUSTER] This node is LEADER of {} groups, attempting leadership transfer...",
+                "[CLUSTER] This node is LEADER of {} groups, transferring each to its most caught-up voter...",
                 groups_leading
             );
-
-            // Attempt leadership transfer for each group where we're leader
-            // Find the first available peer to transfer leadership to
-            if let Some(target_node) = self.config.peers.first() {
-                let target_node_id = target_node.node_id;
-                log::debug!("[CLUSTER] Transferring leadership to node {}...", target_node.node_id);
-
-                // Transfer leadership for Meta group
-                if self.meta.is_leader() {
-                    match self.meta.transfer_leadership(target_node_id).await {
-                        Ok(_) => log::info!(
-                            "[CLUSTER] ✓ Meta leadership transferred to node {}",
-                            target_node.node_id
-                        ),
-                        Err(e) => {
-                            log::warn!("[CLUSTER] ⚠ Failed to transfer Meta leadership: {}", e)
-                        },
-                    }
+            for result in self.step_down_all().await? {
+                if result.success {
+                    log::info!("[CLUSTER] leadership transfer finished for {}", result.group_id);
+                } else {
+                    log::warn!(
+                        "[CLUSTER] leadership transfer failed for {}: {}",
+                        result.group_id,
+                        result.error.unwrap_or_default()
+                    );
                 }
-
-                // Transfer leadership for user data shards
-                for (i, shard) in self.user_data_shards.iter().enumerate() {
-                    if shard.is_leader() {
-                        match shard.transfer_leadership(target_node_id).await {
-                            Ok(_) => log::debug!(
-                                "[CLUSTER] ✓ UserDataShard[{}] leadership transferred",
-                                i
-                            ),
-                            Err(e) => log::warn!(
-                                "[CLUSTER] ⚠ Failed to transfer UserDataShard[{}] leadership: {}",
-                                i,
-                                e
-                            ),
-                        }
-                    }
-                }
-
-                // Transfer leadership for shared data shards
-                for (i, shard) in self.shared_data_shards.iter().enumerate() {
-                    if shard.is_leader() {
-                        match shard.transfer_leadership(target_node_id).await {
-                            Ok(_) => log::debug!(
-                                "[CLUSTER] ✓ SharedDataShard[{}] leadership transferred",
-                                i
-                            ),
-                            Err(e) => log::warn!(
-                                "[CLUSTER] ⚠ Failed to transfer SharedDataShard[{}] leadership: {}",
-                                i,
-                                e
-                            ),
-                        }
-                    }
-                }
-
-                // Give time for any leadership-transition side effects to settle.
-                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                log::info!(
-                    "[CLUSTER] Leadership transfer attempts completed (explicit transfer may be \
-                     unsupported by current OpenRaft version)"
-                );
             }
         }
 
@@ -2094,6 +2161,7 @@ impl RaftManager {
             }
         }
 
+        self.progress.write().clear();
         log::info!("[CLUSTER] All Raft groups shutdown complete");
 
         // Mark as stopped

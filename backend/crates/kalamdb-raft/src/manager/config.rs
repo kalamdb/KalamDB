@@ -77,6 +77,9 @@ pub struct RaftManagerConfig {
 
     /// Maximum delay in milliseconds between peer availability checks (exponential backoff cap)
     pub peer_wait_max_delay_ms: u64,
+
+    /// OpenRaft API channel depth. `None` keeps the upstream default of 65536.
+    pub api_channel_size: Option<u64>,
 }
 
 impl Default for RaftManagerConfig {
@@ -100,6 +103,7 @@ impl Default for RaftManagerConfig {
             peer_wait_max_retries: 60,
             peer_wait_initial_delay_ms: 500,
             peer_wait_max_delay_ms: 2000,
+            api_channel_size: None,
         }
     }
 }
@@ -136,6 +140,7 @@ impl RaftManagerConfig {
             peer_wait_max_retries: 60,
             peer_wait_initial_delay_ms: 500,
             peer_wait_max_delay_ms: 2000,
+            api_channel_size: None,
         }
     }
 }
@@ -162,6 +167,7 @@ impl From<kalamdb_configs::ClusterConfig> for RaftManagerConfig {
             peer_wait_max_retries: config.peer_wait_max_retries.unwrap_or(60),
             peer_wait_initial_delay_ms: config.peer_wait_initial_delay_ms.unwrap_or(500),
             peer_wait_max_delay_ms: config.peer_wait_max_delay_ms.unwrap_or(2000),
+            api_channel_size: None,
         }
     }
 }

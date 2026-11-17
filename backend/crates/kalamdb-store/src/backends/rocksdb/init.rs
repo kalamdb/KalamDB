@@ -19,7 +19,10 @@ use sysinfo::{MemoryRefreshKind, System};
 
 use super::{
     cf_tuning::{apply_cf_settings, apply_db_settings, install_write_buffer_manager},
-    keyspace::{decode_logical_partition_registry_key, fixed_column_families, logical_partition_registry_prefix, physical_cf_for_partition, SYSTEM_META_CF},
+    keyspace::{
+        decode_logical_partition_registry_key, fixed_column_families,
+        logical_partition_registry_prefix, physical_cf_for_partition, SYSTEM_META_CF,
+    },
     restore::apply_pending_rocksdb_restore,
 };
 

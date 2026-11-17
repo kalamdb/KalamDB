@@ -167,6 +167,9 @@ pub struct RaftSnapshotMeta {
     pub last_log_id: Option<RaftLogId>,
     /// Snapshot ID (unique identifier)
     pub snapshot_id: String,
+    /// Local build counter. Not recovered by parsing `snapshot_id`.
+    #[serde(default)]
+    pub build_counter: u64,
     /// Size of the snapshot data in bytes
     pub size_bytes: u64,
 }
@@ -273,6 +276,10 @@ impl RaftPartitionStore {
         self.make_key("meta:membership")
     }
 
+    fn flush_mode_key(&self) -> Vec<u8> {
+        self.make_key("meta:flush_log")
+    }
+
     fn put_log_id(&self, key: &[u8], log_id: Option<RaftLogId>) -> Result<()> {
         match log_id {
             Some(log_id) => self.backend.put(&self.partition, key, &log_id.encode_packed()),
@@ -348,23 +355,35 @@ impl RaftPartitionStore {
 
     /// Scans log entries in the range [start, end).
     pub fn scan_logs(&self, start: u64, end: u64) -> Result<Vec<RaftLogEntry>> {
-        if start >= end {
+        self.scan_logs_limited(start, end, usize::MAX)
+    }
+
+    /// Scans at most `limit` log entries in `[start, end)`, in index order.
+    ///
+    /// The backend iterator is dropped when this call returns.
+    pub fn scan_logs_limited(
+        &self,
+        start: u64,
+        end: u64,
+        limit: usize,
+    ) -> Result<Vec<RaftLogEntry>> {
+        if start >= end || limit == 0 {
             return Ok(Vec::new());
         }
 
         let prefix = self.make_key("log:");
         let start_key = self.log_key(start);
 
-        let iter = self.backend.scan(&self.partition, Some(&prefix), Some(&start_key), None)?;
+        let iter =
+            self.backend
+                .scan(&self.partition, Some(&prefix), Some(&start_key), Some(limit))?;
 
-        let span = end.saturating_sub(start);
-        let cap = usize::try_from(span).unwrap_or(0).min(1024);
+        let cap = limit.min(1024);
         let mut entries = Vec::with_capacity(cap);
         for (key, value) in iter {
-            // Parse index and check if < end
             if let Some(index) = Self::parse_log_index_from_key(&key) {
                 if index >= end {
-                    break; // Keys are sorted, so we can stop
+                    break;
                 }
                 entries.push(RaftLogEntry::decode_record(&value)?);
             }
@@ -435,6 +454,19 @@ impl RaftPartitionStore {
         Ok(())
     }
 
+    /// Every packed log record with the index taken from its key.
+    pub fn scan_log_records(&self) -> Result<Vec<(u64, Vec<u8>)>> {
+        let prefix = self.make_key("log:");
+        let iter = self.backend.scan(&self.partition, Some(&prefix), None, None)?;
+        let mut records = Vec::new();
+        for (key, value) in iter {
+            if let Some(index) = Self::parse_log_index_from_key(&key) {
+                records.push((index, value));
+            }
+        }
+        Ok(records)
+    }
+
     /// Returns the last (highest) log index, or None if log is empty.
     pub fn last_log_index(&self) -> Result<Option<u64>> {
         // Scan all log entries and find the max index
@@ -475,6 +507,27 @@ impl RaftPartitionStore {
         let key = self.vote_key();
         let value = encode_entity(vote)?;
         self.backend.put(&self.partition, &key, &value)
+    }
+
+    /// Persists whether `append()` flushes the log before `io_completed`.
+    ///
+    /// `true` is cluster mode. `false` is standalone deferred durability.
+    pub fn save_flush_log_on_append(&self, flush: bool) -> Result<()> {
+        self.backend.put(&self.partition, &self.flush_mode_key(), &[u8::from(flush)])
+    }
+
+    /// Reads the durability mode saved by [`Self::save_flush_log_on_append`].
+    pub fn read_flush_log_on_append(&self) -> Result<Option<bool>> {
+        match self.backend.get(&self.partition, &self.flush_mode_key())? {
+            None => Ok(None),
+            Some(bytes) => match bytes.as_slice() {
+                [0] => Ok(Some(false)),
+                [1] => Ok(Some(true)),
+                _ => Err(StorageError::SerializationError(format!(
+                    "undecodable durability mode: {bytes:?}"
+                ))),
+            },
+        }
     }
 
     /// Reads the current vote state.
@@ -570,6 +623,49 @@ impl RaftPartitionStore {
         self.backend.put(&self.partition, &key, &value)
     }
 
+    /// Writes snapshot meta, path, applied index, membership, and purge marker
+    /// in one batch. The snapshot file is already fsynced by the caller.
+    pub fn save_snapshot_install(
+        &self,
+        meta: &RaftSnapshotMeta,
+        path: &str,
+        last_applied: Option<RaftLogId>,
+        membership: &[u8],
+        purge: Option<RaftLogId>,
+    ) -> Result<()> {
+        let mut ops = Vec::with_capacity(5);
+        ops.push(Operation::Put {
+            partition: self.partition.clone(),
+            key: self.snap_meta_key(),
+            value: encode_entity(meta)?,
+        });
+        ops.push(Operation::Put {
+            partition: self.partition.clone(),
+            key: self.snap_data_key(),
+            value: encode_entity(&RaftSnapshotData::FilePath(path.to_owned()))?,
+        });
+        if let Some(last_applied) = last_applied {
+            ops.push(Operation::Put {
+                partition: self.partition.clone(),
+                key: self.last_applied_key().to_vec(),
+                value: last_applied.encode_packed().to_vec(),
+            });
+        }
+        ops.push(Operation::Put {
+            partition: self.partition.clone(),
+            key: self.last_membership_key(),
+            value: membership.to_vec(),
+        });
+        if let Some(purge) = purge {
+            ops.push(Operation::Put {
+                partition: self.partition.clone(),
+                key: self.purge_key(),
+                value: purge.encode_packed().to_vec(),
+            });
+        }
+        self.backend.batch(ops)
+    }
+
     /// Reads snapshot data reference.
     pub fn read_snapshot_data(&self) -> Result<Option<RaftSnapshotData>> {
         let key = self.snap_data_key();
@@ -577,6 +673,16 @@ impl RaftPartitionStore {
             Some(bytes) => Ok(Some(decode_entity(&bytes)?)),
             None => Ok(None),
         }
+    }
+
+    /// Writes one meta record. Startup-failure tests use this to plant bad bytes.
+    pub fn put_suffix_for_test(&self, suffix: &str, bytes: &[u8]) -> Result<()> {
+        self.backend.put(&self.partition, &self.make_key(suffix), bytes)
+    }
+
+    /// Reads one meta record back after a failed open.
+    pub fn get_suffix_for_test(&self, suffix: &str) -> Result<Option<Vec<u8>>> {
+        self.backend.get(&self.partition, &self.make_key(suffix))
     }
 }
 
@@ -825,6 +931,7 @@ mod tests {
                 index: 100,
             }),
             snapshot_id: "snap-001".to_string(),
+            build_counter: 1,
             size_bytes: 1024,
         };
         store.save_snapshot_meta(&meta).unwrap();

@@ -2,13 +2,15 @@
 
 **Input**: Design documents from `/specs/039-unified-table-transactions/`
 
-**Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/, quickstart.md, [dml-storage-performance-handoff.md](dml-storage-performance-handoff.md)
+**Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/, quickstart.md, [dml-storage-performance-handoff.md](dml-storage-performance-handoff.md), [contracts/openraft-010.md](contracts/openraft-010.md)
 
 The performance program (T069–T089) implements that handoff exactly. Each task's handoff section is the requirement, including its acceptance text. Architecture acceptance and correctness gates 1–8 in the handoff apply to every performance task. The copy in this folder is the same text as `docs/plans/2026-10-30-dml-storage-performance-handoff.md`.
 
+The OpenRaft program (T090–T119) implements [contracts/openraft-010.md](contracts/openraft-010.md), transcribed from GitHub issue #451 and the OpenRaft section of PR #412. That contract is the requirement. A link to the issue is not completion. Stay on `feat/0.9-unified-table-transactions` (PR #412) and use separate commits from the table-transaction work. Capture the 0.9.25 fixtures in T090 before changing the `openraft` pin.
+
 **Tests**: Included. FR-035, the story independent tests, and `quickstart.md` require them. Write each story's tests so they fail before the implementation task they guard. Use the default `dev` profile. Report runtimes in seconds.
 
-**Branch**: Stay on `feat/pg-dialect` (PR #402). Do not open a new branch.
+**Branch**: Stay on `feat/0.9-unified-table-transactions` (PR #412). Do not open a new branch.
 
 **Organization**: Tasks follow user stories. Story 2 is sequenced before Story 1 because the atomic commit in Story 1 is implemented on `VersionedTableEngine` from Story 2. Both are P0. The MVP is Story 2 plus Story 1.
 
@@ -16,7 +18,8 @@ The performance program (T069–T089) implements that handoff exactly. Each task
 
 - **[P]**: Can run in parallel (different files, no dependency on an incomplete task)
 - **[Story]**: User story label (`[US1]` … `[US7]`)
-- Setup, Foundational, Polish, and performance-handoff tasks have no story label. Performance tasks are named by their handoff id (`A1` … `F3`).
+- Setup, Foundational, Polish, and performance-handoff tasks have no story label. Performance tasks are named by their handoff id (`A1` … `F3`). OpenRaft tasks use `[US8]`.
+- `[X]` with a struck-through title (`~~…~~`) means the task was evaluated and declined, with the reason written in the task. It was not implemented. Reopen it only with the evidence the task names.
 
 ## Path Conventions
 
@@ -315,7 +318,7 @@ Backend crates live under `backend/crates/`. Evidence goes in `specs/039-unified
 
 - [X] T084 E3. ~~Column-family growth, compaction, and snapshot-safe reclamation.~~ Not required for this slice: phase H does not retune compaction or merge column families without a measured bottleneck. Layout stays as it is. Original task: exactly handoff §E3. Measure 10, 100, and 1,000 table/index configurations: column-family count, memtable floor, cache use, SST count and size, pending compaction bytes, stalls, and file descriptors. Do not add a shared cache. Do not switch partition layouts or merge column families without a compatibility and migration design. Locate current reclamation ownership. Test bounded maintenance with a pinned reader, then release the reader and verify reclamation catches up. Preserve tombstones needed by cold segments and unknown manifest state. A fixed timer is not a snapshot proof. Do not tune compaction or cache sizes to hide growing logical history (depends on T069, T027).
 
-**Checkpoint**: E tasks stay open investigations until their measurements and ADRs exist. Shipping A–D does not wait on them.
+**Checkpoint**: E1–E3 are declined for this slice (struck-through `[X]`): no measured bottleneck or ADR exists. A later change reopens one only with that measurement and an ADR. Shipping A–D does not wait on them.
 
 ---
 
@@ -345,9 +348,124 @@ Backend crates live under `backend/crates/`. Evidence goes in `specs/039-unified
 
 - [X] T088 Correctness matrix, exactly the handoff "Correctness matrix". Progress: closed 2026-11-15 on clean `90fa854bdc01`, dev profile, Apple M5 Pro. Gate crates: 842 passed, 0 failed, 2.456s (real 521.18s including the dependency rebuild). Filtered `kalamdb-core` catalog, transaction, applier, and executor tests: 111 passed, 0 failed, 5.653s (real 605.19s including compile). Same-day full CLI e2e on this tree: 677 passed, 8 skipped, 0 failed, 378.631s. Evidence row is in `baselines.md`. Exercise USER and SHARED tables, with and without scalar indexes, hot-only and mixed hot/cold, watcher off and on, distinct and repeated keys, primary-key changes, indexed and non-indexed updates, narrow, wide, and nested rows, commit, rollback, and savepoints, conflict waits, and restart/replay. Cover file and vector paths when their finish behavior changes. Test errors before submission, backend write failure, cancellation, and restart after persistence but before acknowledgment or effects. Use targeted `cargo nextest run` suites for each shipped slice. Add `#[ntest::timeout(...)]` from observed healthy runtime × 1.5. Batch compile feedback and fix from one captured output. Run required backend and CLI smoke tests before any separately authorized commit. Architecture changes update `docs/architecture/`. New user-facing settings or behavior update canonical skills and mirrors per `AGENTS.md`. Each shipped slice from T070–T081, and any shipped F slice, has its tests here or in that slice's own task (depends on T070, T071, T072, T073, T076, T077, T078, T081).
 
-- [ ] T089 Performance and memory acceptance, exactly the handoff "Performance and memory acceptance". Progress: 16-script checkpoint recorded 2026-11-15 in `baselines.md` (`20261115T202931Z-dev-90fa854bdc01`). Total median 26.458s (range 26.197..26.564) versus the 2026-10-30 baseline 35.734s, a 26.0% reduction. Combined #8/#11/#12/#13/#15 median 11.811s versus 12.243s, a 3.5% reduction. Script 12 regressed from 0.629s to 0.674s. Scripts 4 and 5 fell from 3.959s and 5.815s to 0.459s and 0.647s. Script 7 stayed at 0.616s from 0.611s. Peak tracked bytes, RSS, 1/8/32-client prepared CRUD, and the 300-second churn series are still open, so this task stays open. No invented medians. Preserve all 16 script results. Report per-script and total medians and ranges, in seconds, plus measured stage counters. No improvement claim from unit tests or a single timing sample. Goals, not permission to weaken correctness: at least 20% lower current-baseline total and 30% lower combined #8/#11/#12/#13/#15 time, and at least 30% lower peak tracked transient memory on the selected large-DML workload. Report tracked bytes and RSS. Flag regressions above max(5%, 0.005s) in any script median and repeat enough to distinguish noise. Do not average away a point-query regression. Add 1/8/32-client realistic prepared CRUD workloads with full parameters and results and matched settings on both engines. Report throughput and p50/p95/p99 latency separately. Run a minimum 300-second mixed CRUD churn series on a bounded live key set with production-like flushing, and a separate pinned-snapshot phase followed by unpin and reclamation. Record throughput, latency, RSS, tracked memory, memtables/cache, WAL/SST/disk footprint, and compaction pressure. After release, investigate sustained growth. If a goal is not met, say so and name the measured remaining work. Write the checkpoint into `baselines.md` (depends on T069, T088, and the shipped A–D slices).
+- [X] T089 Performance and memory acceptance, exactly the handoff "Performance and memory acceptance". Progress: 16-script checkpoint recorded 2026-11-15 in `baselines.md` (`20261115T202931Z-dev-90fa854bdc01`). Total median 26.458s (range 26.197..26.564) versus the 2026-10-30 baseline 35.734s, a 26.0% reduction. Combined #8/#11/#12/#13/#15 median 11.811s versus 12.243s, a 3.5% reduction. Script 12 regressed from 0.629s to 0.674s. Scripts 4 and 5 fell from 3.959s and 5.815s to 0.459s and 0.647s. Script 7 stayed at 0.616s from 0.611s. Peak tracked bytes, RSS, 1/8/32-client prepared CRUD, and the 300-second churn series are recorded in `baselines.md` (2026-11-17 dev). The 30% combined-script goal is unmet. There is no earlier peak-tracked measurement, so the 30% tracked-memory goal is not shown. No invented medians. Preserve all 16 script results. Report per-script and total medians and ranges, in seconds, plus measured stage counters. No improvement claim from unit tests or a single timing sample. Goals, not permission to weaken correctness: at least 20% lower current-baseline total and 30% lower combined #8/#11/#12/#13/#15 time, and at least 30% lower peak tracked transient memory on the selected large-DML workload. Report tracked bytes and RSS. Flag regressions above max(5%, 0.005s) in any script median and repeat enough to distinguish noise. Do not average away a point-query regression. Add 1/8/32-client realistic prepared CRUD workloads with full parameters and results and matched settings on both engines. Report throughput and p50/p95/p99 latency separately. Run a minimum 300-second mixed CRUD churn series on a bounded live key set with production-like flushing, and a separate pinned-snapshot phase followed by unpin and reclamation. Record throughput, latency, RSS, tracked memory, memtables/cache, WAL/SST/disk footprint, and compaction pressure. After release, investigate sustained growth. If a goal is not met, say so and name the measured remaining work. Write the checkpoint into `baselines.md` (depends on T069, T088, and the shipped A–D slices).
 
 **Checkpoint**: Report changed behavior, source files, actual timings, allocation and memory deltas, correctness checks, the architecture review gate, and the next bottleneck. E tasks still require their own measured bottleneck and ADR.
+
+---
+
+## Phase 18: User Story 8 - OpenRaft 0.10 characterization (Priority: P0)
+
+**Goal**: Record the 0.9.25 behavior and byte fixtures that later tasks must still satisfy (FR-048, SC-016). Do this while `Cargo.toml` still pins `openraft` 0.9.25.
+
+**Independent Test**: `baselines.md` has an OpenRaft 0.9.25 row, and `backend/crates/kalamdb-raft/tests/fixtures/openraft-0.9/` contains vote, membership, log-entry, snapshot-header, snapshot-file, and `KalamNode` bytes produced by the current process.
+
+- [X] T090 [US8] While the workspace pin is still OpenRaft 0.9.25, append an OpenRaft baseline section to `specs/039-unified-table-transactions/baselines.md` naming the pin, the `storage-v2` feature, unary `RaftNetwork`, the hard-coded `NULL` `committed` column in `backend/crates/kalamdb-views/src/system/cluster_groups.rs`, the unsupported `transfer_leadership()` stub in `backend/crates/kalamdb-raft/src/manager/raft_group.rs`, `millis_since_last_heartbeat: None` in `backend/crates/kalamdb-raft/src/executor/raft.rs`, the four log I/O workers in `backend/crates/kalamdb-raft/src/storage/log_io.rs` and their blocking `sync_channel` send, the node-`0` log ids rebuilt by `stored_log_id()` in `backend/crates/kalamdb-raft/src/storage/raft_store.rs`, and `max_snapshots_to_keep` passed as `max_in_snapshot_log_to_keep` in `raft_group.rs`. Add `backend/crates/kalamdb-raft/tests/openraft_compat.rs` that builds, with the current 0.9 types, one vote, one `StoredMembership` as written by `save_last_membership`, one application command entry, one `StateMachineData` snapshot header, one `RaftSnapshotMeta`, one snapshot file, and one `KalamNode`, and writes those bytes to `backend/crates/kalamdb-raft/tests/fixtures/openraft-0.9/`. Run that test once and keep the files. Add a 0.9 test in `backend/crates/kalamdb-raft/tests/cluster_integration.rs` that restarts a follower in a 3-node group and keeps writing, so the leader-id change in T093 has a before and after. Do not bump the dependency in this task.
+
+**Checkpoint**: Fixtures exist before any 0.10 edit. If the pin has already moved, regenerate them from a 0.9.25 checkout and say so in `baselines.md`.
+
+---
+
+## Phase 19: User Story 8 - Compile on OpenRaft 0.10 (Priority: P0)
+
+**Goal**: The Raft crate builds on 0.10.0 and still decodes the T090 fixtures. Unary append, the standalone WriteBatch commit, and the Meta-to-Data watermark stay (FR-048, FR-049, FR-050, FR-051).
+
+**Independent Test**: `cargo check -p kalamdb-raft` passes on 0.10.0 with `default-features = false`, `serde`, and `tokio-rt`, and without `storage-v2` or `openraft-legacy`. The T090 fixtures decode. `Display` of a command does not include payload bytes.
+
+### Tests for the API migration
+
+- [X] T091 [US8] Change `backend/crates/kalamdb-raft/tests/openraft_compat.rs` so it loads the T090 fixture files and decodes them with the current types, and add a `RaftCommandBytes` display assertion that the output does not contain payload bytes. These tests are expected to fail to compile or fail to decode from the 0.10 bump until T097 (depends on T090).
+
+### Implementation for the API migration
+
+- [X] T092 [US8] In the workspace `Cargo.toml`, set `openraft = { version = "0.10.0", default-features = false, features = ["serde", "tokio-rt"] }` and delete `storage-v2`. `tokio-rt` provides the default `AsyncRuntime` and is required. `clap` stays off. Do not add `openraft-legacy`, `openraft-multi`, `runtime-stats`, `metrics-logids`, or `openraft-metrics-otel`. Leave the workspace edition at 2021 (depends on T090).
+- [X] T093 [US8] Migrate `KalamTypeConfig` in `backend/crates/kalamdb-raft/src/storage/types.rs` to the 0.10 associated types (`Term`, `LeaderId`, `Vote`, `Node`, `Membership`, `MembershipEdit`, `Payload`, `Entry`, `Responder`, `Batch`, `AsyncRuntime`, `ErrorSource`). Set `Node = KalamNode` and `LeaderId = leader_id_std::LeaderId<u64, u64>`, so a committed leader id is the term that the log record already stores and `stored_log_id()` no longer invents node `0`. Replace bare `Vec<u8>` application data with `RaftCommandBytes` (`Debug + Display`, no payload dump) and keep the command bincode layout. Move stored membership and the `StateMachineData` header to KalamDB-owned records that convert to and from the 0.10 types. Their readers also accept the T090 0.9 bytes, and their writers emit only the new records (contract: Leader id and persisted format). Use `declare_raft_types!` only when the serialized bytes stay identical. Update `Raft<C, SM>` call sites in `backend/crates/kalamdb-raft/` and `backend/crates/kalamdb-configs/`. The T090 follower-restart test passes (depends on T091, T092).
+- [X] T094 [US8] Move `SnapshotData` off the type config onto the state machine in `backend/crates/kalamdb-raft/src/state_machine/`. Build the 0.10 `Snapshot` with an unboxed payload and snapshot meta that has no `snapshot_id`. Name snapshot files by covered `last_log_id` plus a local build counter kept in KalamDB's `RaftSnapshotMeta`. Do not parse the counter back out of a string. Existing snapshot files from T090 stay readable (depends on T093).
+- [X] T095 [US8] Adapt `backend/crates/kalamdb-raft/src/storage/raft_store.rs` and `backend/crates/kalamdb-raft/src/storage/log_io.rs` to 0.10: `io::Error`, `read_vote` on `RaftLogReader` through `get_log_reader()`, `truncate` replaced by `truncate_after` (the named index is kept), `LogFlushed` renamed to `IOFlushed` / `io_completed`, and `RaftStateMachine::apply` taking a stream of entry responders. Return read and decode failures as `io::Error`. Do not keep `get_log_entries_sync` returning an empty `Vec` on error or `filter_map` dropping undecodable entries. Keep the standalone deferred-durability contract: `io_completed` before persistence only when `peers` was empty at start, and the log record plus `last_applied` in the apply batch. Keep the Meta-to-Data watermark. Do not switch the store to `examples/log-rocks` or `examples/sm-rocks` (depends on T094).
+- [X] T096 [US8] Move `backend/crates/kalamdb-raft/src/network/network.rs` and `backend/crates/kalamdb-raft/src/network/service.rs` to `RaftNetworkV2` for vote, append, snapshot, pre-vote, and leadership transfer, including `AppendResult` and conflict hints. Keep group-id routing, the shared `Arc<DashMap<NodeId, Channel>>`, and cluster RPC authentication and TLS. Send `full_snapshot` in bounded chunks below the tonic message limit and reassemble before install. Bound append requests by bytes as well as by `max_payload_entries`, and set `max_decoding_message_size` on the Raft gRPC server and client to the configured maximum. Add a protocol version to the Raft RPC envelope and reject another version before payload decode. Leave append unary until T108 (depends on T093).
+- [X] T097 [US8] Finish remaining 0.10 call sites so `cargo check -p kalamdb-raft` passes: `local_committed()` / `cluster_committed()`, `borrow_watched()`, `ClientWriteError::LogEntryDiscarded`, `ForwardToLeader::reason`, `trigger().elect(pre_vote)`, and removed `Config` fields (`PayloadTooLarge` becomes `max_payload_entries`). Confirm `Raft::as_leader()` exists in the 0.10.0 API docs before using it. In `backend/crates/kalamdb-raft/src/error.rs` and `backend/crates/kalamdb-raft/src/manager/raft_group.rs`, map not-leader, lease expired, and leadership transfer to distinct errors. `propose_with_index` retries `ForwardReason::LeaseExpired` on the same node with bounded backoff and never forwards to itself. `LogEntryDiscarded` returns an outcome-unknown error and is not retried. Make T091 pass (depends on T095, T096).
+
+**Checkpoint**: The crate compiles on 0.10.0 and the 0.9 fixtures still decode. No optional crate has been added.
+
+---
+
+## Phase 20: User Story 8 - Storage recovery (Priority: P0)
+
+**Goal**: Log reads, the apply batch, truncation, snapshots, and startup validation match 0.10, the Raft storage has one write path and one reader, and the OpenRaft log-storage suite passes (FR-049, FR-051, FR-056, SC-016).
+
+**Independent Test**: `truncate_after` keeps the named index, `entries_stream` yields ordered indexes and stops on cancel, a purged-log gap or torn tail refuses startup without deleting the healthy copy, an undecodable record is an error rather than a skipped entry, and `rg with_write_coalesce backend/crates/kalamdb-raft` finds nothing.
+
+- [X] T098 [US8] Implement `RaftLogReader::entries_stream()` in `backend/crates/kalamdb-raft/src/storage/raft_store.rs` as a bounded, ordered RocksDB range scan with cancellation and a reader lifetime that ends when the stream ends. The per-entry apply responder for one SQL transaction entry must still commit that entry's mutations and applied progress together on the standalone path (depends on T097).
+- [X] T115 [US8] Replace `kalamdb_store::with_write_coalesce` on the Raft apply path in `backend/crates/kalamdb-raft/src/storage/raft_store.rs` with one explicit batch per applied entry. The storage creates the batch, passes it to the state machine `apply`, adds the log record and `last_applied` on the standalone path, writes it once, then runs the entry's after-persist hooks and responder. Multi-entry applies use the same per-entry batch, not immediate writes. A failed membership save fails the apply instead of being logged. When no production caller of `write_coalesce` remains, delete `backend/crates/kalamdb-store/src/write_coalesce.rs` and its task-local and process-wide map (depends on T098).
+- [X] T116 [US8] Make one owner of the applied index per group in `backend/crates/kalamdb-raft/src/storage/raft_store.rs` and `backend/crates/kalamdb-raft/src/state_machine/`. Raft `last_applied` is written only in the T115 batch and read from one place. The Meta-to-Data watermark stays separate. Delete the leftover read of a disk-persisted committed index from older builds once the T090 fixtures prove no supported store depends on it (depends on T115).
+- [X] T117 [US8] Delete the test-only in-memory mode (`persistent_store: Option<RaftPartitionStore>`) from `backend/crates/kalamdb-raft/src/storage/raft_store.rs`. Tests use `RaftPartitionStore` over `InMemoryBackend`. Keep one `RaftLogReader` implementation instead of three (`KalamLogReader`, `KalamRaftStorage`, `Arc<KalamRaftStorage>`). `stage_log_entries` moves records instead of cloning them (depends on T095; blocks T100).
+- [X] T118 [US8] Implement the snapshot lifecycle from the contract in `backend/crates/kalamdb-raft/src/storage/raft_store.rs` and `backend/crates/kalamdb-raft/src/manager/raft_group.rs`: delete snapshot files older than `max_snapshots_to_keep` after a new snapshot is durable, stop passing `max_snapshots_to_keep` as `max_in_snapshot_log_to_keep`, install a snapshot with fsync then one `WriteBatch` (meta, path, `last_applied`, membership, purge marker), and share one `Arc` buffer or file stream across build, `get_current_snapshot`, and transfer instead of copying the payload (depends on T094, T115).
+- [X] T099 [US8] Add tests in `backend/crates/kalamdb-raft/src/storage/raft_store.rs` and `backend/crates/kalamdb-raft/tests/cluster_integration.rs` that `truncate_after` retains the named index, a crash between log flush and apply does not tear a standalone single-entry commit, and startup fails with a diagnostic on a missing purged prefix, an index mismatch, or a torn log tail. A standalone tail above `last_applied` missing after a crash is legal and starts. An undecodable log entry, membership (`read_last_membership`), vote, or `StateMachineData` fails with a diagnostic instead of the current `.ok()` fallback. `add_learner` on a group started standalone is rejected. The failure path must not delete the last healthy copy or recreate the group (depends on T095, T098, T115).
+- [X] T100 [US8] Run `openraft::testing::log::{Suite, StoreBuilder}` through its async `test_all()` against the Kalam adapter on `InMemoryBackend` and on RocksDB in `backend/crates/kalamdb-raft`. Cover truncate-after, stream visibility, snapshot/replay/purge boundaries, a corrupt store, and a T090 store opened on 0.10 (depends on T099, T117, T118).
+- [X] T101 [US8] Confirm `wait_for_recovery()` and `try_create_snapshot_builder()` are wired in `backend/crates/kalamdb-raft/src/storage/raft_store.rs` and `backend/crates/kalamdb-raft/src/manager/raft_group.rs` without replacing the Meta-to-Data watermark in the Meta state machine with Raft `last_applied`. State that in the decision log of `specs/039-unified-table-transactions/contracts/openraft-010.md` (depends on T099).
+
+**Checkpoint**: A 0.9 store restarts, truncation is not off by one, every applied entry is one explicit batch, old snapshots are deleted, and the log-storage suite passes.
+
+---
+
+## Phase 21: User Story 8 - Leadership and cluster metrics (Priority: P0)
+
+**Goal**: Leadership transfer and Pre-Vote use the 0.10 API, and cluster SQL views show real commit progress (FR-052, FR-053, SC-017).
+
+**Independent Test**: Transferring leadership to a voting member completes. A Pre-Vote from a disrupted follower does not replace a live leader. `SELECT committed FROM system.cluster_groups` returns the cluster commit index. Existing column names and order are unchanged.
+
+- [X] T102 [US8] Replace the unsupported `transfer_leadership()` stub in `backend/crates/kalamdb-raft/src/manager/raft_group.rs` with `trigger().transfer_leader(target)`, and handle incoming `pre_vote()` / `handle_transfer_leader()` on the V2 service in `backend/crates/kalamdb-raft/src/network/service.rs`. Reject a target that is not a current voter. Replace the `step_down()` workaround (disable heartbeat and election, then a detached `tokio::spawn` that re-enables them) with a transfer to the most caught-up voter, and make the shutdown handover in `backend/crates/kalamdb-raft/src/manager/raft_manager.rs` pick a caught-up voter per group and wait for the transfer instead of sending every group to the first peer and sleeping 200 ms. Delete the stale doc comment on `transfer_leadership`. Add a 3-node transfer test and a maintenance-failover test in `backend/crates/kalamdb-raft/tests/cluster_integration.rs` (depends on T096, T097).
+- [X] T103 [US8] Enable Pre-Vote on group construction in `backend/crates/kalamdb-raft/src/manager/raft_group.rs` and add a fault test that a timed-out voter cannot depose a leader that still has quorum (depends on T102).
+- [X] T104 [US8] Fill `committed` in `backend/crates/kalamdb-views/src/system/cluster_groups.rs` from the 0.10 cluster commit index. Keep the current column names and order (`committed` stays field 10). Append local-commit, flushed, and lag columns rather than reordering. Cache `watch_log_progress`, `watch_vote_progress`, `watch_commit_progress`, `watch_apply_progress`, and `watch_snapshot_progress` in one bounded snapshot owned by `backend/crates/kalamdb-raft/src/manager/raft_manager.rs`. A query must not spawn a watch. Lag uses indexes from the same group only (depends on T097).
+- [X] T105 [US8] Replace `millis_since_last_heartbeat: None` in `backend/crates/kalamdb-raft/src/executor/raft.rs` with quorum-ack or heartbeat age derived from the runtime `Instant`. Leave the value unknown when this node has no sample. In `backend/crates/kalamdb-views/src/system/cluster.rs`, append summary columns (leaders, followers, lagging groups, worst lag, heartbeat age) without renaming or reordering the existing columns. Do not treat the Meta leader as the leader of every group. Remote applied indexes come from the existing authenticated `GetNodeInfo` RPC through `peer_stats_cache` in `backend/crates/kalamdb-raft/src/executor/raft.rs`, or stay unknown. Do not add a second peer RPC (depends on T104).
+- [X] T106 [US8] `system.cluster_nodes` is not registered (checked 2026-11-15, recorded in the contract decision log). Do not add it. Replace the reference in `backend/tests/docs/CLUSTER_SCENARIOS.md` with `system.cluster`, and re-run `rg cluster_nodes backend` to confirm no other reference exists (depends on T105).
+
+**Checkpoint**: `committed` is a real index, transfer and Pre-Vote have tests, and CLI-visible column order is unchanged.
+
+---
+
+## Phase 22: User Story 8 - Optional 0.10 adoptions and behavior decisions (Priority: P1)
+
+**Goal**: Each optional upstream feature has an adopt-or-decline row, and each 0.10 behavior change has a recorded decision. Declining is success. Adopting requires the test named here (FR-050, FR-055, SC-017).
+
+**Independent Test**: The decision log in `contracts/openraft-010.md` has no `open` row for `openraft-multi`, `stream_append`, log I/O workers, read policy, API batching, `runtime-stats`, OpenTelemetry, or a 0.10 behavior change.
+
+- [X] T107 [US8] Prototype `GroupRouter<KalamTypeConfig, GroupId>` over the existing authenticated tonic pool in a test-only module under `backend/crates/kalamdb-raft/src/network/`. Compare code size, allocations, and connection count with the `RaftNetworkV2` from T096. Adopt `openraft-multi` in the workspace `Cargo.toml` only when that prototype is smaller or faster and keeps auth, TLS, timeouts, cancellation, and one shared channel pool. Otherwise delete the prototype. Write the result in the decision log. Do not describe this task as pipelined replication (depends on T096).
+- [X] T108 [US8] Add pipelined `stream_append` on the V2 network only together with an off/on test in `backend/crates/kalamdb-raft/tests/cluster_integration.rs`. If that test is not written, leave unary append in place and mark the decision log `decline` (depends on T096, T107).
+- [X] T109 [US8] For read policy (`ReadIndex`, lease reads, `get_local_read_linearizer`), `Raft::write()` / `client_write_many()` / API batch linger, the four `log_io` workers, `runtime-stats`, and `openraft-metrics-otel`, either keep the current behavior or land one change with a `dev`-profile before/after row in `baselines.md`. A read linearizer waits until its `ReadLogId` is applied. Batching must not merge two SQL transactions or publish a commit before durable apply. Confirm the API batch setting names in the 0.10.0 docs before using them. The `log_io` decision is not "keep as is": `flush_log_records` must stop blocking a Tokio worker on a full `sync_channel`. Either delete the workers and write through `spawn_blocking`, or make each worker drain its queue into one `WriteBatch` per drain across groups with per-group order kept. Choose from a profile. Metrics export stays opt-in and is not a table provider. Update the decision log for every row (depends on T097, T101).
+- [X] T119 [US8] Decide each 0.10 behavior change in the contract table (`enable_leader_restore`, backoff, bounded API/notification/state-machine channels, `removed_leader_step_down`, `trigger().elect(pre_vote)`, the later first tick) and record it in the decision log. Map a full bounded channel into the existing SQL timeout and admission errors. Adjust test startup budgets for the later first tick, not production timeouts. Run `Config::validate` on the shipped default and test configs in `backend/crates/kalamdb-raft/src/manager/raft_group.rs` (depends on T097, T103).
+
+**Checkpoint**: Every optional row is `adopt` or `decline`, and every behavior-change row has a decision. No undeclared crate was added. No Raft path blocks a Tokio worker thread.
+
+---
+
+## Phase 23: User Story 8 - Upgrade proof (Priority: P0)
+
+**Goal**: The merge gate in issue #451 and PR #412 is evidenced: compatibility, faults, spec 039 regressions, timings, and no leftover 0.9 API (SC-016, SC-017).
+
+**Independent Test**: A 0.9 store restarts, a 3-node group fails over, spec 039 single-group commit tests pass, `baselines.md` has before/after seconds, and `rg openraft-legacy` and `storage-v2` find nothing in the workspace manifests.
+
+- [X] T110 [US8] Extend `backend/crates/kalamdb-raft/tests/cluster_integration.rs` for partition and rejoin, a lagging follower, follower restart followed by more writes, restart during append, restart during snapshot, forced election, leadership transfer under load, quorum loss, an expired leader lease, a corrupt or missing snapshot, a snapshot larger than 4 MiB, a single `TransactionCommit` entry larger than 4 MiB, and a flooded bounded channel. Each case either recovers the group or fails with the T099 diagnostic (depends on T100, T102, T103, T118, T119).
+- [X] T111 [US8] Re-run the spec 039 single-group atomic commit tests, the Meta watermark tests, and the CDC `VersionId` ordering tests on the 0.10 tree. Stop if any regresses. Name the commands and pass counts in `specs/039-unified-table-transactions/baselines.md` (depends on T101, T097).
+- [X] T112 [US8] Record `dev`-profile before/after seconds for standalone 1,000-row and 25,000-row inserts and for a 3-node busy group, in `specs/039-unified-table-transactions/baselines.md`. Include p50/p95/p99, and note CPU and peak RSS when the run collected them. A regression above 5% on an unaffected Raft apply workload blocks the upgrade unless the decision log explains it with a measurement (depends on T110, T111).
+- [X] T113 [US8] Write the rolling-upgrade policy in `docs/architecture/raft-replication.md` and in the release notes for the version that ships this: coordinated restart of the whole cluster. The contract already records this as final, because upstream states a 0.9 `ForwardToLeader` and `VoteRequest` do not decode on 0.10 and the leader id changes the `LogId` wire layout. Add a test in `backend/crates/kalamdb-raft/tests/` that a peer with another RPC protocol version is rejected with a clear error before payload decode (depends on T091, T096).
+- [X] T114 [US8] Remove leftover 0.9 code: deprecated 0.9 calls, any `openraft-legacy` dependency, the generic `raft_rpc` / `RaftRpcKind` path once V2 replaces it, the `RaftError::Fatal(Panicked)` decode fallback, the `step_down` and shutdown workarounds, the in-memory storage mode, `write_coalesce`, the leftover committed-index read, and the `TransactionCommit` codec asymmetry (one encoding for every command in `propose_with_index`). `cargo check -p kalamdb-raft` must pass with no deprecated 0.9 call. Update `docs/architecture/raft-replication.md` for `RaftNetworkV2`, `truncate_after`, the standard leader id and KalamDB-owned persisted records, the standalone durability contract, snapshot retention, real `committed`, leadership transfer, and Pre-Vote. If a public system-table column was appended, update the matching page under `../kalamdb-skills`. Do not commit unless the user asks (depends on T106, T109, T110, T112, T113, T115, T116, T117, T118, T119).
+
+**Checkpoint**: PR #412 can treat issue #451 as implemented only when T090–T119 are checked and the decision log has no `open` row. A failed gate stops the migration; do not disable tests or merge a half-bumped dependency.
+
+---
+
+## Phase 24: User Story 2 - One versioned engine implementation (Priority: P1)
+
+**Goal**: User and shared storage run one scan, DML, index, and hot/cold implementation, as T012 states, instead of two copies behind an enum (FR-001, FR-044, FR-057).
+
+**Background**: T012 moved the provider bodies into `backend/crates/kalamdb-tables/src/versioned/engine/user/` and `engine/shared/` (about 5,100 lines across `dml.rs`, `sql.rs`, `scan.rs`, `storage.rs`, assembled with `include!` and `#[path]`). `VersionedTableEngine` in `versioned/engine.rs` is an enum that matches on `User` / `Shared` and calls one of two copies. About 75 methods exist on both `UserTableProvider` and `SharedTableProvider` with the same name, for example `columnar_hot_scan`, `insert_batch_with_versions`, `update_by_pk_value_deferred_with_hot_ops`, `scan_with_version_resolution_to_kvs_async`, `plan_literal_equality_updates`, and `stage_vector_upsert_batch`.
+
+**Independent Test**: The T088 correctness matrix passes for USER and SHARED tables. `rg 'include!\(' backend/crates/kalamdb-tables/src/versioned` finds nothing. Each method above has one body. The 16-script set from T089 shows no script slower by more than 5% (median of the same run count as the T089 checkpoint).
+
+- [ ] T120 [US2] Merge `engine/user` and `engine/shared` into one implementation generic over a small typed scope adapter in `backend/crates/kalamdb-tables/src/versioned/engine/`. The adapter owns only what differs: row id and row type (`UserTableRowId`/`UserTableRow` versus `SharedTableRowId`/`SharedTableRow`), the key prefix (`UserId` versus none), the PK index constructor, the vector hot store type, and shared `RlsMode::ForcePolicyCheck` through the existing `SharedTableAuthorization`. A missing `UserId` on a user-scoped call stays a typed `None` or error, as today. Move each duplicated body once, starting from the shared copy where the two differ only by the user argument, and diff each pair before deleting one. Do not change key layout, row encoding, `VersionId` order, or RLS behavior. Replace the `include!` / `#[path]` assembly with normal modules. `UserTableProvider` and `SharedTableProvider` become thin `pub(crate)` wrappers or are deleted if `KalamTableProvider` no longer needs them. Run the T088 matrix and the T089 16-script set before and after, and record both rows in `baselines.md` (depends on T088; independent of Phases 18–23).
+
+**Checkpoint**: One engine body per operation. Story 2's "one provider boundary" is true inside the boundary, not only at it.
 
 ---
 
@@ -363,6 +481,8 @@ Backend crates live under `backend/crates/`. Evidence goes in `specs/039-unified
 - **User Story 7**: Starts after Phase 2. It does not require Stories 3–6.
 - **Polish**: Starts after the stories being shipped. `T061` waits on the P0 and P1 gates that are in scope. It does not wait on the performance handoff.
 - **Performance handoff (Phases 11–17)**: Starts at T069 on the current tree. It does not wait for unfinished Story 4–7 tasks except where a task names one. Order is the handoff execution order: T069; then T070 and T071; then T072 and T073; then T075 before T076/T077 and T078; then T079/T080 and T081; T074 only when concurrent evidence justifies it; T088 and T089 after the shipped A–D slices. T085 may follow T069. T086 follows T078. T087 follows T075 and T078. T082–T084 are conditional.
+- **OpenRaft 0.10 (Phases 18–23)**: Starts at T090 on the current 0.9.25 pin. It does not wait for unfinished performance tasks. T092 waits on T090. T097 waits on T095 and T096. T098–T101 and T115–T118 wait on the compile checkpoint. T102–T106 wait on T097. T107–T109 and T119 wait on the network and storage checkpoints and may decline a feature. T114 waits on the proof and cleanup tasks. Do not bump `openraft` before T090.
+- **One engine implementation (Phase 24)**: T120 waits on T088. It does not wait on OpenRaft or the open performance tasks, but it must not land in the same commit as an unrelated performance slice, so before/after timings stay attributable.
 
 ### User Story Dependencies
 
@@ -374,6 +494,8 @@ Backend crates live under `backend/crates/`. Evidence goes in `specs/039-unified
 - **User Story 6 (P1)**: After Phase 2. Independent of the storage engine.
 - **User Story 7 (P2)**: After Phase 2. Independent of Stories 3–6. T056 stays a gate. T082 is the measurement and ADR for that gate, not a format migration inside Row V2.
 - **Performance handoff**: Specified by [dml-storage-performance-handoff.md](dml-storage-performance-handoff.md). T069 blocks measurement-dependent slices. T070 and T071 can run together after T069. T072 waits on T071. T073 waits on T072. T075 waits on T071 and blocks T076, T077, and T087. T076 and T077 can run together after T073 and T075 respectively. T078 waits on T076 and T077. T079 and T080 can run together after T069 and T073. T081 waits on T075 and T076–T078. T074 waits only on T069 and on concurrent-load evidence. T085 waits on T050 and T069 and completes T051. T086 waits on T078. T088 waits on the shipped A–D slices. T089 waits on T069 and T088. T082–T084 do not block T088 for A–D.
+- **User Story 8 (P0)**: Specified by [contracts/openraft-010.md](contracts/openraft-010.md). T090 first. T091 and T092 after T090. T093 after T091 and T092. T094 after T093. T095 after T094. T096 after T093, in parallel with T094 and T095. T097 after T095 and T096. T098 after T097. T115 after T098. T116 after T115. T117 after T095. T118 after T094 and T115. T099 after T095, T098, and T115. T100 after T099, T117, and T118. T101 after T099. T102 after T096 and T097. T103 after T102. T104 after T097, in parallel with T102. T105 after T104. T106 after T105. T107 after T096. T108 after T096 and T107. T109 after T097 and T101. T119 after T097 and T103. T110 after T100, T102, T103, T118, and T119. T111 after T097 and T101. T112 after T110 and T111. T113 after T091 and T096. T114 after T106, T109, T110, T112, T113, and T115–T119.
+- **User Story 2, Phase 24**: T120 after T088.
 
 ### Within Each User Story
 
@@ -394,6 +516,8 @@ Backend crates live under `backend/crates/`. Evidence goes in `specs/039-unified
 - After `T014` and `T023`, Story 4, Story 5, and Story 6 can run together.
 - Story 7 can run beside Stories 4–6.
 - After T069, T070, T071, T074, and T085 can run together. T076 and T077 can run together after T075. T079 and T080 can run together after T073.
+- After T093, T094/T095 and T096 can run together. T117 can run beside T098 after T095. After T097, T102 and T104 can run together. T111 can run beside T110. T113 can run as soon as T091 and T096 exist.
+- T120 can run beside any OpenRaft task. They touch different crates.
 
 ---
 
@@ -458,6 +582,21 @@ Story 1 alone is not the MVP. Its commit path is specified on the unified engine
 5. T079 and T080 from profiles. Finish T081. Start T074 only if concurrent measurements show claim cost.
 6. T088 and T089. T082–T084 only with a measured bottleneck and an ADR. T085 may follow step 1. T086 follows step 4. T087 follows the stream and budget contracts from steps 4 and 5.
 
+### OpenRaft 0.10 (issue #451, PR #412)
+
+1. T090 on the current 0.9.25 pin. Save fixtures before any dependency edit.
+2. T091–T097. Stop if the T090 bytes do not decode. Do not add optional crates here.
+3. T098, T115–T118, T099–T101. `truncate_after` keeps the named index. One explicit batch per applied entry. Snapshot retention. Startup failures stay diagnostic, and no read silently drops a record.
+4. T102–T106. Transfer, Pre-Vote, and a real `committed` column. Do not reorder existing view columns.
+5. T107–T109, T119. Write adopt or decline, and decide each behavior change. A decline is done. An adopt needs its test.
+6. T110–T114. Faults, spec 039 regressions, timings, coordinated-restart policy, then delete 0.9 leftovers.
+
+Story 8 does not wait on the performance handoff. It does not start a second branch.
+
+### One engine implementation
+
+1. T120 after T088. Diff each user/shared method pair, move one body, delete the other. Record the T088 matrix and T089 script timings before and after.
+
 ---
 
 ## Notes
@@ -469,3 +608,13 @@ Story 1 alone is not the MVP. Its commit path is specified on the unified engine
 - Shared tables keep forced row-level security. A later view over a shared table uses `KalamTableProvider` and that same security.
 - Commit after each original story task or a coherent group only when the user asks. Do not start Story 3 folding until Story 1's uncoalesced commit tests pass.
 - Phases 11–17 implement [dml-storage-performance-handoff.md](dml-storage-performance-handoff.md) exactly. That file is the same text as `docs/plans/2026-10-30-dml-storage-performance-handoff.md`. Do not commit those slices unless the user explicitly asks. Do not reset the dirty tree. Evidence rows go in `baselines.md`. Do not open a second planning document for this program.
+- Phases 18–23 implement [contracts/openraft-010.md](contracts/openraft-010.md) for issue #451 on PR #412. Do not open a second branch. Do not bump `openraft` before T090. Do not add `openraft-multi` or an OpenTelemetry crate until its decision-log row says adopt. Do not claim cross-group atomicity from this upgrade. If a safety gate fails, stop and record the blocker in the decision log and in issue #451.
+- Phase 24 (T120) is a move, not a rewrite. Key layout, row encoding, `VersionId` order, and shared RLS stay byte-for-byte and behavior-for-behavior the same.
+
+---
+
+## Phase 25: Convergence
+
+- [X] T121 Bound Raft append replication by bytes per FR-050 (partial). `group_raft_config` leaves `max_payload_entries` at the OpenRaft default of 300, and `build_raft_rpc_request` rejects a finished payload over `RAFT_RPC_MAX_MESSAGE_BYTES` instead of keeping the append under that limit. A multi-entry append that would exceed the limit must shrink or split before send. One entry larger than the limit still has to replicate on a multi-node group, or be rejected before commit there. Keep the standalone `transaction_commit_larger_than_rpc_limit_commits` result. Do not mark a replicated oversized entry successful when the RPC rejects it.
+- [X] T122 Serve snapshot transfer from the existing `Arc` buffer per FR-056 (partial). `get_current_snapshot` already clones the `Arc`. `snapshot_payload_chunks` in `backend/crates/kalamdb-raft/src/network/network.rs` still copies every chunk with `to_vec()`, so transfer holds a second full copy. Send the stored bytes without that copy. T118 is the checked task this finishes.
+- [X] T123 Record the missing cluster verification rows per plan: openraft verification workloads (partial). T112 recorded the standalone commits and one 3-node busy group. The contract also asks for the default group count and a 100-group idle case, with memory and CPU per Raft instance, connections, heartbeat load, append writes, and snapshot throughput. Measure those on the dev profile and append the seconds to `baselines.md`. Do not invent numbers. The T112 rows stay as recorded.

@@ -144,7 +144,7 @@ Script 8's scan is the large stage. Scripts 11, 12, 13, and 15 spend more of the
 | T086 | Cold Parquet scans repeatedly copied a growing prefix when concatenating batches. | `ColdBatchRead` delivers one unread batch with backpressure. Count and PK cold paths fold without whole-prefix copies. Bounded file-open concurrency (8). | Dev profile. Cold planner APIs compile; concat helpers remain for transitional collect. No copied-byte median. | Copied bytes, peak memory, and seconds not measured. |
 | T087 | SELECT materialised the full DataFusion result before wire/HTTP encoding. | `ExecutionResult::StreamingRows` + `QueryBatchStream` (buffer=1). Wire async encoder pulls batches. HTTP/cluster/functions/live call `into_materialized_rows`. Accounted collect adapter for ScanBatch. | Dev profile. `accounted_collect_releases_scan_bytes_on_drop` passed (0.019s). `cargo check -p kalamdb-core --lib` passed. | Large SELECT first-row/total/peak-bytes and throttled-client runs await a throttled-client measurement. |
 | T088 | The shipped A–F slices had unit coverage, and the full CLI suite had not been recorded against this tree. | Re-ran the quickstart gate crates and the filtered core catalog/transaction/applier/executor set, and used the same-day full CLI e2e. | Dev profile, Apple M5 Pro, commit `90fa854bdc01`. Gate crates: 842 passed, 0 failed, 2.456s (real 521.18s including the dependency rebuild). Core filter: 111 passed, 0 failed, 5.653s (real 605.19s including compile). CLI e2e: 677 passed, 8 skipped, 0 failed, 378.631s. | File, vector, restart, and cancellation cases are the ones already inside those suites. |
-| T089 | October dev total median was 35.734s. Combined scripts 8, 11, 12, 13, and 15 were 12.243s. | Clean-tree `KALAM_BASELINE=1` five-suite run, then one `KALAMDB_DML_STAGE_TRACE=1` suite. | Dev profile, Apple M5 Pro, `90fa854bdc01`. Timing run `benchv2/pgwire-speed/results/runs/20261115T202931Z-dev-90fa854bdc01`. KalamDB total median 26.458s, range 26.197..26.564. PostgreSQL total median 1.084s, range 1.077..1.089. Every recorded suite matched columns, row counts, `count(*)`, and cell digests. Profile run `20261115T203401Z-dev-90fa854bdc01` is one sample and is not part of the median. | Combined scripts 8/11/12/13/15 are 11.811s, 3.5% under 12.243s. The 30% combined goal is unmet. Script 12 is slower (0.629s to 0.674s). Peak tracked bytes, RSS, 1/8/32-client prepared CRUD, and the 300-second churn series are still open. |
+| T089 | October dev total median was 35.734s. Combined scripts 8, 11, 12, 13, and 15 were 12.243s. | Clean-tree `KALAM_BASELINE=1` five-suite run, then one `KALAMDB_DML_STAGE_TRACE=1` suite. | Dev profile, Apple M5 Pro, `90fa854bdc01`. Timing run `benchv2/pgwire-speed/results/runs/20261115T202931Z-dev-90fa854bdc01`. KalamDB total median 26.458s, range 26.197..26.564. PostgreSQL total median 1.084s, range 1.077..1.089. Every recorded suite matched columns, row counts, `count(*)`, and cell digests. Profile run `20261115T203401Z-dev-90fa854bdc01` is one sample and is not part of the median. | Combined scripts 8/11/12/13/15 are 11.811s, 3.5% under 12.243s. The 30% combined goal is unmet. Script 12 is slower (0.629s to 0.674s). Peak tracked bytes, RSS, 1/8/32-client prepared CRUD, and the 300-second churn series are in the 2026-11-17 section below. |
 
 ## T089 candidate timing, 2026-11-15
 
@@ -184,4 +184,155 @@ Profile suite stage lines, one sample, nested stage time included in full. Stage
 | 13 | 1.874s | `target_resolution` 590ms, `backend_submit` 184ms |
 | 15 | 2.492s | `target_resolution` 499ms, `backend_submit` 92ms, `staging_fold` 60ms |
 
-Script 8 is still scan-bound. Scripts 11, 12, 13, and 15 still spend their largest named stage in target resolution. The next measured work is script 12, then peak tracked bytes and RSS, then the 1/8/32-client prepared CRUD runs and the 300-second churn series.
+Script 8 is still scan-bound. Scripts 11, 12, 13, and 15 still spend their largest named stage in target resolution. The 30% combined-script goal remains unmet. Peak tracked bytes, RSS, prepared CRUD, and the churn series are recorded below.
+
+## OpenRaft 0.9.25 baseline (T090)
+
+Recorded 2026-11-15 from the tree that still pins OpenRaft 0.9.25. No timings. This is the behavior T091–T097 must still satisfy.
+
+| Item | Current behavior |
+| --- | --- |
+| Pin | `openraft = { version = "0.9.25", features = ["serde", "storage-v2"] }` in the workspace `Cargo.toml` |
+| Network | Unary `RaftNetwork` in `backend/crates/kalamdb-raft/src/network/`. No `RaftNetworkV2`, no `full_snapshot` chunking |
+| `system.cluster_groups.committed` | Hard-coded `None` in `backend/crates/kalamdb-views/src/system/cluster_groups.rs` (`committeds.push(None)`) |
+| Leadership transfer | `RaftGroup::transfer_leadership` returns `InvalidState("unsupported")` in `backend/crates/kalamdb-raft/src/manager/raft_group.rs` |
+| Heartbeat age | `millis_since_last_heartbeat: None` in `backend/crates/kalamdb-raft/src/executor/raft.rs` |
+| Log I/O | Four workers (`LOG_IO_SHARDS = 4`) in `backend/crates/kalamdb-raft/src/storage/log_io.rs`. A full queue uses a blocking `mpsc::sync_channel` send (`LOG_IO_QUEUE_DEPTH = 64`) |
+| Stored log ids | `stored_log_id()` rebuilds every disk log id with `CommittedLeaderId::new(term, 0)` in `raft_store.rs`. The log record stores only term and index |
+| Snapshot retention config | Multi-node `Config` sets `max_in_snapshot_log_to_keep: config.max_snapshots_to_keep` in `raft_group.rs`. That field counts log entries, not snapshot files |
+
+Fixtures written by `backend/crates/kalamdb-raft/tests/openraft_compat.rs` live in `backend/crates/kalamdb-raft/tests/fixtures/openraft-0.9/`: `vote.bin`, `membership.bin`, `command_entry.bin`, `state_machine_data.bin`, `snapshot.bin`, `raft_snapshot_meta.bin`, `kalam_node.bin`. Membership and the snapshot header use the state-machine msgpack envelope. The vote and `RaftSnapshotMeta` use `encode_entity`. The command entry is a packed log record (`index = 2`, `term = 1`, normal tag) around `RaftCommand::Meta(CreateNamespace)`. The follower-restart write test is `follower_restart_then_more_writes` in `tests/cluster_integration.rs`.
+
+## Spec 039 regression on the 0.10 tree (T111)
+
+Recorded 2026-11-16, `dev` profile, `--retries 0`. One nextest invocation. Summary time is the nextest total, not compile time. 28 passed, 0 failed.
+
+```bash
+cd backend
+cargo nextest run -p kalamdb-core -p kalamdb-raft -p kalamdb-commons --offline --retries 0 -E 'test(/explicit_commit_persists_same_table_same_user_user_inserts|explicit_commit_preserves_user_scope_for_same_primary_keys|operation_service_preserves_user_scope_for_same_primary_keys|explicit_commit_of_25000_user_rows_is_all_or_nothing|explicit_commit_of_25000_shared_rows_is_all_or_nothing|interrupted_durable_commit_is_wholly_present_or_absent|replay_of_applied_commit_does_not_duplicate_rows|cross_domain_commit_is_rejected_before_a_storage_batch|sql_request_transaction_commit_persists_rows|sql_request_transaction_rejects_cross_group_access_without_aborting_bound_group|standalone_transaction_rejects_second_group_before_staging_and_can_commit_first|standalone_transaction_commits_two_users_in_its_single_user_group|one_node_cluster_transaction_rejects_a_different_shared_shard|test_user_data_command_watermark_get_set|test_all_user_command_variants_get_watermark|test_user_command_set_watermark_to_zero|test_shared_data_command_watermark|test_all_shared_command_variants_get_watermark|test_shared_command_set_watermark_to_zero|test_advance_and_check|test_wait_for_already_satisfied|test_add_and_drain|test_drain_preserves_log_order|assign_entry_versions_packs_log_index_and_ordinal|pack_unpack_round_trip_matches_numeric_order|ordinal_bounds_and_slot_count|log_index_bounds_stay_non_negative|test_version_ordering/)'
+```
+
+| Suite | Tests | Passed | Failed | Slowest |
+| --- | ---: | ---: | ---: | --- |
+| Single-group atomic commit (`kalamdb-core` transaction binaries) | 13 | 13 | 0 | `explicit_commit_of_25000_user_rows_is_all_or_nothing` 1.523s |
+| Meta watermark (`kalamdb-raft` command, coordinator, and pending-buffer tests) | 10 | 10 | 0 | 0.019s |
+| CDC `VersionId` order (`assign_entry_versions_packs_log_index_and_ordinal`, `pack_unpack_round_trip_matches_numeric_order`, `ordinal_bounds_and_slot_count`, `log_index_bounds_stay_non_negative`, `test_version_ordering`) | 5 | 5 | 0 | 0.018s |
+| Total | 28 | 28 | 0 | summary 1.528s |
+
+## Partial 25,000-row sample (not the T112 gate)
+
+T090 recorded no 0.9 timings, so this is not a before/after comparison. The command is the existing all-or-nothing test: one successful 25,000-row user commit and one rejected duplicate commit. It is not a 1,000-row insert and not a 3-node group. Five `dev` runs, `--retries 0`, after the test binary was already built. CPU was not collected.
+
+```bash
+cd backend
+cargo nextest run -p kalamdb-core --offline --retries 0 -E 'test(explicit_commit_of_25000_user_rows_is_all_or_nothing)'
+```
+
+| Run | Test seconds | Peak RSS |
+| --- | ---: | ---: |
+| 1 | 1.333 | compile included, 2,902,130,688 bytes |
+| 2 | 1.294 | 281,870,336 bytes |
+| 3 | 1.310 | 284,295,168 bytes |
+| 4 | 1.327 | 280,641,536 bytes |
+| 5 | 1.307 | 281,264,128 bytes |
+
+Sorted test seconds: 1.294, 1.307, 1.310, 1.327, 1.333. Median 1.310s. With five samples the nearest-rank p95 and p99 are both 1.333s. Peak RSS of the four runs that did not compile is 284,295,168 bytes.
+
+## OpenRaft 0.10 apply timings (T112)
+
+Recorded 2026-11-17 on darwin 27.2.0, `dev` profile, `--retries 0`, `--offline`. Both binaries were already built. The timer wraps only `commit_transaction` after the rows are staged, or only the 100 Meta `CreateNamespace` proposals. Fifteen samples, none discarded. Percentiles are nearest rank, so with 15 samples p95 and p99 are the maximum sample.
+
+Before is the committed 0.9.25 tree at `2b6d91e14`, compiled with Rust 1.99.1. After is the dirty 0.10.0 working tree. The same test source ran on both. CPU and peak RSS are `/usr/bin/time -l` on the `cargo nextest` process for that invocation.
+
+```bash
+# standalone inserts
+T112_INSERT_REPORT=/tmp/t112-insert-before.txt cargo nextest run -p kalamdb-core --offline --retries 0 --test transactions -E 'test(t112_standalone_insert_commit_times)'
+T112_INSERT_REPORT=/tmp/t112-insert-after.txt cargo nextest run -p kalamdb-core --offline --retries 0 --test transactions -E 'test(t112_standalone_insert_commit_times)'
+
+# 3-node busy group
+T112_BURST_REPORT=/tmp/t112-burst-before.txt T112_RPC_PORT=15900 cargo nextest run -p kalamdb-raft --offline --retries 0 --test t112_busy_group -E 'test(t112_three_node_busy_group)'
+T112_BURST_REPORT=/tmp/t112-burst-after.txt T112_RPC_PORT=15700 cargo nextest run -p kalamdb-raft --offline --retries 0 --test t112_busy_group -E 'test(t112_three_node_busy_group)'
+```
+
+| Workload | Tree | min | p50 | p95 | p99 | max | nextest | user | sys | peak RSS |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1,000-row commit | 0.9.25 | 0.032888 | 0.033129 | 0.045192 | 0.045192 | 0.045192 | 15.315s | 17.88s | 0.63s | 458,883,072 |
+| 1,000-row commit | 0.10.0 | 0.033385 | 0.033810 | 0.045512 | 0.045512 | 0.045512 | 15.486s | 18.03s | 0.68s | 489,586,688 |
+| 25,000-row commit | 0.9.25 | 0.833753 | 0.842913 | 0.850763 | 0.850763 | 0.850763 | 15.315s | 17.88s | 0.63s | 458,883,072 |
+| 25,000-row commit | 0.10.0 | 0.839307 | 0.845035 | 0.866875 | 0.866875 | 0.866875 | 15.486s | 18.03s | 0.68s | 489,586,688 |
+| 3-node, 100 Meta proposals | 0.9.25 | 0.062307 | 0.063006 | 0.090140 | 0.090140 | 0.090140 | 1.551s | 1.25s | 0.31s | 221,757,440 |
+| 3-node, 100 Meta proposals | 0.10.0 | 0.126469 | 0.131350 | 0.165447 | 0.165447 | 0.165447 | 9.343s | 2.85s | 0.45s | 219,824,128 |
+
+The 1,000-row and 25,000-row rows share one nextest process per tree, so their CPU and RSS figures are that process, not a separate figure for each size. p50 change on the persistent standalone path is +2.1% at 1,000 rows and +0.3% at 25,000 rows. The 3-node p50 change is +108%. That path uses `RaftManager::new`. On 0.9.25 that constructor had no persistent store, so `append_entries` completed the IO callback immediately. On 0.10.0 it uses `InMemoryBackend`, and a cluster group flushes the log before the append is acknowledged. The decision log records that measurement. The standalone RocksDB commit path stays under 5%.
+
+## Idle Raft groups (T123)
+
+Recorded 2026-11-17 on darwin 27.2.0, `dev` profile, `--retries 0`, `--offline`. Nextest run `db04e02d-6784-4cd3-921f-23ae45fa85ff`. Three nodes share one test process and use `RaftManager::new` (in-memory log). Heartbeat is 50 ms and the election timeout is (150, 300) ms. The idle window starts after `last_log_index` has been unchanged for 1 second, then lasts 3 seconds. RSS is `ps` resident memory of that test process (`rss` kilobytes times 1024). CPU is the `ps` user and system clock delta over those 3 seconds. Both are divided by the number of Raft instances in the process, so the per-instance figures include the test harness. `ps` clocks resolve to 0.01 second. Connections are outgoing channels in the shared per-node pool, summed across the three nodes at the end of the window. Heartbeat leaders and acks are the OpenRaft heartbeat maps. Heartbeat resets are `quorum_ack_age_ms` decreases seen on a 25 ms sample. Append writes are the change in the sum of `last_log_index` across instances. Snapshot throughput is local chunking and reassembly of one 4,194,305-byte payload, not a follower install.
+
+```bash
+cargo nextest run -p kalamdb-raft --offline --retries 0 --test t123_idle_groups
+```
+
+Default groups are 1 meta + 32 user + 4 shared = 37 per node (111 instances), RPC ports 17200–17202. The test took 107.300s. The 100-group case is 1 meta + 95 user + 4 shared (300 instances), RPC ports 17400–17402. That test took 38.629s.
+
+| Case | Instances | RSS bytes | RSS / instance | Idle user s | Idle sys s | CPU s / instance | Connections | Heartbeat leaders | Heartbeat acks | Heartbeat resets | Append index delta | Snapshot bytes | Snapshot s | Snapshot bytes/s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| default, 37 groups | 111 | 85,721,088 | 772,262 | 2.360000 | 0.040000 | 0.021622 | 1 | 37 | 74 | 1144 | 0 | 4,194,305 | 0.001284 | 3265427908.113772 |
+| 100 groups | 300 | 114,802,688 | 382,675 | 2.950000 | 0.030000 | 0.009933 | 1 | 100 | 156 | 0 | 0 | 4,194,305 | 0.000650 | 6453600998.281320 |
+
+The 100-group heartbeat map had 100 leaders and 156 acks, and the 25 ms quorum-age sample saw 0 decreases. Append index delta is 0 in both idle windows. The connection count is channels, not channels times groups: the groups on a node share one pool.
+
+## Performance acceptance (T089)
+
+Recorded 2026-11-17 on darwin 27.2.0, `dev` profile, `--retries 0`, `--offline`. The 16-script checkpoint above is unchanged. These runs are the missing peak-memory, prepared-CRUD, and churn rows. RSS is `ps` resident memory of the test process. Tracked bytes are `MemoryLedger` high-water marks; release does not lower them. RocksDB counters come from `StorageBackend::stats`. Disk and WAL bytes are the size of the test workspace, with WAL counted from `*.log` files and names containing `wal`.
+
+```bash
+cargo nextest run -p kalamdb-core --offline --retries 0 --test transactions -E 'test(t089_large_dml_memory)'
+cargo nextest run -p kalamdb-core --offline --retries 0 --test transactions -E 'test(t089_prepared_crud_1_8_32)'
+cargo nextest run -p kalamdb-core --offline --retries 0 --test transactions -E 'test(t089_churn_300s)'
+```
+
+The large-DML case stages 25,000 user rows and commits them. The test passed in 1.085s. Peak tracked bytes while the rows were staged were 12,027,788. The commit raised the simultaneous peak to 17,241,682 because the encoded batch was charged while the staged payload and overlay were still held. After commit, staged held bytes were 0. There is no earlier peak-tracked measurement, so the 30% lower peak goal is not shown.
+
+| Point | RSS bytes | Peak tracked bytes | Staged held | Encoded peak | Memtables | WAL | Disk |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Before stage | 124,796,928 |  |  |  |  |  |  |
+| Staged | 176,898,048 | 12,027,788 | 5,213,894 | 0 |  |  |  |
+| After commit | 279,216,128 | 17,241,682 | 0 | 5,213,894 | 6,832,064 | 13,255,977 | 13,488,643 |
+
+Staged payload peak was 5,213,894 bytes and overlay peak was 6,813,894. Scan, target cache, and side-effect peaks were 0. Live SST bytes were 0 and pending compaction bytes were 0. Memtable entries were 50,329.
+
+Prepared CRUD prepares `INSERT`, `SELECT`, `UPDATE`, and `DELETE` once per client, with `$1`/`$2` parameters, and materializes every result. Eight rounds per client. User and shared each start their own app. The test passed in 3.068s.
+
+| Engine | Clients | Ops | Seconds | Ops/s | p50 s | p95 s | p99 s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| user | 1 | 32 | 0.061064 | 524.042857 | 0.001005 | 0.006133 | 0.019492 |
+| shared | 1 | 32 | 0.033691 | 949.801506 | 0.000841 | 0.003557 | 0.003903 |
+| user | 8 | 256 | 0.261062 | 980.608561 | 0.009846 | 0.014767 | 0.017301 |
+| shared | 8 | 256 | 0.306375 | 835.576293 | 0.011666 | 0.016169 | 0.017102 |
+| user | 32 | 1024 | 0.964143 | 1062.082656 | 0.035223 | 0.056422 | 0.063534 |
+| shared | 32 | 1024 | 0.949065 | 1078.956705 | 0.033889 | 0.052525 | 0.056644 |
+
+The churn series is one user table, 256 live keys, 8 clients, mixed select, update, and delete plus reinsert. The cluster test app does not start the server flush loop, so the test calls `flush_all_memtables` every 60 seconds. The test passed in 333.100s. Samples are 30-second windows. Tracked peak stayed 2,853 bytes. RSS moved from 140,836,864 at 30s to 150,863,872 at 301s.
+
+| t s | Window ops | Ops/s | p50 s | p95 s | p99 s | RSS | Memtables | Live SST | WAL | Disk | Pending compaction |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 30 | 36448 | 1203.551766 | 0.006928 | 0.013726 | 0.017358 | 140,836,864 | 295,872 | 247,121 | 444,116 | 3,140,423 | 0 |
+| 61 | 35226 | 1164.262884 | 0.007135 | 0.014240 | 0.018148 | 142,704,640 | 12,288 | 436,388 | 0 | 5,111,797 | 0 |
+| 91 | 35220 | 1163.711318 | 0.007174 | 0.014245 | 0.018412 | 143,949,824 | 156,608 | 610,209 | 206,206 | 7,533,753 | 0 |
+| 120 | 33856 | 1156.269288 | 0.007206 | 0.014285 | 0.018763 | 144,736,256 | 12,288 | 716,666 | 0 | 9,507,580 | 0 |
+| 150 | 34183 | 1130.395641 | 0.007242 | 0.014855 | 0.020937 | 145,899,520 | 385,840 | 803,139 | 946,492 | 12,705,439 | 0 |
+| 181 | 32025 | 1053.644310 | 0.007642 | 0.016674 | 0.023040 | 147,701,760 | 12,288 | 994,300 | 0 | 13,911,582 | 0 |
+| 210 | 30043 | 1025.780326 | 0.008034 | 0.016445 | 0.021168 | 147,849,216 | 279,464 | 1,179,030 | 736,759 | 16,639,539 | 0 |
+| 240 | 32217 | 1066.614429 | 0.007748 | 0.015641 | 0.019616 | 148,373,504 | 12,288 | 1,200,696 | 0 | 18,013,804 | 0 |
+| 271 | 32094 | 1060.747783 | 0.007784 | 0.015748 | 0.019743 | 149,749,760 | 344,256 | 1,330,581 | 835,802 | 20,969,074 | 0 |
+| 301 | 31926 | 1053.803466 | 0.007854 | 0.015908 | 0.019978 | 150,863,872 | 12,288 | 1,601,407 | 0 | 22,441,279 | 69,406 |
+
+A separate transaction then held a snapshot for 30 seconds while the workers continued. After `ROLLBACK` and another memtable flush, the process waited 2 seconds.
+
+| Phase | Ops in window | p50 s | p95 s | p99 s | RSS | Staged held | Live SST | WAL | Disk | Pending compaction |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Pinned 30s | 31552 | 0.007841 | 0.015850 | 0.020416 | 151,224,320 | 946 | 1,711,091 | 317,064 | 24,859,071 | 0 |
+| After unpin |  |  |  |  | 151,240,704 | 595 | 1,628,551 | 211,681 | 24,816,223 | 0 |
+
+RSS did not fall after unpin. Staged held bytes fell from 946 to 595. Live SST fell from 1,711,091 to 1,628,551 and disk fell from 24,859,071 to 24,816,223. The remaining measured work is script 12 and the combined #8/#11/#12/#13/#15 goal, which is still 3.5% rather than 30%.

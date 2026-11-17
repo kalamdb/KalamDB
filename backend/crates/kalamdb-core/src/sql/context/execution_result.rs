@@ -2,9 +2,8 @@ use std::sync::Arc;
 
 use arrow::{array::RecordBatch, datatypes::SchemaRef};
 use kalamdb_commons::{
-    conversions::arrow_json_conversion::json_rows_to_arrow_batch,
-    models::rows::Row,
-    MemoryClass, MemoryLedger, Reservation,
+    conversions::arrow_json_conversion::json_rows_to_arrow_batch, models::rows::Row, MemoryClass,
+    MemoryLedger, Reservation,
 };
 
 use super::query_stream::QueryBatchStream;
@@ -194,9 +193,10 @@ impl ExecutionResult {
     /// Streaming results must use [`Self::into_materialized_rows`] first.
     pub fn into_arrow_rows(self) -> Result<Self, String> {
         match self {
-            ExecutionResult::StreamingRows { .. } => Err(
-                "internal: streaming rows require materialization or the async encoder".to_string(),
-            ),
+            ExecutionResult::StreamingRows { .. } => {
+                Err("internal: streaming rows require materialization or the async encoder"
+                    .to_string())
+            },
             ExecutionResult::ScalarRows {
                 rows,
                 row_count,

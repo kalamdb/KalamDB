@@ -198,6 +198,12 @@ impl StorageBackend for BatchCounter {
     }
 
     fn batch(&self, operations: Vec<Operation>) -> kalamdb_store::storage_trait::Result<()> {
+        // The apply batch is owned by this wrapper. Absorb here so the later
+        // durable flush is the call this counter records.
+        let Some(operations) = kalamdb_store::buffer_operations(self.coalesce_token(), operations)
+        else {
+            return Ok(());
+        };
         // Calls inside a coalesce session are absorbed and flushed once later.
         if !kalamdb_store::coalesce_session_active() {
             let mut names = Vec::new();

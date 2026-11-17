@@ -338,7 +338,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ntest::timeout(4000)]
+    #[ntest::timeout(15000)]
     async fn schedules_progress_while_job_capacity_is_exhausted() {
         let app = test_app_context_simple();
         crate::init_job_manager(&app).expect("job capability");

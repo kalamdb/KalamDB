@@ -16,6 +16,7 @@
 //! - [`PendingBuffer`]: Buffers data commands until Meta catches up
 //! - [`MetadataCoordinator`]: Broadcasts meta-advanced events to data shards
 
+mod data_apply;
 mod meta;
 mod meta_coordinator;
 mod pending_buffer;

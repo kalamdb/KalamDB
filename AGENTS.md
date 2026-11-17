@@ -1,125 +1,47 @@
 # KalamDB Agent Guidelines
 
-Keep context small. Read only the files needed for the current task. Do not scan historical planning files, generated files, dependency caches, benchmark reports, or large docs unless the user explicitly asks for them.
+<!-- speckit-context: skip -->
+
+Stay in the paths the user names. Do not search the repo or open neighboring trees for context.
+
+## Scope
+
+- Backend tasks stay under `backend/`. Leave `benchv2/`, `ui/`, `link/`, `pg/`, `docs/`, `docker/`, and `cli/` unread unless the user includes them.
+- One spec. When a task names a spec directory, open only the file section that task needs. Leave every other directory under `specs/` unread.
+- Leave tests, benchmarks, and smoke suites unread and unrun unless the user asks. A code change does not require opening its tests.
+- Search with `rg` inside the directory already in scope. Do not search from the repo root or list large trees.
 
 ## Core Rules
 
-1. Put each model in its own file.
-2. Prefer `Arc<AppContext>` over passing many individual dependencies.
+1. One model per file.
+2. Prefer `Arc<AppContext>` over many individual dependencies.
 3. Optimize for low memory, high concurrency, and short feedback loops.
-4. Use `Arc<T>` for shared data, `DashMap` for concurrent maps, and memoize expensive schema construction.
-5. Use `TableId` instead of passing `NamespaceId` and `TableName` separately.
-6. Use type-safe models/enums such as `NamespaceId`, `TableId`, `UserId`, `JobStatus`, `Role`, `TableType`, and `StorageId`; avoid raw strings for domain values.
-7. Import types at the top of Rust files. Do not add `use` statements inside methods.
-8. Import `UserId` directly instead of writing fully-qualified conversions inline:
-   ```rust
-   use kalamdb_commons::models::UserId;
-   ```
-9. Use `EntityStore`, not the `EntityStorev2` alias.
-10. Keep code organized with minimal duplication and no unrelated refactors.
-11. Use DataFusion for query processing, version resolution, and deletion filtering.
-12. Do not add SQL rewrite passes in hot paths. Prefer typed coercion at parameter binding, scalar coercion, provider write paths, DataFusion casts, or explicit UDFs.
-13. Parse SQL with `KalamParser` and `KalamDbDialect` (PostgreSQL via sqlparser). Do not stitch SQL text, split identifiers on `.`, or scan statements with regular expressions when the parser already returns an AST (`Statement`, `ObjectName`, `Ident`, `TableConstraint`). Identifier characters come from the dialect (`is_identifier_start`, `is_identifier_part`). Keep only Kalam policy outside the parser: length, a leading underscore, and reserved names. A hyphen is not an unquoted identifier character; it is valid only after the parser has accepted a quoted identifier.
+4. `Arc<T>` for shared data, `DashMap` for concurrent maps, memoize expensive schema construction.
+5. Pass `TableId`, not `NamespaceId` plus `TableName`.
+6. Use typed ids and enums (`NamespaceId`, `TableId`, `UserId`, `JobStatus`, `Role`, `TableType`, `StorageId`). No raw strings for domain values.
+7. Imports at the top of the file. No `use` inside methods.
+8. `use kalamdb_commons::models::UserId;` instead of inline fully-qualified conversions.
+9. `EntityStore`, not the `EntityStorev2` alias.
+10. No unrelated refactors.
+11. DataFusion for query processing, version resolution, and deletion filtering.
+12. No SQL rewrite passes on hot paths. Coerce at parameter binding, scalar coercion, provider writes, DataFusion casts, or explicit UDFs.
+13. Parse SQL with `KalamParser` and `KalamDbDialect`. Do not stitch SQL, split identifiers on `.`, or scan statements with regular expressions when the parser already returns an AST. Identifier characters come from the dialect. Kalam policy outside the parser is only length, a leading underscore, and reserved names. A hyphen is valid only inside a quoted identifier.
 
-## Storage Boundaries
+## Storage
 
-- Filesystem, object storage, Parquet files, file lifecycle, cleanup, compaction, and file size accounting belong in `backend/crates/kalamdb-filestore`.
-- RocksDB, key-value engines, partitions, and column families belong in `backend/crates/kalamdb-store`.
-- `kalamdb-core` should orchestrate and delegate storage work instead of embedding filesystem or RocksDB details.
+- Files, object storage, Parquet, lifecycle, compaction, and file size: `backend/crates/kalamdb-filestore`.
+- RocksDB, partitions, and column families: `backend/crates/kalamdb-store`.
+- `kalamdb-core` orchestrates. It does not embed filesystem or RocksDB details.
 
-## Project Map
+## Crates
 
-- `backend/`: Rust server workspace.
-- `backend/crates/`: server crates by ownership boundary.
-- `cli/`: CLI and smoke tests.
-- `link/`: SDK bridge workspace.
-- `link/sdks/typescript/`: TypeScript SDK.
-- `link/sdks/dart/link/`: `kalam_link` Dart transport SDK. `lib/src/generated` is generated; regenerate via its `build.sh`.
-- `link/sdks/dart/sync/`: `kalam_sync` Flutter local-first runtime.
-- `link/sdks/dart/generator/`: `kalam_sync_generator` action generator.
-- `link/kalam-link-dart/`: Rust bridge for Dart.
-- `pg/`: PostgreSQL extension.
-- `benchv2/`: benchmarks.
-- `ui/`: admin UI.
-- `docs/`: maintained architecture, API, security, and operational docs.
-- `docs/releases/`: GitHub Releases body copy (one file per version).
-- `docker/`: container builds and local deployment.
+`kalamdb-api` HTTP and UI assets. `kalamdb-auth` auth and RBAC. `kalamdb-commons` shared types. `kalamdb-configs` server config. `kalamdb-core` SQL, jobs, live queries, schema registry. `kalamdb-dialect` SQL parse and DDL AST. `kalamdb-filestore` Parquet segments. `kalamdb-observability` metrics. `kalamdb-publisher` topics. `kalamdb-raft` consensus. `kalamdb-session` session providers. `kalamdb-sharding` routing. `kalamdb-store` `EntityStore`. `kalamdb-streams` commit log. `kalamdb-system` system tables. `kalamdb-tables` user, shared, and stream tables.
 
-## Crate Ownership
+## Build
 
-- `kalamdb-api`: HTTP, REST, WebSocket, and UI asset serving.
-- `kalamdb-auth`: authentication, authorization, JWT, RBAC, guards.
-- `kalamdb-commons`: shared types, IDs, constants, utilities.
-- `kalamdb-configs`: server configuration.
-- `kalamdb-core`: orchestration, SQL handlers, jobs, live queries, schema registry.
-- `kalamdb-filestore`: filesystem and object-store Parquet segment lifecycle.
-- `kalamdb-observability`: metrics and telemetry helpers.
-- `kalamdb-publisher`: durable topic publishing.
-- `kalamdb-raft`: Raft consensus and cluster coordination.
-- `kalamdb-session`: session context and permission-aware providers.
-- `kalamdb-sharding`: shard models and routing.
-- `kalamdb-dialect`: SQL dialect, parsing, classification, and DDL ASTs.
-- `kalamdb-store`: RocksDB storage abstractions, `EntityStore`, and `IndexedEntityStore`.
-- `kalamdb-streams`: stream storage and commit log utilities.
-- `kalamdb-system`: system tables and metadata providers.
-- `kalamdb-tables`: user, shared, and stream table providers.
-
-## Build And Test
-
-- Local check/test/run stays on the default dev profile. No `--release` unless packaging.
-- Batch compile feedback. For multi-file changes, finish an edit batch, then run one check and capture output, for example `cargo check > batch_compile_output.txt 2>&1`.
-- When there are multiple compiler errors, fix them from one captured output file instead of repeatedly running `cargo check`.
-- Use `cargo nextest run` for tests unless explicitly told otherwise.
-- CLI smoke tests require a running server. Start the backend first, then run smoke tests from `cli`.
-- Smoke tests are required before committing changes that affect backend or CLI behavior.
-- For CLI e2e tests, run `cargo build -p kalam-cli --bin kalam` (or `./cli/run-tests.sh`, which prebuilds it) before `cargo nextest run -p kalam-cli-e2e` without `--no-fail-fast`; fix the first failure, then rerun.
-- For performance tests, benchmarks, or perf e2e cases, report each relevant runtime in seconds.
-- Add `#[ntest::timeout(time)]` to async tests using observed healthy runtime x 1.5.
-
-## Commands
-
-- Backend build: `cd backend && cargo build`
-- Backend run (API only): `cd backend && cargo run --bin kalamdb-server`
-- Backend run with admin UI: `cd backend && cargo run --bin kalamdb-server --features embedded-ui`
-- Backend fast check (local dev, no S3/mimalloc/tracing): `cargo check -p kalamdb-server`
-- Backend prod-like build: `cargo build -p kalamdb-server --no-default-features --features embedded-ui,mimalloc,traceability,cloud-aws`
-- CLI build: `cd cli && cargo build`
-- CLI smoke: `cd cli && KALAMDB_SERVER_URL="http://localhost:3000" KALAMDB_ROOT_PASSWORD="mypass" cargo nextest run -p kalam-cli-e2e --test e2e smoke`
-- Everyday CLI (`kalam dev`, `up`, `down`, `status`, `logs`): `specs/035-cli-everyday-lifecycle/spec.md` and `cli/src/workflow/target.rs`
-- Full sweep: start the backend server, then run `./scripts/test-all.sh` from the repo root.
-- Rust SDK (fast iteration): `cargo check -p kalam-client --features native-sdk,consumer,healthcheck`.
-- Rust SDK e2e: `cargo nextest run -p kalam-client-e2e --test e2e` (requires running server).
-- Version verification after SDK version changes: `python3 scripts/versions.py verify`
-
-## SDK And Docs
-
-- Add new Rust dependencies only in root `Cargo.toml` under `[workspace.dependencies]`; use `{ workspace = true }` in crates.
-- TypeScript SDK packages under `link/sdks/typescript/**` move as one version cohort.
-- While TypeScript SDK packages are on prereleases, use bounded internal ranges like `>=0.5.0-0 <0.6.0`, not `>=0.5.0`.
-- SDK changes under `link/sdks/**` or SDK bridge crates must update corresponding SDK docs in `../KalamSite/content/sdk/**` and include tests.
-- User-facing command, CLI flag, SQL syntax, system table, SDK entry point, config/env, or runbook changes must update canonical skill content in `../kalamdb-skills` and generated in-repo mirrors when applicable.
-- Architecture-affecting changes must update relevant docs under `docs/architecture/` or `docs/architecture/decisions/`.
-- Version ships (GitHub Releases) must add `docs/releases/<version>.md` (the release body) and a link in `docs/releases/README.md`.
-
-## Security
-
-Before shipping API, auth, SQL, or storage changes, check:
-
-- SQL injection: no privileged string-concatenated SQL from user input.
-- Auth bypass: protected endpoints validate sessions or JWTs, not just header presence.
-- Role escalation: role claims are checked against storage; impersonation is gated.
-- Pre-auth login and refresh endpoints are rate-limited.
-- Non-admin roles cannot access or mutate `system.*`, including through views, subqueries, or unions.
-- Public endpoints expose only safe data.
-- File upload/download paths, sizes, access checks, and cleanup are validated.
-- JWT secrets are non-default and at least 32 chars outside localhost.
-- Auth cookies are `HttpOnly`, `SameSite=Strict`, and `Secure` in production.
-- WebSocket origins are validated when strict mode is enabled.
-- Login failures use generic messages and soft-deleted users behave like invalid credentials.
-
-## Token Discipline
-
-- Prefer scoped `rg` commands against relevant source directories.
-- Avoid broad searches from repo root unless necessary.
-- Do not read or summarize large docs, historical plans, generated code, dependency directories, benchmark HTML, or binary assets unless they are directly required.
-- If broad context is needed, first list candidate files, then open only the smallest relevant set.
+- Dev profile. No `--release` unless packaging.
+- After an edit batch, one `cargo check` for the touched package. Fix from that output.
+- When the user asks to test, `cargo nextest run` for the touched crate only.
+- New Rust dependencies go in the root `Cargo.toml` `[workspace.dependencies]`, then `{ workspace = true }`.
+- User-facing command, SQL, config, or SDK changes also update `../kalamdb-skills`.
+- Before shipping API, auth, SQL, or storage changes: no privileged SQL built from user strings, protected routes check a session or JWT, non-admins cannot touch `system.*`, and login failures stay generic.

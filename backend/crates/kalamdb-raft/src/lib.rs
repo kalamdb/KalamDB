@@ -61,8 +61,8 @@ pub use error::{RaftError, Result};
 pub use executor::{ClusterInfo, ClusterNodeInfo, CommandExecutor, RaftExecutor};
 pub use kalamdb_sharding::{ClusterConfig as RaftClusterConfig, GroupId, PeerConfig, ShardRouter};
 pub use manager::{
-    PeerNode, RaftGroup, RaftManager, RaftManagerConfig, SnapshotInfo, SnapshotsSummary,
-    DEFAULT_SHARED_DATA_SHARDS, DEFAULT_USER_DATA_SHARDS,
+    GroupProgressSnapshot, PeerNode, RaftGroup, RaftManager, RaftManagerConfig, SnapshotInfo,
+    SnapshotsSummary, DEFAULT_SHARED_DATA_SHARDS, DEFAULT_USER_DATA_SHARDS,
 };
 pub use network::{
     forward_sql_param, named_service_routes, start_rpc_server, ClusterClient,
@@ -74,4 +74,7 @@ pub use state_machine::{
     serde_helpers, ApplyResult, KalamStateMachine, MetaStateMachine, SharedDataStateMachine,
     StateMachineSnapshot, UserDataStateMachine,
 };
-pub use storage::{KalamNode, KalamRaftStorage, KalamTypeConfig};
+pub use storage::{
+    decode_persisted_membership, decode_persisted_state, KalamNode, KalamRaftStorage,
+    KalamTypeConfig, PersistedRaftState, RaftCommandBytes,
+};

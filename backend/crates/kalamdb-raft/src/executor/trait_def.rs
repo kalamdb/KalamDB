@@ -27,7 +27,10 @@ pub struct ClusterNodeInfo {
     pub api_addr: String,
     /// Whether this is the current node
     pub is_self: bool,
-    /// Whether this node is leader for Meta group
+    /// Whether this node is the Meta group leader.
+    ///
+    /// This is not the leader of every data group. Per-group leadership is
+    /// `leaders` and `followers`.
     pub is_leader: bool,
     /// Number of groups this node leads (for multi-group Raft)
     pub groups_leading: u32,
@@ -67,6 +70,14 @@ pub struct ClusterNodeInfo {
     pub os: Option<String>,
     /// CPU architecture (e.g., "x86_64", "aarch64")
     pub arch: Option<String>,
+    /// Groups this node currently leads. Unknown when a remote node has no `GetNodeInfo` sample.
+    pub leaders: Option<u32>,
+    /// Groups this node follows. Unknown for a remote node.
+    pub followers: Option<u32>,
+    /// Groups on this node whose apply index lags the cluster commit.
+    pub lagging_groups: Option<u32>,
+    /// Largest apply lag on this node, in log entries.
+    pub worst_lag: Option<u64>,
 }
 
 /// Cluster status information
@@ -217,6 +228,10 @@ mod tests {
             uptime_human: Some("2h 0m".to_string()),
             os: Some("linux".to_string()),
             arch: Some("x86_64".to_string()),
+            leaders: Some(14),
+            followers: Some(0),
+            lagging_groups: Some(0),
+            worst_lag: None,
         };
 
         assert_eq!(node_info.node_id, NodeId::from(1));
@@ -254,6 +269,10 @@ mod tests {
             uptime_human: Some("1h 0m".to_string()),
             os: Some("linux".to_string()),
             arch: Some("aarch64".to_string()),
+            leaders: None,
+            followers: None,
+            lagging_groups: None,
+            worst_lag: None,
         };
 
         assert_eq!(follower.node_id, NodeId::from(2));
@@ -354,6 +373,10 @@ mod tests {
             uptime_human: None,
             os: None,
             arch: None,
+            leaders: None,
+            followers: None,
+            lagging_groups: None,
+            worst_lag: None,
         };
 
         let cloned = original.clone();
@@ -391,6 +414,10 @@ mod tests {
                 uptime_human: Some("3h 0m".to_string()),
                 os: Some("linux".to_string()),
                 arch: Some("x86_64".to_string()),
+                leaders: Some(14),
+                followers: Some(0),
+                lagging_groups: Some(0),
+                worst_lag: None,
             },
             ClusterNodeInfo {
                 node_id: NodeId::from(2),
@@ -418,6 +445,10 @@ mod tests {
                 uptime_human: Some("2h 40m".to_string()),
                 os: Some("linux".to_string()),
                 arch: Some("x86_64".to_string()),
+                leaders: None,
+                followers: None,
+                lagging_groups: None,
+                worst_lag: None,
             },
         ];
 

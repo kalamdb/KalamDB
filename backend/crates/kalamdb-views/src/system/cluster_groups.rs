@@ -57,6 +57,12 @@ pub struct ClusterGroupRow {
     pub current_leader: Option<i64>,
     /// Milliseconds since most recent quorum acknowledgment (leader only)
     pub millis_since_quorum_ack: Option<i64>,
+    /// This node's local commit index. Distinct from the cluster `committed` index.
+    pub local_committed: Option<i64>,
+    /// Last log index flushed to storage for this group.
+    pub flushed: Option<i64>,
+    /// Cluster commit index minus the applied index of this same group.
+    pub lag: Option<i64>,
 }
 
 #[derive(Debug)]
@@ -120,6 +126,9 @@ impl VirtualView for ClusterGroupsView {
         let mut states: Vec<Option<String>> = Vec::with_capacity(estimated_rows);
         let mut current_leaders: Vec<Option<i64>> = Vec::with_capacity(estimated_rows);
         let mut millis_since_quorum_acks: Vec<Option<i64>> = Vec::with_capacity(estimated_rows);
+        let mut local_committeds: Vec<Option<i64>> = Vec::with_capacity(estimated_rows);
+        let mut flusheds: Vec<Option<i64>> = Vec::with_capacity(estimated_rows);
+        let mut lags: Vec<Option<i64>> = Vec::with_capacity(estimated_rows);
 
         for gid in &group_ids {
             // New order: group_id, cluster_id, node_id, group_type, ...
@@ -146,12 +155,35 @@ impl VirtualView for ClusterGroupsView {
                 last_applieds.push(metrics.last_applied.map(|log_id| log_id.index as i64));
                 snapshots.push(metrics.snapshot.map(|log_id| log_id.index as i64));
                 purgeds.push(metrics.purged.map(|log_id| log_id.index as i64));
-                // Note: RaftMetrics doesn't directly expose committed; we'd need to get it from
-                // storage/log For now, use None
-                committeds.push(None);
+                let progress = raft_exec.and_then(|re| re.manager().group_progress(*gid));
+                committeds.push(
+                    progress
+                        .as_ref()
+                        .and_then(|progress| progress.committed)
+                        .map(|index| index as i64),
+                );
                 states.push(Some(format!("{:?}", metrics.state)));
                 current_leaders.push(metrics.current_leader.map(|id| id as i64));
-                millis_since_quorum_acks.push(metrics.millis_since_quorum_ack.map(|ms| ms as i64));
+                millis_since_quorum_acks.push(
+                    raft_exec
+                        .and_then(|re| re.manager().quorum_ack_age_ms(*gid))
+                        .map(|ms| ms as i64),
+                );
+                local_committeds.push(
+                    progress
+                        .as_ref()
+                        .and_then(|progress| progress.local_committed)
+                        .map(|index| index as i64),
+                );
+                flusheds.push(
+                    progress
+                        .as_ref()
+                        .and_then(|progress| progress.flushed)
+                        .map(|index| index as i64),
+                );
+                lags.push(
+                    progress.as_ref().and_then(|progress| progress.lag).map(|index| index as i64),
+                );
             } else {
                 // No metrics available - use defaults/NULLs
                 node_ids.push(info.current_node_id.as_u64() as i64);
@@ -165,6 +197,9 @@ impl VirtualView for ClusterGroupsView {
                 states.push(None);
                 current_leaders.push(None);
                 millis_since_quorum_acks.push(None);
+                local_committeds.push(None);
+                flusheds.push(None);
+                lags.push(None);
             }
         }
 
@@ -196,6 +231,9 @@ impl VirtualView for ClusterGroupsView {
                 },
                 Arc::new(Int64Array::from(current_leaders)) as ArrayRef,
                 Arc::new(Int64Array::from(millis_since_quorum_acks)) as ArrayRef,
+                Arc::new(Int64Array::from(local_committeds)) as ArrayRef,
+                Arc::new(Int64Array::from(flusheds)) as ArrayRef,
+                Arc::new(Int64Array::from(lags)) as ArrayRef,
             ],
         )
         .map_err(|e| RegistryError::Other(format!("Failed to build cluster_groups batch: {}", e)))
@@ -217,7 +255,7 @@ mod tests {
     #[test]
     fn test_schema() {
         let schema = cluster_groups_schema();
-        assert_eq!(schema.fields().len(), 14);
+        assert_eq!(schema.fields().len(), 17);
         assert_eq!(schema.field(0).name(), "group_id");
         assert_eq!(schema.field(1).name(), "cluster_id");
         assert_eq!(schema.field(2).name(), "node_id");
@@ -232,5 +270,8 @@ mod tests {
         assert_eq!(schema.field(11).name(), "state");
         assert_eq!(schema.field(12).name(), "current_leader");
         assert_eq!(schema.field(13).name(), "millis_since_quorum_ack");
+        assert_eq!(schema.field(14).name(), "local_committed");
+        assert_eq!(schema.field(15).name(), "flushed");
+        assert_eq!(schema.field(16).name(), "lag");
     }
 }

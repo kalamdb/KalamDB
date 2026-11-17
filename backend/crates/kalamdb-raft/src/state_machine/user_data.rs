@@ -23,12 +23,12 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    decode, encode, get_coordinator, ApplyResult, KalamStateMachine, PendingBuffer, PendingCommand,
+    data_apply::{apply_data_entry, DataWatermark},
+    decode, encode, ApplyResult, KalamStateMachine, PendingBuffer, PendingCommand,
     StateMachineSnapshot,
 };
 use crate::{
-    applier::UserDataApplier, assign_entry_versions, DataResponse, GroupId, RaftCommand, RaftError,
-    UserDataCommand,
+    applier::UserDataApplier, DataResponse, GroupId, RaftCommand, RaftError, UserDataCommand,
 };
 
 /// Snapshot data for UserDataStateMachine
@@ -157,46 +157,6 @@ impl UserDataStateMachine {
         );
     }
 
-    /// Drain and apply any buffered commands that are now satisfied
-    ///
-    /// Called after Meta advances to check if any pending commands can now run.
-    async fn drain_pending(&self) -> Result<(), RaftError> {
-        let current_meta = get_coordinator().current_index();
-        let drained = self.pending_buffer.drain_satisfied(current_meta);
-
-        if !drained.is_empty() {
-            log::info!(
-                "UserDataStateMachine[{}]: Draining {} buffered commands (meta_index={})",
-                self.shard,
-                drained.len(),
-                current_meta
-            );
-        }
-
-        for pending in drained {
-            let cmd = Self::decode_apply_command(&pending.command_bytes)?;
-            let versions = match assign_entry_versions(pending.log_index, cmd.row_slot_count()) {
-                Ok(versions) => versions,
-                Err(error) => {
-                    log::warn!(
-                        "UserDataStateMachine[{}]: rejecting buffered entry: {}",
-                        self.shard,
-                        error
-                    );
-                    continue;
-                },
-            };
-            let _ = self.apply_decoded_command(cmd, &versions).await?;
-            log::debug!(
-                "UserDataStateMachine[{}]: Applied buffered command log_index={}",
-                self.shard,
-                pending.log_index
-            );
-        }
-
-        Ok(())
-    }
-
     /// Get the number of pending commands
     pub fn pending_count(&self) -> usize {
         self.pending_buffer.len()
@@ -204,6 +164,15 @@ impl UserDataStateMachine {
 
     fn publish_last_applied(&self, index: u64) {
         self.last_applied_tx.send_replace(index);
+    }
+
+    fn watermark(&self) -> DataWatermark<'_> {
+        DataWatermark {
+            last_applied_index: &self.last_applied_index,
+            last_applied_term: &self.last_applied_term,
+            notify: &self.last_applied_tx,
+            pending: &self.pending_buffer,
+        }
     }
 
     /// Apply a user data command
@@ -414,79 +383,19 @@ impl KalamStateMachine for UserDataStateMachine {
     }
 
     async fn apply(&self, index: u64, term: u64, command: &[u8]) -> Result<ApplyResult, RaftError> {
-        // Idempotency check
-        let last_applied = self.last_applied_index.load(Ordering::Acquire);
-        if index <= last_applied {
-            log::debug!(
-                "UserDataStateMachine[{}]: Skipping already applied entry {} (last_applied={})",
-                self.shard,
-                index,
-                last_applied
-            );
-            return Ok(ApplyResult::NoOp);
-        }
-
-        // Deserialize command to check watermark
-        let cmd = Self::decode_apply_command(command)?;
-        let required_meta = cmd.required_meta_index();
-
-        // Check watermark: if Meta is behind AND required_meta > 0, wait for it to catch up.
-        // DML commands (INSERT/UPDATE/DELETE) set required_meta_index=0 to skip waiting
-        // since the table's existence was validated before the command was built.
-        // See spec 021 section 5.4.1 "Watermark Nuance" for detailed analysis.
-        if required_meta > 0 {
-            let current_meta = get_coordinator().current_index();
-            if required_meta > current_meta {
-                log::debug!(
-                    "UserDataStateMachine[{}]: Buffering command (required_meta={} > \
-                     current_meta={})",
-                    self.shard,
-                    required_meta,
-                    current_meta
-                );
-                self.pending_buffer.add(PendingCommand {
-                    log_index: index,
-                    log_term: term,
-                    required_meta_index: required_meta,
-                    command_bytes: command.to_vec(),
-                });
-
-                // Mark as applied (buffered) to satisfy Raft log progress
-                self.last_applied_index.store(index, Ordering::Release);
-                self.last_applied_term.store(term, Ordering::Release);
-                self.publish_last_applied(index);
-
-                return Ok(ApplyResult::NoOp);
-            }
-        }
-
-        // First drain any pending commands that are now satisfied (only if buffer non-empty)
-        if self.pending_buffer.len() > 0 {
-            self.drain_pending().await?;
-        }
-
-        // Apply current command
-        let versions = match assign_entry_versions(index, cmd.row_slot_count()) {
-            Ok(versions) => versions,
-            Err(error) => {
-                return Ok(ApplyResult::ok_with_data(
-                    crate::codec::command_codec::encode_data_response(&DataResponse::error(
-                        error.to_string(),
-                    ))?,
-                ));
-            },
-        };
-        let response = self.apply_decoded_command(cmd, &versions).await?;
-
-        // Update last applied
-        self.last_applied_index.store(index, Ordering::Release);
-        self.last_applied_term.store(term, Ordering::Release);
-        self.publish_last_applied(index);
-
-        // Serialize response
-        let response_data = crate::codec::command_codec::encode_data_response(&response)?;
-
-        Ok(ApplyResult::ok_with_data(response_data))
+        apply_data_entry(
+            "UserDataStateMachine",
+            self.shard,
+            self.watermark(),
+            index,
+            term,
+            command,
+            Self::decode_apply_command,
+            |cmd| cmd.required_meta_index(),
+            |cmd| cmd.row_slot_count(),
+            |cmd, versions| async move { self.apply_decoded_command(cmd, &versions).await },
+        )
+        .await
     }
 
     fn last_applied_index(&self) -> u64 {
@@ -498,20 +407,11 @@ impl KalamStateMachine for UserDataStateMachine {
     }
 
     fn mark_applied_index(&self, index: u64, term: u64) {
-        let last_applied = self.last_applied_index.load(Ordering::Acquire);
-        if index <= last_applied {
-            return;
-        }
-
-        self.last_applied_index.store(index, Ordering::Release);
-        self.last_applied_term.store(term, Ordering::Release);
-        self.publish_last_applied(index);
+        self.watermark().mark(index, term);
     }
 
     fn rewind_applied_index(&self, index: u64, term: u64) {
-        self.last_applied_index.store(index, Ordering::Release);
-        self.last_applied_term.store(term, Ordering::Release);
-        self.publish_last_applied(index);
+        self.watermark().rewind(index, term);
     }
 
     fn last_applied_term(&self) -> u64 {

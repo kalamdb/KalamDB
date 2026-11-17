@@ -113,6 +113,14 @@ pub trait StorageBackend: Send + Sync {
     /// Either all operations succeed or none are applied.
     fn batch(&self, operations: Vec<Operation>) -> Result<()>;
 
+    /// Identity used to keep a coalesced apply batch on this backend.
+    ///
+    /// The Raft log store and the table store can be different objects. Apply
+    /// buffers writes only for the backend that commits the batch.
+    fn coalesce_token(&self) -> usize {
+        self as *const Self as *const () as usize
+    }
+
     /// Scans keys in a partition, optionally filtered by prefix and limit.
     ///
     /// Returns an iterator of (key, value) pairs. The iterator should be

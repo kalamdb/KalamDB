@@ -4,32 +4,72 @@
 //! These types are used throughout the Raft layer for node identification,
 //! log entries, and snapshot data.
 
-use std::io::Cursor;
-
 use kalamdb_observability::SERVER_VERSION;
-use openraft::{Entry, RaftTypeConfig};
+use openraft::{vote::RaftLeaderId, OptionalSend, RaftTypeConfig};
 use serde::{Deserialize, Serialize};
 
-/// Type configuration for KalamDB Raft
+/// Type configuration for KalamDB Raft.
 ///
-/// Defines the associated types used by OpenRaft:
-/// - `D`: Log entry data (serialized commands)
-/// - `R`: Response data (serialized responses)
-/// - `NodeId`: Unique identifier for nodes (u64)
-/// - `Node`: Node metadata for cluster membership
+/// Leader ids use standard Raft: a committed leader id is the term, so a log
+/// id read back from disk compares equal to the one that was appended.
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct KalamTypeConfig;
 
 impl RaftTypeConfig for KalamTypeConfig {
-    type D = Vec<u8>; // Log entry data (serialized command)
-    type R = Vec<u8>; // Response data (serialized response)
+    type D = super::command_bytes::RaftCommandBytes;
+    type R = Vec<u8>;
     type NodeId = u64;
     type Node = KalamNode;
-    type Entry = Entry<Self>;
-    type SnapshotData = Cursor<Vec<u8>>;
+    type Term = u64;
+    type LeaderId = openraft::impls::leader_id_std::LeaderId<u64, u64>;
+    type Vote = openraft::impls::Vote<Self::LeaderId>;
+    type Membership = openraft::impls::Membership<u64, KalamNode>;
+    type MembershipEdit = openraft::impls::ChangeMembers<Self::NodeId, Self::Node>;
+    type Payload = openraft::impls::EntryPayload<Self::D, Self::Membership>;
+    type Entry = openraft::impls::Entry<<Self::LeaderId as RaftLeaderId>::Committed, Self::Payload>;
     type AsyncRuntime = openraft::TokioRuntime;
-    type Responder = openraft::impls::OneshotResponder<Self>;
+    type Responder<T>
+        = openraft::impls::OneshotResponder<Self, T>
+    where
+        T: OptionalSend + 'static;
+    type Batch<T>
+        = openraft::impls::InlineBatch<T>
+    where
+        T: OptionalSend + 'static;
+    type ErrorSource = openraft::AnyError;
 }
+
+/// Committed leader id for standard Raft: the term alone.
+pub type KalamCommittedLeaderId = openraft::vote::leader_id_std::CommittedLeaderId<u64>;
+
+/// Log id stored by OpenRaft. The committed leader id is the term.
+pub type KalamLogId = openraft::LogId<KalamCommittedLeaderId>;
+
+/// Vote type for [`KalamTypeConfig`].
+pub type KalamVote = <KalamTypeConfig as RaftTypeConfig>::Vote;
+
+/// Membership type for [`KalamTypeConfig`].
+pub type KalamMembership = <KalamTypeConfig as RaftTypeConfig>::Membership;
+
+/// Membership record carried in the state machine and snapshots.
+pub type KalamStoredMembership =
+    openraft::StoredMembership<KalamCommittedLeaderId, KalamMembership>;
+
+/// Snapshot metadata carried by OpenRaft. The file id stays on KalamDB's own record.
+pub type KalamSnapshotMeta = openraft::SnapshotMeta<KalamCommittedLeaderId, KalamMembership>;
+
+/// Log entry type for [`KalamTypeConfig`].
+pub type KalamEntry = <KalamTypeConfig as RaftTypeConfig>::Entry;
+
+/// Log payload type for [`KalamTypeConfig`].
+pub type KalamEntryPayload = <KalamTypeConfig as RaftTypeConfig>::Payload;
+
+/// Snapshot bytes shared by build, the current snapshot, and transfer.
+pub type KalamSnapshotData = std::io::Cursor<std::sync::Arc<[u8]>>;
+
+/// Snapshot handle passed through OpenRaft.
+pub type KalamSnapshot =
+    openraft::Snapshot<KalamCommittedLeaderId, KalamMembership, KalamSnapshotData>;
 
 /// Node information for cluster membership
 ///

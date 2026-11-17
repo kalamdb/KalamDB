@@ -193,7 +193,7 @@ testcontainers-modules = { version = "0.15.0", default-features = false, feature
 criterion = { version = "0.8.2", features = ["html_reports"] }
 
 # Raft consensus
-openraft = { version = "0.9.25", features = ["serde", "storage-v2"] }
+openraft = { version = "0.10.0", default-features = false, features = ["serde", "tokio-rt"] }
 rmp = "0.8"
 rmp-serde = "1.3"
 

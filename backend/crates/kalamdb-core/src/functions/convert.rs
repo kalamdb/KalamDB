@@ -218,10 +218,7 @@ pub async fn execution_result_to_routine(
     if let ExecutionResult::ScalarRows { rows, schema, .. } = result {
         return routine_value_from_scalar_rows(rows, &schema);
     }
-    let result = result
-        .into_materialized_rows()
-        .await
-        .map_err(KalamDbError::InvalidOperation)?;
+    let result = result.into_materialized_rows().await.map_err(KalamDbError::InvalidOperation)?;
     let result = result.into_arrow_rows().map_err(KalamDbError::InvalidOperation)?;
     match result {
         ExecutionResult::Rows { batches, .. } => rows_to_routine(&batches),
@@ -239,15 +236,14 @@ pub async fn execution_result_to_routine(
     }
 }
 
-pub async fn execution_result_to_rows(result: ExecutionResult) -> Result<RoutineValue, KalamDbError> {
+pub async fn execution_result_to_rows(
+    result: ExecutionResult,
+) -> Result<RoutineValue, KalamDbError> {
     if let ExecutionResult::ScalarRows { rows, schema, .. } = result {
         ensure_scalar_row_limit(&rows)?;
         return Ok(wrap_query_list(structs_from_scalar_rows(rows, &schema)?));
     }
-    let result = result
-        .into_materialized_rows()
-        .await
-        .map_err(KalamDbError::InvalidOperation)?;
+    let result = result.into_materialized_rows().await.map_err(KalamDbError::InvalidOperation)?;
     let result = result.into_arrow_rows().map_err(KalamDbError::InvalidOperation)?;
     let ExecutionResult::Rows { batches, .. } = result else {
         return Err(KalamDbError::InvalidOperation(

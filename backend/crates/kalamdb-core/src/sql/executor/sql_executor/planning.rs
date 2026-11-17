@@ -270,10 +270,7 @@ impl SqlExecutor {
         dataframe: DataFrame,
     ) -> Result<(Vec<RecordBatch>, SchemaRef), datafusion::error::DataFusionError> {
         let stream = Self::stream_dataframe(dataframe).await?;
-        stream
-            .collect()
-            .await
-            .map_err(datafusion::error::DataFusionError::Execution)
+        stream.collect().await.map_err(datafusion::error::DataFusionError::Execution)
     }
 
     /// One unoptimized plan for prepared parameter and result metadata.

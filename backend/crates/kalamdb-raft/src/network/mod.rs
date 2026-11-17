@@ -22,6 +22,7 @@
 #[allow(clippy::module_inception)]
 mod network;
 pub mod service;
+mod snapshot_transfer;
 
 // Cluster messaging modules
 pub mod cluster_client;
@@ -40,4 +41,7 @@ pub use network::{RaftChannelPool, RaftNetwork, RaftNetworkFactory};
 pub use service::{
     named_service_routes, raft_client::RaftClient, start_rpc_server, ClientProposalRequest,
     ClientProposalResponse, RaftService,
+};
+pub use snapshot_transfer::{
+    assemble_snapshot_chunk, snapshot_payload_chunks, FullSnapshotMessage, SnapshotChunk,
 };

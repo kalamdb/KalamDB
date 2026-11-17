@@ -204,13 +204,12 @@ impl RocksDBBackend {
         // Only hot data/index partitions own dedicated physical families.
         // System metadata, system indexes, and Raft always use their canonical CFs.
         let physical = physical_cf_for_partition(partition.name());
-        let cf_name = if matches!(physical, "hot_data" | "hot_index")
-            && partition.name() != physical
-        {
-            partition.name()
-        } else {
-            physical
-        };
+        let cf_name =
+            if matches!(physical, "hot_data" | "hot_index") && partition.name() != physical {
+                partition.name()
+            } else {
+                physical
+            };
         self.db
             .cf_handle(cf_name)
             .ok_or_else(|| StorageError::PartitionNotFound(cf_name.to_string()))
@@ -419,7 +418,7 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn put(&self, partition: &Partition, key: &[u8], value: &[u8]) -> Result<()> {
-        if crate::write_coalesce::buffer_put(partition, key, value) {
+        if crate::write_coalesce::buffer_put(self.coalesce_token(), partition, key, value) {
             return Ok(());
         }
         let _span = kalamdb_observability::kdb_trace_span_entered!(
@@ -437,7 +436,7 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn delete(&self, partition: &Partition, key: &[u8]) -> Result<()> {
-        if crate::write_coalesce::buffer_delete(partition, key) {
+        if crate::write_coalesce::buffer_delete(self.coalesce_token(), partition, key) {
             return Ok(());
         }
         let _span = kalamdb_observability::kdb_trace_span_entered!(
@@ -454,7 +453,9 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn batch(&self, operations: Vec<Operation>) -> Result<()> {
-        let Some(operations) = crate::write_coalesce::buffer_operations(operations) else {
+        let Some(operations) =
+            crate::write_coalesce::buffer_operations(self.coalesce_token(), operations)
+        else {
             return Ok(());
         };
         let _backend = kalamdb_observability::dml_stage::stage_guard(
@@ -504,14 +505,12 @@ impl StorageBackend for RocksDBBackend {
             let partition_name = partition.name();
             if !partition_cache.contains_key(partition_name) {
                 let cf = self.get_cf(&partition)?;
-                partition_cache.insert(
-                    partition_name.to_string(),
-                    (cf, partition_key_prefix(partition_name)),
-                );
+                partition_cache
+                    .insert(partition_name.to_string(), (cf, partition_key_prefix(partition_name)));
             }
-            let cache_entry = partition_cache.get(partition_name).expect(
-                "partition handle is inserted before the batch writes that partition",
-            );
+            let cache_entry = partition_cache
+                .get(partition_name)
+                .expect("partition handle is inserted before the batch writes that partition");
             let physical_key = prefixed_physical_key(&cache_entry.1, &key);
 
             match value {
@@ -752,9 +751,13 @@ impl StorageBackend for RocksDBBackend {
 
     fn create_partition(&self, partition: &Partition) -> Result<()> {
         let physical = physical_cf_for_partition(partition.name());
-        let dedicated_hot = matches!(physical, "hot_data" | "hot_index")
-            && partition.name() != physical;
-        let target = if dedicated_hot { partition.name() } else { physical };
+        let dedicated_hot =
+            matches!(physical, "hot_data" | "hot_index") && partition.name() != physical;
+        let target = if dedicated_hot {
+            partition.name()
+        } else {
+            physical
+        };
         if self.partition_exists(partition) {
             if self.db.cf_handle(target).is_some() {
                 return Ok(());
@@ -779,8 +782,8 @@ impl StorageBackend for RocksDBBackend {
 
     fn drop_partition(&self, partition: &Partition) -> Result<()> {
         let physical = physical_cf_for_partition(partition.name());
-        let dedicated_hot = matches!(physical, "hot_data" | "hot_index")
-            && partition.name() != physical;
+        let dedicated_hot =
+            matches!(physical, "hot_data" | "hot_index") && partition.name() != physical;
         let was_tracked = self.partition_exists(partition);
 
         if dedicated_hot && !was_tracked {
@@ -1062,7 +1065,11 @@ mod tests {
             let partition = table.partition().expect("persisted system table has partition");
             backend.create_partition(partition).unwrap();
             assert_eq!(physical_cf_for_partition(partition.name()), SYSTEM_META_CF);
-            assert!(db.cf_handle(partition.name()).is_none(), "dedicated system CF: {}", partition.name());
+            assert!(
+                db.cf_handle(partition.name()).is_none(),
+                "dedicated system CF: {}",
+                partition.name()
+            );
             backend.put(partition, b"key", index.to_string().as_bytes()).unwrap();
         }
 

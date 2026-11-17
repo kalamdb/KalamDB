@@ -106,6 +106,16 @@ pub struct ClusterRow {
     pub os: Option<String>,
     /// CPU architecture
     pub arch: Option<String>,
+    /// Groups this node leads. Unknown for a remote node with no `GetNodeInfo` sample.
+    pub leaders: Option<i32>,
+    /// Groups this node follows. Unknown for a remote node.
+    pub followers: Option<i32>,
+    /// Groups on this node whose apply index lags the cluster commit.
+    pub lagging_groups: Option<i32>,
+    /// Largest apply lag on this node, in log entries.
+    pub worst_lag: Option<i64>,
+    /// Milliseconds since the freshest quorum ack or heartbeat sample. Unknown when absent.
+    pub heartbeat_age: Option<i64>,
 }
 
 /// ClusterView - Displays live Raft cluster status
@@ -130,7 +140,7 @@ pub struct ClusterView {
 impl ClusterView {
     /// Get the TableDefinition for system.cluster view
     ///
-    /// Schema (25 columns):
+    /// Schema (30 columns):
     /// - cluster_id TEXT NOT NULL
     /// - node_id BIGINT NOT NULL
     /// - role TEXT NOT NULL
@@ -156,6 +166,11 @@ impl ClusterView {
     /// - uptime_human TEXT (nullable)
     /// - os TEXT (nullable)
     /// - arch TEXT (nullable)
+    /// - leaders INT (nullable)
+    /// - followers INT (nullable)
+    /// - lagging_groups INT (nullable)
+    /// - worst_lag BIGINT (nullable)
+    /// - heartbeat_age BIGINT (nullable)
     pub fn definition() -> TableDefinition {
         ClusterRow::definition()
     }
@@ -222,6 +237,11 @@ impl VirtualView for ClusterView {
         let mut uptime_humans: Vec<Option<&str>> = Vec::with_capacity(num_nodes);
         let mut oses: Vec<Option<&str>> = Vec::with_capacity(num_nodes);
         let mut archs: Vec<Option<&str>> = Vec::with_capacity(num_nodes);
+        let mut leaders: Vec<Option<i32>> = Vec::with_capacity(num_nodes);
+        let mut followers: Vec<Option<i32>> = Vec::with_capacity(num_nodes);
+        let mut lagging_groups: Vec<Option<i32>> = Vec::with_capacity(num_nodes);
+        let mut worst_lags: Vec<Option<i64>> = Vec::with_capacity(num_nodes);
+        let mut heartbeat_ages: Vec<Option<i64>> = Vec::with_capacity(num_nodes);
 
         // Single pass through nodes - collect all data
         for node in &info.nodes {
@@ -251,6 +271,11 @@ impl VirtualView for ClusterView {
             uptime_humans.push(node.uptime_human.as_deref());
             oses.push(node.os.as_deref());
             archs.push(node.arch.as_deref());
+            leaders.push(node.leaders.map(|value| value as i32));
+            followers.push(node.followers.map(|value| value as i32));
+            lagging_groups.push(node.lagging_groups.map(|value| value as i32));
+            worst_lags.push(node.worst_lag.map(|value| value as i64));
+            heartbeat_ages.push(node.millis_since_last_heartbeat.map(|value| value as i64));
         }
 
         // Build RecordBatch with direct Arrow array construction
@@ -283,6 +308,11 @@ impl VirtualView for ClusterView {
                 Arc::new(StringArray::from(uptime_humans)) as ArrayRef,
                 Arc::new(StringArray::from(oses)) as ArrayRef,
                 Arc::new(StringArray::from(archs)) as ArrayRef,
+                Arc::new(Int32Array::from(leaders)) as ArrayRef,
+                Arc::new(Int32Array::from(followers)) as ArrayRef,
+                Arc::new(Int32Array::from(lagging_groups)) as ArrayRef,
+                Arc::new(Int64Array::from(worst_lags)) as ArrayRef,
+                Arc::new(Int64Array::from(heartbeat_ages)) as ArrayRef,
             ],
         )
         .map_err(|e| RegistryError::Other(format!("Failed to build cluster batch: {}", e)))
@@ -413,7 +443,7 @@ mod tests {
     #[test]
     fn test_schema() {
         let schema = cluster_schema();
-        assert_eq!(schema.fields().len(), 25);
+        assert_eq!(schema.fields().len(), 30);
         assert_eq!(schema.field(0).name(), "cluster_id");
         assert_eq!(schema.field(1).name(), "node_id");
         assert_eq!(schema.field(2).name(), "role");
@@ -428,6 +458,11 @@ mod tests {
         assert_eq!(schema.field(22).name(), "uptime_human");
         assert_eq!(schema.field(23).name(), "os");
         assert_eq!(schema.field(24).name(), "arch");
+        assert_eq!(schema.field(25).name(), "leaders");
+        assert_eq!(schema.field(26).name(), "followers");
+        assert_eq!(schema.field(27).name(), "lagging_groups");
+        assert_eq!(schema.field(28).name(), "worst_lag");
+        assert_eq!(schema.field(29).name(), "heartbeat_age");
     }
 
     #[test]

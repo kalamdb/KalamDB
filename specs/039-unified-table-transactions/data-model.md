@@ -248,3 +248,118 @@ FormatCompatibilityFloor
 ├── row_v2_writer_enabled: bool         # Only true after all eligible cluster nodes report reader >= 2
 └── secondary_index_format_version: u8  # Independently gated from row format
 ```
+
+---
+
+## 2. Raft Group Entities (User Story 8, FR-048–FR-056)
+
+Specified by [contracts/openraft-010.md](contracts/openraft-010.md). Every persisted byte layout below is owned by KalamDB in `kalamdb-raft`. No OpenRaft type is bincode-encoded directly into RocksDB or a snapshot file.
+
+### 2.1 `KalamTypeConfig` and `RaftCommandBytes` (FR-048)
+
+```text
+KalamTypeConfig (OpenRaft 0.10)
+├── NodeId   = u64
+├── Node     = KalamNode
+├── Term     = u64
+├── LeaderId = leader_id_std::LeaderId<u64, u64>   # committed leader id = term
+├── D        = RaftCommandBytes                    # Debug + Display: command kind and byte length only
+├── R        = RaftCommandBytes                    # apply response bytes
+└── AsyncRuntime = tokio-rt default
+
+RaftCommandBytes(Vec<u8>)    # same bincode layout as 0.9 Vec<u8>
+```
+
+`SnapshotData` is not on the type config in 0.10. It is the state machine's snapshot payload (section 2.3).
+
+### 2.2 Persisted Raft records (FR-048, FR-049)
+
+The existing types live in `backend/crates/kalamdb-store/src/raft_storage.rs`.
+
+```text
+RaftLogEntry           # existing, unchanged
+├── index: u64
+├── term: u64
+└── payload: Vec<u8>   # tagged: Blank | Normal(RaftCommandBytes) | Membership
+
+RaftVote               # existing, unchanged; maps to the std Vote (term, voted_for, committed)
+├── term: u64
+├── voted_for: Option<u64>
+└── committed: bool
+
+RaftMembership         # new, replaces the opaque bincode bytes passed to save_last_membership
+├── log_id: Option<RaftLogId>       # (term, index)
+├── configs: Vec<BTreeSet<u64>>     # joint configs, in order
+└── nodes: BTreeMap<u64, KalamNode>
+```
+
+- `save_last_membership` / `read_last_membership` take and return `RaftMembership`, not `&[u8]`.
+- Reads accept the 0.9 bincode `StoredMembership` (advanced leader id) once and drop the node id. Writes emit only `RaftMembership`. The membership payload inside a `RaftLogEntry` uses the same rule.
+- A record that decodes as neither layout is a startup error, not `None`.
+- Log ids are rebuilt as `(term, index)`. No node `0` placeholder.
+
+### 2.3 Snapshot header and lifecycle (FR-056)
+
+```text
+RaftSnapshotMeta                 # existing in kalamdb-store; snapshot_id stays as the local file id
+├── last_log_id: Option<RaftLogId>
+├── snapshot_id: String          # local only; not sent to OpenRaft 0.10, which has no snapshot_id
+└── size_bytes: u64
+  + build_counter: u64           # new: next file counter, read from here instead of split('-')
+
+StateMachineSnapshotHeader       # new, replaces the bincode StateMachineData header in raft_store.rs
+├── last_applied: Option<RaftLogId>
+└── last_membership: RaftMembership
+```
+
+Adding `build_counter` changes the `RaftSnapshotMeta` encoding. The reader accepts the old record (counter recovered once from the existing `snapshot_id`), and the writer emits the new one. T090 captures the old bytes.
+
+- Retention: after a new snapshot is durable, delete files older than `max_snapshots_to_keep`.
+- Install: fsync the file, then one `WriteBatch` with `RaftSnapshotMeta`, data path, `last_applied`, membership, and purge marker. Purge logs after.
+- Build, current-snapshot read, and transfer share one `Arc<[u8]>` or a file stream.
+
+### 2.4 Applied entry batch (FR-051, FR-056)
+
+```text
+AppliedEntryBatch                # one per applied Raft entry, owned by the storage
+├── ops: Vec<Operation>          # table, index, and state-machine writes from apply
+├── log_record: Option<RaftLogEntry>     # standalone deferred mode only
+├── last_applied: (term, index)
+└── after_persist: Vec<Hook>     # run once after the batch is written, before the responder
+```
+
+- Standalone mode is fixed at `RaftGroup::start` (`peers` empty). `add_learner` is rejected in that mode.
+- In standalone mode a crash may lose log records above `last_applied`. That tail was never acknowledged and is not a torn tail.
+- The Meta-to-Data materialization watermark stays a separate value and is never derived from `last_applied`.
+
+### 2.5 `GroupProgressSnapshot` (FR-052)
+
+```text
+GroupProgressSnapshot            # one per local group, owned by RaftManager, refreshed from 0.10 watches
+├── group_id: GroupId
+├── observed_at: Instant
+├── local_committed: Option<u64>
+├── cluster_committed: Option<u64>
+├── flushed: Option<u64>
+├── applied: Option<u64>
+├── snapshot: Option<u64>
+├── purged: Option<u64>
+├── vote: Option<(term, node_id, committed)>
+├── leader: Option<u64>
+└── last_quorum_acked: Option<Instant>
+```
+
+A SQL query reads the latest `GroupProgressSnapshot`. It does not start a watch. Remote applied indexes come from `peer_stats_cache` (`GetNodeInfo` RPC) and are `NULL` when absent.
+
+### 2.6 System view columns
+
+`system.cluster_groups` keeps its 14 existing columns in order: `group_id`, `cluster_id`, `node_id`, `group_type`, `current_term`, `vote`, `last_log_index`, `last_applied`, `snapshot`, `purged`, `committed`, `state`, `current_leader`, `millis_since_quorum_ack`. `committed` keeps its name and is filled from `GroupProgressSnapshot.cluster_committed`. Appended columns, all nullable:
+
+| Column | Type | Source |
+| --- | --- | --- |
+| `local_committed` | `Int64` | `GroupProgressSnapshot.local_committed` |
+| `flushed` | `Int64` | `GroupProgressSnapshot.flushed` |
+| `apply_lag` | `Int64` | `cluster_committed - applied`, same group only |
+| `observed_at_ms` | `Int64` | age of the snapshot in milliseconds |
+
+`system.cluster` keeps its existing columns in order. Appended summaries: `leader_groups`, `follower_groups`, `lagging_groups`, `worst_apply_lag`, `millis_since_last_heartbeat` (existing field, now filled when known).

@@ -14,7 +14,7 @@ use dashmap::DashMap;
 use kalamdb_commons::models::{NodeId, UserId};
 use kalamdb_observability::{collect_runtime_metrics, SERVER_VERSION};
 use kalamdb_sharding::ShardRouter;
-use openraft::ServerState;
+use openraft::{Instant as RaftInstant, ServerState};
 use tonic::service::Routes;
 
 use crate::{
@@ -32,6 +32,72 @@ use crate::{
 type Result<T> = std::result::Result<T, RaftError>;
 
 const PEER_STATS_REFRESH_MIN_INTERVAL: Duration = Duration::from_secs(5);
+
+struct LocalGroupSummary {
+    leaders: u32,
+    followers: u32,
+    lagging_groups: u32,
+    worst_lag: Option<u64>,
+}
+
+/// Leadership and apply lag for this node, counted once per Raft group.
+fn local_group_summary(manager: &RaftManager) -> LocalGroupSummary {
+    let mut leaders = 0u32;
+    let mut followers = 0u32;
+    let mut lagging_groups = 0u32;
+    let mut worst_lag = None;
+    for group_id in manager.all_group_ids() {
+        let Some(metrics) = manager.group_metrics(group_id) else {
+            continue;
+        };
+        if metrics.current_leader == Some(metrics.id) {
+            leaders += 1;
+        } else {
+            followers += 1;
+        }
+        if let Some(lag) = manager.group_progress(group_id).and_then(|progress| progress.lag) {
+            if lag > 0 {
+                lagging_groups += 1;
+            }
+            worst_lag = Some(worst_lag.map_or(lag, |current: u64| current.max(lag)));
+        }
+    }
+    LocalGroupSummary {
+        leaders,
+        followers,
+        lagging_groups,
+        worst_lag,
+    }
+}
+
+/// Freshest heartbeat or quorum-ack age for `target`, in milliseconds.
+///
+/// A missing sample stays unknown. The age is `Instant::elapsed` on the
+/// OpenRaft timestamp, not a stored duration.
+fn heartbeat_age_ms(manager: &RaftManager, target: u64) -> Option<u64> {
+    let mut freshest = None;
+    for group_id in manager.all_group_ids() {
+        let Some(metrics) = manager.group_metrics(group_id) else {
+            continue;
+        };
+        let age = if metrics.id == target {
+            metrics
+                .last_quorum_acked
+                .as_ref()
+                .map(|acked| acked.elapsed().as_millis() as u64)
+        } else {
+            metrics.heartbeat.as_ref().and_then(|beats| {
+                beats.get(&target).and_then(|stamp| {
+                    stamp.as_ref().map(|stamp| stamp.elapsed().as_millis() as u64)
+                })
+            })
+        };
+        if let Some(age) = age {
+            freshest = Some(freshest.map_or(age, |current: u64| current.min(age)));
+        }
+    }
+    freshest
+}
 
 /// Cluster mode executor using Raft consensus.
 ///
@@ -213,13 +279,8 @@ impl CommandExecutor for RaftExecutor {
         let total_groups = all_groups.len() as u32;
         let local_runtime = collect_runtime_metrics(self.server_start_time);
 
-        // Count how many groups this node leads
-        let mut self_groups_leading = 0;
-        for group in &all_groups {
-            if self.manager.is_leader(*group) {
-                self_groups_leading += 1;
-            }
-        }
+        let summary = local_group_summary(&self.manager);
+        let self_groups_leading = summary.leaders;
 
         let meta_metrics = self.manager.meta_metrics();
         let mut voter_ids = BTreeSet::new();
@@ -245,7 +306,10 @@ impl CommandExecutor for RaftExecutor {
                 metrics.current_term,
                 metrics.last_log_index,
                 metrics.last_applied.map(|log_id| log_id.index),
-                metrics.millis_since_quorum_ack,
+                metrics
+                    .last_quorum_acked
+                    .as_ref()
+                    .map(|acked| acked.elapsed().as_millis() as u64),
                 metrics.replication.clone(),
                 metrics.state,
             )
@@ -319,7 +383,7 @@ impl CommandExecutor for RaftExecutor {
             };
 
             // Determine status and replication metrics for other nodes
-            let (status, replication_lag, last_applied_log, catchup_progress_pct) = if is_self {
+            let (status, replication_lag, _matched_index, catchup_progress_pct) = if is_self {
                 (self_status, None, last_applied, None)
             } else if let Some(ref repl) = replication_metrics {
                 // If we have replication metrics (leader's view), use them
@@ -397,11 +461,11 @@ impl CommandExecutor for RaftExecutor {
                 } else {
                     Some(current_term)
                 },
-                // Prefer live last_applied from cache (more accurate than replication lag proxy)
-                last_applied_log: if let Some(ref p) = peer_cache_entry {
-                    p.last_applied_log.or(last_applied_log)
+                // Remote applied indexes come from GetNodeInfo. A missing sample stays unknown.
+                last_applied_log: if is_self {
+                    last_applied
                 } else {
-                    last_applied_log
+                    peer_cache_entry.as_ref().and_then(|peer| peer.last_applied_log)
                 },
                 leader_last_log_index: last_log_index,
                 // Prefer live snapshot from cache for remote nodes
@@ -411,7 +475,7 @@ impl CommandExecutor for RaftExecutor {
                     snapshot_idx
                 },
                 catchup_progress_pct,
-                millis_since_last_heartbeat: None, // TODO: heartbeat metrics are in OpenRaft 0.10+
+                millis_since_last_heartbeat: heartbeat_age_ms(&self.manager, node_id),
                 replication_lag,
                 // Node metadata: prefer live cache, fall back to KalamNode membership data
                 hostname: peer_cache_entry
@@ -459,6 +523,22 @@ impl CommandExecutor for RaftExecutor {
                     .as_ref()
                     .and_then(|p| p.arch.clone())
                     .or_else(|| node.arch.clone()),
+                leaders: if is_self {
+                    Some(summary.leaders)
+                } else {
+                    peer_cache_entry.as_ref().map(|peer| peer.groups_leading)
+                },
+                followers: if is_self {
+                    Some(summary.followers)
+                } else {
+                    None
+                },
+                lagging_groups: if is_self {
+                    Some(summary.lagging_groups)
+                } else {
+                    None
+                },
+                worst_lag: if is_self { summary.worst_lag } else { None },
             });
         }
 

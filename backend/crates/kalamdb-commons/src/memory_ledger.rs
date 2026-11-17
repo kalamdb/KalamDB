@@ -138,6 +138,8 @@ impl std::error::Error for MemoryBudgetError {}
 #[derive(Debug)]
 pub struct MemoryLedger {
     held: [AtomicUsize; CLASS_COUNT],
+    peak: [AtomicUsize; CLASS_COUNT],
+    total_peak: AtomicUsize,
     limits: [usize; CLASS_COUNT],
 }
 
@@ -145,6 +147,8 @@ impl MemoryLedger {
     pub fn new(budgets: MemoryBudgets) -> Self {
         Self {
             held: std::array::from_fn(|_| AtomicUsize::new(0)),
+            peak: std::array::from_fn(|_| AtomicUsize::new(0)),
+            total_peak: AtomicUsize::new(0),
             limits: std::array::from_fn(|index| {
                 let class = match index {
                     0 => MemoryClass::StagedPayload,
@@ -161,6 +165,40 @@ impl MemoryLedger {
 
     pub fn held(&self, class: MemoryClass) -> usize {
         self.held[class.index()].load(Ordering::Relaxed)
+    }
+
+    /// High water of one class. Release does not lower it.
+    pub fn peak(&self, class: MemoryClass) -> usize {
+        self.peak[class.index()].load(Ordering::Relaxed)
+    }
+
+    /// High water of the sum of held bytes across classes.
+    pub fn peak_total(&self) -> usize {
+        self.total_peak.load(Ordering::Relaxed)
+    }
+
+    fn note_peak(&self, class: MemoryClass, held: usize) {
+        let peak = &self.peak[class.index()];
+        let mut current = peak.load(Ordering::Relaxed);
+        while held > current {
+            match peak.compare_exchange_weak(current, held, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => break,
+                Err(observed) => current = observed,
+            }
+        }
+        let total: usize = self.held.iter().map(|counter| counter.load(Ordering::Relaxed)).sum();
+        let mut current = self.total_peak.load(Ordering::Relaxed);
+        while total > current {
+            match self.total_peak.compare_exchange_weak(
+                current,
+                total,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(observed) => current = observed,
+            }
+        }
     }
 
     pub fn limit(&self, class: MemoryClass) -> usize {
@@ -194,7 +232,10 @@ impl MemoryLedger {
             }
             match counter.compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Relaxed)
             {
-                Ok(_) => return Ok(()),
+                Ok(_) => {
+                    self.note_peak(class, next);
+                    return Ok(());
+                },
                 Err(observed) => current = observed,
             }
         }
@@ -316,6 +357,8 @@ mod tests {
         ledger.try_reserve(MemoryClass::StagedPayload, 40).expect("reopened");
         ledger.release(MemoryClass::StagedPayload, 10_000);
         assert_eq!(ledger.held(MemoryClass::StagedPayload), 0);
+        assert_eq!(ledger.peak(MemoryClass::StagedPayload), 100);
+        assert!(ledger.peak_total() >= 100);
     }
 
     #[test]
@@ -361,9 +404,7 @@ mod tests {
         let mut handles = Vec::new();
         for _ in 0..4 {
             let ledger = Arc::clone(&ledger);
-            handles.push(std::thread::spawn(move || {
-                ledger.try_reserve_staged(20, 1).is_ok()
-            }));
+            handles.push(std::thread::spawn(move || ledger.try_reserve_staged(20, 1).is_ok()));
         }
         let admitted: usize = handles
             .into_iter()

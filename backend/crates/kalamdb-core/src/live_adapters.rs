@@ -181,10 +181,7 @@ impl LiveSqlExecutor for SqlExecutorAdapter {
             .await
             .map_err(|e| LiveError::ExecutionError(e.to_string()))?;
 
-        let result = result
-            .into_materialized_rows()
-            .await
-            .map_err(LiveError::ExecutionError)?;
+        let result = result.into_materialized_rows().await.map_err(LiveError::ExecutionError)?;
         let result = result.into_arrow_rows().map_err(LiveError::ExecutionError)?;
 
         match result {
