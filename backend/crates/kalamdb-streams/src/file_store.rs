@@ -704,43 +704,45 @@ impl FileStreamLogStore {
     fn collect_range_from_entries(
         &self,
         entries: &[LogFileEntry],
+        start_time: u64,
+        end_time: u64,
         limit: usize,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>> {
-        let mut results: Vec<(StreamTableRowId, StreamTableRow)> = Vec::new();
-        let mut deleted: HashSet<i64> = HashSet::new();
+        // Replay all selected windows before applying LIMIT. Stopping at the
+        // first N puts could resurrect a row deleted later in the same window.
+        // Keep the latest visibility state by version, rather than O(N) retain
+        // scans for each DELETE frame.
+        let mut live: HashMap<i64, (StreamTableRowId, StreamTableRow)> = HashMap::new();
 
         for entry in entries {
             self.flush_segment(&entry.path);
-            let should_continue = self.visit_records(&entry.path, |record| {
+            self.visit_records(&entry.path, |record| {
                 match record {
                     StreamLogRecord::Put { row_id, row } => {
-                        let version = row_id.version().as_i64();
-                        if deleted.contains(&version) {
-                            return Ok(true);
-                        }
-                        results.push((row_id, row));
-                        if results.len() >= limit {
-                            return Ok(false);
-                        }
+                        live.insert(row_id.version().as_i64(), (row_id, row));
                     },
-                    StreamLogRecord::Delete {
-                        row_id,
-                        timestamp: _,
-                    } => {
-                        let version = row_id.version().as_i64();
-                        deleted.insert(version);
-                        results
-                            .retain(|(existing_id, _)| existing_id.version().as_i64() != version);
+                    StreamLogRecord::Delete { row_id, .. } => {
+                        live.remove(&row_id.version().as_i64());
                     },
                 }
                 Ok(true)
             })?;
-            if !should_continue {
-                break;
-            }
         }
 
-        Ok(results)
+        let mut rows: Vec<_> = live
+            .into_values()
+            .filter(|(_, row)| {
+                let timestamp = row._timestamp;
+                timestamp >= 0
+                    && (timestamp as u64) >= start_time
+                    && (timestamp as u64) <= end_time
+            })
+            .collect();
+        // Retain the original chronological semantics, independent of
+        // HashMap iteration order or append order inside a segment.
+        rows.sort_unstable_by_key(|(row_id, row)| (row._timestamp, row_id.version().as_i64()));
+        rows.truncate(limit);
+        Ok(rows)
     }
 
     fn read_range_internal(
@@ -750,7 +752,7 @@ impl FileStreamLogStore {
         end_time: u64,
         limit: usize,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>> {
-        if limit == 0 {
+        if limit == 0 || start_time > end_time {
             return Ok(Vec::new());
         }
 
@@ -759,7 +761,7 @@ impl FileStreamLogStore {
             return Ok(Vec::new());
         }
 
-        self.collect_range_from_entries(&entries, limit)
+        self.collect_range_from_entries(&entries, start_time, end_time, limit)
     }
 
     fn read_latest_internal(
@@ -1177,6 +1179,69 @@ mod tests {
         // Data should still be readable from disk.
         let read = store.read_with_limit(&table_id, &user_id, 10).unwrap();
         assert_eq!(read.len(), 1);
+
+        let _ = fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn test_range_limit_does_not_resurrect_deleted_rows() {
+        let base_dir = temp_base_dir("kalamdb_streams_range_delete_limit");
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("events"));
+        let store = create_store(
+            base_dir.clone(),
+            table_id.clone(),
+            ShardRouter::new(4, 1),
+            StreamTimeBucket::Hour,
+        );
+
+        let user_id = UserId::new("user-range");
+        let timestamp = chrono::Utc::now().timestamp_millis();
+        let first_version = version_from_local(1);
+        let second_version = version_from_local(2);
+        let first_id = StreamTableRowId::new(user_id.clone(), first_version);
+        let second_id = StreamTableRowId::new(user_id.clone(), second_version);
+
+        store
+            .append_row(
+                &table_id,
+                &user_id,
+                &first_id,
+                &build_row(&user_id, first_version, timestamp),
+            )
+            .unwrap();
+        store
+            .append_row(
+                &table_id,
+                &user_id,
+                &second_id,
+                &build_row(&user_id, second_version, timestamp),
+            )
+            .unwrap();
+        store.append_delete(&table_id, &user_id, &first_id, timestamp).unwrap();
+
+        let rows = store
+            .read_in_time_range(
+                &table_id,
+                &user_id,
+                (timestamp - 1000) as u64,
+                (timestamp + 1000) as u64,
+                1,
+            )
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows.contains_key(&second_id));
+        assert!(!rows.contains_key(&first_id));
+
+        let excluded = store
+            .read_in_time_range(
+                &table_id,
+                &user_id,
+                (timestamp + 1) as u64,
+                (timestamp + 2000) as u64,
+                10,
+            )
+            .unwrap();
+        assert!(excluded.is_empty(), "partial-window timestamp filtering must be exact");
 
         let _ = fs::remove_dir_all(&base_dir);
     }
