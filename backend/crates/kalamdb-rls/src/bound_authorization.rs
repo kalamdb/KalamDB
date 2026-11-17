@@ -45,6 +45,13 @@ impl BoundAuthorization {
         self.dependencies.iter().all(AuthorizationDependencyGuard::is_current)
     }
 
+    /// Admin bypass: every row is allowed, and the row body is not an input.
+    ///
+    /// Still false when the dependency epoch has moved. Callers then fail closed.
+    pub fn allows_all_current_rows(&self) -> bool {
+        self.is_current() && self.policies.bypasses_rls()
+    }
+
     pub fn authorizes(&self, row: &Row) -> bool {
         self.is_current()
             && self.policies.authorizes_row_with_sets(&self.table, row, &self.sets)

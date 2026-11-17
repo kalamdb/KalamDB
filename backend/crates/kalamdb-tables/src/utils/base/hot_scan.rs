@@ -192,14 +192,20 @@ where
     }
     missing.sort();
     missing.dedup();
-    for pk in missing {
-        let scalar = crate::versioned::pk_text_to_scalar(&mask.schema, mask.pk_name, &pk)?;
-        let prefix = (mask.prefix_for_pk)(&scalar);
-        if let Some((key, row)) =
-            crate::versioned::latest_hot_by_prefix(mask.store, prefix, None).await?
-        {
-            winners.absorb_row(pk_name, key, row);
-        }
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let mut prefixes = Vec::with_capacity(missing.len());
+    for pk in &missing {
+        let scalar = crate::versioned::pk_text_to_scalar(&mask.schema, mask.pk_name, pk)?;
+        prefixes.push((mask.prefix_for_pk)(&scalar));
+    }
+    let loaded = mask.store.get_latest_many_by_index_prefixes(0, &prefixes).map_err(|error| {
+        KalamDbError::InvalidOperation(format!("PK index scan failed: {error}"))
+    })?;
+    for hit in loaded.into_iter().flatten() {
+        let (key, row) = hit;
+        winners.absorb_row(pk_name, key, row);
     }
     Ok(())
 }

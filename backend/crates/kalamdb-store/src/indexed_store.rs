@@ -887,9 +887,7 @@ where
                 ));
             }
 
-            for ((key, storage_key), old_bytes) in
-                chunk.iter().zip(storage_keys).zip(old_rows)
-            {
+            for ((key, storage_key), old_bytes) in chunk.iter().zip(storage_keys).zip(old_rows) {
                 operations.push(Operation::Delete {
                     partition: self.main_partition.clone(),
                     key: storage_key,
@@ -1446,15 +1444,15 @@ where
         Ok(None)
     }
 
-    /// Newest row for each index prefix.
+    /// Newest index hit's raw payload for each prefix, in `prefixes` order.
     ///
     /// Prefix seeks stay inside this call. The row bodies are one `get_many`.
-    /// A missing index partition is a miss for that prefix, not a failed batch.
-    pub fn get_latest_many_by_index_prefixes(
+    /// A missing index partition, or a hit whose body is gone, is `None`.
+    pub fn get_latest_payloads_by_index_prefixes(
         &self,
         index_idx: usize,
-        prefixes: &[Vec<u8>],
-    ) -> Result<Vec<Option<(K, V)>>> {
+        prefixes: &[&[u8]],
+    ) -> Result<Vec<Option<(K, Vec<u8>)>>> {
         if prefixes.is_empty() {
             return Ok(Vec::new());
         }
@@ -1504,14 +1502,43 @@ where
                 continue;
             };
             match fetched.next() {
-                Some(Some(bytes)) => {
-                    let entity = self.codec.decode(&key, &bytes)?;
-                    rows.push(Some((key, entity)));
-                },
+                Some(Some(bytes)) => rows.push(Some((key, bytes))),
                 _ => rows.push(None),
             }
         }
         Ok(rows)
+    }
+
+    /// Tombstone bit from bytes this store already loaded.
+    pub fn row_deleted_flag(&self, bytes: &[u8]) -> Result<Option<bool>> {
+        self.codec.row_deleted_flag(bytes)
+    }
+
+    /// Decode a payload already returned by [`Self::get_latest_payloads_by_index_prefixes`].
+    pub fn decode_entity(&self, key: &K, bytes: &[u8]) -> Result<V> {
+        self.codec.decode(key, bytes)
+    }
+
+    /// Newest row for each index prefix.
+    ///
+    /// Prefix seeks stay inside this call. The row bodies are one `get_many`.
+    /// A missing index partition is a miss for that prefix, not a failed batch.
+    pub fn get_latest_many_by_index_prefixes(
+        &self,
+        index_idx: usize,
+        prefixes: &[Vec<u8>],
+    ) -> Result<Vec<Option<(K, V)>>> {
+        let refs: Vec<&[u8]> = prefixes.iter().map(Vec::as_slice).collect();
+        self.get_latest_payloads_by_index_prefixes(index_idx, &refs)?
+            .into_iter()
+            .map(|payload| {
+                let Some((key, bytes)) = payload else {
+                    return Ok(None);
+                };
+                let entity = self.codec.decode(&key, &bytes)?;
+                Ok(Some((key, entity)))
+            })
+            .collect()
     }
 
     /// Load `keys` with one multi-get. Missing keys are `None` in order.

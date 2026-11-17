@@ -418,11 +418,12 @@ where
         for ((pk_value, version), target) in
             pk_values.iter().zip(versions.iter().copied()).zip(targets)
         {
-            let Some((previous, latest_row)) = crate::versioned::optional_live_row(target) else {
+            let Some((hot_key, row)) = crate::versioned::optional_live_row(target) else {
                 continue;
             };
-            let prior = S::row_fields(&latest_row).clone();
-            let entity = S::make_row(scope, version, true, S::row_fields(&latest_row).clone());
+            let prior = S::row_fields(&row).clone();
+            let previous = hot_key.map(|key| (key, row));
+            let entity = S::make_row(scope, version, true, prior.clone());
             let row_key = S::make_row_id(scope, version);
             let notification = watched.then(|| {
                 self.delete_notification(table_id.clone(), Self::notification_row(&entity))
@@ -477,23 +478,24 @@ where
         let mut applied = Vec::with_capacity(updates.len());
         for ((pk_value, update_row, version), target) in updates.iter().zip(targets) {
             let coerced = crate::versioned::coerce_update_row(update_row.clone(), &schema)?;
-            let (previous, latest_row) =
-                crate::versioned::require_live_row(target, &pk_column, pk_value)?;
+            let (hot_key, row) = crate::versioned::require_live_row(target, &pk_column, pk_value)?;
+            let prior = S::row_fields(&row).clone();
+            let old_notification = watched.then(|| Self::notification_row(&row));
+            let previous = hot_key.map(|key| (key, row));
             let Some(new_fields) = crate::versioned::changed_update_fields(
-                S::row_fields(&latest_row),
+                &prior,
                 coerced,
                 self.core.non_null_columns(),
             )?
             else {
                 continue;
             };
-            let prior = S::row_fields(&latest_row).clone();
             let entity = S::make_row(scope, *version, false, new_fields);
             let row_key = S::make_row_id(scope, *version);
             let notification = crate::versioned::update_notification_when_watched(
                 watched,
                 table_id.clone(),
-                || Self::notification_row(&latest_row),
+                || old_notification.expect("notification row is built when a watcher is present"),
                 || Self::notification_row(&entity),
                 pk_column.clone(),
             );
@@ -678,15 +680,17 @@ where
             let _guard = self.begin_guard();
             let scope = self.storage_user(Some(actor))?;
             let pk_name = self.primary_key_field_name().to_string();
-            let (previous, latest_row) = crate::versioned::require_live_row(
+            let (hot_key, row) = crate::versioned::require_live_row(
                 self.load_mutation_target(Some(actor), pk_value).await?,
                 &pk_name,
                 pk_value,
             )?;
+            let old_notice = Self::notification_row(&row);
+            let latest_fields = S::row_fields(&row).clone();
+            let previous = hot_key.map(|key| (key, row));
             let coerced = crate::versioned::coerce_update_row(updates, &self.core.schema_ref())?;
-            let new_fields =
-                crate::versioned::merge_row_updates(S::row_fields(&latest_row), coerced);
-            if new_fields == *S::row_fields(&latest_row) {
+            let new_fields = crate::versioned::merge_row_updates(&latest_fields, coerced);
+            if new_fields == latest_fields {
                 if !S::USER_SCOPED_ROWS {
                     tracing::debug!(
                         table_id = %self.core.table_id(),
@@ -721,12 +725,7 @@ where
                 kalamdb_commons::models::TopicOp::Update,
                 || Self::notification_row(&entity),
                 |table_id, new_row| {
-                    crate::versioned::update_notification(
-                        table_id,
-                        Self::notification_row(&latest_row),
-                        new_row,
-                        pk_col,
-                    )
+                    crate::versioned::update_notification(table_id, old_notice, new_row, pk_col)
                 },
             )
             .await;
@@ -752,7 +751,7 @@ where
             let _guard = self.begin_guard();
             let scope = self.storage_user(Some(actor))?;
             let pk_name = self.primary_key_field_name().to_string();
-            let Some((previous, latest_row)) = crate::versioned::optional_live_row(
+            let Some((hot_key, row)) = crate::versioned::optional_live_row(
                 self.load_mutation_target(Some(actor), pk_value).await?,
             ) else {
                 log::trace!(
@@ -763,7 +762,8 @@ where
                 );
                 return Ok(false);
             };
-            let values = S::row_fields(&latest_row).values.clone();
+            let values = S::row_fields(&row).values.clone();
+            let previous = hot_key.map(|key| (key, row));
             let entity = S::make_row(scope, version, true, Row::new(values));
             let row_key = S::make_row_id(scope, version);
             log::debug!(
@@ -817,11 +817,13 @@ where
         let mut effects = Vec::new();
         let mut deleted = Vec::new();
         for (pk_value, target) in pk_values.iter().zip(targets) {
-            let Some((previous, latest_row)) = crate::versioned::optional_live_row(target) else {
+            let Some((hot_key, row)) = crate::versioned::optional_live_row(target) else {
                 continue;
             };
             let version = crate::utils::base::next_statement_version(commit_seq, ordinal)?;
-            let entity = S::make_row(scope, version, true, S::row_fields(&latest_row).clone());
+            let fields = S::row_fields(&row).clone();
+            let previous = hot_key.map(|key| (key, row));
+            let entity = S::make_row(scope, version, true, fields);
             let row_key = S::make_row_id(scope, version);
             items.push((previous, row_key, entity.clone()));
             effects.push(crate::versioned::PlannedScopeFinish::Delete {
@@ -911,10 +913,15 @@ where
                 self.core.non_null_columns(),
                 std::slice::from_ref(&inserted_row),
             )?;
-            let live = crate::versioned::optional_live_row(target);
-            if let Some((previous, _)) = &live {
-                reused.insert(old_pk.clone(), previous.clone());
-            }
+            let live = match crate::versioned::optional_live_row(target) {
+                Some((hot_key, row)) => {
+                    let fields = S::row_fields(&row).clone();
+                    let previous = hot_key.map(|key| (key, row));
+                    reused.insert(old_pk.clone(), previous.clone());
+                    Some((previous, fields))
+                },
+                None => None,
+            };
             prepared.push((old_pk, inserted_row, new_pk, live));
         }
         let mut early_deletes = Vec::new();
@@ -931,8 +938,7 @@ where
                 self.insert_predecessor(Some(actor), &inserted_row).await?
             };
             inserts.push((predecessor, inserted_row));
-            if let Some((previous, latest_row)) = live {
-                let fields = S::row_fields(&latest_row).clone();
+            if let Some((previous, fields)) = live {
                 if reused.contains_key(&old_pk) {
                     early_deletes.push((previous, fields, old_pk));
                 } else {
@@ -977,8 +983,9 @@ where
         }
         let mut updated = 0u64;
         for ((pk_value, updates), target) in direct_updates.into_iter().zip(update_targets) {
-            let (previous, latest_row) =
-                crate::versioned::require_live_row(target, &pk_name, &pk_value)?;
+            let (hot_key, row) = crate::versioned::require_live_row(target, &pk_name, &pk_value)?;
+            let latest_row = row.clone();
+            let previous = hot_key.map(|key| (key, row));
             let coerced = crate::versioned::coerce_update_row(updates, &schema)?;
             let new_fields =
                 crate::versioned::merge_row_updates(S::row_fields(&latest_row), coerced);

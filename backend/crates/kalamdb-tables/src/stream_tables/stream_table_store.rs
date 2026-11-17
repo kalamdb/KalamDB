@@ -19,9 +19,7 @@ use kalamdb_commons::{
 use kalamdb_serialization::StorageSchema;
 use kalamdb_sharding::ShardRouter;
 use kalamdb_store::storage_trait::{Result, StorageError};
-use kalamdb_streams::{
-    bucket_for_ttl, FileStreamLogStore, MemoryStreamLogStore, StreamLogConfig,
-};
+use kalamdb_streams::{bucket_for_ttl, FileStreamLogStore, MemoryStreamLogStore, StreamLogConfig};
 
 use crate::common::partition_name;
 

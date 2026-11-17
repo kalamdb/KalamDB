@@ -814,9 +814,25 @@ mod tests {
         let user = RaftPartitionStore::new(backend.clone(), GroupId::DataUserShard(5));
         let shared = RaftPartitionStore::new(backend, GroupId::DataSharedShard(5));
 
-        meta.append_logs(&[RaftLogEntry { index: 3, term: 1, payload: vec![] }]).unwrap();
-        user.append_logs(&[RaftLogEntry { index: 17, term: 1, payload: vec![] }]).unwrap();
-        shared.append_logs(&[RaftLogEntry { index: 42, term: 1, payload: vec![] }]).unwrap();
+        meta.append_logs(&[RaftLogEntry {
+            index: 3,
+            term: 1,
+            payload: vec![],
+        }])
+        .unwrap();
+        user.append_logs(&[RaftLogEntry {
+            index: 17,
+            term: 1,
+            payload: vec![],
+        }])
+        .unwrap();
+        shared
+            .append_logs(&[RaftLogEntry {
+                index: 42,
+                term: 1,
+                payload: vec![],
+            }])
+            .unwrap();
 
         assert_eq!(meta.last_log_index().unwrap(), Some(3));
         assert_eq!(user.last_log_index().unwrap(), Some(17));

@@ -212,9 +212,7 @@ where
 /// `StorageBackend::batch` calls from that scope are absorbed and are not a
 /// durable submission. The caller writes the buffered operations once.
 pub fn coalesce_session_active() -> bool {
-    COALESCE_STATE
-        .try_with(|state| lock_state(state).active)
-        .unwrap_or(false)
+    COALESCE_STATE.try_with(|state| lock_state(state).active).unwrap_or(false)
 }
 
 /// Defer a hook until *every* participating backend has durably committed.

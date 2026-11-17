@@ -287,10 +287,64 @@ pub fn classify_update(
         )?;
         return Ok(UpdateChange::PrimaryKeyMove(inserted));
     }
-    if update_assignments_noop(schema, row, &evaluated_updates)? {
+    let evaluated_updates =
+        coerce_updates(evaluated_updates, schema).map_err(DataFusionError::Execution)?;
+    if assignment_values_match(row, &evaluated_updates) {
         return Ok(UpdateChange::Unchanged);
     }
     Ok(UpdateChange::FieldUpdate(evaluated_updates))
+}
+
+/// Primary key and coerced assignments for one projected scan row.
+///
+/// `Ok((pk, None))` is a no-op. The source batch already holds the current
+/// values, so this does not build a row map for the unchanged columns.
+pub fn projected_field_change(
+    batch: &RecordBatch,
+    row_idx: usize,
+    pk_column: &str,
+    schema: &SchemaRef,
+    evaluated: Row,
+) -> DataFusionResult<(String, Option<Row>)> {
+    let pk_index = batch.schema().index_of(pk_column).map_err(|_| {
+        DataFusionError::Execution(format!(
+            "Primary key column '{pk_column}' not found in matching row"
+        ))
+    })?;
+    let pk_scalar = arrow_value_to_scalar(batch.column(pk_index).as_ref(), row_idx)?;
+    let pk_value = scalar_to_pk_string(&pk_scalar).map_err(|error| {
+        DataFusionError::Execution(format!("Invalid primary key value: {error}"))
+    })?;
+    let updates = coerce_updates(evaluated, schema).map_err(DataFusionError::Execution)?;
+    if assigned_values_match_batch(batch, row_idx, &updates)? {
+        Ok((pk_value, None))
+    } else {
+        Ok((pk_value, Some(updates)))
+    }
+}
+
+fn assignment_values_match(row: &Row, updates: &Row) -> bool {
+    updates
+        .values
+        .iter()
+        .all(|(column, value)| row.values.get(column) == Some(value))
+}
+
+fn assigned_values_match_batch(
+    batch: &RecordBatch,
+    row_idx: usize,
+    updates: &Row,
+) -> DataFusionResult<bool> {
+    for (column, value) in &updates.values {
+        let Ok(index) = batch.schema().index_of(column) else {
+            return Ok(false);
+        };
+        let existing = arrow_value_to_scalar(batch.column(index).as_ref(), row_idx)?;
+        if &existing != value {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Stage `change` for a transaction. Returns whether anything was staged.

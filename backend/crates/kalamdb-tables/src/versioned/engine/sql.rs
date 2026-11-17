@@ -443,8 +443,49 @@ where
                     return Ok(());
                 }
                 matched = true;
-                let source_rows = kalamdb_datafusion_sources::dml::record_batch_to_rows(&batch)?;
                 let evaluated = evaluator.evaluate_batch(&batch)?;
+                let project_fields = !relocates_pk
+                    && check
+                        .as_ref()
+                        .is_none_or(kalamdb_rls::BoundAuthorization::allows_all_current_rows);
+                if project_fields {
+                    for (row_idx, evaluated_updates) in evaluated.into_iter().enumerate() {
+                        let (pk_value, updates) =
+                            crate::utils::datafusion_dml::projected_field_change(
+                                &batch,
+                                row_idx,
+                                &pk_column,
+                                &schema,
+                                evaluated_updates,
+                            )?;
+                        if !seen.insert(pk_value.clone()) {
+                            continue;
+                        }
+                        let Some(updates) = updates else {
+                            continue;
+                        };
+                        if let Some(staged_mutations) = staged_mutations.as_mut() {
+                            let context = transaction_query_context
+                                .expect("transaction_query_context must exist when staging UPDATE");
+                            if crate::utils::datafusion_dml::stage_update_change(
+                                staged_mutations,
+                                context,
+                                self.core.table_id(),
+                                S::TABLE_TYPE,
+                                user_id,
+                                &pk_column,
+                                pk_value,
+                                UpdateChange::FieldUpdate(updates),
+                            )? {
+                                updated += 1;
+                            }
+                            continue;
+                        }
+                        direct_updates.push((pk_value, updates));
+                    }
+                    return Ok(());
+                }
+                let source_rows = kalamdb_datafusion_sources::dml::record_batch_to_rows(&batch)?;
                 for (row, evaluated_updates) in source_rows.into_iter().zip(evaluated) {
                     let pk_value =
                         crate::utils::datafusion_dml::extract_pk_value(&row, &pk_column)?;

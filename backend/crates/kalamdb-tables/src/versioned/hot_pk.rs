@@ -51,26 +51,30 @@ where
     K: StorageKey,
     V: KSerializable + 'static,
 {
-    match store
-        .get_latest_deleted_flag_by_index_prefix(0, prefix)
+    let payload = store
+        .get_latest_payloads_by_index_prefixes(0, &[prefix])
         .into_kalamdb_error("PK index scan failed")?
-    {
-        Some((_, false)) => Err(KalamDbError::AlreadyExists(format!(
+        .into_iter()
+        .next()
+        .flatten();
+    let Some((key, bytes)) = payload else {
+        return Ok(InsertPredecessor::Missing);
+    };
+    match store.row_deleted_flag(&bytes).into_kalamdb_error("PK index scan failed")? {
+        Some(false) => Err(KalamDbError::AlreadyExists(format!(
             "Primary key violation: value '{pk_str}' already exists in column '{pk_name}' (hot \
              storage)"
         ))),
-        Some((key, true)) => {
-            let row = store.get(&key).into_kalamdb_error("PK tombstone load failed")?.ok_or_else(
-                || {
-                    KalamDbError::NotFound(format!(
-                        "tombstone for primary key '{pk_str}' disappeared before replacement"
-                    ))
-                },
-            )?;
+        Some(true) => {
+            let row = store
+                .decode_entity(&key, &bytes)
+                .into_kalamdb_error("PK tombstone load failed")?;
             kalamdb_observability::dml_stage::record_baseline_decode();
             Ok(InsertPredecessor::Tombstone(key, row))
         },
-        None => Ok(InsertPredecessor::Missing),
+        None => Err(KalamDbError::InvalidOperation(
+            "row codec cannot report a tombstone without a full decode".to_string(),
+        )),
     }
 }
 
@@ -222,11 +226,12 @@ pub(crate) fn mutation_target_from_hot<K, V>(
 }
 
 /// Live predecessor for a delete. `None` when the key is missing or already tombstoned.
-pub(crate) fn optional_live_row<K, V: Clone>(
-    target: MutationTarget<K, V>,
-) -> Option<(Option<(K, V)>, V)> {
+///
+/// The hot key is `Some` when hot storage holds the row. The row itself is moved,
+/// not cloned.
+pub(crate) fn optional_live_row<K, V>(target: MutationTarget<K, V>) -> Option<(Option<K>, V)> {
     match target {
-        MutationTarget::Hot(key, row) => Some((Some((key, row.clone())), row)),
+        MutationTarget::Hot(key, row) => Some((Some(key), row)),
         MutationTarget::Cold(row) => Some((None, row)),
         MutationTarget::Tombstoned(_, _) | MutationTarget::Missing => None,
     }
@@ -328,13 +333,15 @@ pub struct DeferredMutation<K> {
 }
 
 /// Live row plus the hot key the next version replaces.
-pub(crate) fn require_live_row<K, V: Clone>(
+///
+/// The row is moved. Callers that still need the field map clone that map.
+pub(crate) fn require_live_row<K, V>(
     target: MutationTarget<K, V>,
     pk_name: &str,
     pk_value: &str,
-) -> Result<(Option<(K, V)>, V), KalamDbError> {
+) -> Result<(Option<K>, V), KalamDbError> {
     match target {
-        MutationTarget::Hot(key, row) => Ok((Some((key, row.clone())), row)),
+        MutationTarget::Hot(key, row) => Ok((Some(key), row)),
         MutationTarget::Cold(row) => Ok((None, row)),
         MutationTarget::Tombstoned(_, _) => {
             Err(KalamDbError::NotFound(format!("Row with {pk_name}={pk_value} was deleted")))
@@ -435,37 +442,38 @@ where
     K: StorageKey,
     V: KSerializable + 'static,
 {
-    let mut tombstone_keys = Vec::new();
-    for (pk_str, prefix) in pk_prefixes {
-        match store.get_latest_deleted_flag_by_index_prefix(0, prefix) {
-            Ok(Some((_, false))) => {
+    let prefix_refs: Vec<&[u8]> = pk_prefixes.iter().map(|(_, prefix)| prefix.as_slice()).collect();
+    let payloads =
+        store.get_latest_payloads_by_index_prefixes(0, &prefix_refs).map_err(|error| {
+            KalamDbError::InvalidOperation(format!("PK index scan failed: {error}"))
+        })?;
+    let mut tombstones = HashMap::with_capacity(pk_prefixes.len());
+    for ((pk_str, _), payload) in pk_prefixes.iter().zip(payloads) {
+        let Some((key, bytes)) = payload else {
+            continue;
+        };
+        match store.row_deleted_flag(&bytes).map_err(|error| {
+            KalamDbError::InvalidOperation(format!("PK index scan failed: {error}"))
+        })? {
+            Some(false) => {
                 return Ok(HotInsertScan {
                     duplicate: Some(pk_str.clone()),
                     tombstones: HashMap::new(),
                 });
             },
-            Ok(Some((key, true))) => tombstone_keys.push((pk_str.clone(), key)),
-            Ok(None) => {},
-            Err(error) => {
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "PK index scan failed: {error}"
-                )));
+            Some(true) => {
+                let row = store.decode_entity(&key, &bytes).map_err(|error| {
+                    KalamDbError::InvalidOperation(format!("PK tombstone load failed: {error}"))
+                })?;
+                kalamdb_observability::dml_stage::record_baseline_decode();
+                tombstones.insert(pk_str.clone(), (key, row));
+            },
+            None => {
+                return Err(KalamDbError::InvalidOperation(
+                    "row codec cannot report a tombstone without a full decode".to_string(),
+                ));
             },
         }
-    }
-    let keys: Vec<K> = tombstone_keys.iter().map(|(_, key)| key.clone()).collect();
-    let loaded = store.get_many_entities(&keys).map_err(|error| {
-        KalamDbError::InvalidOperation(format!("PK tombstone load failed: {error}"))
-    })?;
-    let mut tombstones = HashMap::with_capacity(tombstone_keys.len());
-    for ((pk_str, key), row) in tombstone_keys.into_iter().zip(loaded) {
-        let Some(row) = row else {
-            return Err(KalamDbError::InvalidOperation(format!(
-                "tombstone for primary key '{pk_str}' disappeared before replacement"
-            )));
-        };
-        kalamdb_observability::dml_stage::record_baseline_decode();
-        tombstones.insert(pk_str, (key, row));
     }
     Ok(HotInsertScan {
         duplicate: None,

@@ -52,6 +52,20 @@ fn prefix_scan_readopts(prefix: Vec<u8>) -> rocksdb::ReadOptions {
     readopts
 }
 
+/// Drop the partition prefix and keep RocksDB's value allocation.
+///
+/// `Box<[u8]>::into_vec` reuses the buffer. Copying the value again made every
+/// hot scan pay a second allocation of the same row.
+fn owned_logical_entry(
+    partition_prefix_len: usize,
+    key: Box<[u8]>,
+    value: Box<[u8]>,
+) -> (Vec<u8>, Vec<u8>) {
+    let mut logical_key = key.into_vec();
+    logical_key.drain(..partition_prefix_len);
+    (logical_key, value.into_vec())
+}
+
 unsafe extern "C" {
     fn rocksdb_flushoptions_set_allow_write_stall(opt: *mut std::ffi::c_void, value: u8);
 }
@@ -624,7 +638,7 @@ impl StorageBackend for RocksDBBackend {
                                 v.len() as u64,
                             );
                         }
-                        Some(Ok((logical_key.to_vec(), v.to_vec())))
+                        Some(Ok(owned_logical_entry(self.partition_prefix.len(), k, v)))
                     },
                     Err(error) => {
                         Some(Err(StorageError::IoError(format!("rocksdb scan failed: {error}"))))
@@ -734,7 +748,7 @@ impl StorageBackend for RocksDBBackend {
                                 *left -= 1;
                             }
                         }
-                        Some(Ok((logical_key.to_vec(), v.to_vec())))
+                        Some(Ok(owned_logical_entry(self.partition_prefix.len(), k, v)))
                     },
                     Err(error) => Some(Err(StorageError::IoError(format!(
                         "rocksdb reverse scan failed: {error}"
