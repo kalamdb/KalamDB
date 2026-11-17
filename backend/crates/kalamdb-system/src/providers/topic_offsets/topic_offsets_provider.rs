@@ -203,10 +203,16 @@ impl TopicOffsetsTableProvider {
     pub fn delete_topic_offsets(&self, topic_id: &TopicId) -> Result<usize, SystemError> {
         // One atomic batch; no full-row decoding or per-key storage commit.
         let prefix = format!("{}:", topic_id.as_str());
-        let keys = self
+        let keys: Vec<TopicOffsetKey> = self
             .sql
             .store()
-            .scan_keys_with_raw_prefix(prefix.as_bytes(), None, usize::MAX)?;
+            .scan_iterator(None, None)?
+            .filter_map(|entry| match entry {
+                Ok((key, _)) if key.as_bytes().starts_with(prefix.as_bytes()) => Some(Ok(key)),
+                Ok(_) => None,
+                Err(err) => Some(Err(err)),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let count = keys.len();
         if !keys.is_empty() {
             self.sql.store().delete_batch(&keys)?;
@@ -248,7 +254,7 @@ fn topic_offsets_scan(
         extract_filter_value(filters, "partition_id").and_then(|v| v.parse::<u32>().ok());
 
     let iter = store.scan_iterator(None, None)?;
-    let effective_limit = limit.unwrap_or(100_000);
+    let effective_limit = limit.unwrap_or(usize::MAX);
     let mut rows = Vec::with_capacity(effective_limit.min(1000));
 
     for item in iter {

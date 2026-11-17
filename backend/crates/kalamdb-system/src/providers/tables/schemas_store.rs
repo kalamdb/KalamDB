@@ -246,7 +246,8 @@ impl SchemasStore {
     pub fn scan_all_with_versions(
         &self,
     ) -> Result<Vec<(TableVersionId, TableDefinition, bool)>, kalamdb_store::StorageError> {
-        let entries = self.scan_all_typed(None, None, None)?;
+        let entries: Vec<(TableVersionId, TableDefinition)> =
+            self.scan_iterator(None, None)?.collect::<Result<Vec<_>, _>>()?;
 
         let result: Vec<(TableVersionId, TableDefinition, bool)> = entries
             .into_iter()
