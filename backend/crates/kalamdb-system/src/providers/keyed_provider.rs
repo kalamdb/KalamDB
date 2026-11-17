@@ -45,7 +45,7 @@ where
     parse_key: fn(&str) -> Option<K>,
     to_row: fn(&V, &TableDefinition) -> Result<SystemTableRow, SystemError>,
     indexed: bool,
-    schema: OnceLock<SchemaRef>,
+    schema: Arc<OnceLock<SchemaRef>>,
     /// Replaces the generic key scan when a table filters on a composite key
     /// or fills columns that are not stored, such as manifest `in_memory`.
     custom_scan: Option<CustomSystemScan<K, V>>,
@@ -72,7 +72,7 @@ where
             parse_key: self.parse_key,
             to_row: self.to_row,
             indexed: self.indexed,
-            schema: OnceLock::new(),
+            schema: Arc::clone(&self.schema),
             custom_scan: self.custom_scan.clone(),
         }
     }
@@ -111,7 +111,7 @@ where
             parse_key,
             to_row,
             indexed: false,
-            schema: OnceLock::new(),
+            schema: Arc::new(OnceLock::new()),
             custom_scan: None,
         }
     }
