@@ -38,7 +38,7 @@ where
     V: KSerializable + 'static,
 {
     store: IndexedEntityStore<K, V>,
-    definition: TableDefinition,
+    definition: Arc<TableDefinition>,
     table_id: TableId,
     table_name: &'static str,
     pk_column: &'static str,
@@ -65,7 +65,7 @@ where
     fn clone(&self) -> Self {
         Self {
             store: self.store.clone(),
-            definition: self.definition.clone(),
+            definition: Arc::clone(&self.definition),
             table_id: self.table_id.clone(),
             table_name: self.table_name,
             pk_column: self.pk_column,
@@ -104,7 +104,7 @@ where
     ) -> Self {
         Self {
             store,
-            definition,
+            definition: Arc::new(definition),
             table_id,
             table_name,
             pk_column,

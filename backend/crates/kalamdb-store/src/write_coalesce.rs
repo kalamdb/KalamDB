@@ -3,7 +3,7 @@
 //!
 //! OpenRaft's state-machine worker is a `Send` Tokio task and may resume on
 //! another thread after `.await`, so thread-locals are unsafe here. A `u64`
-//! Tokio task-local (Send) keys a process-wide map of pending operations.
+//! Tokio task-local carries an Arc to one apply session's pending operations.
 //! Each backend's writes stay on that backend. [`CoalescedBatch::commit`]
 //! writes those legs after the session ends.
 //!
@@ -17,8 +17,8 @@ use std::{
     future::Future,
     ops::Range,
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
-        Arc, Mutex, MutexGuard, OnceLock, Weak,
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex, OnceLock, Weak,
     },
 };
 
@@ -30,28 +30,25 @@ use tokio::task_local;
 use crate::storage_trait::{Operation, Partition, StorageBackend, StorageError};
 
 task_local! {
-    static COALESCE_ID: u64;
-    /// `0` accepts every backend. Any other value accepts only that backend.
-    ///
-    /// Raft apply sets this to its log backend. Table writes on another backend
-    /// then hit that backend immediately instead of landing in the log store.
+    /// The current Tokio task's apply buffer survives thread migration and
+    /// awaits, but is not shared with unrelated Raft apply tasks.
+    static COALESCE_STATE: Arc<Mutex<ApplyState>>;
+    /// 0 accepts every backend; a non-zero owner accepts its own backend and
+    /// registered secondary commit targets.
     static COALESCE_OWNER: usize;
 }
 
 type PersistHook = Box<dyn FnOnce() + Send>;
 
-fn pending_map() -> &'static Mutex<HashMap<u64, HashMap<usize, Vec<Operation>>>> {
-    static MAP: OnceLock<Mutex<HashMap<u64, HashMap<usize, Vec<Operation>>>>> = OnceLock::new();
-    MAP.get_or_init(|| Mutex::new(HashMap::new()))
+#[derive(Default)]
+struct ApplyState {
+    active: bool,
+    pending: HashMap<usize, Vec<Operation>>,
+    hooks: Vec<PersistHook>,
 }
 
-fn hook_map() -> &'static Mutex<HashMap<u64, Vec<PersistHook>>> {
-    static MAP: OnceLock<Mutex<HashMap<u64, Vec<PersistHook>>>> = OnceLock::new();
-    MAP.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn lock_pending() -> MutexGuard<'static, HashMap<u64, HashMap<usize, Vec<Operation>>>> {
-    pending_map().lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+fn lock_state(state: &Mutex<ApplyState>) -> std::sync::MutexGuard<'_, ApplyState> {
+    state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn commit_targets() -> &'static Mutex<HashMap<usize, Weak<dyn StorageBackend>>> {
@@ -77,35 +74,24 @@ fn commit_target(token: usize) -> Option<Arc<dyn StorageBackend>> {
         .and_then(Weak::upgrade)
 }
 
-fn lock_hooks() -> MutexGuard<'static, HashMap<u64, Vec<PersistHook>>> {
-    hook_map().lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-static NEXT_BATCH_ID: AtomicU64 = AtomicU64::new(1);
-
-/// One storage-owned apply batch.
-///
-/// The Raft apply path creates this, passes it into the state machine, and
-/// writes [`Self::finish`] once. Dropping it discards operations that were
-/// not finished.
+/// One storage-owned apply batch. Every session owns its pending map, avoiding
+/// a process-wide mutex and map lookup for every inserted/deleted row.
 pub struct ApplyBatch {
-    id: u64,
+    state: Arc<Mutex<ApplyState>>,
     owner: AtomicUsize,
 }
 
 impl ApplyBatch {
-    /// Reserve an empty batch. Writes on this task join it only inside [`Self::enter`].
     pub fn begin() -> Self {
-        let id = NEXT_BATCH_ID.fetch_add(1, Ordering::Relaxed);
-        lock_pending().insert(id, HashMap::new());
-        lock_hooks().insert(id, Vec::new());
         Self {
-            id,
+            state: Arc::new(Mutex::new(ApplyState {
+                active: true,
+                ..ApplyState::default()
+            })),
             owner: AtomicUsize::new(0),
         }
     }
 
-    /// Run `fut` while backend `put` and `batch` calls append to this batch.
     pub async fn enter<F, T>(&self, fut: F) -> T
     where
         F: Future<Output = T>,
@@ -113,25 +99,24 @@ impl ApplyBatch {
         self.enter_owned(0, fut).await
     }
 
-    /// Like [`Self::enter`], but a non-zero `owner` buffers only that backend
-    /// and backends registered with [`bind_commit_target`].
-    ///
-    /// Writes on any other backend stay on that backend.
+    /// Backends not participating in this session write through as before.
     pub async fn enter_owned<F, T>(&self, owner: usize, fut: F) -> T
     where
         F: Future<Output = T>,
     {
         self.owner.store(owner, Ordering::Relaxed);
-        COALESCE_ID.scope(self.id, COALESCE_OWNER.scope(owner, fut)).await
+        COALESCE_STATE
+            .scope(Arc::clone(&self.state), COALESCE_OWNER.scope(owner, fut))
+            .await
     }
 
-    /// Take the buffered operations and after-persist hooks.
-    ///
-    /// `ops` is every leg in token order. [`CoalescedBatch::commit`] writes
-    /// each leg to the backend that buffered it.
     pub fn finish(self) -> CoalescedBatch {
-        let legs_map = lock_pending().remove(&self.id).unwrap_or_default();
-        let after_persist = lock_hooks().remove(&self.id).unwrap_or_default();
+        let (legs_map, after_persist) = {
+            let mut state = lock_state(&self.state);
+            state.active = false;
+            (std::mem::take(&mut state.pending), std::mem::take(&mut state.hooks))
+        };
+
         let mut legs: Vec<(usize, Vec<Operation>)> = legs_map.into_iter().collect();
         legs.sort_by_key(|(token, _)| *token);
         let mut ops = Vec::new();
@@ -141,11 +126,10 @@ impl ApplyBatch {
             ops.extend(leg);
             ranges.push((token, start..ops.len()));
         }
-        let owner = self.owner.load(Ordering::Relaxed);
         CoalescedBatch {
             ops,
             legs: ranges,
-            owner,
+            owner: self.owner.load(Ordering::Relaxed),
             after_persist,
         }
     }
@@ -153,8 +137,12 @@ impl ApplyBatch {
 
 impl Drop for ApplyBatch {
     fn drop(&mut self) {
-        lock_pending().remove(&self.id);
-        lock_hooks().remove(&self.id);
+        // Clearing here also makes a leaked task-local handle inert after the
+        // owning apply scope has ended.
+        let mut state = lock_state(&self.state);
+        state.active = false;
+        state.pending.clear();
+        state.hooks.clear();
     }
 }
 
@@ -224,20 +212,20 @@ where
 /// `StorageBackend::batch` calls from that scope are absorbed and are not a
 /// durable submission. The caller writes the buffered operations once.
 pub fn coalesce_session_active() -> bool {
-    COALESCE_ID.try_with(|_| ()).is_ok()
+    COALESCE_STATE
+        .try_with(|state| lock_state(state).active)
+        .unwrap_or(false)
 }
 
-/// Run `hook` after the active coalesce batch persists.
-///
-/// Outside a coalesce session the hook runs immediately.
+/// Defer a hook until *every* participating backend has durably committed.
 pub fn defer_after_persist(hook: impl FnOnce() + Send + 'static) {
     let mut hook = Some(hook);
-    let deferred = COALESCE_ID
-        .try_with(|id| {
-            let mut hooks = hook_map().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            if let Some(pending) = hooks.get_mut(id) {
+    let deferred = COALESCE_STATE
+        .try_with(|state| {
+            let mut state = lock_state(state);
+            if state.active {
                 if let Some(hook) = hook.take() {
-                    pending.push(Box::new(hook));
+                    state.hooks.push(Box::new(hook));
                 }
                 true
             } else {
@@ -280,6 +268,8 @@ fn reset_payload_copy_count() {
 }
 
 fn should_buffer(backend_ptr: usize) -> bool {
+    // Avoid both a task-local mutex and a backend-registry lookup outside
+    // coalesced Raft apply; the normal write path must remain near zero cost.
     if !coalesce_session_active() {
         return false;
     }
@@ -287,7 +277,6 @@ fn should_buffer(backend_ptr: usize) -> bool {
     owner == 0 || owner == backend_ptr || commit_target(backend_ptr).is_some()
 }
 
-/// Buffer a put if a coalesce session is active on this task for `backend_ptr`.
 pub fn buffer_put(backend_ptr: usize, partition: &Partition, key: &[u8], value: &[u8]) -> bool {
     if !should_buffer(backend_ptr) {
         return false;
@@ -304,7 +293,6 @@ pub fn buffer_put(backend_ptr: usize, partition: &Partition, key: &[u8], value: 
     )
 }
 
-/// Buffer a delete if a coalesce session is active on this task for `backend_ptr`.
 pub fn buffer_delete(backend_ptr: usize, partition: &Partition, key: &[u8]) -> bool {
     if !should_buffer(backend_ptr) {
         return false;
@@ -320,10 +308,6 @@ pub fn buffer_delete(backend_ptr: usize, partition: &Partition, key: &[u8]) -> b
     )
 }
 
-/// Absorb `operations` into the active session.
-///
-/// Returns `None` when they were buffered, or `Some(operations)` when this task
-/// is not coalescing and the caller should write them immediately.
 pub fn buffer_operations(
     backend_ptr: usize,
     mut operations: Vec<Operation>,
@@ -331,17 +315,16 @@ pub fn buffer_operations(
     if !should_buffer(backend_ptr) {
         return Some(operations);
     }
-    let Ok(buffered) = COALESCE_ID.try_with(|id| {
-        if let Some(pending) = lock_pending().get_mut(id) {
-            pending.entry(backend_ptr).or_default().append(&mut operations);
+    let buffered = COALESCE_STATE
+        .try_with(|state| {
+            let mut state = lock_state(state);
+            if !state.active {
+                return false;
+            }
+            state.pending.entry(backend_ptr).or_default().append(&mut operations);
             true
-        } else {
-            false
-        }
-    }) else {
-        return Some(operations);
-    };
-
+        })
+        .unwrap_or(false);
     if buffered {
         None
     } else {
@@ -350,14 +333,14 @@ pub fn buffer_operations(
 }
 
 fn buffer_operation(backend_ptr: usize, op: Operation) -> bool {
-    COALESCE_ID
-        .try_with(|id| {
-            if let Some(pending) = lock_pending().get_mut(id) {
-                pending.entry(backend_ptr).or_default().push(op);
-                true
-            } else {
-                false
+    COALESCE_STATE
+        .try_with(|state| {
+            let mut state = lock_state(state);
+            if !state.active {
+                return false;
             }
+            state.pending.entry(backend_ptr).or_default().push(op);
+            true
         })
         .unwrap_or(false)
 }

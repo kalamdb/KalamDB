@@ -25,8 +25,6 @@ use kalamdb_streams::{
 
 use crate::common::partition_name;
 
-const MAX_SCAN_LIMIT: usize = 100000;
-
 /// Configuration for StreamTableStore.
 #[derive(Debug, Clone)]
 pub struct StreamTableStoreConfig {
@@ -273,7 +271,7 @@ impl StreamTableStore {
             key.user_id(),
             0,
             u64::MAX,
-            MAX_SCAN_LIMIT,
+            usize::MAX,
         )?;
         Ok(rows.get(key).cloned())
     }
@@ -300,12 +298,13 @@ impl StreamTableStore {
         &self,
         limit: Option<usize>,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>> {
-        let limit = limit.unwrap_or(MAX_SCAN_LIMIT);
+        let limit = limit.unwrap_or(usize::MAX);
         if limit == 0 {
             return Ok(Vec::new());
         }
 
-        let users = self.log_store.list_user_ids()?;
+        let mut users = self.log_store.list_user_ids()?;
+        users.sort_by(|a, b| a.as_str().cmp(b.as_str()));
         let mut results: Vec<(StreamTableRowId, StreamTableRow)> = Vec::new();
 
         for user_id in users {
@@ -318,9 +317,11 @@ impl StreamTableStore {
                 &user_id,
                 0,
                 u64::MAX,
-                remaining,
+                usize::MAX,
             )?;
-            results.extend(rows.into_iter());
+            let mut ordered: Vec<_> = rows.into_iter().collect();
+            ordered.sort_by(|(a, _), (b, _)| a.cmp(b));
+            results.extend(ordered.into_iter().take(remaining));
         }
 
         results.sort_by(|(a, _), (b, _)| a.cmp(b));
@@ -347,27 +348,23 @@ impl StreamTableStore {
             user_id,
             0,
             u64::MAX,
-            MAX_SCAN_LIMIT,
+            usize::MAX,
         )?;
 
         let mut vec: Vec<(StreamTableRowId, StreamTableRow)> = rows
             .into_iter()
             .filter(|(key, _)| start_seq.map(|seq| key.version() >= seq).unwrap_or(true))
-            .take(limit)
             .collect();
         vec.sort_by(|(a, _), (b, _)| a.cmp(b));
+        vec.truncate(limit);
         Ok(vec)
     }
 
-    /// Streaming scan for a single user with TTL filtering and early termination.
+    /// Correctly ordered per-user VersionId scan with TTL and an output limit.
     ///
-    /// This method is optimized for LIMIT queries - it stops scanning as soon as
-    /// enough rows are collected, without loading all data into memory first.
-    ///
-    /// **Performance benefits over `scan_user`:**
-    /// - Early termination when limit is reached
-    /// - TTL filtering applied during iteration (not after collection)
-    /// - Memory-efficient for large datasets with small LIMIT
+    /// The legacy map-based stream storage API does not yet support ordered
+    /// pagination, so the backing store must first load candidate rows before
+    /// applying VersionId ordering and LIMIT. This is not a bounded-I/O cursor.
     ///
     /// # Arguments
     /// * `user_id` - User ID to scope the scan
@@ -394,11 +391,9 @@ impl StreamTableStore {
         if let Some(ttl) = ttl_ms {
             start_time = now_ms.saturating_sub(ttl).saturating_add(1);
         }
-        let read_limit = if start_seq.is_some() {
-            MAX_SCAN_LIMIT
-        } else {
-            limit
-        };
+        // A time-window prefix is not a VersionId prefix. Do not apply
+        // LIMIT before filtering and sorting by the requested version.
+        let read_limit = usize::MAX;
         let rows = self.log_store.read_in_time_range(
             &self.table_id,
             user_id,
@@ -424,8 +419,7 @@ impl StreamTableStore {
 
             // TTL filtering: skip expired rows (use ingestion _timestamp, not VersionId)
             if let Some(ttl) = ttl_ms {
-                let row_ts = row._timestamp as u64;
-                if row_ts + ttl <= now_ms {
+                if row._timestamp < 0 || (row._timestamp as u64).saturating_add(ttl) <= now_ms {
                     continue; // Row has expired
                 }
             }

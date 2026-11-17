@@ -137,7 +137,9 @@ impl RocksDBBackend {
             known_cf_names: std::sync::RwLock::new(Vec::new()),
             logical_partition_names: std::sync::RwLock::new(Vec::new()),
         };
-        backend.load_logical_partitions();
+        backend
+            .load_logical_partitions()
+            .expect("failed to load persisted RocksDB logical partition registry");
         backend
     }
 
@@ -267,30 +269,36 @@ impl RocksDBBackend {
         }
     }
 
-    fn load_logical_partitions(&self) {
+    fn load_logical_partitions(&self) -> Result<()> {
         let Some(cf) = self.db.cf_handle(SYSTEM_META_CF) else {
-            return;
+            return Ok(());
         };
         let prefix = logical_partition_registry_prefix();
         let readopts = prefix_scan_readopts(prefix.clone());
 
-        let names: Vec<String> = self
-            .db
-            .iterator_cf_opt(
-                &cf,
-                readopts,
-                IteratorMode::From(prefix.as_slice(), rocksdb::Direction::Forward),
-            )
-            .filter_map(|item| {
-                item.ok().and_then(|(key, _)| {
-                    decode_logical_partition_registry_key(&key).map(str::to_string)
-                })
-            })
-            .collect();
-
-        if let Ok(mut tracked) = self.logical_partition_names.write() {
-            *tracked = names;
+        let mut names = Vec::new();
+        for entry in self.db.iterator_cf_opt(
+            &cf,
+            readopts,
+            IteratorMode::From(prefix.as_slice(), rocksdb::Direction::Forward),
+        ) {
+            let (key, _) = entry.map_err(|err| StorageError::IoError(err.to_string()))?;
+            if !key.starts_with(&prefix) {
+                break;
+            }
+            let partition = decode_logical_partition_registry_key(&key).ok_or_else(|| {
+                StorageError::SerializationError(
+                    "malformed persisted logical partition registry key".to_string(),
+                )
+            })?;
+            names.push(partition.to_string());
         }
+
+        let mut tracked = self.logical_partition_names.write().map_err(|err| {
+            StorageError::Other(format!("partition registry lock poisoned: {err}"))
+        })?;
+        *tracked = names;
+        Ok(())
     }
 
     fn persist_logical_partition(&self, partition_name: &str) -> Result<()> {

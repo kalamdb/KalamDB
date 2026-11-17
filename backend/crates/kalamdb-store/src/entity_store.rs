@@ -339,7 +339,7 @@ where
     /// Scans entities with keys matching the given prefix.
     ///
     /// Returns a vector of (K, V) pairs with properly deserialized keys.
-    /// Entries with malformed keys are skipped with a warning log.
+    /// Malformed keys or payloads fail the scan instead of returning partial data.
     ///
     /// ## Example
     ///
@@ -351,8 +351,7 @@ where
     /// }
     /// ```
     fn scan_prefix_typed(&self, prefix: &K, limit: Option<usize>) -> Result<Vec<(K, V)>> {
-        const MAX_SCAN_LIMIT: usize = 10000;
-        let effective_limit = limit.unwrap_or(MAX_SCAN_LIMIT);
+        let effective_limit = limit.unwrap_or(usize::MAX);
         let partition = self.partition();
         let iter = self.backend().scan(
             &partition,
@@ -363,20 +362,9 @@ where
 
         let mut results = Vec::new();
         for (key_bytes, value_bytes) in iter {
-            let key = match K::from_storage_key(&key_bytes) {
-                Ok(k) => k,
-                Err(e) => {
-                    log::warn!("Skipping entry with malformed key: {}", e);
-                    continue;
-                },
-            };
-            let entity = match self.deserialize(&key, &value_bytes) {
-                Ok(v) => v,
-                Err(e) => {
-                    log::warn!("Skipping entry with malformed value: {}", e);
-                    continue;
-                },
-            };
+            let key = K::from_storage_key(&key_bytes)
+                .map_err(StorageError::SerializationError)?;
+            let entity = self.deserialize(&key, &value_bytes)?;
             results.push((key, entity));
             if results.len() >= effective_limit {
                 break;
@@ -389,10 +377,10 @@ where
     /// Scans all entities in the partition with typed key deserialization.
     ///
     /// Returns a vector of (K, V) pairs with properly deserialized keys.
-    /// Entries with malformed keys are skipped with a warning log.
+    /// Malformed keys or payloads fail the scan instead of returning partial data.
     ///
     /// ## Arguments
-    /// * `limit` - Maximum entries to return (defaults to 100,000)
+    /// * `limit` - Maximum entries to return (None scans all)
     /// * `prefix` - Optional key prefix to filter by
     /// * `start_key` - Optional key to start scanning from
     ///
@@ -410,8 +398,7 @@ where
         prefix: Option<&K>,
         start_key: Option<&K>,
     ) -> Result<Vec<(K, V)>> {
-        const MAX_SCAN_LIMIT: usize = 10000;
-        let effective_limit = limit.unwrap_or(MAX_SCAN_LIMIT);
+        let effective_limit = limit.unwrap_or(usize::MAX);
 
         let partition = self.partition();
         let prefix_bytes = prefix.map(|k| k.storage_key());
@@ -426,20 +413,9 @@ where
 
         let mut results = Vec::new();
         for (key_bytes, value_bytes) in iter {
-            let key = match K::from_storage_key(&key_bytes) {
-                Ok(k) => k,
-                Err(e) => {
-                    log::warn!("Skipping entry with malformed key: {}", e);
-                    continue;
-                },
-            };
-            let entity = match self.deserialize(&key, &value_bytes) {
-                Ok(v) => v,
-                Err(e) => {
-                    log::warn!("Skipping entry with malformed value: {}", e);
-                    continue;
-                },
-            };
+            let key = K::from_storage_key(&key_bytes)
+                .map_err(StorageError::SerializationError)?;
+            let entity = self.deserialize(&key, &value_bytes)?;
             results.push((key, entity));
             if results.len() >= effective_limit {
                 break;
@@ -486,20 +462,9 @@ where
 
         let mut results = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
         for (key_bytes, value_bytes) in iter {
-            let key = match K::from_storage_key(&key_bytes) {
-                Ok(k) => k,
-                Err(e) => {
-                    log::warn!("Skipping entry with malformed key: {}", e);
-                    continue;
-                },
-            };
-            let entity = match self.deserialize_selected(&key, &value_bytes, ordinals) {
-                Ok(v) => v,
-                Err(e) => {
-                    log::warn!("Skipping entry with malformed value: {}", e);
-                    continue;
-                },
-            };
+            let key = K::from_storage_key(&key_bytes)
+                .map_err(StorageError::SerializationError)?;
+            let entity = self.deserialize_selected(&key, &value_bytes, ordinals)?;
             results.push((key, entity));
             if results.len() >= limit {
                 break;
@@ -541,20 +506,9 @@ where
 
         let mut results = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
         for (key_bytes, value_bytes) in iter {
-            let key = match K::from_storage_key(&key_bytes) {
-                Ok(k) => k,
-                Err(e) => {
-                    log::warn!("Skipping entry with malformed key: {}", e);
-                    continue;
-                },
-            };
-            let entity = match self.deserialize_selected(&key, &value_bytes, ordinals) {
-                Ok(v) => v,
-                Err(e) => {
-                    log::warn!("Skipping entry with malformed value: {}", e);
-                    continue;
-                },
-            };
+            let key = K::from_storage_key(&key_bytes)
+                .map_err(StorageError::SerializationError)?;
+            let entity = self.deserialize_selected(&key, &value_bytes, ordinals)?;
             results.push((key, entity));
             if results.len() >= limit {
                 break;
@@ -589,13 +543,8 @@ where
 
         let mut keys = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
         for (key_bytes, _) in iter {
-            let key = match K::from_storage_key(&key_bytes) {
-                Ok(k) => k,
-                Err(e) => {
-                    log::warn!("Skipping entry with malformed key: {}", e);
-                    continue;
-                },
-            };
+            let key = K::from_storage_key(&key_bytes)
+                .map_err(StorageError::SerializationError)?;
             keys.push(key);
             if keys.len() >= limit {
                 break;
@@ -637,13 +586,8 @@ where
 
         let mut keys = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
         for (key_bytes, _) in iter {
-            let key = match K::from_storage_key(&key_bytes) {
-                Ok(k) => k,
-                Err(e) => {
-                    log::warn!("Skipping entry with malformed key: {}", e);
-                    continue;
-                },
-            };
+            let key = K::from_storage_key(&key_bytes)
+                .map_err(StorageError::SerializationError)?;
             keys.push(key);
             if keys.len() >= limit {
                 break;
@@ -724,14 +668,8 @@ where
     /// This is useful for monitoring and validation. Note that this does a full scan
     /// and can be expensive for large datasets.
     fn count_all(&self) -> Result<usize> {
-        const MAX_COUNT_LIMIT: usize = 1_000_000;
         let partition = self.partition();
-        let iter = self.backend().scan(&partition, None, None, Some(MAX_COUNT_LIMIT))?;
-        let mut count = 0usize;
-        for _ in iter {
-            count += 1;
-        }
-        Ok(count)
+        Ok(self.backend().scan(&partition, None, None, None)?.count())
     }
 
     /// Compact the partition to reclaim space and optimize reads.
