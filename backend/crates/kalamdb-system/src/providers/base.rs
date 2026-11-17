@@ -174,7 +174,7 @@ where
             },
         )?;
 
-        let effective_limit = scan_limit.unwrap_or(100_000);
+        let effective_limit = scan_limit.unwrap_or(usize::MAX);
         for result in iter {
             let (key, value) = result.map_err(|error| {
                 DataFusionError::Execution(format!("Failed to scan {table_name} by index: {error}"))
@@ -191,7 +191,7 @@ where
             ))
         })?;
 
-        let effective_limit = scan_limit.unwrap_or(100_000);
+        let effective_limit = scan_limit.unwrap_or(usize::MAX);
         for result in iter {
             match result {
                 Ok((key, value)) => {
@@ -201,7 +201,9 @@ where
                     }
                 },
                 Err(error) => {
-                    log::warn!("Error during scan of {table_name}: {error}");
+                    return Err(DataFusionError::Execution(format!(
+                        "Failed to scan {table_name}: {error}"
+                    )));
                 },
             }
         }

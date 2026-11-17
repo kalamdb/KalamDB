@@ -428,7 +428,7 @@ where
     }
 
     let iter = store.scan_iterator(None, None)?;
-    let effective_limit = limit.unwrap_or(100_000);
+    let effective_limit = limit.unwrap_or(usize::MAX);
     let mut rows = Vec::with_capacity(effective_limit.min(1000));
     for item in iter {
         let (_, model) = item?;
