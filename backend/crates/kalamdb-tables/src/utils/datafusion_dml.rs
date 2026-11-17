@@ -441,9 +441,10 @@ where
     Fut: std::future::Future<Output = DataFusionResult<bool>>,
 {
     if let Some(claims) = context.pk_claims() {
-        claims.acquire(table_id, pk_value, &context.transaction_id).await;
+        let claim_user = (table_type == TableType::User).then_some(user_id);
+        claims.acquire_scoped(table_id, claim_user, pk_value, &context.transaction_id).await;
         if !is_live().await? {
-            claims.release_key(table_id, pk_value, &context.transaction_id);
+            claims.release_key_scoped(table_id, claim_user, pk_value, &context.transaction_id);
             return Ok(false);
         }
     }

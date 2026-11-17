@@ -30,6 +30,15 @@ use crate::{
     statement::{KalamQueryParser, WireCachedStatement},
 };
 
+/// Bound intermediate INSERT parsing and staging for PostgreSQL simple-query batches.
+const WIRE_INSERT_BATCH_MAX_STATEMENTS: usize = 512;
+
+fn is_insert_batch_candidate(sql: &str) -> bool {
+    sql.split_ascii_whitespace()
+        .next()
+        .is_some_and(|word| word.eq_ignore_ascii_case("INSERT"))
+}
+
 #[derive(Clone)]
 pub struct KalamQueryHandler {
     sql_executor: Arc<WireSqlExecutor>,
@@ -101,14 +110,46 @@ impl KalamQueryHandler {
         }
 
         let mut batch_failed = false;
-        for stmt in &statements {
-            let responses = self.execute_single_sql_statement(state, stmt.as_str()).await?;
+        let mut position = 0;
+        while position < statements.len() {
+            // Use the same transaction batch INSERT path as HTTP, but only
+            // inside a live transaction and for consecutive compatible INSERTs.
+            // A bounded window avoids parsing a multi-megabyte script at once.
+            if is_insert_batch_candidate(&statements[position]) {
+                let mut end = position + 1;
+                while end < statements.len()
+                    && end - position < WIRE_INSERT_BATCH_MAX_STATEMENTS
+                    && is_insert_batch_candidate(&statements[end])
+                {
+                    end += 1;
+                }
+                if end - position > 1 {
+                    if let Some(responses) = self
+                        .sql_executor
+                        .try_execute_insert_batch(state, &statements[position..end])
+                        .await?
+                    {
+                        let has_error = responses.iter().any(|r| matches!(r, Response::Error(_)));
+                        all_responses.extend(responses);
+                        if has_error {
+                            batch_failed = true;
+                            break;
+                        }
+                        position = end;
+                        continue;
+                    }
+                }
+            }
+
+            let responses =
+                self.execute_single_sql_statement(state, statements[position].as_str()).await?;
             let has_error = responses.iter().any(|r| matches!(r, Response::Error(_)));
             all_responses.extend(responses);
             if has_error {
                 batch_failed = true;
                 break;
             }
+            position += 1;
         }
 
         if implicit_tx_active {
@@ -189,6 +230,19 @@ impl SimpleQueryHandler for KalamQueryHandler {
             kalamdb_observability::dml_stage::eprint_and_reset(&query_label(query));
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod insert_batch_candidate_tests {
+    use super::is_insert_batch_candidate;
+
+    #[test]
+    fn recognizes_only_simple_insert_prefixes() {
+        assert!(is_insert_batch_candidate("INSERT INTO items VALUES (1)"));
+        assert!(is_insert_batch_candidate("  insert INTO items VALUES (2)"));
+        assert!(!is_insert_batch_candidate("DELETE FROM items"));
+        assert!(!is_insert_batch_candidate("INSERTED INTO items"));
     }
 }
 

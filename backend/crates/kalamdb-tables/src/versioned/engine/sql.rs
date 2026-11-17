@@ -16,6 +16,7 @@ use datafusion::{
 use kalamdb_commons::{
     ids::VersionId,
     models::{rows::Row, Role, UserId},
+    schemas::TableType,
     PolicyCommand,
 };
 use kalamdb_datafusion_sources::dml::PreparedUpdateAssignments;
@@ -587,33 +588,60 @@ where
         let mut ordinal = 0u32;
         let mut staged_mutations =
             transaction_query_context.as_ref().map(|_| Vec::with_capacity(pk_values.len()));
-        let mut direct_pks = Vec::new();
+        let mut direct_pks = Vec::with_capacity(pk_values.len());
         for pk_value in pk_values {
-            if !seen.insert(pk_value.clone()) {
-                continue;
+            if seen.insert(pk_value.clone()) {
+                direct_pks.push(pk_value);
             }
-            if let Some(staged_mutations) = staged_mutations.as_mut() {
-                let context = transaction_query_context
-                    .as_ref()
-                    .expect("transaction_query_context must exist when staging DELETE");
-                if crate::utils::datafusion_dml::stage_delete_if_committed_live(
-                    staged_mutations,
-                    context,
-                    self.core.table_id(),
-                    S::TABLE_TYPE,
-                    user_id,
-                    &pk_value,
-                    || self.committed_primary_key_is_live(Some(user_id), &pk_value),
-                )
-                .await?
-                {
-                    deleted += 1;
-                }
-                continue;
-            }
-            direct_pks.push(pk_value);
         }
-        if !direct_pks.is_empty() {
+        if let (Some(context), Some(staged)) =
+            (transaction_query_context, staged_mutations.as_mut())
+        {
+            // Claim keys in canonical order to avoid lock-order inversions.
+            // Once held, recheck committed liveness with bounded MultiGet batches
+            // instead of initiating one blocking lookup per deleted row.
+            let scope_user = (S::TABLE_TYPE == TableType::User).then_some(user_id);
+            if let Some(claims) = context.pk_claims() {
+                let mut sorted: Vec<&str> = direct_pks.iter().map(String::as_str).collect();
+                sorted.sort_unstable();
+                for pk in sorted {
+                    claims
+                        .acquire_scoped(self.core.table_id(), scope_user, pk, &context.transaction_id)
+                        .await;
+                }
+            }
+            const DELETE_LOOKUP_BATCH: usize = 512;
+            for chunk in direct_pks.chunks(DELETE_LOOKUP_BATCH) {
+                let targets = self
+                    .load_mutation_targets(Some(user_id), chunk)
+                    .await
+                    .map_err(crate::error::into_datafusion)?;
+                for (pk, target) in chunk.iter().zip(targets) {
+                    if matches!(
+                        target,
+                        crate::versioned::MutationTarget::Hot(_, _)
+                            | crate::versioned::MutationTarget::Cold(_)
+                    ) {
+                        crate::utils::datafusion_dml::stage_delete(
+                            staged,
+                            context.transaction_id.clone(),
+                            self.core.table_id(),
+                            S::TABLE_TYPE,
+                            user_id.clone(),
+                            pk.clone(),
+                        );
+                        deleted += 1;
+                    } else if let Some(claims) = context.pk_claims() {
+                        claims.release_key_scoped(
+                            self.core.table_id(),
+                            scope_user,
+                            pk,
+                            &context.transaction_id,
+                        );
+                    }
+                }
+            }
+        } else if !direct_pks.is_empty() {
             if self.replicates_shared_writes() {
                 let key_count = direct_pks.len();
                 let table_id = self.core.table_id().clone();

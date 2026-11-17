@@ -430,7 +430,9 @@ where
         })?;
         self.backend.create_partition(&index_partition)?;
 
-        const BATCH_SIZE: usize = 512;
+        // Larger bounded batches amortize RocksDB WriteBatch submission during
+        // CREATE INDEX without retaining an unbounded backfill in memory.
+        const BATCH_SIZE: usize = 2048;
         let mut operations = Vec::with_capacity(BATCH_SIZE);
         let mut count = 0usize;
         for item in self.scan_iterator(None, None)? {
