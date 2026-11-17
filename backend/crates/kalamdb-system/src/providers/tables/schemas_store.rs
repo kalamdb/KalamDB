@@ -139,12 +139,14 @@ impl SchemasStore {
         // No 10k-row cap; remove the latest pointer and all versions as one batch.
         let prefix = TableVersionId::table_scan_prefix(table_id);
         let iter = self.backend.scan(&self.partition, Some(&prefix), None, None)?;
-        let operations: Vec<Operation> = iter
-            .map(|(key, _)| Operation::Delete {
+        let mut operations = Vec::new();
+        for item in iter {
+            let (key, _) = item?;
+            operations.push(Operation::Delete {
                 partition: self.partition.clone(),
                 key,
-            })
-            .collect();
+            });
+        }
         let count = operations.len();
         if count != 0 {
             self.backend.batch(operations)?;

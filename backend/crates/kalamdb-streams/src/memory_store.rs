@@ -5,7 +5,7 @@
 //! than scanning every active stream user.
 
 use std::{
-    collections::{hash_map::DefaultHasher, BTreeMap, HashMap},
+    collections::{hash_map::DefaultHasher, BTreeMap, HashMap, HashSet},
     hash::{Hash, Hasher},
     sync::RwLock,
 };
@@ -312,52 +312,50 @@ impl MemoryStreamLogStore {
         max_rows: Option<usize>,
         mut on_page: impl FnMut(Vec<(StreamTableRowId, StreamTableRow)>) -> Result<bool>,
     ) -> Result<()> {
-        if page_rows == 0 {
+        if page_rows == 0 || start_time > end_time {
             return Ok(());
         }
-        let state = self
-            .state
+        let state = self.shards[Self::shard_index(user_id)]
             .read()
-            .map_err(|e| StreamLogError::Io(format!("Failed to acquire read lock: {}", e)))?;
-        let start = (user_id.as_str().to_string(), start_time, vec![0; 8]);
-        let end = (user_id.as_str().to_string(), end_time, vec![u8::MAX; 8]);
-        let mut deleted: HashSet<i64> = HashSet::new();
-        for ((_user, _ts, seq_bytes), record) in state.data.range(start.clone()..=end.clone()) {
-            if matches!(record, StreamLogRecord::Delete { .. }) {
-                deleted.insert(Self::version_from_key(seq_bytes));
+            .map_err(|err| StreamLogError::Io(format!("stream shard read lock: {err}")))?;
+        let Some(log) = state.get(user_id) else {
+            return Ok(());
+        };
+        let start = (start_time, i64::MIN);
+        let end = (end_time, i64::MAX);
+        let mut deleted = HashSet::new();
+        for (_, record) in log.range(start..=end) {
+            if let StreamLogRecord::Delete { row_id, .. } = record {
+                deleted.insert(row_id.version().as_i64());
             }
         }
         let mut page = Vec::with_capacity(page_rows.min(1024));
         let mut emitted = 0usize;
-        for ((_user, _ts, seq_bytes), record) in state.data.range(start..=end) {
-            match record {
-                StreamLogRecord::Put { row_id, row } => {
-                    let version = Self::version_from_key(seq_bytes);
-                    if deleted.contains(&version) {
-                        continue;
-                    }
-                    if start_seq.is_some_and(|seq| version < seq) {
-                        continue;
-                    }
-                    if ttl_ms
-                        .is_some_and(|ttl| (row._timestamp as u64).saturating_add(ttl) <= now_ms)
-                    {
-                        continue;
-                    }
-                    page.push((row_id.clone(), row.clone()));
-                    emitted += 1;
-                    if page.len() >= page_rows && !on_page(std::mem::take(&mut page))? {
-                        break;
-                    }
-                    if max_rows.is_some_and(|max| emitted >= max) {
-                        break;
-                    }
-                },
-                StreamLogRecord::Delete { .. } => {},
+        for (_, record) in log.range(start..=end) {
+            let StreamLogRecord::Put { row_id, row } = record else {
+                continue;
+            };
+            let version = row_id.version().as_i64();
+            if deleted.contains(&version) {
+                continue;
+            }
+            if start_seq.is_some_and(|seq| version < seq) {
+                continue;
+            }
+            if ttl_ms.is_some_and(|ttl| (row._timestamp as u64).saturating_add(ttl) <= now_ms) {
+                continue;
+            }
+            page.push((row_id.clone(), row.clone()));
+            emitted += 1;
+            if page.len() >= page_rows && !on_page(std::mem::take(&mut page))? {
+                break;
+            }
+            if max_rows.is_some_and(|max| emitted >= max) {
+                break;
             }
         }
         if !page.is_empty() {
-            let _ = on_page(page)?;
+            on_page(page)?;
         }
         Ok(())
     }
