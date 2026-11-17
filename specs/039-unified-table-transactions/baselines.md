@@ -336,3 +336,46 @@ A separate transaction then held a snapshot for 30 seconds while the workers con
 | After unpin |  |  |  |  | 151,240,704 | 595 | 1,628,551 | 211,681 | 24,816,223 | 0 |
 
 RSS did not fall after unpin. Staged held bytes fell from 946 to 595. Live SST fell from 1,711,091 to 1,628,551 and disk fell from 24,859,071 to 24,816,223. The remaining measured work is script 12 and the combined #8/#11/#12/#13/#15 goal, which is still 3.5% rather than 30%.
+
+## T120 engine merge, 2026-11-17
+
+The before row is the 2026-11-15 T088 and T089 checkpoint on `90fa854bdc01`. The after row is the uncommitted engine merge on `782d1738c` (`782d1738c11b`). The run directory name uses that commit. The merge itself is not in the commit. `KALAMDB_DML_STAGE_TRACE` was unset. Dev profile, one discarded warm-up suite and five recorded suites. The 5% gate is not met: scripts 1, 8, 9, and 16 are slower than the November 15 median by more than 5%. The speed follow-up is deferred.
+
+### T088 after
+
+Dev profile, Apple M5 Pro. Log `/tmp/kalamdb-t120-t088.log`. Started 2026-11-17T14:33:00Z, finished 2026-11-17T14:50:24Z, exit 0. This does not include a new CLI e2e run.
+
+| Suite | Passed | Failed | Skipped | Summary | real | user | sys |
+| --- | ---: | ---: | ---: | --- | ---: | ---: | ---: |
+| Gate crates | 843 | 0 | 0 | 2.557s | 494.11s | 939.04s | 46.46s |
+| Core filter | 112 | 0 | 360 | 16.884s | 549.76s | 628.57s | 39.85s |
+
+The core filter has one more passing test than the 111-test before row. The extra name is `kalamdb-core::transactions transaction_user_batch_commit::t112_standalone_insert_commit_times`, which matches the `transaction` filter.
+
+### 16-script after
+
+Run `benchv2/pgwire-speed/results/runs/20261117T145734Z-dev-782d1738c11b`. PostgreSQL total median 1.115s, range 1.102..1.131. KalamDB seconds:
+
+| Script | November 15 median | After median | After range | Change |
+| --- | ---: | ---: | --- | --- |
+| 1 | 0.133 | 0.257 | 0.250..0.286 | +93.2% |
+| 2 | 2.493 | 2.580 | 2.568..2.605 | +3.5% |
+| 3 | 2.566 | 2.661 | 2.649..2.670 | +3.7% |
+| 4 | 0.459 | 0.447 | 0.420..0.524 | −2.6% |
+| 5 | 0.647 | 0.676 | 0.648..0.688 | +4.5% |
+| 6 | 0.340 | 0.357 | 0.353..0.359 | +5.0% |
+| 7 | 0.616 | 0.641 | 0.636..0.671 | +4.1% |
+| 8 | 3.744 | 4.184 | 4.171..4.210 | +11.8% |
+| 9 | 2.832 | 2.978 | 2.951..2.997 | +5.2% |
+| 10 | 2.992 | 3.130 | 3.097..3.209 | +4.6% |
+| 11 | 2.952 | 3.067 | 3.050..3.081 | +3.9% |
+| 12 | 0.674 | 0.696 | 0.689..0.723 | +3.3% |
+| 13 | 1.910 | 1.992 | 1.967..1.999 | +4.3% |
+| 14 | 1.508 | 1.537 | 1.532..1.549 | +1.9% |
+| 15 | 2.531 | 2.641 | 2.606..2.659 | +4.3% |
+| 16 | 0.062 | 0.073 | 0.067..0.090 | +17.7% |
+| total | 26.458 | 27.927 | 27.893..27.997 | +5.6% |
+
+Scripts 1, 8, and 9 have ranges that do not overlap the November 15 ranges. Script 16 is 0.011s slower and its range overlaps 0.061..0.070. Script 6 is 0.017s slower, which is 5% of 0.340s and not more than 5%. Combined scripts 8, 11, 12, 13, and 15 are 4.184 + 3.067 + 0.696 + 1.992 + 2.641 = 12.580s, against 11.811s on November 15.
+
+A separate traced sample of script 1, not part of the median, spent 20ms in `backend_submit` (1,028 hits) and 54ms in `scan_filter` (70 hits) inside a 0.275s wall time. The storage submit is not the doubled second. The benchmark's autocommit shared inserts still take the existing `propose_shared_insert` path when Raft is started. That proposal cost was not separated from the engine merge.

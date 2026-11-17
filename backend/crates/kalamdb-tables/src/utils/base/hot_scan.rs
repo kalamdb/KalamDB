@@ -133,9 +133,7 @@ where
     let _stats = cold_result.stats().await;
     // Hot-only counts skip merge_row_metadata, so apply the snapshot bound here.
     if !merged_with_cold {
-        winners.retain(|row| {
-            snapshot_commit_seq.is_none_or(|snapshot| row.version <= snapshot)
-        });
+        winners.retain(|row| snapshot_commit_seq.is_none_or(|snapshot| row.version <= snapshot));
     }
     Ok(winners.iter().filter(|row| !row.deleted).count())
 }
@@ -472,11 +470,7 @@ mod tests {
             ),
         ];
 
-        filter_hot_only_winners(
-            &mut rows,
-            false,
-            Some(VersionId::try_from_i64(5).unwrap()),
-        );
+        filter_hot_only_winners(&mut rows, false, Some(VersionId::try_from_i64(5).unwrap()));
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1.pk, "live");
     }

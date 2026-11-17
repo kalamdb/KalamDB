@@ -49,11 +49,10 @@ pub mod row_codec;
 pub mod scalar_index_sync;
 pub mod shared_tables;
 pub mod stream_tables;
-#[path = "versioned/engine.rs"]
-pub mod table_engine;
 pub mod user_tables;
 pub mod utils;
 pub(crate) mod versioned;
+pub(crate) use versioned::engine as table_engine;
 
 // Re-export commonly used types
 pub use error::{KalamDbError, Result, TableError};

@@ -1,18 +1,21 @@
-//! One engine over the moved user and shared provider bodies.
-//!
-//! The scan, DML, and hot-path functions still live in `engine/user` and
-//! `engine/shared`. This type calls those bodies. Stream TTL stays on the
-//! stream provider.
+//! One versioned table engine. User and shared scopes share the scan and DML bodies.
+
+mod mutate;
+mod provider;
+mod scan;
+mod scope;
+mod shared;
+mod sql;
+
+pub(crate) use provider::{SharedTableProvider, UserTableProvider};
+pub(crate) use scope::SharedScanContext;
 
 use datafusion::{logical_expr::Expr, scalar::ScalarValue};
 use kalamdb_commons::{ids::VersionId, models::UserId, TransactionId};
 use kalamdb_store::IndexRole;
 use kalamdb_transactions::{StagedMutation, TransactionOverlay};
 
-use crate::{
-    error::KalamDbError, shared_tables::SharedTableProvider, user_tables::UserTableProvider,
-    utils::TableRowDml,
-};
+use crate::{error::KalamDbError, utils::TableRowDml};
 
 pub(crate) enum VersionedTableEngine {
     User(UserTableProvider),
@@ -32,7 +35,7 @@ impl VersionedTableEngine {
         match self {
             Self::Shared(provider) => {
                 provider
-                    .columnar_hot_scan(snapshot, projection, filter, limit, keep_deleted)
+                    .columnar_hot_scan(None, snapshot, projection, filter, limit, keep_deleted)
                     .await
             },
             Self::User(provider) => {
@@ -40,7 +43,14 @@ impl VersionedTableEngine {
                     return Ok(None);
                 };
                 provider
-                    .columnar_hot_scan(user_id, snapshot, projection, filter, limit, keep_deleted)
+                    .columnar_hot_scan(
+                        Some(user_id),
+                        snapshot,
+                        projection,
+                        filter,
+                        limit,
+                        keep_deleted,
+                    )
                     .await
             },
         }
@@ -54,13 +64,13 @@ impl VersionedTableEngine {
     ) -> Result<Option<(u64, i128)>, KalamDbError> {
         match self {
             Self::Shared(provider) => {
-                provider.sum_hot_covering_integers(filters, value_column).await
+                provider.sum_hot_covering_integers(None, filters, value_column).await
             },
             Self::User(provider) => {
                 let Some(user_id) = user_id else {
                     return Ok(None);
                 };
-                provider.sum_hot_covering_integers(user_id, filters, value_column).await
+                provider.sum_hot_covering_integers(Some(user_id), filters, value_column).await
             },
         }
     }

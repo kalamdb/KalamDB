@@ -23,7 +23,7 @@ use kalamdb_rls::{
     AuthorizationSet, BoundAuthorization, BoundLiveAuthorization, BoundTablePolicies,
 };
 
-use super::{SharedScanContext, SharedTableProvider};
+use crate::versioned::engine::{SharedScanContext, SharedTableProvider};
 
 fn snapshot_as_u64(snapshot: Option<VersionId>) -> Option<u64> {
     snapshot.map(|v| v.as_u64())
@@ -247,7 +247,7 @@ impl SharedTableAuthorization {
                 if !seen.insert(pk.clone()) {
                     continue;
                 }
-                if let Some((_, winner)) = relation_provider.find_by_pk(pk).await? {
+                if let Some((_, winner)) = relation_provider.find_by_pk(None, pk).await? {
                     winners.push(winner.fields);
                 }
             }

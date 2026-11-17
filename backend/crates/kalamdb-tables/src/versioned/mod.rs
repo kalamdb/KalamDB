@@ -5,6 +5,7 @@
 mod codec;
 pub(crate) mod columnar;
 pub(crate) mod covering;
+pub(crate) mod engine;
 pub(crate) mod equality;
 mod field_rows;
 mod hot_pk;

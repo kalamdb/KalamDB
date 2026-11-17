@@ -89,7 +89,7 @@ impl KalamTableProvider {
         let target = self
             .as_user()
             .ok_or_else(not_user)?
-            .load_mutation_target(user_id, pk_value)
+            .load_mutation_target(Some(user_id), pk_value)
             .await?;
         Ok(authoritative_baseline(target))
     }
@@ -98,8 +98,11 @@ impl KalamTableProvider {
         &self,
         pk_value: &str,
     ) -> Result<AuthoritativeBaseline<SharedTableRowId, SharedTableRow>, KalamDbError> {
-        let target =
-            self.as_shared().ok_or_else(not_shared)?.load_mutation_target(pk_value).await?;
+        let target = self
+            .as_shared()
+            .ok_or_else(not_shared)?
+            .load_mutation_target(None, pk_value)
+            .await?;
         Ok(authoritative_baseline(target))
     }
 
@@ -123,7 +126,7 @@ impl KalamTableProvider {
     ) -> Result<Vec<UserTableRowId>, KalamDbError> {
         self.as_user()
             .ok_or_else(not_user)?
-            .insert_batch_with_versions(user_id, rows, versions)
+            .insert_batch_with_versions(Some(user_id), rows, versions)
             .await
     }
 
@@ -147,7 +150,7 @@ impl KalamTableProvider {
     ) -> Result<usize, KalamDbError> {
         self.as_user()
             .ok_or_else(not_user)?
-            .insert_encoded_fields_with_versions(user_id, payloads, versions)
+            .insert_encoded_fields_with_versions(Some(user_id), payloads, versions)
             .await
     }
 
@@ -170,7 +173,7 @@ impl KalamTableProvider {
     ) -> Result<Vec<DeferredMutation<UserTableRowId>>, KalamDbError> {
         self.as_user()
             .ok_or_else(not_user)?
-            .update_batch_by_pk_values_deferred(user_id, updates)
+            .update_batch_by_pk_values_deferred(Some(user_id), updates)
             .await
     }
 
@@ -182,7 +185,7 @@ impl KalamTableProvider {
     ) -> Result<Vec<DeferredMutation<UserTableRowId>>, KalamDbError> {
         self.as_user()
             .ok_or_else(not_user)?
-            .delete_batch_by_pk_values_deferred(user_id, pk_values, versions)
+            .delete_batch_by_pk_values_deferred(Some(user_id), pk_values, versions)
             .await
     }
 
@@ -192,7 +195,7 @@ impl KalamTableProvider {
     ) -> Result<Vec<DeferredMutation<SharedTableRowId>>, KalamDbError> {
         self.as_shared()
             .ok_or_else(not_shared)?
-            .update_batch_by_pk_values_deferred(updates)
+            .update_batch_by_pk_values_deferred(None, updates)
             .await
     }
 
@@ -203,7 +206,7 @@ impl KalamTableProvider {
     ) -> Result<Vec<DeferredMutation<SharedTableRowId>>, KalamDbError> {
         self.as_shared()
             .ok_or_else(not_shared)?
-            .delete_batch_by_pk_values_deferred(pk_values, versions)
+            .delete_batch_by_pk_values_deferred(None, pk_values, versions)
             .await
     }
 
@@ -217,7 +220,7 @@ impl KalamTableProvider {
     {
         self.as_user()
             .ok_or_else(not_user)?
-            .validate_insert_batch_rows(user_id, rows)
+            .validate_insert_batch_rows(Some(user_id), rows)
             .await?;
         Ok(())
     }
@@ -230,7 +233,7 @@ impl KalamTableProvider {
     ) -> Result<Vec<(UserTableRowId, Option<ChangeNotification>)>, KalamDbError> {
         self.as_user()
             .ok_or_else(not_user)?
-            .insert_batch_deferred_prevalidated_with_versions(user_id, rows, versions)
+            .insert_batch_deferred_prevalidated_with_versions(Some(user_id), rows, versions)
             .await
     }
 
@@ -241,7 +244,7 @@ impl KalamTableProvider {
     ) -> Result<Vec<(SharedTableRowId, Option<ChangeNotification>)>, KalamDbError> {
         self.as_shared()
             .ok_or_else(not_shared)?
-            .insert_batch_deferred_prevalidated_with_versions(rows, versions)
+            .insert_batch_deferred_prevalidated_with_versions(None, rows, versions)
             .await
     }
 
@@ -254,7 +257,7 @@ impl KalamTableProvider {
         let (operations, applied, entries) = self
             .as_user()
             .ok_or_else(not_user)?
-            .plan_insert_batch_prevalidated(user_id, rows, versions)
+            .plan_insert_batch_prevalidated(Some(user_id), rows, versions)
             .await?;
         Ok(PlannedInsertBatch {
             operations,
@@ -271,7 +274,7 @@ impl KalamTableProvider {
         let (operations, applied, entries) = self
             .as_shared()
             .ok_or_else(not_shared)?
-            .plan_insert_batch_prevalidated(rows, versions)
+            .plan_insert_batch_prevalidated(None, rows, versions)
             .await?;
         Ok(PlannedInsertBatch {
             operations,
@@ -287,7 +290,7 @@ impl KalamTableProvider {
     ) -> Result<(), KalamDbError> {
         self.as_user()
             .ok_or_else(not_user)?
-            .finish_planned_user_insert(user_id, entries)
+            .finish_planned_insert(Some(user_id), entries)
             .await;
         Ok(())
     }
@@ -298,7 +301,7 @@ impl KalamTableProvider {
     ) -> Result<(), KalamDbError> {
         self.as_shared()
             .ok_or_else(not_shared)?
-            .finish_planned_shared_insert(entries)
+            .finish_planned_insert(None, entries)
             .await;
         Ok(())
     }
@@ -310,7 +313,7 @@ impl KalamTableProvider {
     ) -> Result<(), KalamDbError> {
         self.as_user()
             .ok_or_else(not_user)?
-            .finish_planned_user_scope(user_id, ops)
+            .finish_planned_scope(Some(user_id), ops)
             .await;
         Ok(())
     }
@@ -319,7 +322,7 @@ impl KalamTableProvider {
         &self,
         ops: &[crate::versioned::PlannedScopeFinish],
     ) -> Result<(), KalamDbError> {
-        self.as_shared().ok_or_else(not_shared)?.finish_planned_shared_scope(ops).await;
+        self.as_shared().ok_or_else(not_shared)?.finish_planned_scope(None, ops).await;
         Ok(())
     }
 
@@ -333,7 +336,7 @@ impl KalamTableProvider {
     ) -> Result<(UserTableRowId, Option<ChangeNotification>, Row), KalamDbError> {
         self.as_user()
             .ok_or_else(not_user)?
-            .plan_insert_deferred(user_id, row_data, version, previous, operations)
+            .plan_insert_deferred(Some(user_id), row_data, version, previous, operations)
             .await
     }
 
@@ -350,7 +353,12 @@ impl KalamTableProvider {
         self.as_user()
             .ok_or_else(not_user)?
             .plan_update_by_pk_value_deferred_with_hot(
-                user_id, pk_value, updates, version, known, operations,
+                Some(user_id),
+                pk_value,
+                updates,
+                version,
+                known,
+                operations,
             )
             .await
     }
@@ -367,7 +375,11 @@ impl KalamTableProvider {
         self.as_user()
             .ok_or_else(not_user)?
             .plan_delete_by_pk_value_deferred_with_hot(
-                user_id, pk_value, version, known, operations,
+                Some(user_id),
+                pk_value,
+                version,
+                known,
+                operations,
             )
             .await
     }
@@ -381,7 +393,7 @@ impl KalamTableProvider {
     ) -> Result<(SharedTableRowId, Option<ChangeNotification>, Row), KalamDbError> {
         self.as_shared()
             .ok_or_else(not_shared)?
-            .plan_insert_deferred(row_data, version, previous, operations)
+            .plan_insert_deferred(None, row_data, version, previous, operations)
             .await
     }
 
@@ -397,7 +409,7 @@ impl KalamTableProvider {
         self.as_shared()
             .ok_or_else(not_shared)?
             .plan_update_by_pk_value_deferred_with_hot(
-                pk_value, updates, version, known, operations,
+                None, pk_value, updates, version, known, operations,
             )
             .await
     }
@@ -412,7 +424,7 @@ impl KalamTableProvider {
     {
         self.as_shared()
             .ok_or_else(not_shared)?
-            .plan_delete_by_pk_value_deferred_with_hot(pk_value, version, known, operations)
+            .plan_delete_by_pk_value_deferred_with_hot(None, pk_value, version, known, operations)
             .await
     }
 
@@ -424,7 +436,7 @@ impl KalamTableProvider {
     ) -> Result<Option<(UserTableRowId, Option<ChangeNotification>)>, KalamDbError> {
         self.as_user()
             .ok_or_else(not_user)?
-            .delete_by_pk_value_deferred(user_id, pk_value, version)
+            .delete_by_pk_value_deferred(Some(user_id), pk_value, version)
             .await
     }
 
@@ -433,14 +445,14 @@ impl KalamTableProvider {
         user_id: &UserId,
         pk_value: &ScalarValue,
     ) -> Result<Option<(UserTableRowId, UserTableRow)>, KalamDbError> {
-        self.as_user().ok_or_else(not_user)?.find_by_pk(user_id, pk_value).await
+        self.as_user().ok_or_else(not_user)?.find_by_pk(Some(user_id), pk_value).await
     }
 
     pub async fn find_by_pk(
         &self,
         pk_value: &ScalarValue,
     ) -> Result<Option<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
-        self.as_shared().ok_or_else(not_shared)?.find_by_pk(pk_value).await
+        self.as_shared().ok_or_else(not_shared)?.find_by_pk(None, pk_value).await
     }
 
     pub async fn shared_row_by_pk_value(
