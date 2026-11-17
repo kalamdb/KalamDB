@@ -321,31 +321,51 @@ where
         partition: impl Into<String>,
         indexes: Vec<Arc<dyn IndexDefinition<K, V>>>,
     ) -> Self {
-        Self::with_codec(backend, partition, indexes, object_entity_codec())
+        Self::try_new(backend, partition, indexes)
+            .expect("failed to initialize main or index storage partition")
+    }
+
+    /// Fallible construction for server startup and table creation paths.
+    /// Partition creation is idempotent: an actual storage failure must never
+    /// leave an apparently usable IndexedEntityStore.
+    pub fn try_new(
+        backend: Arc<dyn StorageBackend>,
+        partition: impl Into<String>,
+        indexes: Vec<Arc<dyn IndexDefinition<K, V>>>,
+    ) -> Result<Self> {
+        Self::try_with_codec(backend, partition, indexes, object_entity_codec())
     }
 
     /// Create a store with a custom entity codec (used by ordinal row stores).
+    /// Existing infallible call sites fail loudly instead of ignoring I/O errors.
     pub fn with_codec(
         backend: Arc<dyn StorageBackend>,
         partition: impl Into<String>,
         indexes: Vec<Arc<dyn IndexDefinition<K, V>>>,
         codec: Arc<dyn EntityCodec<K, V>>,
     ) -> Self {
+        Self::try_with_codec(backend, partition, indexes, codec)
+            .expect("failed to initialize main or index storage partition")
+    }
+
+    pub fn try_with_codec(
+        backend: Arc<dyn StorageBackend>,
+        partition: impl Into<String>,
+        indexes: Vec<Arc<dyn IndexDefinition<K, V>>>,
+        codec: Arc<dyn EntityCodec<K, V>>,
+    ) -> Result<Self> {
         let partition_str = partition.into();
-
-        // Ensure main partition exists
         let main_partition = Partition::new(&partition_str);
-        let _ = backend.create_partition(&main_partition); // Ignore error if already exists
+        backend.create_partition(&main_partition)?;
 
-        // Ensure all index partitions exist
         let mut index_partitions = Vec::with_capacity(indexes.len());
         for index in &indexes {
             let index_partition = index.partition();
-            let _ = backend.create_partition(&index_partition); // Ignore error if already exists
+            backend.create_partition(&index_partition)?;
             index_partitions.push(index_partition);
         }
 
-        Self {
+        Ok(Self {
             backend,
             partition: partition_str,
             main_partition,
@@ -353,7 +373,7 @@ where
             index_partitions,
             codec,
             _marker: std::marker::PhantomData,
-        }
+        })
     }
 
     /// Returns the index definitions.
@@ -408,7 +428,7 @@ where
         let index_partition = self.index_partitions.get(index_idx).cloned().ok_or_else(|| {
             StorageError::Other(format!("index partition {} does not exist", index_idx))
         })?;
-        let _ = self.backend.create_partition(&index_partition);
+        self.backend.create_partition(&index_partition)?;
 
         const BATCH_SIZE: usize = 512;
         let mut operations = Vec::with_capacity(BATCH_SIZE);
