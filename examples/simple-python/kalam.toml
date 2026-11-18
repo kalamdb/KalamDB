@@ -1,0 +1,20 @@
+[project]
+name = "simple-python"
+default_env = "dev"
+
+[connection.dev]
+url = "http://localhost:2900"
+namespace = "simple_python"
+purpose = "development"
+
+[schema]
+mode = "sql"
+path = "kalam/schema.sql"
+watch = true
+languages = ["python"]
+
+[schema.targets.python]
+output = "generated/kalam.py"
+
+[migrations]
+auto_create = true
