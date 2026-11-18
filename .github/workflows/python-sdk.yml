@@ -77,7 +77,7 @@ jobs:
         shell: bash
         run: |
           if [ -f .venv/bin/activate ]; then source .venv/bin/activate; else source .venv/Scripts/activate; fi
-          pytest tests/test_auth.py tests/test_exceptions.py tests/test_agent.py -v
+          pytest tests/test_auth.py tests/test_exceptions.py tests/test_agent.py tests/test_schema.py tests/test_codecs.py -v
 
   build-wheels:
     name: Build wheels (${{ matrix.os }})
