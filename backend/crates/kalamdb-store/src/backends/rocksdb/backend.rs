@@ -1285,8 +1285,9 @@ mod tests {
             .collect();
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].0, newer_key);
-        assert_eq!(results[0].1, b"newer".to_vec());
+        let (key, value) = results[0].as_ref().expect("reverse scan entry");
+        assert_eq!(key, &newer_key);
+        assert_eq!(value.as_slice(), b"newer");
     }
 
     #[test]

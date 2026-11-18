@@ -16,6 +16,7 @@ use std::{
     collections::HashMap,
     future::Future,
     ops::Range,
+    pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, Mutex, OnceLock, Weak,
@@ -39,12 +40,14 @@ task_local! {
 }
 
 type PersistHook = Box<dyn FnOnce() + Send>;
+type AsyncPersistHook = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 #[derive(Default)]
 struct ApplyState {
     active: bool,
     pending: HashMap<usize, Vec<Operation>>,
     hooks: Vec<PersistHook>,
+    async_hooks: Vec<AsyncPersistHook>,
 }
 
 fn lock_state(state: &Mutex<ApplyState>) -> std::sync::MutexGuard<'_, ApplyState> {
@@ -111,10 +114,14 @@ impl ApplyBatch {
     }
 
     pub fn finish(self) -> CoalescedBatch {
-        let (legs_map, after_persist) = {
+        let (legs_map, after_persist, async_hooks) = {
             let mut state = lock_state(&self.state);
             state.active = false;
-            (std::mem::take(&mut state.pending), std::mem::take(&mut state.hooks))
+            (
+                std::mem::take(&mut state.pending),
+                std::mem::take(&mut state.hooks),
+                std::mem::take(&mut state.async_hooks),
+            )
         };
 
         let mut legs: Vec<(usize, Vec<Operation>)> = legs_map.into_iter().collect();
@@ -131,6 +138,7 @@ impl ApplyBatch {
             legs: ranges,
             owner: self.owner.load(Ordering::Relaxed),
             after_persist,
+            async_hooks,
         }
     }
 }
@@ -143,6 +151,7 @@ impl Drop for ApplyBatch {
         state.active = false;
         state.pending.clear();
         state.hooks.clear();
+        state.async_hooks.clear();
     }
 }
 
@@ -156,6 +165,7 @@ pub struct CoalescedBatch {
     legs: Vec<(usize, Range<usize>)>,
     owner: usize,
     pub after_persist: Vec<PersistHook>,
+    async_hooks: Vec<AsyncPersistHook>,
 }
 
 impl CoalescedBatch {
@@ -188,6 +198,19 @@ impl CoalescedBatch {
         }
         for hook in std::mem::take(&mut self.after_persist) {
             hook();
+        }
+        Ok(())
+    }
+
+    /// Persist buffered writes, run synchronous hooks, then await deferred async work.
+    ///
+    /// Async work runs only after every leg is durable, and still before the
+    /// caller observes success. A failed commit drops that work.
+    pub async fn commit_await(mut self) -> Result<(), StorageError> {
+        let async_hooks = std::mem::take(&mut self.async_hooks);
+        self.commit()?;
+        for hook in async_hooks {
+            hook.await;
         }
         Ok(())
     }
@@ -236,6 +259,27 @@ pub fn defer_after_persist(hook: impl FnOnce() + Send + 'static) {
             hook();
         }
     }
+}
+
+/// Defer async work until [`CoalescedBatch::commit_await`] has persisted every leg.
+///
+/// Outside a coalesce session the future is not stored. Callers must await the
+/// work themselves in that case.
+pub fn defer_after_persist_async(hook: impl Future<Output = ()> + Send + 'static) -> bool {
+    let mut hook = Some(Box::pin(hook));
+    COALESCE_STATE
+        .try_with(|state| {
+            let mut state = lock_state(state);
+            if state.active {
+                if let Some(hook) = hook.take() {
+                    state.async_hooks.push(hook);
+                }
+                true
+            } else {
+                false
+            }
+        })
+        .unwrap_or(false)
 }
 
 // Copies of a key or value made while building a buffered operation.

@@ -606,7 +606,12 @@ where
                 sorted.sort_unstable();
                 for pk in sorted {
                     claims
-                        .acquire_scoped(self.core.table_id(), scope_user, pk, &context.transaction_id)
+                        .acquire_scoped(
+                            self.core.table_id(),
+                            scope_user,
+                            pk,
+                            &context.transaction_id,
+                        )
                         .await;
                 }
             }

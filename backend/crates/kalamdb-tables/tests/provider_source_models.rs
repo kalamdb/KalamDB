@@ -1748,8 +1748,8 @@ async fn user_sql_dml_writes_each_version_once_with_statement_commit_seq() {
     collect(plan, state.task_ctx()).await.unwrap();
     assert_eq!(
         recording.batch_calls() - before,
-        2,
-        "one atomic row/index write per updated row"
+        1,
+        "one storage batch writes every updated row"
     );
     let mut update_commit = None;
     for id in 1_i64..=2 {
@@ -1780,7 +1780,11 @@ async fn user_sql_dml_writes_each_version_once_with_statement_commit_seq() {
     let before = recording.batch_calls();
     let plan = provider.delete_from(&state, vec![col("id").gt(lit(0_i64))]).await.unwrap();
     collect(plan, state.task_ctx()).await.unwrap();
-    assert_eq!(recording.batch_calls() - before, 2, "one atomic row/index write per tombstone");
+    assert_eq!(
+        recording.batch_calls() - before,
+        1,
+        "one storage batch writes every tombstone"
+    );
     let mut delete_commit = None;
     for id in 1_i64..=2 {
         let (_, prefix) = store
@@ -1887,8 +1891,8 @@ async fn shared_sql_dml_writes_each_version_once_with_statement_commit_seq() {
     collect(plan, state.task_ctx()).await.unwrap();
     assert_eq!(
         recording.batch_calls() - before,
-        2,
-        "one atomic row/index write per updated row"
+        1,
+        "one storage batch writes every updated row"
     );
     let mut update_commit = None;
     for id in 1_i64..=2 {
@@ -1918,7 +1922,11 @@ async fn shared_sql_dml_writes_each_version_once_with_statement_commit_seq() {
     let before = recording.batch_calls();
     let plan = provider.delete_from(&state, vec![col("id").gt(lit(0_i64))]).await.unwrap();
     collect(plan, state.task_ctx()).await.unwrap();
-    assert_eq!(recording.batch_calls() - before, 2, "one atomic row/index write per tombstone");
+    assert_eq!(
+        recording.batch_calls() - before,
+        1,
+        "one storage batch writes every tombstone"
+    );
     let mut delete_commit = None;
     for id in 1_i64..=2 {
         let (_, prefix) =

@@ -1613,7 +1613,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
             let finished = batch.finish();
             let failed = match result {
                 Ok(mut responses) => {
-                    if let Err(error) = finished.commit() {
+                    if let Err(error) = finished.commit_await().await {
                         Some(StorageError::<KalamTypeConfig>::write(error_source(&error)).into())
                     } else {
                         results.append(&mut responses);

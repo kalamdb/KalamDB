@@ -442,7 +442,9 @@ where
 {
     if let Some(claims) = context.pk_claims() {
         let claim_user = (table_type == TableType::User).then_some(user_id);
-        claims.acquire_scoped(table_id, claim_user, pk_value, &context.transaction_id).await;
+        claims
+            .acquire_scoped(table_id, claim_user, pk_value, &context.transaction_id)
+            .await;
         if !is_live().await? {
             claims.release_key_scoped(table_id, claim_user, pk_value, &context.transaction_id);
             return Ok(false);

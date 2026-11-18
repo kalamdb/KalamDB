@@ -1881,9 +1881,13 @@ impl DmlExecutor {
         prepared.run_scope_finishes().await;
         if cleanup_queued && !prepared.post_commit_effects.file_cleanup_intents.is_empty() {
             let app = Arc::clone(&self.app_context);
-            tokio::spawn(async move {
+            let immediate = Arc::clone(&app);
+            let stored = kalamdb_store::defer_after_persist_async(async move {
                 super::file_cleanup_queue::drain_file_cleanup(app).await;
             });
+            if !stored {
+                super::file_cleanup_queue::drain_file_cleanup(immediate).await;
+            }
         } else {
             for intent in &prepared.post_commit_effects.file_cleanup_intents {
                 delete_file_refs_best_effort(

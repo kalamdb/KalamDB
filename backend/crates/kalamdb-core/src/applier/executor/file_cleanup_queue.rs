@@ -96,9 +96,13 @@ pub(crate) async fn queue_file_cleanup(app: Arc<AppContext>, intents: Vec<FileCl
         },
     };
     if queued {
-        tokio::spawn(async move {
+        let immediate = Arc::clone(&app);
+        let stored = kalamdb_store::defer_after_persist_async(async move {
             drain_file_cleanup(app).await;
         });
+        if !stored {
+            drain_file_cleanup(immediate).await;
+        }
         return;
     }
     for intent in &intents {
