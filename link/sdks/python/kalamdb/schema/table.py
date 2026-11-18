@@ -63,9 +63,21 @@ class Table(Generic[Row]):
         #: The generated columns class, kept for discoverability from the table.
         self.c = columns_class
 
-        keys = [col for col in self.columns if col.is_primary_key]
-        keys.sort(key=lambda col: (col.pk_ordinal, self.columns.index(col)))
-        self.key_columns: Tuple[str, ...] = tuple(col.name for col in keys)
+    @property
+    def key_columns(self) -> Tuple[str, ...]:
+        """Primary key column names, in key order.
+
+        Derived on access rather than cached: a caller holding a reference to a
+        Column can still mark it a key after the table is built, and a stale
+        tuple would disagree with `column()`.
+        """
+        keys = [
+            (column.pk_ordinal, index, column.name)
+            for index, column in enumerate(self.columns)
+            if column.is_primary_key
+        ]
+        keys.sort()
+        return tuple(name for _, _, name in keys)
 
     # -- lookup ---------------------------------------------------------------
 
@@ -122,7 +134,12 @@ class Table(Generic[Row]):
                 )
 
         if not names:
-            raise ValueError(f"insert into {self.table_id} supplied no columns")
+            # The dialect has no INSERT ... DEFAULT VALUES form, so there is no
+            # statement to emit for an all-defaults insert.
+            raise ValueError(
+                f"insert into {self.table_id} supplied no columns, and the server "
+                "has no DEFAULT VALUES form; supply at least one column"
+            )
 
         placeholders = ", ".join(f"${i}" for i in range(1, len(params) + 1))
         sql = (
@@ -220,13 +237,14 @@ class Table(Generic[Row]):
             if missing:
                 raise ValueError(f"{self.table_id} key is missing {missing}")
             values = [key[name] for name in self.key_columns]
-        elif isinstance(key, (list, tuple)):
+        elif isinstance(key, Sequence) and not isinstance(key, (str, bytes)):
+            key = list(key)
             if len(key) != len(self.key_columns):
                 raise ValueError(
                     f"{self.table_id} has a composite key of "
                     f"{len(self.key_columns)} columns, got {len(key)} values"
                 )
-            values = list(key)
+            values = key
         else:
             raise ValueError(
                 f"{self.table_id} has a composite key {self.key_columns}, so pass a "

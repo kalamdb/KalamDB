@@ -18,6 +18,10 @@ def _resolve_columns(table_id: str, columns: Any) -> List[Column[Any]]:
 
     A class is read in definition order, so the declaration order in
     schema.sql survives into the generated table.
+
+    Only dunder attributes are skipped. A single leading underscore is a real
+    column name here -- ``_version``, ``_deleted`` and ``_timestamp`` are
+    KalamDB system columns -- so filtering those out would silently lose them.
     """
     if isinstance(columns, Mapping):
         entries = list(columns.items())
@@ -25,7 +29,7 @@ def _resolve_columns(table_id: str, columns: Any) -> List[Column[Any]]:
         entries = [
             (attr, value)
             for attr, value in vars(columns).items()
-            if not attr.startswith("_")
+            if not (attr.startswith("__") and attr.endswith("__"))
         ]
     else:
         raise TypeError(

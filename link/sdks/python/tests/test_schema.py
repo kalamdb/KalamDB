@@ -126,6 +126,63 @@ def test_declaration_rejects_bad_input():
         KTable.shared("app.t", {"a": bigint("id"), "b": Column("id", "BIGINT")})
 
 
+def test_system_columns_are_not_dropped():
+    """_version, _deleted and _timestamp are real column names, not privates."""
+    class Columns:
+        id = bigint("id").primary_key()
+        _version = bigint("_version").not_null()
+        _deleted = text("_deleted")
+
+    t = KTable.shared("app.rows", Columns)
+    assert [c.name for c in t] == ["id", "_version", "_deleted"]
+    assert t.column("_version").is_not_null
+
+
+def test_declaration_still_rejects_non_columns_beside_dunders():
+    class Columns:
+        """A docstring and annotations add dunders, which are skipped."""
+
+        id = bigint("id").primary_key()
+        oops = "not a column"
+
+    with pytest.raises(TypeError, match="not a Column"):
+        KTable.shared("app.rows", Columns)
+
+
+def test_quote_table_rejects_an_empty_namespace():
+    # ".notes" is malformed, not unqualified.
+    with pytest.raises(ValueError, match="empty namespace"):
+        quote_table(".notes")
+
+
+def test_key_columns_follow_a_column_marked_after_construction():
+    class Columns:
+        id = bigint("id")
+        label = text("label").not_null()
+
+    t = KTable.shared("app.rows", Columns)
+    assert t.key_columns == ()
+    t.column("id").primary_key()
+    assert t.key_columns == ("id",)
+    assert t.select_by_key_sql(1)[0].endswith('WHERE "id" = $1')
+
+
+def test_composite_key_accepts_any_sequence():
+    t = KTable.stream(
+        "chat.events",
+        {
+            "room": text("room").primary_key(1),
+            "seq": bigint("seq").primary_key(2),
+        },
+    )
+    expected = 'SELECT * FROM "chat"."events" WHERE "room" = $1 AND "seq" = $2'
+    assert t.select_by_key_sql(["a", 1]) == (expected, ["a", 1])
+    assert t.select_by_key_sql(range(2)) == (expected, [0, 1])
+    # A string is a sequence but is never a composite key.
+    with pytest.raises(ValueError, match="composite key"):
+        t.select_by_key_sql("ab")
+
+
 def test_column_lookup():
     notes = notes_table()
     assert notes.column("body").sql_type == "TEXT"

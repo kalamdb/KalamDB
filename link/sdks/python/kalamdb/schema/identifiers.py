@@ -22,9 +22,12 @@ def quote_table(table_id: str) -> str:
     """
     if not table_id:
         raise ValueError("table id must not be empty")
-    namespace, _, name = table_id.rpartition(".")
+    namespace, separator, name = table_id.rpartition(".")
     if not name:
         raise ValueError(f"invalid table id: {table_id!r}")
-    if not namespace:
+    if not separator:
         return quote_ident(name)
+    # A separator with nothing before it (".notes") is malformed, not unqualified.
+    if not namespace:
+        raise ValueError(f"table id {table_id!r} has an empty namespace")
     return f"{quote_ident(namespace)}.{quote_ident(name)}"
