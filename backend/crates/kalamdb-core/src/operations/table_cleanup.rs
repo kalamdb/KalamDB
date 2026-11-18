@@ -3,7 +3,7 @@
 //! These functions are shared by the `DropTableHandler` (in `kalamdb-handlers`)
 //! and the `CleanupExecutor` (in `kalamdb-jobs`).
 
-use std::{fs, sync::Arc};
+use std::{collections::HashSet, fs, sync::Arc};
 
 use kalamdb_commons::{
     constants::ColumnFamilyNames,
@@ -81,8 +81,12 @@ pub fn cleanup_table_partitions_sync(
 
     let (scalar_indexes, columns) = catalog_open_args(app_context, table_id);
     let backend = app_context.storage_backend();
-    let mut partitions =
-        expected_table_partition_names(table_id, table_type, &scalar_indexes, &columns);
+    let mut partitions = Vec::new();
+    for_each_expected_table_partition(table_id, table_type, &scalar_indexes, &columns, |name| {
+        if !partitions.contains(&name) {
+            partitions.push(name);
+        }
+    });
 
     if let Ok(existing_partitions) = backend.list_partitions() {
         let live_tables = app_context.system_tables().tables().list_tables().unwrap_or_default();
@@ -113,45 +117,62 @@ pub fn cleanup_table_partitions_sync(
 /// Drop any table-scoped RocksDB partitions/column families (`user_*`, `shared_*`,
 /// `stream_*`, `vix_*`) that do not belong to any live table in `system.tables`.
 pub fn sweep_orphaned_table_partitions(app_context: &AppContext) -> Result<usize, KalamDbError> {
+    let backend = app_context.storage_backend();
+    let existing_partitions = backend
+        .list_partitions()
+        .into_kalamdb_error("Failed to list storage partitions for orphan partition sweep")?;
+    // Start with the actual partitions and remove each name claimed by the catalog.
+    let mut orphan_names: HashSet<&str> = existing_partitions
+        .iter()
+        .map(StorePartition::name)
+        .filter(|name| is_table_scoped_partition_name(name))
+        .collect();
+    if orphan_names.is_empty() {
+        return Ok(0);
+    }
+
     let live_tables = app_context
         .system_tables()
         .tables()
         .list_tables()
         .into_kalamdb_error("Failed to scan table definitions for orphan partition sweep")?;
-    let backend = app_context.storage_backend();
-    let existing_partitions = backend
-        .list_partitions()
-        .into_kalamdb_error("Failed to list storage partitions for orphan partition sweep")?;
+    for table in live_tables {
+        for_each_expected_table_partition(
+            &table.table_id(),
+            table.table_type,
+            &table.scalar_indexes,
+            &table.columns,
+            |name| {
+                orphan_names.remove(name.as_str());
+            },
+        );
+        if orphan_names.is_empty() {
+            return Ok(0);
+        }
+    }
 
     let mut dropped = 0usize;
-    for partition in existing_partitions {
+    for partition in &existing_partitions {
         let name = partition.name();
-        if !is_table_scoped_partition_name(name) {
+        if !orphan_names.contains(name) {
             continue;
         }
-        let owned_by_live_table = live_tables.iter().any(|table_def| {
-            let table_id =
-                TableId::new(table_def.namespace_id.clone(), table_def.table_name.clone());
-            partition_belongs_to_live_table_def(name, &table_id, table_def)
-        });
-        if !owned_by_live_table {
-            match backend.drop_partition(&partition) {
-                Ok(()) => {
-                    dropped += 1;
-                    log::info!(
-                        "[CleanupHelper] Dropped orphaned table partition/CF '{}' during sweep",
-                        name
-                    );
-                },
-                Err(e) if e.to_string().to_lowercase().contains("not found") => {},
-                Err(e) => {
-                    log::warn!(
-                        "[CleanupHelper] Failed to drop orphaned table partition '{}': {}",
-                        name,
-                        e
-                    );
-                },
-            }
+        match backend.drop_partition(partition) {
+            Ok(()) => {
+                dropped += 1;
+                log::info!(
+                    "[CleanupHelper] Dropped orphaned table partition/CF '{}' during sweep",
+                    name
+                );
+            },
+            Err(e) if e.to_string().to_lowercase().contains("not found") => {},
+            Err(e) => {
+                log::warn!(
+                    "[CleanupHelper] Failed to drop orphaned table partition '{}': {}",
+                    name,
+                    e
+                );
+            },
         }
     }
 
@@ -175,38 +196,29 @@ fn catalog_open_args(
     }
 }
 
-fn expected_table_partition_names(
+fn for_each_expected_table_partition(
     table_id: &TableId,
     table_type: TableType,
     scalar_indexes: &[ScalarIndexDefinition],
     columns: &[ColumnDefinition],
-) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut push_unique = |name: String| {
-        if !names.contains(&name) {
-            names.push(name);
-        }
-    };
-
+    mut visit: impl FnMut(String),
+) {
     match table_type {
         TableType::User => {
             let main = format!("{}{}", ColumnFamilyNames::USER_TABLE_PREFIX, table_id);
             let pk = format!("{}_pk_idx", main);
-            push_unique(main);
-            push_unique(pk);
+            visit(main);
+            visit(pk);
             for index in scalar_indexes {
-                push_unique(kalamdb_tables::common::scalar_index_partition_name(
+                visit(kalamdb_tables::common::scalar_index_partition_name(
                     table_id,
                     &index.name,
                     true,
                 ));
             }
             for col in columns {
-                push_unique(kalamdb_vector::user_vector_ops_partition_name(
-                    table_id,
-                    &col.column_name,
-                ));
-                push_unique(kalamdb_vector::user_vector_pk_index_partition_name(
+                visit(kalamdb_vector::user_vector_ops_partition_name(table_id, &col.column_name));
+                visit(kalamdb_vector::user_vector_pk_index_partition_name(
                     table_id,
                     &col.column_name,
                 ));
@@ -215,33 +227,28 @@ fn expected_table_partition_names(
         TableType::Shared => {
             let main = format!("{}{}", ColumnFamilyNames::SHARED_TABLE_PREFIX, table_id);
             let pk = format!("{}_pk_idx", main);
-            push_unique(main);
-            push_unique(pk);
+            visit(main);
+            visit(pk);
             for index in scalar_indexes {
-                push_unique(kalamdb_tables::common::scalar_index_partition_name(
+                visit(kalamdb_tables::common::scalar_index_partition_name(
                     table_id,
                     &index.name,
                     false,
                 ));
             }
             for col in columns {
-                push_unique(kalamdb_vector::shared_vector_ops_partition_name(
-                    table_id,
-                    &col.column_name,
-                ));
-                push_unique(kalamdb_vector::shared_vector_pk_index_partition_name(
+                visit(kalamdb_vector::shared_vector_ops_partition_name(table_id, &col.column_name));
+                visit(kalamdb_vector::shared_vector_pk_index_partition_name(
                     table_id,
                     &col.column_name,
                 ));
             }
         },
         TableType::Stream => {
-            push_unique(format!("{}{}", ColumnFamilyNames::STREAM_TABLE_PREFIX, table_id));
+            visit(format!("{}{}", ColumnFamilyNames::STREAM_TABLE_PREFIX, table_id));
         },
         TableType::System => {},
     }
-
-    names
 }
 
 fn drop_partition_ignoring_not_found(

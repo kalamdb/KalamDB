@@ -696,10 +696,11 @@ impl SchemaRegistry {
             .forget_table_layouts(table_id.namespace_id(), table_id.table_name());
 
         // 1. Create CachedTableData with named-type Arrow overlay
+        let table_def = Arc::new(table_def);
         let cached_data = Arc::new(CachedTableData::from_table_definition(
             app_ctx.as_ref(),
             &table_id,
-            Arc::new(table_def.clone()),
+            Arc::clone(&table_def),
         )?);
         let arrow_schema = cached_data.arrow_schema()?;
         let previous_entry = self.table_cache.insert(table_id.clone(), Arc::clone(&cached_data));
@@ -757,33 +758,27 @@ impl SchemaRegistry {
     }
 
     fn build_column_defaults(&self, table_def: &TableDefinition) -> HashMap<String, Expr> {
-        let base_state = self.app_context().base_session_context().state();
-        let scalar_functions = base_state.scalar_functions();
+        let mut base_state = None;
 
         table_def
             .columns
             .iter()
             .filter_map(|column| {
-                self.build_default_expr(&column.default_value, scalar_functions)
-                    .map(|expr| (column.column_name.clone(), expr))
+                let expr = match &column.default_value {
+                    ColumnDefault::None => return None,
+                    ColumnDefault::Literal(json) => Expr::Literal(json_value_to_scalar(json), None),
+                    ColumnDefault::FunctionCall(call) => {
+                        let udf_name = call.scalar_udf_name()?;
+                        let state = base_state.get_or_insert_with(|| {
+                            self.app_context().base_session_context().state()
+                        });
+                        let udf = Self::lookup_scalar_function(state.scalar_functions(), udf_name)?;
+                        Expr::ScalarFunction(ScalarFunctionExpr::new_udf(udf, Vec::new()))
+                    },
+                };
+                Some((column.column_name.clone(), expr))
             })
             .collect()
-    }
-
-    fn build_default_expr(
-        &self,
-        default_value: &ColumnDefault,
-        scalar_functions: &HashMap<String, Arc<datafusion::logical_expr::ScalarUDF>>,
-    ) -> Option<Expr> {
-        match default_value {
-            ColumnDefault::None => None,
-            ColumnDefault::Literal(json) => Some(Expr::Literal(json_value_to_scalar(json), None)),
-            ColumnDefault::FunctionCall(call) => {
-                let udf_name = call.scalar_udf_name()?;
-                let udf = Self::lookup_scalar_function(scalar_functions, udf_name)?;
-                Some(Expr::ScalarFunction(ScalarFunctionExpr::new_udf(udf, Vec::new())))
-            },
-        }
     }
 
     fn lookup_scalar_function(

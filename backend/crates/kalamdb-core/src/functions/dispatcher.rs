@@ -33,7 +33,8 @@ fn cached_enabled_triggers(
     app: &Arc<AppContext>,
     cache: &mut Option<TriggerListCache>,
 ) -> Result<Vec<CatalogTrigger>, KalamDbError> {
-    let generation = app.function_runtime().active_set().generation;
+    let generation =
+        app.try_function_runtime().map_or(0, |runtime| runtime.active_set().generation);
     if let Some(row) = cache.as_ref() {
         if row.generation == generation && row.fetched_at.elapsed() < TRIGGER_CACHE_TTL {
             return Ok(row.triggers.clone());

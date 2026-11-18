@@ -438,7 +438,6 @@ impl AppContext {
             );
             let functions_dir = config.storage.functions_dir();
             let _ = std::fs::create_dir_all(config.storage.functions_artifacts_dir());
-            let _ = std::fs::create_dir_all(config.storage.functions_runtime_dir());
             let functions_storage =
                 Arc::new(kalamdb_filestore::StorageCached::for_functions_dir(&functions_dir));
             let procedure_log_logger = crate::procedure_log_logger::ProcedureLogLogger::new(
@@ -764,11 +763,17 @@ impl AppContext {
 
             let app_ctx_for_procedure_runs = Arc::clone(&app_ctx);
             active_procedure_runs_view.set_snapshot_callback(Arc::new(move || {
-                app_ctx_for_procedure_runs.function_runtime().snapshot_runs()
+                app_ctx_for_procedure_runs
+                    .try_function_runtime()
+                    .map(|runtime| runtime.snapshot_runs())
+                    .unwrap_or_default()
             }));
             let app_ctx_for_module_instances = Arc::clone(&app_ctx);
             module_instances_view.set_snapshot_callback(Arc::new(move || {
-                app_ctx_for_module_instances.function_runtime().snapshot_instances()
+                app_ctx_for_module_instances
+                    .try_function_runtime()
+                    .map(|runtime| runtime.snapshot_instances())
+                    .unwrap_or_default()
             }));
 
             let live_query_manager = Arc::new(LiveQueryManager::new(
@@ -1495,23 +1500,25 @@ impl AppContext {
         self.try_sql_executor().expect("SqlExecutor not initialized in AppContext")
     }
 
+    /// Access function state for polling and cleanup without initializing it.
+    pub(crate) fn try_function_runtime(&self) -> Option<&crate::functions::FunctionRuntimeState> {
+        self.function_runtime.get().map(Arc::as_ref)
+    }
+
     /// Staged function-runtime state (typed topic publishes).
     pub fn function_runtime(&self) -> Arc<crate::functions::FunctionRuntimeState> {
-        if self.function_runtime.get().is_none() {
-            let _ = self.function_runtime.set(Arc::new(
-                crate::functions::FunctionRuntimeState::from_runtime_settings(
-                    &self.config.functions.runtime,
-                ),
-            ));
-        }
-        let state = Arc::clone(self.function_runtime.get().expect("function runtime initialized"));
+        let state = self.function_runtime.get_or_init(|| {
+            Arc::new(crate::functions::FunctionRuntimeState::from_runtime_settings(
+                &self.config.functions.runtime,
+            ))
+        });
         state.ensure_lifecycle_observer(|| {
             Arc::new(crate::functions::lifecycle::FunctionRuntimeLogObserver {
                 logger: self.procedure_log_logger(),
                 node_id: Arc::from(self.node_id().as_ref().to_string()),
             })
         });
-        state
+        Arc::clone(state)
     }
 
     /// Get server uptime in seconds

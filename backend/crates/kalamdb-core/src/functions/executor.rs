@@ -1262,8 +1262,10 @@ pub(crate) fn flush_staged_publishes(
     app: &AppContext,
     transaction_id: &TransactionId,
 ) -> Result<(), KalamDbError> {
-    let staged = app.function_runtime().take(transaction_id);
-    for publish in staged {
+    let Some(runtime) = app.try_function_runtime() else {
+        return Ok(());
+    };
+    for publish in runtime.take(transaction_id) {
         app.topic_publisher()
             .publish_typed(&publish.topic_id, publish.payload, publish.user_id.as_ref())
             .map_err(|error| {
@@ -1276,7 +1278,9 @@ pub(crate) fn flush_staged_publishes(
 }
 
 pub(crate) fn drop_staged_publishes(app: &AppContext, transaction_id: &TransactionId) {
-    let _ = app.function_runtime().take(transaction_id);
+    if let Some(runtime) = app.try_function_runtime() {
+        let _ = runtime.take(transaction_id);
+    }
 }
 
 fn procedure_out_value_to_execution_result(
