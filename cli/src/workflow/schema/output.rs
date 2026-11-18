@@ -1,6 +1,6 @@
 //! Shared writes and headers for generated schema artifacts.
 
-use std::{fs, io, path::Path};
+use std::{collections::HashSet, fs, io, path::Path};
 
 use kalamdb_sql::contracts::{ContractSnapshot, ContractTable};
 use serde::Serialize;
@@ -62,6 +62,25 @@ pub fn remove_if_exists(path: &Path) -> Result<()> {
         Err(error) => {
             Err(CLIError::FileError(format!("failed to remove '{}': {error}", path.display())))
         },
+    }
+}
+
+/// Make `base` unique within `used`, suffixing `2`, `3`, ... on collision.
+///
+/// Snake-case value names can collide where the PascalCase type names that
+/// [`super::naming::assign_names`] checks do not: `chat.user_profiles` and
+/// `chat_user.profiles` both shorten to `chat_user_profiles`.
+pub fn unique_ident(base: String, used: &mut HashSet<String>) -> String {
+    if used.insert(base.clone()) {
+        return base;
+    }
+    let mut index = 2u32;
+    loop {
+        let candidate = format!("{base}{index}");
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+        index += 1;
     }
 }
 

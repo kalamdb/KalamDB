@@ -19,9 +19,6 @@ from urllib.request import urlopen
 import pytest
 import pytest_asyncio
 
-from kalamdb import KalamClient, Auth
-
-
 KALAMDB_URL = os.environ.get("KALAMDB_TEST_URL", "http://localhost:8088")
 KALAMDB_USER = os.environ.get("KALAMDB_TEST_USER", "admin")
 KALAMDB_PASSWORD = os.environ.get("KALAMDB_TEST_PASSWORD")
@@ -58,6 +55,10 @@ def require_integration_env() -> str:
 @pytest_asyncio.fixture
 async def client():
     """Yield a connected KalamClient; disconnect automatically when the test finishes."""
+    # Imported here rather than at module scope so collecting the tests that need
+    # no server (or no compiled extension) does not fail outright.
+    from kalamdb import Auth, KalamClient
+
     password = require_integration_env()
     c = KalamClient(KALAMDB_URL, Auth.basic(KALAMDB_USER, password))
     yield c

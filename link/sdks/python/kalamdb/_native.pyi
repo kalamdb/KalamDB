@@ -1,6 +1,6 @@
 """Type stubs for the kalamdb Python SDK."""
 
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 CheckpointCallback = Callable[[dict[str, str]], None]
 ErrorCallback = Callable[[dict[str, Any]], None]
@@ -89,7 +89,7 @@ class KalamClient:
     async def query_with_files(
         self,
         sql: str,
-        files: dict[str, tuple],
+        files: dict[str, FileUpload | tuple[str, bytes] | tuple[str, bytes, str]],
         params: list[Any] | None = None,
     ) -> dict[str, Any]:
         """Execute SQL with file uploads.
@@ -253,3 +253,75 @@ class Consumer:
     async def __aenter__(self) -> "Consumer": ...
     async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None: ...
     def __repr__(self) -> str: ...
+
+
+class FileRef:
+    """Typed FILE column reference, stored as JSON in the column."""
+
+    def __init__(
+        self,
+        id: str,
+        sub: str,
+        name: str,
+        size: int,
+        mime: str,
+        sha256: str,
+        shard: Optional[int] = None,
+    ) -> None: ...
+
+    @staticmethod
+    def from_value(value: Any) -> Optional["FileRef"]:
+        """Parse a wire value (JSON string or mapping); None when it is not a file."""
+        ...
+
+    @property
+    def id(self) -> str: ...
+    @property
+    def sub(self) -> str: ...
+    @property
+    def name(self) -> str: ...
+    @property
+    def size(self) -> int: ...
+    @property
+    def mime(self) -> str: ...
+    @property
+    def sha256(self) -> str: ...
+    @property
+    def shard(self) -> Optional[int]: ...
+
+    def is_image(self) -> bool: ...
+    def is_pdf(self) -> bool: ...
+    def format_size(self) -> str: ...
+    def download_url(self, base_url: str, namespace: str, table: str) -> str: ...
+    def relative_url(self, namespace: str, table: str) -> str: ...
+
+    def to_dict(self) -> dict[str, Any]:
+        """Dict form matching the stored JSON, for writing the reference back."""
+        ...
+
+    def __repr__(self) -> str: ...
+
+
+class FileUpload:
+    """Multipart upload payload for a SQL `FILE("placeholder")` expression."""
+
+    def __init__(
+        self,
+        placeholder: str,
+        filename: str,
+        data: bytes,
+        mime: Optional[str] = None,
+    ) -> None: ...
+
+    def __repr__(self) -> str: ...
+
+
+class FileDownload:
+    """Bytes and HTTP metadata from a file download response."""
+
+    @property
+    def bytes(self) -> bytes: ...
+    @property
+    def content_type(self) -> Optional[str]: ...
+    @property
+    def content_disposition(self) -> Optional[str]: ...

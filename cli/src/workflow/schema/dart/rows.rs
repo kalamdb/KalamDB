@@ -1,11 +1,11 @@
 //! Dart row codecs shared by tables and procedure request types.
 
-use std::collections::HashSet;
-
 use kalamdb_sql::contracts::{ContractField, ContractSnapshot, ContractTypeKind};
 use serde::Serialize;
 
 pub use crate::workflow::project::templates::escape_js_single_quoted_string as escape_dart_string;
+// Re-exported so dart/tables.rs keeps its existing import path.
+pub use crate::workflow::schema::output::unique_ident;
 use crate::workflow::schema::{
     naming::{camel_case, AssignedNames},
     output::line_docs,
@@ -220,20 +220,6 @@ fn kalam_row_key_expr(columns: &[DartColumn]) -> String {
 
 fn dart_field_name(sql_name: &str) -> String {
     sanitize_ident(&camel_case(sql_name))
-}
-
-pub fn unique_ident(base: String, used: &mut HashSet<String>) -> String {
-    if used.insert(base.clone()) {
-        return base;
-    }
-    let mut index = 2u32;
-    loop {
-        let candidate = format!("{base}{index}");
-        if used.insert(candidate.clone()) {
-            return candidate;
-        }
-        index += 1;
-    }
 }
 
 fn sanitize_ident(value: &str) -> String {
