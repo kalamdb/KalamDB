@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile real generated TS/Dart output against installed local SDK dependencies."""
+"""Compile real generated TS/Dart/Python output against installed local SDK dependencies."""
 import argparse
 import json
 from pathlib import Path
@@ -13,7 +13,12 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--flutter', default='flutter')
 parser.add_argument('--kalam', default=str(ROOT / 'target/debug/kalam'))
 parser.add_argument('--node-modules', type=Path, default=ROOT / 'link/sdks/typescript/react/node_modules')
+parser.add_argument('--python', action='store_true',
+                    help='also typecheck generated Python; needs kalamdb installed (maturin develop) and mypy')
+parser.add_argument('--python-bin', default='python3')
 args = parser.parse_args()
+
+LANGUAGES = ['typescript', 'dart'] + (['python'] if args.python else [])
 
 def run(argv, cwd):
     subprocess.run([str(value) for value in argv], cwd=cwd, check=True)
@@ -21,18 +26,20 @@ def run(argv, cwd):
 with tempfile.TemporaryDirectory(prefix='kalam-sdk-contract-') as directory:
     project = Path(directory).resolve()
     shutil.copyfile(FIXTURES / 'schema.sql', project / 'schema.sql')
-    (project / 'kalam.toml').write_text('''[project]
+    (project / 'kalam.toml').write_text(f'''[project]
 name = "sdk_contract_fixture"
 [schema]
 mode = "sql"
 path = "schema.sql"
-languages = ["typescript", "dart"]
+languages = {json.dumps(LANGUAGES)}
 [schema.targets.typescript]
 output = "ts/kalam.ts"
 [schema.targets.dart]
 output = "lib/kalam.dart"
+[schema.targets.python]
+output = "py/kalam.py"
 ''')
-    run([args.kalam, 'schema', 'gen', '--project-dir', project, '--languages', 'typescript,dart', '--agent', '--no-spinner'], ROOT)
+    run([args.kalam, 'schema', 'gen', '--project-dir', project, '--languages', ','.join(LANGUAGES), '--agent', '--no-spinner'], ROOT)
     (project / 'package.json').write_text('{"type":"module"}')
     (project / 'node_modules').symlink_to(args.node_modules.resolve(), target_is_directory=True)
     shutil.copyfile(FIXTURES / 'shape-check.ts', project / 'ts/shape-check.ts')
@@ -62,4 +69,22 @@ dev_dependencies:
     result = subprocess.run([str(dart), 'analyze', str(invalid)], cwd=project, text=True, capture_output=True)
     if result.returncode == 0 or 'argument_type_not_assignable' not in result.stdout:
         raise RuntimeError(f'Expected generated Dart columns to reject wrong types:\n{result.stdout}\n{result.stderr}')
-print('Generated SDK contracts: TypeScript typechecks, Dart round trips and negative types passed.')
+    if args.python:
+        # Generated Python is checked the same way: strict types on the real SDK,
+        # a real import as the syntax gate, then a negative boundary mypy must reject.
+        shutil.copyfile(FIXTURES / 'shape_check.py', project / 'py/shape_check.py')
+        run([args.python_bin, '-m', 'mypy', '--strict', '--no-error-summary',
+             'py/kalam.py', 'py/shape_check.py'], project)
+        run([args.python_bin, '-c', 'import kalam; assert kalam.KALAM_TABLES'], project / 'py')
+        invalid = project / 'py/invalid.py'
+        invalid.write_text('from kalam import Inventory\n'
+                           'wrong = Inventory(id=1, sku="s", tags=None, dates=None,\n'
+                           '                  moods=None, addresses=None, attachment=None)\n')
+        result = subprocess.run([args.python_bin, '-m', 'mypy', '--strict', 'py/invalid.py'],
+                                cwd=project, text=True, capture_output=True)
+        if result.returncode == 0 or 'arg-type' not in result.stdout:
+            raise RuntimeError(
+                f'Expected generated Python rows to reject wrong types:\n{result.stdout}\n{result.stderr}')
+
+print('Generated SDK contracts: TypeScript typechecks, Dart round trips and negative types passed.'
+      + (' Python typechecks, imports and rejects wrong types.' if args.python else ''))

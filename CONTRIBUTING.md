@@ -9,6 +9,7 @@ It focuses on the commands contributors actually need for the server, CLI, Postg
 - `cargo-nextest` for Rust test runs
 - Node.js 18+ and npm 9+ for the UI, TypeScript SDKs, and npm examples
 - Flutter 3.19+ and Dart 3.3+ for the Dart SDK
+- Python 3.9+ and `maturin` for the Python SDK
 - LLVM/Clang and a working C/C++ toolchain for RocksDB and native builds
 
 Install the common Rust helpers once:
@@ -348,6 +349,7 @@ Examples:
 - Dart transport change: `cd link/sdks/dart/link && ./test.sh`
 - Dart sync change: `cd link/sdks/dart/sync && flutter analyze && flutter test`
 - Dart generator change: `cd link/sdks/dart/generator && flutter analyze && dart test`
+- Python SDK change: `cd link/sdks/python && maturin develop && python -m pytest tests -v`
 
 For cross-cutting changes, use the repo-wide sweep after starting the backend server:
 

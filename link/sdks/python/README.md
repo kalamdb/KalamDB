@@ -4,6 +4,53 @@ Official Python SDK for [KalamDB](https://github.com/kalamdb/KalamDB) — a SQL-
 
 Built on top of the Rust `kalam-client` core via PyO3, so the networking, reconnection, and protocol logic is shared with the TypeScript and Dart SDKs.
 
+## Schema-first tables
+
+`schema.sql` is the single source of truth for your tables. `kalam schema gen
+--languages python` reads it and writes the typed bindings; this SDK ships the
+hand-written runtime they call into. Nothing in the SDK creates tables — DDL and
+table options (TTL, compression, eviction) live in `schema.sql` and are enforced
+by the server.
+
+Enable the target in `kalam.toml`, then generate:
+
+```toml
+[schema]
+mode = "sql"
+path = "kalam/schema.sql"
+languages = ["python"]
+
+[schema.targets.python]
+output = "generated/kalam.py"
+```
+
+```bash
+kalam schema gen --languages python
+```
+
+You get a row dataclass, a typed columns class, and a table declaration per
+table:
+
+```python
+from kalamdb import KalamClient, Auth
+from generated.kalam import profiles, Profiles
+
+async def main():
+    async with KalamClient("http://localhost:2900", Auth.basic("admin", "pw")) as client:
+        sql, params = profiles.insert_sql({"email": "a@b.c"})
+        await client.query(sql, params)
+
+        sql, params = profiles.select_sql("email = $1", ["a@b.c"])
+        rows = await client.query_rows(sql, params)
+        profile: Profiles = profiles.decode(rows[0])
+        print(profile.email, profile.created_at)   # typed attributes
+```
+
+Every builder is pure — it returns the SQL string and its parameters, so you can
+log them, adapt them, or drop to `client.query` for anything the builders do not
+cover. The runtime pieces (`Column`, `Table`, `KTable`) live in
+`kalamdb.schema`.
+
 ## Installation
 
 ```bash

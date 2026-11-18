@@ -9,11 +9,11 @@ use crate::{
         project::config::KalamProjectConfig,
         schema::{
             dart, load,
-            model::{parse_language_list, LanguageTarget},
+            model::{parse_language_list, supported_languages_hint, LanguageTarget},
             naming::{assign_names_with_home, NamingOptions},
             output::SchemaEmitInput,
             procedures::ProcedureCatalog,
-            rust, typescript,
+            python, rust, typescript,
         },
         WorkflowContext,
     },
@@ -151,6 +151,7 @@ fn write_language(language: LanguageTarget, input: &SchemaEmitInput<'_>) -> Resu
         LanguageTarget::TypeScript => typescript::write_typescript(input),
         LanguageTarget::Dart => dart::write_dart_schema(input),
         LanguageTarget::Rust => rust::write_rust_schema(input),
+        LanguageTarget::Python => python::write_python_schema(input),
     }
 }
 
@@ -177,7 +178,8 @@ pub fn validate_language_filter(
     for value in requested {
         let Some(parsed) = LanguageTarget::parse(value) else {
             return Err(CLIError::ConfigurationError(format!(
-                "unsupported language target '{value}'; supported: typescript, dart, rust"
+                "unsupported language target '{value}'; supported: {}",
+                supported_languages_hint()
             )));
         };
         let canonical = parsed.as_str().to_string();
