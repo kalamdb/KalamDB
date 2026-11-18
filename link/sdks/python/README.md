@@ -16,6 +16,8 @@ Enable the target in `kalam.toml`, then generate:
 
 ```toml
 [schema]
+mode = "sql"
+path = "kalam/schema.sql"
 languages = ["python"]
 
 [schema.targets.python]
@@ -33,14 +35,15 @@ table:
 from kalamdb import KalamClient, Auth
 from generated.kalam import profiles, Profiles
 
-async with KalamClient("http://localhost:2900", Auth.basic("admin", "pw")) as client:
-    sql, params = profiles.insert_sql({"email": "a@b.c"})
-    await client.query(sql, params)
+async def main():
+    async with KalamClient("http://localhost:2900", Auth.basic("admin", "pw")) as client:
+        sql, params = profiles.insert_sql({"email": "a@b.c"})
+        await client.query(sql, params)
 
-    sql, params = profiles.select_sql("email = $1", ["a@b.c"])
-    rows = await client.query_rows(sql, params)
-    profile: Profiles = profiles.decode(rows[0])
-    print(profile.email, profile.created_at)   # typed attributes
+        sql, params = profiles.select_sql("email = $1", ["a@b.c"])
+        rows = await client.query_rows(sql, params)
+        profile: Profiles = profiles.decode(rows[0])
+        print(profile.email, profile.created_at)   # typed attributes
 ```
 
 Every builder is pure — it returns the SQL string and its parameters, so you can

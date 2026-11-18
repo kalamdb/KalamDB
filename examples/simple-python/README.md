@@ -37,16 +37,17 @@ python main.py
 ```python
 from generated.kalam import NoteState, Notes, notes
 
-sql, params = notes.insert_sql({"author": "manik", "body": "hi",
-                                "state": NoteState.DRAFT.value})
-await client.query(sql, params)
+async def example(client):
+    sql, params = notes.insert_sql({"author": "manik", "body": "hi",
+                                    "state": NoteState.DRAFT.value})
+    await client.query(sql, params)
 
-sql, params = notes.select_sql("author = $1", ["manik"])
-note: Notes = notes.decode((await client.query_rows(sql, params))[0])
+    sql, params = notes.select_sql("author = $1", ["manik"])
+    note: Notes = notes.decode((await client.query_rows(sql, params))[0])
 
-note.created_at      # datetime, decoded from the wire
-note.state           # NoteState enum
-note.tags            # Optional[List[str]]
+    note.created_at      # datetime, decoded from the wire
+    note.state           # NoteState enum
+    note.tags            # Optional[List[str]]
 ```
 
 Every builder returns the SQL string and its parameters, so you can log them,
