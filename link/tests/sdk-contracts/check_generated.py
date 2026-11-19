@@ -2,6 +2,7 @@
 """Compile real generated TS/Dart/Python output against installed local SDK dependencies."""
 import argparse
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -17,6 +18,11 @@ parser.add_argument('--python', action='store_true',
                     help='also typecheck generated Python; needs kalamdb installed (maturin develop) and mypy')
 parser.add_argument('--python-bin', default='python3')
 args = parser.parse_args()
+# Resolved against the invoking directory: the Python steps run with `cwd` set
+# to the generated output, where a relative path like .venv/bin/python would
+# otherwise be looked up. A bare name such as python3 stays on PATH.
+if os.sep in args.python_bin or (os.altsep and os.altsep in args.python_bin):
+    args.python_bin = str(Path(args.python_bin).resolve())
 
 LANGUAGES = ['typescript', 'dart'] + (['python'] if args.python else [])
 
@@ -81,6 +87,9 @@ dev_dependencies:
         run([args.python_bin, '-m', 'mypy', '--strict', '--no-error-summary',
              '--explicit-package-bases', 'kalam.py', 'shape_check.py'], generated)
         run([args.python_bin, '-c', 'import kalam; assert kalam.KALAM_TABLES'], generated)
+        # mypy only typechecks the fixture; its assertions about table metadata,
+        # enum values and the SQL builders need a real run.
+        run([args.python_bin, 'shape_check.py'], generated)
         invalid = generated / 'invalid.py'
         invalid.write_text('from kalam import Inventory\n'
                            'wrong = Inventory(id=1, sku="s", tags=None, dates=None,\n'

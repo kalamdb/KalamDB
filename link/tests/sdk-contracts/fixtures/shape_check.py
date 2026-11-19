@@ -81,3 +81,31 @@ def builds_parameterised_sql() -> None:
     select, select_params = inventory.select_by_key_sql("sku-1")
     assert "$1" in select
     assert select_params == ["sku-1"]
+
+
+def main() -> None:
+    """Run every check, so the harness exercises them and not just mypy."""
+    row: Dict[str, Any] = {
+        "id": "1",
+        "sku": "sku-1",
+        "tags": ["a"],
+        "dates": ["2026-01-01T00:00:00Z"],
+        "moods": ["calm"],
+        "addresses": [{"city": "Jammu"}],
+        "attachment": None,
+    }
+    decoded = decodes_a_wire_row(row)
+    assert decoded.sku == "sku-1"
+    assert decoded.moods == [Mood.CALM]
+    assert decoded.addresses == [Address(city="Jammu")]
+    assert decoded.dates == [dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)]
+
+    assert declared_field_types()["sku"] == "sku-1"
+    assert enum_carries_its_wire_value() == "calm"
+    table_declaration_is_typed()
+    columns_are_declared_objects()
+    builds_parameterised_sql()
+
+
+if __name__ == "__main__":
+    main()
