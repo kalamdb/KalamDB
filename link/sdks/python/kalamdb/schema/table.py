@@ -224,35 +224,46 @@ class Table(Generic[Row]):
 
     def _key_predicate(self, key: Any, params: List[Any]) -> str:
         """Append key values to ``params`` and return the WHERE fragment."""
-        if not self.key_columns:
+        # Read the key order once. It is derived on access, and the branches
+        # below run caller code, so re-reading could collect the values in one
+        # order and bind them in another.
+        key_columns = self.key_columns
+        if not key_columns:
             raise ValueError(
                 f"{self.table_id} has no primary key, so rows cannot be addressed "
                 "by key; use select_sql with an explicit where fragment"
             )
 
-        if len(self.key_columns) == 1:
+        if len(key_columns) == 1:
             values: Sequence[Any] = [key]
         elif isinstance(key, Mapping):
-            missing = [name for name in self.key_columns if name not in key]
+            missing = [name for name in key_columns if name not in key]
             if missing:
                 raise ValueError(f"{self.table_id} key is missing {missing}")
-            values = [key[name] for name in self.key_columns]
+            values = [key[name] for name in key_columns]
         elif isinstance(key, Sequence) and not isinstance(key, (str, bytes)):
-            key = list(key)
-            if len(key) != len(self.key_columns):
-                raise ValueError(
-                    f"{self.table_id} has a composite key of "
-                    f"{len(self.key_columns)} columns, got {len(key)} values"
-                )
-            values = key
+            # Width first: a wrong-length lazy sequence such as range(1_000_000_000)
+            # would otherwise be materialised in full only to be rejected.
+            self._require_key_width(len(key), key_columns)
+            values = list(key)
+            # The sequence may have resized while it was being copied.
+            self._require_key_width(len(values), key_columns)
         else:
             raise ValueError(
-                f"{self.table_id} has a composite key {self.key_columns}, so pass a "
+                f"{self.table_id} has a composite key {key_columns}, so pass a "
                 "mapping or a sequence of values"
             )
 
         parts = []
-        for name, value in zip(self.key_columns, values):
+        for name, value in zip(key_columns, values):
             params.append(value)
             parts.append(f"{quote_ident(name)} = ${len(params)}")
         return " AND ".join(parts)
+
+    def _require_key_width(self, width: int, key_columns: Tuple[str, ...]) -> None:
+        """Reject a composite key that does not cover every key column."""
+        if width != len(key_columns):
+            raise ValueError(
+                f"{self.table_id} has a composite key of "
+                f"{len(key_columns)} columns, got {width} values"
+            )

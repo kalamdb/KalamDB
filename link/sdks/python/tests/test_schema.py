@@ -1,5 +1,6 @@
 """Unit tests for table declarations and the SQL they build. No server needed."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
@@ -350,6 +351,39 @@ def test_composite_key_rejects_bad_shapes():
         t.select_by_key_sql(("general",))
     with pytest.raises(ValueError, match="missing"):
         t.select_by_key_sql({"room": "general"})
+
+
+def test_composite_key_is_measured_before_it_is_copied():
+    """A wrong-length sequence is rejected without any element being read.
+
+    Copying first would materialise something like range(1_000_000_000) in full
+    only to reject it.
+    """
+
+    class Unreadable(Sequence):
+        def __len__(self):
+            return 5
+
+        def __getitem__(self, index):
+            raise AssertionError("key was copied before its width was checked")
+
+    with pytest.raises(ValueError, match="composite key of 2 columns"):
+        composite_table().select_by_key_sql(Unreadable())
+
+
+def test_composite_key_binds_the_order_it_read():
+    """A mapping that reorders the key mid-read cannot misbind the values."""
+    t = composite_table()
+
+    class Reordering(dict):
+        def __getitem__(self, name):
+            # Swap the key order while the values are being collected.
+            t.column("room").pk_ordinal, t.column("seq").pk_ordinal = (2, 1)
+            return super().__getitem__(name)
+
+    sql, params = t.select_by_key_sql(Reordering(room="general", seq=4))
+    columns = [part.split(" = ")[0] for part in sql.split(" WHERE ")[1].split(" AND ")]
+    assert list(zip(columns, params)) == [('"room"', "general"), ('"seq"', 4)]
 
 
 def test_keyed_operations_need_a_primary_key():
