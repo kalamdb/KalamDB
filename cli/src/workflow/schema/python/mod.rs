@@ -14,7 +14,7 @@ use kalamdb_sql::contracts::{ContractField, ContractSnapshot, ContractTypeKind};
 use serde::Serialize;
 
 use self::{
-    rows::{escape_python_string, PyColumn},
+    rows::{assign_unique_field_names, escape_python_string, PyColumn, SDK_ALIAS},
     tables::{table_bindings, ColumnsClassContext, TableSpecContext},
 };
 use crate::{
@@ -99,6 +99,10 @@ struct PythonContext {
     needs_enum: bool,
     needs_dataclass: bool,
     sdk_imports: Vec<String>,
+    /// Columns classes call the runtime through this alias, so a generated
+    /// attribute can never shadow a factory.
+    sdk_alias: &'static str,
+    needs_sdk_alias: bool,
     enums: Vec<EnumContext>,
     dataclasses: Vec<DataclassContext>,
     aliases: Vec<AliasContext>,
@@ -205,9 +209,15 @@ fn python_context(
                 let mut body = String::new();
                 let mut used = BTreeSet::new();
                 for label in labels {
-                    let mut member = screaming_snake_case(label);
+                    let base = screaming_snake_case(label);
+                    // A trailing underscore would make `_2FA` into `_2FA_`, and
+                    // Enum reserves `_name_` for itself. A numeric suffix keeps
+                    // the member importable.
+                    let mut member = base.clone();
+                    let mut index = 2u32;
                     while !used.insert(member.clone()) {
-                        member.push('_');
+                        member = format!("{base}_{index}");
+                        index += 1;
                     }
                     body.push_str(&format!(
                         "    {member} = \"{}\"\n",
@@ -221,9 +231,11 @@ fn python_context(
                 });
             },
             ContractTypeKind::Composite { fields } => {
+                let fields: Vec<ContractField> =
+                    fields.iter().filter(|field| !field.dropped).cloned().collect();
                 dataclasses.push(dataclass_context(
                     names.type_ident(id),
-                    fields,
+                    &fields,
                     names,
                     snapshot,
                     ty.comment.as_deref(),
@@ -321,9 +333,11 @@ fn python_context(
 
     let bindings = table_bindings(snapshot, names);
     code.extend(bindings.exprs.iter().cloned());
+    // `Table` annotates the registry whether or not any table exists; `KTable`
+    // is only called when one does.
+    code.push("Table".to_string());
     if !bindings.tables.is_empty() {
         code.push("KTable".to_string());
-        code.push("Table".to_string());
     }
     // FileRef only ever appears as an annotation, so carry it over by hand.
     if emitted.iter().any(|text| text.contains("FileRef")) {
@@ -348,6 +362,8 @@ fn python_context(
         needs_enum: !enums.is_empty(),
         needs_dataclass,
         sdk_imports: sdk_imports(&code),
+        sdk_alias: SDK_ALIAS,
+        needs_sdk_alias: !bindings.columns_classes.is_empty(),
         enums,
         dataclasses,
         aliases,
@@ -367,8 +383,9 @@ fn dataclass_context(
     emitted: &mut Vec<String>,
     code: &mut Vec<String>,
 ) -> DataclassContext {
-    let columns: Vec<PyColumn> =
+    let mut columns: Vec<PyColumn> =
         fields.iter().map(|field| PyColumn::from_field(field, names, snapshot)).collect();
+    assign_unique_field_names(&mut columns);
 
     let mut annotations = String::new();
     let mut decode = String::new();
@@ -408,12 +425,20 @@ fn docstring(comment: Option<&str>) -> String {
         return String::new();
     }
     if trimmed.lines().count() == 1 {
-        format!("    \"\"\"{}\"\"\"\n", trimmed.replace('"', "'"))
+        format!("    \"\"\"{}\"\"\"\n", docstring_text(trimmed))
     } else {
         let body: Vec<String> =
-            trimmed.lines().map(|line| format!("    {}", line.replace('"', "'"))).collect();
+            trimmed.lines().map(|line| format!("    {}", docstring_text(line))).collect();
         format!("    \"\"\"\n{}\n    \"\"\"\n", body.join("\n"))
     }
+}
+
+/// Comment text that is safe between triple quotes. Backslashes are doubled
+/// first: a comment ending in one would otherwise escape the closing delimiter
+/// and the module would not compile. Quotes become apostrophes so the delimiter
+/// itself can never appear.
+fn docstring_text(line: &str) -> String {
+    line.replace('\\', "\\\\").replace('"', "'")
 }
 
 fn typing_imports(emitted: &[String], needs_dataclass: bool, has_tables: bool) -> String {
@@ -428,14 +453,11 @@ fn typing_imports(emitted: &[String], needs_dataclass: bool, has_tables: bool) -
     if joined.contains("Union[") {
         names.insert("Union");
     }
-    if needs_dataclass || has_tables || joined.contains("Any") {
-        // `Any` shows up in row dataclasses, in the table registry, and as the
-        // JSON column type.
-        names.insert("Any");
-    }
-    if needs_dataclass || has_tables {
-        names.insert("Dict");
-    }
+    // `KALAM_TABLES: Dict[str, Table[Any]]` is emitted even when a schema
+    // declares no tables, so its types are always imported.
+    let _ = has_tables;
+    names.insert("Any");
+    names.insert("Dict");
     if needs_dataclass {
         names.insert("Mapping");
     }
@@ -599,17 +621,86 @@ CREATE TABLE chat.plain (id BIGINT PRIMARY KEY);
     }
 
     #[test]
+    fn string_literals_escape_the_double_quote_delimiter() {
+        let source = generate("CREATE TYPE mood AS ENUM ('say \"hi\"');");
+        assert!(source.contains(r#"SAY_HI = "say \"hi\"""#), "{source}");
+    }
+
+    #[test]
+    fn colliding_enum_members_keep_a_digit_suffix() {
+        // `_2FA_` would be a sunder name and Enum rejects it at import.
+        let source = generate("CREATE TYPE mood AS ENUM ('a b', 'a_b');");
+        assert!(source.contains("    A_B = \"a b\""), "{source}");
+        assert!(source.contains("    A_B_2 = \"a_b\""), "{source}");
+        assert!(!source.contains("A_B_ ="), "{source}");
+    }
+
+    #[test]
+    fn colliding_field_names_stay_distinct_and_keep_their_sql_keys() {
+        let source = generate(
+            "CREATE TABLE t (id BIGINT PRIMARY KEY, user_id TEXT, \"user__id\" TEXT);",
+        );
+        assert!(source.contains("    user_id: Optional[str]"), "{source}");
+        assert!(source.contains("    user_id2: Optional[str]"), "{source}");
+        assert!(source.contains("user_id2=as_str_or_none(row.get(\"user__id\"))"), "{source}");
+        assert!(source.contains("\"user__id\": self.user_id2"), "{source}");
+    }
+
+    #[test]
+    fn a_column_never_takes_a_generated_method_name() {
+        let source =
+            generate("CREATE TABLE t (id BIGINT PRIMARY KEY, \"to_row\" TEXT);");
+        assert!(source.contains("    to_row2: Optional[str]"), "{source}");
+        assert!(source.contains("\"to_row\": self.to_row2"), "{source}");
+    }
+
+    #[test]
+    fn a_table_never_replaces_a_runtime_import() {
+        let source = generate("CREATE TABLE \"as_int\" (id BIGINT PRIMARY KEY);");
+        assert!(source.contains("as_int2: Table[AsInt] = KTable."), "{source}");
+        assert!(source.contains("as_int(row.get(\"id\"))"), "{source}");
+    }
+
+    #[test]
+    fn columns_classes_call_factories_through_the_alias() {
+        // Evaluated in a class body, so an unqualified `text(...)` would hit
+        // the `text` column declared on the line above it.
+        let source = generate("CREATE TABLE t (\"text\" TEXT PRIMARY KEY, title TEXT);");
+        assert!(source.contains("from kalamdb import schema as _kalam"), "{source}");
+        assert!(source.contains("    text: Column[str] = _kalam.text(\"text\")"), "{source}");
+        assert!(source.contains("    title: Column[str] = _kalam.text(\"title\")"), "{source}");
+    }
+
+    #[test]
+    fn an_empty_schema_still_imports_the_registry_types() {
+        let source = generate("CREATE SCHEMA empty_app;");
+        assert!(source.contains("KALAM_TABLES: Dict[str, Table[Any]] = {}"), "{source}");
+        assert!(source.contains("from typing import Any, Dict"), "{source}");
+        assert!(source.contains("    Table,"), "{source}");
+    }
+
+    #[test]
+    fn docstrings_escape_a_trailing_backslash() {
+        // Left alone, the backslash would escape the first quote of the closing
+        // delimiter and the module would not compile.
+        let source = generate(
+            "CREATE TYPE postal AS (city TEXT);\nCOMMENT ON TYPE postal IS 'ends with \\';",
+        );
+        assert!(source.contains(r#"    """ends with \\""""#), "{source}");
+    }
+
+    #[test]
     fn columns_classes_declare_keys_and_server_defaults() {
         let source = generate(GOLDEN_SQL);
         assert!(source.contains("class ChatProfilesColumns:"));
         assert!(source.contains("\"\"\"Typed columns for chat.profiles.\"\"\""));
         assert!(source
-            .contains("    id: Column[int] = bigint(\"id\").primary_key().not_null().server_default()"));
-        assert!(source.contains("    email: Column[str] = text(\"email\").not_null()"));
-        assert!(source.contains("    avatar: Column[FileRef] = file(\"avatar\")"));
-        assert!(source.contains("    tags: Column[List[str]] = Column(\"tags\", \"TEXT[]\")"));
+            .contains("    id: Column[int] = _kalam.bigint(\"id\").primary_key().not_null().server_default()"));
+        assert!(source.contains("    email: Column[str] = _kalam.text(\"email\").not_null()"));
+        assert!(source.contains("    avatar: Column[FileRef] = _kalam.file(\"avatar\")"));
+        assert!(source.contains("    tags: Column[List[str]] = _kalam.Column(\"tags\", \"TEXT[]\")"));
         assert!(source
-            .contains("    status: Column[ChatStatus] = Column(\"status\", \"chat.status\").not_null()"));
+            .contains("    status: Column[ChatStatus] = _kalam.Column(\"status\", \"chat.status\").not_null()"));
     }
 
     #[test]
@@ -619,7 +710,7 @@ CREATE TABLE chat.plain (id BIGINT PRIMARY KEY);
         // need an ordinal. `Column.primary_key(ordinal)` in the runtime is
         // ready for when they land.
         let source = generate("CREATE STREAM TABLE log (seq BIGINT PRIMARY KEY);");
-        assert!(source.contains("    seq: Column[int] = bigint(\"seq\").primary_key().not_null()"));
+        assert!(source.contains("    seq: Column[int] = _kalam.bigint(\"seq\").primary_key().not_null()"));
         assert!(!source.contains(".primary_key(1)"));
     }
 
@@ -652,7 +743,7 @@ CREATE TABLE chat.plain (id BIGINT PRIMARY KEY);
         // The SQL name is carried separately, so the column keeps its real name.
         assert!(source.contains("class_=as_str_or_none(row.get(\"class\"))"));
         assert!(source.contains("\"class\": self.class_"));
-        assert!(source.contains("    class_: Column[str] = text(\"class\")"));
+        assert!(source.contains("    class_: Column[str] = _kalam.text(\"class\")"));
     }
 
     #[test]

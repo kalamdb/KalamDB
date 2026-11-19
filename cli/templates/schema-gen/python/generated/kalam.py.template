@@ -15,6 +15,7 @@ from __future__ import annotations
 from kalamdb.schema import (
 {{#each sdk_imports}}    {{this}},
 {{/each}})
+{{/if}}{{#if needs_sdk_alias}}from kalamdb import schema as {{sdk_alias}}
 {{/if}}{{#each enums}}
 
 class {{ident}}(str, Enum):

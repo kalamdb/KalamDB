@@ -1,10 +1,13 @@
 //! Python row dataclasses and the column metadata generated tables declare.
 
+use std::collections::HashSet;
+
 use kalamdb_sql::contracts::{ContractField, ContractSnapshot, ContractTypeKind};
 
-pub use crate::workflow::project::templates::escape_js_single_quoted_string as escape_python_string;
+pub use crate::workflow::project::templates::escape_double_quoted_string as escape_python_string;
 use crate::workflow::schema::{
     naming::{snake_case, AssignedNames},
+    output::unique_ident,
     types::{builtin, is_file_field, render_field_type, TargetLang},
 };
 
@@ -170,17 +173,25 @@ impl PyColumn {
             .to_string()
     }
 
-    /// `bigint("id").primary_key().server_default()`
+    /// `_kalam.bigint("id").primary_key().server_default()`
     pub fn column_expr(&self, composite_key: bool) -> String {
         let name = escape_python_string(&self.sql_name);
+        // Factories are called through the module alias because these
+        // expressions are evaluated in a class body: a column named `text`
+        // binds that name before the next line looks the factory up, and the
+        // class attribute would win.
         let mut expr = match self.factory() {
-            Some(factory) if factory == "embedding" => {
-                format!("embedding(\"{name}\", {})", embedding_dimensions(&self.sql_type))
-            },
-            Some(factory) => format!("{factory}(\"{name}\")"),
+            Some(factory) if factory == "embedding" => format!(
+                "{SDK_ALIAS}.embedding(\"{name}\", {})",
+                embedding_dimensions(&self.sql_type)
+            ),
+            Some(factory) => format!("{SDK_ALIAS}.{factory}(\"{name}\")"),
             // Enums, composites, domains and anything else keep their SQL type
             // verbatim; nothing in the runtime needs to interpret it.
-            None => format!("Column(\"{name}\", \"{}\")", escape_python_string(&self.sql_type)),
+            None => format!(
+                "{SDK_ALIAS}.Column(\"{name}\", \"{}\")",
+                escape_python_string(&self.sql_type)
+            ),
         };
         if self.is_key {
             if composite_key {
@@ -258,6 +269,30 @@ fn embedding_dimensions(sql_type: &str) -> u32 {
         .and_then(|(_, rest)| rest.split_once(')'))
         .and_then(|(dims, _)| dims.trim().parse().ok())
         .unwrap_or(1)
+}
+
+/// Module alias the generated file imports the runtime under. Reserved against
+/// generated attribute names, so a column or table can never replace it.
+pub const SDK_ALIAS: &str = "_kalam";
+
+/// Names the generated dataclass defines as methods. A field may not take one:
+/// an instance attribute would hide the method on every decoded row.
+const RESERVED_ROW_ATTRS: &[&str] = &["from_row", "to_row"];
+
+/// Give every column a distinct Python attribute name.
+///
+/// Two SQL names can snake_case to the same identifier (`user_id` and
+/// `user__id`), which would repeat a keyword argument in `from_row` and
+/// overwrite one declaration in the columns class. Allocating over the whole
+/// field list keeps them apart, and the SQL name is carried separately, so no
+/// column is renamed on the wire. The row and columns classes run this over the
+/// same field list and so agree on the result.
+pub fn assign_unique_field_names(columns: &mut [PyColumn]) {
+    let mut used: HashSet<String> =
+        RESERVED_ROW_ATTRS.iter().map(|name| (*name).to_string()).collect();
+    for column in columns.iter_mut() {
+        column.field_name = unique_ident(python_field_name(&column.sql_name), &mut used);
+    }
 }
 
 /// PEP 8 field name, with a trailing underscore on keywords. The SQL name is

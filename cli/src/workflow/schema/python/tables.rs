@@ -5,7 +5,9 @@ use std::collections::HashSet;
 use kalamdb_sql::contracts::{ContractSnapshot, ContractTable, ContractTableKind};
 use serde::Serialize;
 
-use super::rows::{escape_python_string, PyColumn};
+use super::rows::{
+    assign_unique_field_names, escape_python_string, python_field_name, PyColumn,
+};
 use crate::workflow::schema::{
     naming::{value_ident_snake, AssignedNames},
     output::{canonical_row_type_id, unique_ident},
@@ -35,8 +37,24 @@ pub struct TableBindings {
 }
 
 pub fn table_bindings(snapshot: &ContractSnapshot, names: &AssignedNames) -> TableBindings {
-    let mut used_vars = HashSet::new();
-    let mut used_classes = HashSet::new();
+    // Table variables and columns classes share the module namespace with the
+    // runtime imports and every generated row type. Seeding the allocators with
+    // those keeps a table called `as_int` from replacing the codec that decodes
+    // it, and a `posts` columns class from replacing the `posts_columns` row.
+    let mut used_vars: HashSet<String> =
+        super::RUNTIME_SYMBOLS.iter().map(|symbol| (*symbol).to_string()).collect();
+    used_vars.insert(super::rows::SDK_ALIAS.to_string());
+    let mut used_classes: HashSet<String> = snapshot
+        .types
+        .keys()
+        .map(|id| names.type_ident(id.as_str()).to_string())
+        .chain(
+            snapshot
+                .tables
+                .values()
+                .map(|table| names.type_ident(canonical_row_type_id(table)).to_string()),
+        )
+        .collect();
     let mut columns_classes = Vec::new();
     let mut tables = Vec::new();
     let mut exprs = Vec::new();
@@ -44,17 +62,22 @@ pub fn table_bindings(snapshot: &ContractSnapshot, names: &AssignedNames) -> Tab
     for table in snapshot.tables.values() {
         let local = names.uses_local_name(&table.schema);
         let row_ident = names.type_ident(canonical_row_type_id(table)).to_string();
-        let var_name =
-            unique_ident(value_ident_snake(&table.schema, &table.name, local), &mut used_vars);
+        // python_field_name also guards the Python keywords, so a table called
+        // `async` becomes `async_` instead of an unparsable assignment target.
+        let var_name = unique_ident(
+            python_field_name(&value_ident_snake(&table.schema, &table.name, local)),
+            &mut used_vars,
+        );
         let columns_ident =
             unique_ident(format!("{row_ident}Columns"), &mut used_classes);
 
-        let columns: Vec<PyColumn> = table
+        let mut columns: Vec<PyColumn> = table
             .fields
             .iter()
             .filter(|field| !field.dropped)
             .map(|field| PyColumn::from_field(field, names, snapshot))
             .collect();
+        assign_unique_field_names(&mut columns);
         let composite_key = columns.iter().filter(|column| column.is_key).count() > 1;
 
         let mut body = String::new();
@@ -68,7 +91,6 @@ pub fn table_bindings(snapshot: &ContractSnapshot, names: &AssignedNames) -> Tab
             // The annotation counts as emitted code: it is what pulls `Column`
             // and any named row type into the import list.
             exprs.push(format!("Column[{value_type}]"));
-            exprs.push(expr);
         }
 
         columns_classes.push(ColumnsClassContext {
