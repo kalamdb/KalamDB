@@ -72,16 +72,22 @@ dev_dependencies:
     if args.python:
         # Generated Python is checked the same way: strict types on the real SDK,
         # a real import as the syntax gate, then a negative boundary mypy must reject.
-        shutil.copyfile(FIXTURES / 'shape_check.py', project / 'py/shape_check.py')
+        generated = project / 'py'
+        shutil.copyfile(FIXTURES / 'shape_check.py', generated / 'shape_check.py')
+        # mypy runs from the output directory. `schema gen` writes an __init__.py
+        # beside kalam.py, so from the project root the module is `py.kalam` and
+        # `from kalam import ...` picks up the CLI's `kalam/` working directory
+        # instead of the generated bindings.
         run([args.python_bin, '-m', 'mypy', '--strict', '--no-error-summary',
-             'py/kalam.py', 'py/shape_check.py'], project)
-        run([args.python_bin, '-c', 'import kalam; assert kalam.KALAM_TABLES'], project / 'py')
-        invalid = project / 'py/invalid.py'
+             '--explicit-package-bases', 'kalam.py', 'shape_check.py'], generated)
+        run([args.python_bin, '-c', 'import kalam; assert kalam.KALAM_TABLES'], generated)
+        invalid = generated / 'invalid.py'
         invalid.write_text('from kalam import Inventory\n'
                            'wrong = Inventory(id=1, sku="s", tags=None, dates=None,\n'
                            '                  moods=None, addresses=None, attachment=None)\n')
-        result = subprocess.run([args.python_bin, '-m', 'mypy', '--strict', 'py/invalid.py'],
-                                cwd=project, text=True, capture_output=True)
+        result = subprocess.run([args.python_bin, '-m', 'mypy', '--strict',
+                                 '--explicit-package-bases', 'invalid.py'],
+                                cwd=generated, text=True, capture_output=True)
         if result.returncode == 0 or 'arg-type' not in result.stdout:
             raise RuntimeError(
                 f'Expected generated Python rows to reject wrong types:\n{result.stdout}\n{result.stderr}')
