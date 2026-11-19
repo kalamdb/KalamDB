@@ -2835,8 +2835,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker buildx imagetools create \\
-            -t "${{ steps.vars.outputs.ghcr_repo }}:latest" \\
+          docker buildx imagetools create \
+            -t "${{ steps.vars.outputs.ghcr_repo }}:latest" \
             "${{ steps.vars.outputs.docker_repo }}:latest"
 
       - name: Promote stable PostgreSQL extension latest tag
@@ -2844,8 +2844,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker buildx imagetools create \\
-            -t "jamals86/pg-kalam:latest-${PG_EXTENSION_FLAVOR}" \\
+          docker buildx imagetools create \
+            -t "jamals86/pg-kalam:latest-${PG_EXTENSION_FLAVOR}" \
             "jamals86/pg-kalam:${{ needs.read_version.outputs.version }}-${PG_EXTENSION_FLAVOR}"
 
       - name: Mirror stable PostgreSQL extension latest tag to GHCR
@@ -2853,7 +2853,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker buildx imagetools create \\
-            -t "${{ steps.vars.outputs.ghcr_pg_repo }}:latest-${PG_EXTENSION_FLAVOR}" \\
+          docker buildx imagetools create \
+            -t "${{ steps.vars.outputs.ghcr_pg_repo }}:latest-${PG_EXTENSION_FLAVOR}" \
             "jamals86/pg-kalam:latest-${PG_EXTENSION_FLAVOR}"
 
