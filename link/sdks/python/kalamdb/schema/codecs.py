@@ -147,6 +147,23 @@ def _iso(value: str) -> str:
     return text
 
 
+_EPOCH = _dt.datetime(1970, 1, 1, tzinfo=_dt.timezone.utc)
+
+# The server sends TIMESTAMP values as microseconds since the epoch (16 digits
+# for current dates); plain milliseconds (13 digits) are accepted for
+# compatibility. Same threshold as the Dart and TypeScript SDKs: year 2001 is
+# ~1e12 in milliseconds and ~1e15 in microseconds, so nothing between 1970 and
+# 2286 is ambiguous. A numeric value is never seconds.
+_MILLIS_MAX = 9_999_999_999_999
+
+
+def _from_epoch(value: float) -> _dt.datetime:
+    micros = value if abs(value) > _MILLIS_MAX else value * 1000
+    # timedelta rather than fromtimestamp: microsecond counts are outside the
+    # range fromtimestamp accepts, and dividing first would round.
+    return _EPOCH + _dt.timedelta(microseconds=micros)
+
+
 def as_datetime(value: Any) -> _dt.datetime:
     value = _required(value, "timestamp")
     if isinstance(value, _dt.datetime):
@@ -154,7 +171,7 @@ def as_datetime(value: Any) -> _dt.datetime:
     if isinstance(value, str):
         return _dt.datetime.fromisoformat(_iso(value))
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return _dt.datetime.fromtimestamp(value, tz=_dt.timezone.utc)
+        return _from_epoch(value)
     raise ValueError(f"cannot read {value!r} as a timestamp")
 
 

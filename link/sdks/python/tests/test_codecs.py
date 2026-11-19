@@ -107,6 +107,13 @@ def test_datetime_codec_handles_the_zulu_suffix():
     assert encode_datetime(None) is None
 
 
+def test_datetime_codec_reads_numeric_epochs():
+    """Numbers are microseconds, with milliseconds accepted, never seconds."""
+    expected = dt.datetime(2024, 1, 1, tzinfo=dt.timezone.utc)
+    assert as_datetime(1_704_067_200_000_000) == expected
+    assert as_datetime(1_704_067_200_000) == expected
+
+
 def test_enum_codec_round_trips_and_reports_unknown_labels():
     assert as_enum("active", Status) is Status.ACTIVE
     assert encode_enum(Status.BLOCKED) == "blocked"
