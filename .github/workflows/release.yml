@@ -2785,7 +2785,7 @@ jobs:
   promote_latest:
     name: Promote stable Docker latest tags
     runs-on: ubuntu-latest
-    needs: [release, docker, docker_pg]
+    needs: [release, docker, docker_pg, read_version]
     if: >-
       ${{
         needs.release.result == 'success' &&
