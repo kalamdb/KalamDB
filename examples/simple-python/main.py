@@ -14,7 +14,7 @@ from kalamdb import Auth, KalamClient
 from generated.kalam import NoteState, Notes, notes
 
 URL = os.environ.get("KALAMDB_URL", "http://localhost:2900")
-USER = os.environ.get("KALAMDB_USER", "admin")
+USER = os.environ.get("KALAMDB_USER", "root")
 PASSWORD = os.environ.get("KALAMDB_PASSWORD", "")
 
 

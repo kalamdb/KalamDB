@@ -27,7 +27,12 @@ server about what a table looks like.
 ```bash
 pip install kalamdb
 kalam dev                     # starts the server and applies schema.sql
+```
 
+`kalam dev` holds the terminal and shuts the server down when it stops, so leave
+it running and use a second terminal:
+
+```bash
 export KALAMDB_PASSWORD=...   # whatever `kalam dev` printed
 python main.py
 ```

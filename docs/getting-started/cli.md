@@ -639,7 +639,7 @@ enabled by hand in `kalam.toml`:
 ```toml
 [schema]
 mode = "sql"
-path = "kalam/schema.sql"
+path = "schema.sql"
 languages = ["typescript", "python"]
 
 [schema.targets.python]
