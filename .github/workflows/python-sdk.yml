@@ -134,14 +134,44 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             clang libclang-dev pkg-config libssl-dev
 
+      # A debug build of the backend does not fit in a runner's default free
+      # space; ci.yml frees the same directories before building the workspace.
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          df -h /
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL \
+            /usr/share/swift \
+            /usr/local/share/powershell \
+            /usr/local/.ghcup
+          sudo docker system prune -af || true
+          df -h /
+
       # Both binaries come from this commit. The TypeScript and Dart workflows
       # download a released server instead, but they only run on dispatch; as a
       # pull request gate that adds a releases-API lookup and an asset download
-      # that can fail for reasons the change had nothing to do with. Building
-      # also means the smoke test checks the SDK against the server it ships
-      # with, which is the point of a contract gate.
+      # that can fail for reasons the change had nothing to do with.
+      #
+      # Two invocations on purpose: --bin filters targets across the whole -p
+      # selection, so `-p kalam-cli --bin kalam -p kalamdb-server` builds only
+      # the kalam binary and finishes green without ever producing a server.
       - name: Build the server and the kalam CLI
-        run: cargo build --locked -p kalam-cli --bin kalam -p kalamdb-server
+        # The smoke test only needs a server that runs, so debuginfo is dropped.
+        # It is most of the size of a debug backend binary, which the harness
+        # then copies into its own working directory.
+        env:
+          CARGO_PROFILE_DEV_DEBUG: "0"
+        run: |
+          set -euo pipefail
+          cargo build --locked -p kalam-cli --bin kalam
+          cargo build --locked -p kalamdb-server --bin kalamdb-server
+          test -x target/debug/kalam
+          test -x target/debug/kalamdb-server
+          ls -lh target/debug/kalam target/debug/kalamdb-server
 
       - name: Create venv and build the SDK
         run: |
