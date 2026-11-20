@@ -643,7 +643,7 @@ jobs:
 
   build_cli_macos_arm:
     name: Build CLI macOS ARM
-    runs-on: macos-14
+    runs-on: macos-15
     needs: [resolve_platforms, read_version, cli_build_wave]
     if: ${{ github.event.inputs.platform_macos_aarch64 == 'true' }}
 
@@ -1059,7 +1059,7 @@ jobs:
 
   build_macos_arm:
     name: Build Server macOS ARM
-    runs-on: macos-14
+    runs-on: macos-15
     needs: [resolve_platforms, build_ui, read_version, server_build_wave]
     if: ${{ github.event.inputs.platform_macos_aarch64 == 'true' }}
 
