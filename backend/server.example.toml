@@ -657,11 +657,11 @@ retention_batch_size = 10000
 # # Raft election timeout range [min, max] in milliseconds (default: [150, 300])
 # election_timeout_ms = [150, 300]
 # 
-# # Snapshot policy (default: "LogsSinceLast(1000)")
+# # Snapshot policy (default: "LogsSinceLast(50000)")
 # # Supported values:
-# #   - "LogsSinceLast(1000)"
+# #   - "LogsSinceLast(50000)"
 # #   - "Never"
-# snapshot_policy = "LogsSinceLast(1000)"
+# snapshot_policy = "LogsSinceLast(50000)"
 # 
 # # Number of snapshots to retain on disk (default: 3)
 # max_snapshots_to_keep = 3
@@ -706,7 +706,7 @@ retention_batch_size = 10000
 # api_addr = "http://node1.example.com:2900"
 # user_shards = 32
 # shared_shards = 4
-# snapshot_policy = "LogsSinceLast(1000)"
+# snapshot_policy = "LogsSinceLast(50000)"
 # max_snapshots_to_keep = 3
 # replication_timeout_ms = 5000
 # reconnect_interval_ms = 3000

@@ -460,7 +460,7 @@ user_shards = 8
 # # Raft election timeout range [min, max] in milliseconds (default: [500, 1000])
 # election_timeout_ms = [500, 1000]
 # 
-# # Snapshot policy (default: "LogsSinceLast(1000)")
+# # Snapshot policy (default: "LogsSinceLast(50000)")
 # # Applies to both single-node and multi-node clusters.
 # # Options:
 # #   - "LogsSinceLast(N)" - Create snapshot after N log entries since last snapshot
@@ -475,7 +475,7 @@ user_shards = 8
 # #   + Less disk I/O
 # #   - Slower follower catchup
 # #   - Larger memory footprint
-# snapshot_policy = "LogsSinceLast(1000)"
+# snapshot_policy = "LogsSinceLast(50000)"
 # 
 # # Maximum number of snapshots to keep (default: 3)
 # # Older snapshots are automatically deleted. Set to 0 to keep all snapshots.

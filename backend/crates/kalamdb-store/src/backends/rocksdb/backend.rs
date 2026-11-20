@@ -4,12 +4,12 @@
 //! as the underlying storage engine. Logical partitions are encoded as key prefixes
 //! inside a small fixed set of physical RocksDB column families.
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use kalamdb_configs::RocksDbSettings;
 use rocksdb::{
-    BoundColumnFamily, Cache, IteratorMode, Options, PrefixRange, WriteBufferManager, WriteOptions,
-    DB,
+    BoundColumnFamily, Cache, IteratorMode, Options, PrefixRange, WriteBatch, WriteBufferManager,
+    WriteOptions, DB,
 };
 
 use super::{
@@ -36,14 +36,6 @@ const LIVE_SST_FILES_SIZE_PROPERTY: &str = "rocksdb.live-sst-files-size";
 const TOTAL_SST_FILES_SIZE_PROPERTY: &str = "rocksdb.total-sst-files-size";
 const ALL_MEMTABLES_SIZE_PROPERTY: &str = "rocksdb.cur-size-all-mem-tables";
 const PENDING_COMPACTION_BYTES_PROPERTY: &str = "rocksdb.estimate-pending-compaction-bytes";
-
-#[inline]
-fn prefixed_physical_key(partition_prefix: &[u8], user_key: &[u8]) -> Vec<u8> {
-    let mut physical_key = Vec::with_capacity(partition_prefix.len() + user_key.len());
-    physical_key.extend_from_slice(partition_prefix);
-    physical_key.extend_from_slice(user_key);
-    physical_key
-}
 
 fn prefix_scan_readopts(prefix: Vec<u8>) -> rocksdb::ReadOptions {
     let mut readopts = rocksdb::ReadOptions::default();
@@ -506,40 +498,53 @@ impl StorageBackend for RocksDBBackend {
             "rocksdb.batch",
             op_count = operations.len()
         );
-        use rocksdb::WriteBatch;
 
         if operations.is_empty() {
             return Ok(());
         }
 
         let mut batch = WriteBatch::default();
-        let mut partition_cache: HashMap<String, (Arc<BoundColumnFamily<'_>>, Vec<u8>)> =
-            HashMap::with_capacity(operations.len().min(16));
+        // Most write batches touch 1-4 partitions (row, pk index, raft log);
+        // linear lookup over borrowed names avoids per-batch HashMap + String allocations.
+        let mut partition_cache: Vec<(&str, Arc<BoundColumnFamily<'_>>, Vec<u8>)> =
+            Vec::with_capacity(operations.len().min(4));
+        let mut physical_key = Vec::with_capacity(64);
 
-        for op in operations {
+        for op in &operations {
             let (partition, key, value) = match op {
                 Operation::Put {
                     partition,
                     key,
                     value,
-                } => (partition, key, Some(value)),
-                Operation::Delete { partition, key } => (partition, key, None),
+                } => (partition, key.as_slice(), Some(value.as_slice())),
+                Operation::Delete { partition, key } => (partition, key.as_slice(), None),
             };
 
             let partition_name = partition.name();
-            if !partition_cache.contains_key(partition_name) {
-                let cf = self.get_cf(&partition)?;
-                partition_cache
-                    .insert(partition_name.to_string(), (cf, partition_key_prefix(partition_name)));
-            }
-            let cache_entry = partition_cache
-                .get(partition_name)
-                .expect("partition handle is inserted before the batch writes that partition");
-            let physical_key = prefixed_physical_key(&cache_entry.1, &key);
+            let entry_idx = match partition_cache
+                .iter()
+                .position(|(name, _, _)| *name == partition_name)
+            {
+                Some(idx) => idx,
+                None => {
+                    let cf = self.get_cf(partition)?;
+                    partition_cache.push((
+                        partition_name,
+                        cf,
+                        partition_key_prefix(partition_name),
+                    ));
+                    partition_cache.len() - 1
+                },
+            };
+            let (_, cf, prefix) = &partition_cache[entry_idx];
+            physical_key.clear();
+            physical_key.reserve(prefix.len() + key.len());
+            physical_key.extend_from_slice(prefix);
+            physical_key.extend_from_slice(key);
 
             match value {
-                Some(value) => batch.put_cf(&cache_entry.0, physical_key, value),
-                None => batch.delete_cf(&cache_entry.0, physical_key),
+                Some(value) => batch.put_cf(cf, &physical_key, value),
+                None => batch.delete_cf(cf, &physical_key),
             }
         }
 

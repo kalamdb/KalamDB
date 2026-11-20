@@ -83,11 +83,11 @@ num_cpus = { workspace = true }
 libc = { workspace = true }
 
 [features]
-# Empty default keeps local/CI compiles off rust-embed, mimalloc, AWS, and OTEL.
-# Production/release/docker must pass explicit features — see docker/build and
+# Mimalloc is enabled by default for faster allocations and lower RSS.
+# Production/release/docker pass explicit features — see docker/build and
 # .github/workflows/release.yml (every server job, not only Windows).
 # Admin UI: `cargo run -p kalamdb-server --features embedded-ui`
-default = []
+default = ["mimalloc"]
 mimalloc = ["dep:mimalloc", "kalamdb-core/mimalloc", "kalamdb-observability/mimalloc"]
 embedded-ui = ["kalamdb-api/embedded-ui"]
 traceability = [

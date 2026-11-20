@@ -54,7 +54,7 @@ pub struct RaftManagerConfig {
     /// Raft election timeout range (min, max) in milliseconds
     pub election_timeout_ms: (u64, u64),
 
-    /// Snapshot policy (default: "LogsSinceLast(1000)")
+    /// Snapshot policy (default: "LogsSinceLast(50000)")
     pub snapshot_policy: String,
 
     /// Maximum number of snapshots to keep
@@ -95,7 +95,7 @@ impl Default for RaftManagerConfig {
             shared_shards: DEFAULT_SHARED_DATA_SHARDS,
             heartbeat_interval_ms: 250,
             election_timeout_ms: (500, 1000),
-            snapshot_policy: "LogsSinceLast(1000)".to_string(),
+            snapshot_policy: "LogsSinceLast(50000)".to_string(),
             max_snapshots_to_keep: 3,
             replication_timeout_ms: 5000,
             replication_timeout: Duration::from_secs(5),
@@ -132,7 +132,7 @@ impl RaftManagerConfig {
             shared_shards: 1, // Single shard - no distribution needed
             heartbeat_interval_ms: 250,
             election_timeout_ms: (500, 1000),
-            snapshot_policy: "LogsSinceLast(1000)".to_string(),
+            snapshot_policy: "LogsSinceLast(50000)".to_string(),
             max_snapshots_to_keep: 1, // Keep only most recent snapshot for single-node
             replication_timeout_ms: 5000,
             replication_timeout: Duration::from_secs(5),

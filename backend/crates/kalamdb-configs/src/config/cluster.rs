@@ -81,7 +81,7 @@ pub struct ClusterConfig {
     #[serde(default = "default_election_timeout_ms")]
     pub election_timeout_ms: (u64, u64),
 
-    /// Snapshot policy (default: "LogsSinceLast(1000)")
+    /// Snapshot policy (default: "LogsSinceLast(50000)")
     /// Options:
     /// - "LogsSinceLast(N)" - Snapshot after N log entries since last snapshot
     /// - "Never" - Disable automatic snapshots (not recommended for production)
@@ -173,7 +173,7 @@ fn default_election_timeout_ms() -> (u64, u64) {
 }
 
 fn default_snapshot_policy() -> String {
-    "LogsSinceLast(1000)".to_string()
+    "LogsSinceLast(50000)".to_string()
 }
 
 fn default_max_snapshots_to_keep() -> u32 {

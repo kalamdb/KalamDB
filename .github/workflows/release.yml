@@ -77,8 +77,8 @@ env:
   RUSTC_WRAPPER: ""
   CARGO_BUILD_RUSTC_WRAPPER: ""
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  # kalamdb-server default features are empty. Linux/macOS used to cargo-build
-  # without this list, so GitHub server archives shipped with UI: disabled.
+  # kalamdb-server default features only enable mimalloc. Linux/macOS used to
+  # cargo-build without this list, so GitHub server archives shipped with UI: disabled.
   # Same feature set on every platform so GitHub binaries match Docker/runtime.
   KALAMDB_SERVER_RELEASE_FEATURES: embedded-ui,traceability,mimalloc,cloud-aws
 
