@@ -51,6 +51,18 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.9", "3.10", "3.11", "3.12"]
+        exclude:
+          # ubuntu-latest is Ubuntu 26.04 now, and setup-python publishes no
+          # 3.9 build for it: 3.9 is end of life, so the newer images stopped
+          # carrying it. macOS and Windows still have one.
+          - os: ubuntu-latest
+            python-version: "3.9"
+        include:
+          # 3.9 is still the floor in pyproject.toml, so it stays covered on
+          # Linux at the newest image that has it. Drop this entry along with
+          # the floor when 3.9 support goes.
+          - os: ubuntu-24.04
+            python-version: "3.9"
 
     steps:
       - uses: actions/checkout@v4
