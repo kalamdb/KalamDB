@@ -21,6 +21,7 @@ from typing import (
     cast,
 )
 
+from .codecs import UnsupportedParameterError, encode_param
 from .column import Column
 from .identifiers import quote_ident, quote_table
 from .types import TableKind
@@ -28,10 +29,19 @@ from .types import TableKind
 __all__ = ["Table"]
 
 Row = TypeVar("Row")
+#: Generated ``TypedDict`` describing what this table accepts on insert.
+Insert = TypeVar("Insert", bound=Mapping[str, Any])
+#: Generated ``TypedDict`` describing what this table accepts on update.
+Update = TypeVar("Update", bound=Mapping[str, Any])
 
 
-class Table(Generic[Row]):
-    """One table from schema.sql. Build one through :class:`~kalamdb.schema.KTable`."""
+class Table(Generic[Row, Insert, Update]):
+    """One table from schema.sql. Build one through :class:`~kalamdb.schema.KTable`.
+
+    The three parameters are the row class and the generated write inputs.
+    Typing the writes is what lets a type checker reject a wrong field type on
+    ``insert_sql`` and ``update_sql``, not just on the row dataclass.
+    """
 
     def __init__(
         self,
@@ -110,7 +120,7 @@ class Table(Generic[Row]):
 
     # -- writes ---------------------------------------------------------------
 
-    def insert_sql(self, values: Mapping[str, Any]) -> Tuple[str, List[Any]]:
+    def insert_sql(self, values: Insert) -> Tuple[str, List[Any]]:
         """Parameterised INSERT, leaving out server-filled columns."""
         self._reject_unknown(values)
 
@@ -124,7 +134,7 @@ class Table(Generic[Row]):
                         "the server, so it must not be supplied"
                     )
                 names.append(quote_ident(col.name))
-                params.append(values[col.name])
+                params.append(self._bind(col, values[col.name]))
             elif col.has_server_default or col.is_read_only:
                 continue
             elif col.is_not_null:
@@ -148,7 +158,7 @@ class Table(Generic[Row]):
         )
         return sql, params
 
-    def update_sql(self, key: Any, patch: Mapping[str, Any]) -> Tuple[str, List[Any]]:
+    def update_sql(self, key: Any, patch: Update) -> Tuple[str, List[Any]]:
         """Parameterised UPDATE of one row, addressed by primary key."""
         self._reject_unknown(patch)
         if not patch:
@@ -168,7 +178,7 @@ class Table(Generic[Row]):
                     f"{self.table_id}.{col.name} is part of the primary key, so it "
                     "cannot be updated"
                 )
-            params.append(patch[col.name])
+            params.append(self._bind(col, patch[col.name]))
             assignments.append(f"{quote_ident(col.name)} = ${len(params)}")
 
         if not assignments:
@@ -200,9 +210,18 @@ class Table(Generic[Row]):
         (``"email = $1"``, ``["a@b.c"]``), so values are never interpolated
         into the statement.
         """
-        bound = list(params or [])
         if params and not where:
             raise ValueError("select params were given without a where fragment")
+        # The fragment is the caller's, so there is no column to name; the
+        # position is what the server would have reported.
+        bound = []
+        for index, value in enumerate(params or (), start=1):
+            try:
+                bound.append(encode_param(value))
+            except UnsupportedParameterError as error:
+                raise UnsupportedParameterError(
+                    f"{self.table_id} select parameter ${index}: {error}"
+                ) from None
 
         sql = f"SELECT * FROM {quote_table(self.table_id)}"
         if where:
@@ -216,6 +235,21 @@ class Table(Generic[Row]):
         return f"SELECT * FROM {quote_table(self.table_id)} WHERE {where}", params
 
     # -- internals ------------------------------------------------------------
+
+    def _bind(self, column: Column[Any], value: Any) -> Any:
+        """Turn one declared value into something the wire accepts.
+
+        The write inputs are typed with the same Python types the row class
+        decodes to -- enums, datetimes, nested rows, file references -- so the
+        values have to be encoded on the way out or a typed input would be one
+        the server rejects.
+        """
+        try:
+            return encode_param(value)
+        except UnsupportedParameterError as error:
+            raise UnsupportedParameterError(
+                f"{self.table_id}.{column.name}: {error}"
+            ) from None
 
     def _reject_unknown(self, values: Mapping[str, Any]) -> None:
         unknown = set(values) - {col.name for col in self.columns}
@@ -256,7 +290,7 @@ class Table(Generic[Row]):
 
         parts = []
         for name, value in zip(key_columns, values):
-            params.append(value)
+            params.append(self._bind(self.column(name), value))
             parts.append(f"{quote_ident(name)} = ${len(params)}")
         return " AND ".join(parts)
 

@@ -11,6 +11,10 @@ from .types import TableKind
 __all__ = ["KTable"]
 
 Row = TypeVar("Row")
+# The write inputs never appear in an argument, so they are solved from the
+# annotation on the generated declaration rather than from a call argument.
+Insert = TypeVar("Insert", bound=Mapping[str, Any])
+Update = TypeVar("Update", bound=Mapping[str, Any])
 
 
 def _resolve_columns(table_id: str, columns: Any) -> List[Column[Any]]:
@@ -58,7 +62,7 @@ class KTable:
         kind: TableKind,
         columns: Any,
         row: Optional[Type[Row]],
-    ) -> Table[Row]:
+    ) -> "Table[Row, Insert, Update]":
         return Table(
             table_id,
             kind,
@@ -68,18 +72,26 @@ class KTable:
         )
 
     @staticmethod
-    def table(table_id: str, columns: Any, *, row: Optional[Type[Row]] = None) -> Table[Row]:
+    def table(
+        table_id: str, columns: Any, *, row: Optional[Type[Row]] = None
+    ) -> "Table[Row, Insert, Update]":
         """A table declared without a kind. The server treats it as shared."""
         return KTable._build(table_id, TableKind.UNSPECIFIED, columns, row)
 
     @staticmethod
-    def user(table_id: str, columns: Any, *, row: Optional[Type[Row]] = None) -> Table[Row]:
+    def user(
+        table_id: str, columns: Any, *, row: Optional[Type[Row]] = None
+    ) -> "Table[Row, Insert, Update]":
         return KTable._build(table_id, TableKind.USER, columns, row)
 
     @staticmethod
-    def shared(table_id: str, columns: Any, *, row: Optional[Type[Row]] = None) -> Table[Row]:
+    def shared(
+        table_id: str, columns: Any, *, row: Optional[Type[Row]] = None
+    ) -> "Table[Row, Insert, Update]":
         return KTable._build(table_id, TableKind.SHARED, columns, row)
 
     @staticmethod
-    def stream(table_id: str, columns: Any, *, row: Optional[Type[Row]] = None) -> Table[Row]:
+    def stream(
+        table_id: str, columns: Any, *, row: Optional[Type[Row]] = None
+    ) -> "Table[Row, Insert, Update]":
         return KTable._build(table_id, TableKind.STREAM, columns, row)

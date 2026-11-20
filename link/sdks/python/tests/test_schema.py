@@ -10,13 +10,17 @@ from kalamdb.schema import (
     MAX_EMBEDDING_DIMENSIONS,
     Column,
     KTable,
+    RoutineResultError,
     TableKind,
+    UnsupportedParameterError,
     bigint,
+    date,
     embedding,
     file,
     json,
     quote_ident,
     quote_table,
+    routine_result,
     text,
     timestamp,
 )
@@ -232,6 +236,66 @@ def test_insert_keeps_a_server_default_column_when_given_explicitly():
     sql, params = notes_table().insert_sql({"id": 7, "author": "a", "body": "b"})
     assert sql.startswith('INSERT INTO "playground"."notes" ("id", "author", "body")')
     assert params == [7, "a", "b"]
+
+
+def test_insert_encodes_declared_python_values():
+    """Write inputs carry the same types the row class decodes to."""
+    import datetime as dt
+    from enum import Enum
+
+    class Mood(str, Enum):
+        CALM = "calm"
+
+    class Columns:
+        id = bigint("id").primary_key().server_default()
+        born_on = date("born_on")
+        mood = Column("mood", "app.mood")
+        seen_at = timestamp("seen_at")
+
+    t = KTable.user("app.people", Columns)
+    _, params = t.insert_sql(
+        {
+            "born_on": dt.date(2026, 1, 1),
+            "mood": Mood.CALM,
+            "seen_at": dt.datetime(2026, 1, 1, 12, 0),
+        }
+    )
+    assert params == ["2026-01-01", "calm", "2026-01-01T12:00:00"]
+
+
+def test_insert_refuses_an_array_parameter_and_names_the_column():
+    """The SQL API binds scalars only, so the array never leaves the client."""
+
+    class Columns:
+        id = bigint("id").primary_key().server_default()
+        tags = Column("tags", "TEXT[]")
+
+    t = KTable.shared("app.posts", Columns)
+    with pytest.raises(UnsupportedParameterError) as caught:
+        t.insert_sql({"tags": ["a", "b"]})
+    assert "app.posts.tags" in str(caught.value)
+    assert "Array parameters not yet supported" in str(caught.value)
+
+
+def test_update_refuses_an_array_parameter_too():
+    class Columns:
+        id = bigint("id").primary_key()
+        tags = Column("tags", "TEXT[]")
+
+    t = KTable.shared("app.posts", Columns)
+    with pytest.raises(UnsupportedParameterError, match="app.posts.tags"):
+        t.update_sql(1, {"tags": ["a"]})
+
+
+# -- routines -----------------------------------------------------------------
+
+
+def test_routine_result_reads_the_result_cell():
+    assert routine_result("app.ping", [{"result": 7}]) == 7
+    # A routine that declares a result but returns no rows is a server
+    # disagreement, not an IndexError three frames later.
+    with pytest.raises(RoutineResultError, match="app.ping"):
+        routine_result("app.ping", [])
 
 
 def test_insert_rejects_a_missing_required_column():

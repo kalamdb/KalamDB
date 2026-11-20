@@ -41,9 +41,11 @@ from .codecs import (
     encode_enum,
     encode_file,
     encode_list,
+    encode_param,
     encode_row,
     encode_time,
 )
+from .codecs import UnsupportedParameterError
 from .column import (
     MAX_EMBEDDING_DIMENSIONS,
     Column,
@@ -64,12 +66,14 @@ from .column import (
 )
 from .identifiers import quote_ident, quote_table
 from .ktable import KTable
+from .routines import RoutineResultError, routine_result
 from .table import Table
 from .types import TableKind
 
 __all__ = [
     # declarations
     "Column",
+    "UnsupportedParameterError",
     "FileRef",
     "KTable",
     "Table",
@@ -93,6 +97,9 @@ __all__ = [
     # identifiers
     "quote_ident",
     "quote_table",
+    # routines
+    "RoutineResultError",
+    "routine_result",
     # decoders
     "as_bool",
     "as_bool_or_none",
@@ -121,6 +128,7 @@ __all__ = [
     "as_time",
     "as_time_or_none",
     # encoders
+    "encode_param",
     "encode_date",
     "encode_datetime",
     "encode_enum",

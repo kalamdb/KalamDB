@@ -9,7 +9,10 @@ import pytest
 
 from kalamdb.schema import (
     KTable,
+    UnsupportedParameterError,
     as_bool,
+    as_bytes,
+    as_date,
     as_datetime,
     as_enum,
     as_int,
@@ -18,9 +21,11 @@ from kalamdb.schema import (
     as_str,
     as_str_or_none,
     as_struct,
+    as_time,
     bigint,
     encode_datetime,
     encode_enum,
+    encode_param,
     encode_row,
     text,
     timestamp,
@@ -108,10 +113,81 @@ def test_datetime_codec_handles_the_zulu_suffix():
 
 
 def test_datetime_codec_reads_numeric_epochs():
-    """Numbers are microseconds, with milliseconds accepted, never seconds."""
-    expected = dt.datetime(2024, 1, 1, tzinfo=dt.timezone.utc)
-    assert as_datetime(1_704_067_200_000_000) == expected
-    assert as_datetime(1_704_067_200_000) == expected
+    """A numeric timestamp is microseconds since the epoch, always.
+
+    The server normalises every timestamp precision to microseconds before it
+    serialises a cell, so there is nothing to detect.
+    """
+    assert as_datetime(1_704_067_200_000_000) == dt.datetime(
+        2024, 1, 1, tzinfo=dt.timezone.utc
+    )
+    # Numeric values also arrive as text, the way Int64 does.
+    assert as_datetime("1704067200000000") == dt.datetime(
+        2024, 1, 1, tzinfo=dt.timezone.utc
+    )
+
+
+def test_datetime_codec_keeps_timestamps_near_the_epoch():
+    """A small microsecond count is not a millisecond count.
+
+    Reading 1970-01-02 as milliseconds multiplied it by a thousand and moved it
+    to 1972, which is how this was first noticed against a live server.
+    """
+    assert as_datetime(86_400_000_000) == dt.datetime(
+        1970, 1, 2, tzinfo=dt.timezone.utc
+    )
+    assert as_datetime(0) == dt.datetime(1970, 1, 1, tzinfo=dt.timezone.utc)
+    assert as_datetime(-86_400_000_000) == dt.datetime(
+        1969, 12, 31, tzinfo=dt.timezone.utc
+    )
+
+
+def test_date_codec_reads_day_offsets():
+    """DATE arrives as Arrow Date32: whole days since 1970-01-01."""
+    assert as_date(20_454) == dt.date(2026, 1, 1)
+    assert as_date(0) == dt.date(1970, 1, 1)
+    assert as_date(-1) == dt.date(1969, 12, 31)
+    assert as_date("20454") == dt.date(2026, 1, 1)
+    # ISO text still works, for values that reach Python another way.
+    assert as_date("2026-01-01") == dt.date(2026, 1, 1)
+    with pytest.raises(ValueError):
+        as_date(True)
+
+
+def test_time_codec_reads_microseconds_since_midnight():
+    assert as_time(45_296_000_000) == dt.time(12, 34, 56)
+    assert as_time(0) == dt.time(0, 0)
+    assert as_time(45_296_500_000) == dt.time(12, 34, 56, 500_000)
+    assert as_time("45296000000") == dt.time(12, 34, 56)
+    assert as_time("12:34:56") == dt.time(12, 34, 56)
+
+
+def test_bytes_codec_reads_the_byte_array_the_server_sends():
+    assert as_bytes([1, 2, 255]) == b"\x01\x02\xff"
+    assert as_bytes(b"ab") == b"ab"
+    # Base64 text is still accepted for non-SQL transports.
+    assert as_bytes("YWI=") == b"ab"
+    with pytest.raises(ValueError):
+        as_bytes([1, 2, 999])
+
+
+def test_encode_param_reduces_declared_types_to_scalars():
+    assert encode_param(Status.ACTIVE) == "active"
+    assert encode_param(dt.datetime(2026, 1, 1)) == "2026-01-01T00:00:00"
+    assert encode_param(dt.date(2026, 1, 1)) == "2026-01-01"
+    assert encode_param(dt.time(12, 34)) == "12:34:00"
+    assert encode_param(None) is None
+    assert encode_param(7) == 7
+
+
+def test_encode_param_refuses_what_the_server_cannot_bind():
+    """Arrays, objects and binary are refused before the statement is sent."""
+    with pytest.raises(UnsupportedParameterError, match="array or object"):
+        encode_param(["a", "b"])
+    with pytest.raises(UnsupportedParameterError, match="array or object"):
+        encode_param({"city": "Jammu"})
+    with pytest.raises(UnsupportedParameterError, match="binary"):
+        encode_param(b"\x00")
 
 
 def test_enum_codec_round_trips_and_reports_unknown_labels():

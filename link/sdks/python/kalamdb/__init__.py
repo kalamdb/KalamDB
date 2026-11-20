@@ -24,7 +24,7 @@ from .agent import run_agent
 # import. Only the declaration types are re-exported here; the column factories
 # and codecs stay in `kalamdb.schema` so they do not crowd the top-level
 # namespace (the same split as @kalamdb/orm beside @kalamdb/client).
-from .schema import Column, KTable, Table, TableKind
+from .schema import Column, KTable, Table, TableKind, UnsupportedParameterError
 
 __all__ = [
     "Auth",
@@ -45,4 +45,5 @@ __all__ = [
     "KTable",
     "Table",
     "TableKind",
+    "UnsupportedParameterError",
 ]
