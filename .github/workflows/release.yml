@@ -691,7 +691,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          "$HOME/.cargo/bin/rustup" run "${{ env.RUST_VERSION }}" cargo build \
+          "$(command -v rustup)" run "${{ env.RUST_VERSION }}" cargo build \
             --profile release-dist \
             --target aarch64-apple-darwin \
             --bin kalam
@@ -1119,7 +1119,7 @@ jobs:
           SKIP_UI_BUILD: "1"
         run: |
           set -euo pipefail
-          "$HOME/.cargo/bin/rustup" run "${{ env.RUST_VERSION }}" cargo build \
+          "$(command -v rustup)" run "${{ env.RUST_VERSION }}" cargo build \
             -p kalamdb-server \
             --no-default-features \
             --features "${KALAMDB_SERVER_RELEASE_FEATURES}" \
