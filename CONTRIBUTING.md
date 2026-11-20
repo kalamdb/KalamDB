@@ -350,6 +350,9 @@ Examples:
 - Dart sync change: `cd link/sdks/dart/sync && flutter analyze && flutter test`
 - Dart generator change: `cd link/sdks/dart/generator && flutter analyze && dart test`
 - Python SDK change: `cd link/sdks/python && maturin develop && python -m pytest tests -v`
+- Python schema-gen or generated-binding change: `cargo build -p kalam-cli --bin kalam && PYTHON_BIN=link/sdks/python/.venv/bin/python ./scripts/test-python-sdk-release.sh`
+  (regenerates and typechecks the bindings, runs `schema gen --check` over the
+  committed example, and smoke tests against a fresh server)
 
 For cross-cutting changes, use the repo-wide sweep after starting the backend server:
 

@@ -10,13 +10,14 @@ import datetime as dt
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, TypedDict
 
 from kalamdb.schema import (
     Column,
     FileRef,
     KTable,
     Table,
+    as_bytes,
     as_datetime,
     as_enum,
     as_file_ref,
@@ -24,14 +25,15 @@ from kalamdb.schema import (
     as_int_or_none,
     as_list_or_none,
     as_str,
-    bigint,
     encode_datetime,
     encode_enum,
     encode_file,
+    encode_param,
     file,
-    text,
-    timestamp,
+    routine_result,
 )
+from kalamdb import KalamClient
+from kalamdb import schema as _kalam
 
 
 class NoteState(str, Enum):
@@ -161,24 +163,82 @@ FileReadOutput = bytes
 class NotesColumns:
     """Typed columns for simple_python.notes."""
 
-    id: Column[int] = bigint("id").primary_key().not_null().server_default()
-    author: Column[str] = text("author").not_null()
-    body: Column[str] = text("body").not_null()
-    state: Column[NoteState] = Column("state", "simple_python.note_state").not_null()
-    tags: Column[List[str]] = Column("tags", "TEXT[]")
-    created_at: Column[dt.datetime] = timestamp("created_at").not_null().server_default()
+    id: Column[int] = _kalam.bigint("id").primary_key().not_null().server_default()
+    author: Column[str] = _kalam.text("author").not_null()
+    body: Column[str] = _kalam.text("body").not_null()
+    state: Column[NoteState] = _kalam.Column("state", "simple_python.note_state").not_null()
+    tags: Column[List[str]] = _kalam.Column("tags", "TEXT[]")
+    created_at: Column[dt.datetime] = _kalam.timestamp("created_at").not_null().server_default()
 
 
-notes: Table[Notes] = KTable.shared(
+class _NotesInsertRequired(TypedDict):
+    author: str
+    body: str
+    state: NoteState
+
+
+class NotesInsert(_NotesInsertRequired, total=False):
+    """Values accepted by simple_python.notes.insert_sql."""
+
+    id: int
+    tags: Optional[List[str]]
+    created_at: dt.datetime
+
+
+class NotesUpdate(TypedDict, total=False):
+    """Values accepted by simple_python.notes.update_sql."""
+
+    author: str
+    body: str
+    state: NoteState
+    tags: Optional[List[str]]
+    created_at: dt.datetime
+
+
+notes: Table[Notes, NotesInsert, NotesUpdate] = KTable.shared(
     "simple_python.notes",
     NotesColumns,
     row=Notes,
 )
 
 
-KALAM_TABLES: Dict[str, Table[Any]] = {
+KALAM_TABLES: Dict[str, Table[Any, Any, Any]] = {
     "simple_python.notes": notes,
 }
+
+
+class PgCatalogFunctions:
+    """Routines declared in the pg_catalog schema."""
+
+    def __init__(self, client: KalamClient) -> None:
+        self._client = client
+
+    async def file_delete(self, request: FileDeleteInput) -> None:
+        await self._client.query(
+            "SELECT pg_catalog.file_delete($1) AS result",
+            [encode_param(request.file)],
+        )
+
+    async def file_put(self, request: FilePutInput) -> FilePutOutput:
+        rows = await self._client.query_rows(
+            "SELECT pg_catalog.file_put($1) AS result",
+            [encode_param(request.upload_key)],
+        )
+        return as_file_ref(routine_result("pg_catalog.file_put", rows))
+
+    async def file_read(self, request: FileReadInput) -> FileReadOutput:
+        rows = await self._client.query_rows(
+            "SELECT pg_catalog.file_read($1) AS result",
+            [encode_param(request.file)],
+        )
+        return as_bytes(routine_result("pg_catalog.file_read", rows))
+
+
+class KalamFunctions:
+    """Server-side routines from schema.sql, grouped by schema."""
+
+    def __init__(self, client: KalamClient) -> None:
+        self.pg_catalog = PgCatalogFunctions(client)
 
 
 __all__ = [
@@ -189,8 +249,12 @@ __all__ = [
     "FileReadInput",
     "FileReadOutput",
     "KALAM_TABLES",
+    "KalamFunctions",
     "NoteState",
     "Notes",
     "NotesColumns",
+    "NotesInsert",
+    "NotesUpdate",
+    "PgCatalogFunctions",
     "notes",
 ]

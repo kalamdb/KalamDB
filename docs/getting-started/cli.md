@@ -651,6 +651,17 @@ hand-written runtime in `kalamdb.schema`. It contains no DDL: table options
 (TTL, compression, eviction) belong to `schema.sql` and are enforced by the
 server.
 
+Each table gets a row dataclass, a typed columns class, typed `TypedDict`
+inputs for `insert_sql` and `update_sql`, and a `Table` declaration. Routines
+declared in `schema.sql` get a `KalamFunctions` client grouped by schema.
+
+`kalam schema gen --check` regenerates into a staging directory and fails if a
+committed artifact has drifted from the schema, so CI can gate on it:
+
+```bash
+kalam schema gen --check --languages python
+```
+
 ### Link environments
 
 ```bash
