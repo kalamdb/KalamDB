@@ -3,8 +3,10 @@
 # generated bindings that are up to date, strictly typed, and exercised
 # against a freshly started server.
 #
-# KALAMDB_SERVER_BIN starts a server; leave it unset (or set
-# KALAMDB_SKIP_SERVER_START=true) to run against one that is already up.
+# A server is started for the smoke test unless KALAMDB_SKIP_SERVER_START=true,
+# in which case one is expected to be running at KALAMDB_URL already.
+# KALAMDB_SERVER_BIN names a prebuilt binary; without it the server is built
+# from source.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,6 +23,10 @@ SERVER_PID=""
 
 cleanup() {
   if [[ -n "${SERVER_PID:-}" ]]; then
+    # The harness backgrounds the server inside a subshell, so the recorded pid
+    # is the subshell and the server is its child. Killing only the parent
+    # leaves a server holding the port behind.
+    pkill -P "$SERVER_PID" 2>/dev/null || true
     kill "$SERVER_PID" 2>/dev/null || true
   fi
 }
@@ -46,9 +52,17 @@ echo "==> example and SDK pass mypy --strict"
 echo "==> unit tests (no server)"
 (cd "$SDK_DIR" && "$PYTHON_BIN" -m pytest tests/test_schema.py tests/test_codecs.py -q)
 
-if [[ "$SKIP_SERVER_START" != "true" && -n "$SERVER_BIN" ]]; then
+if [[ "$SKIP_SERVER_START" == "true" ]]; then
+  echo "==> using the server already running at $SERVER_URL"
+else
+  if [[ -n "$SERVER_BIN" && ! -f "$SERVER_BIN" ]]; then
+    echo "KALAMDB_SERVER_BIN is set to $SERVER_BIN, which does not exist" >&2
+    exit 1
+  fi
   SERVER_WORK_DIR="$ROOT_DIR/python-sdk-test-server"
   mkdir -p "$SERVER_WORK_DIR"
+  # An empty KALAMDB_SERVER_BIN is not a reason to skip the smoke test: the
+  # harness builds the server from source when it is not given one.
   KALAMDB_SERVER_BIN="$SERVER_BIN" \
     KALAMDB_SERVER_WORK_DIR="$SERVER_WORK_DIR" \
     KALAMDB_SERVER_LOG="$SERVER_LOG" \

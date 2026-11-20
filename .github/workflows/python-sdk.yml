@@ -122,40 +122,14 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             clang libclang-dev pkg-config libssl-dev
 
-      - name: Resolve repo versions
-        id: versions
-        run: |
-          set -euo pipefail
-          python3 scripts/versions.py github-outputs \
-            --github-output "$GITHUB_OUTPUT" --repository "$GITHUB_REPOSITORY"
-
-      # The smoke test runs against a released server rather than one built
-      # here, the same way the TypeScript and Dart SDK workflows do.
-      - name: Resolve latest released server asset
-        id: latest_server
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          python3 scripts/resolve-latest-release-asset.py \
-            --repository "$GITHUB_REPOSITORY" \
-            --github-output "$GITHUB_OUTPUT" \
-            --token "$GITHUB_TOKEN" \
-            --preferred-version "${{ steps.versions.outputs.root_version }}" \
-            --asset-pattern '^kalamdb-server-.*-linux-x86_64\.tar\.gz$'
-
-      - name: Download server binary
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          bash scripts/download-release-server.sh \
-            "${{ steps.latest_server.outputs.latest_server_asset_name }}" \
-            "${{ steps.latest_server.outputs.latest_server_asset_api_url }}" \
-            "$PWD/release-server/kalamdb-server"
-
-      - name: Build the kalam CLI
-        run: cargo build -p kalam-cli --bin kalam
+      # Both binaries come from this commit. The TypeScript and Dart workflows
+      # download a released server instead, but they only run on dispatch; as a
+      # pull request gate that adds a releases-API lookup and an asset download
+      # that can fail for reasons the change had nothing to do with. Building
+      # also means the smoke test checks the SDK against the server it ships
+      # with, which is the point of a contract gate.
+      - name: Build the server and the kalam CLI
+        run: cargo build --locked -p kalam-cli --bin kalam -p kalamdb-server
 
       - name: Create venv and build the SDK
         run: |
@@ -168,7 +142,7 @@ jobs:
 
       - name: Run the Python SDK contract gates
         env:
-          KALAMDB_SERVER_BIN: ${{ github.workspace }}/release-server/kalamdb-server
+          KALAMDB_SERVER_BIN: ${{ github.workspace }}/target/debug/kalamdb-server
           PYTHON_SDK_SERVER_LOG: ${{ github.workspace }}/python-sdk-server.log
           KALAMDB_ROOT_PASSWORD: "kalamdb123"
           KALAMDB_USER: "root"
