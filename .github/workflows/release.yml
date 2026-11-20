@@ -662,11 +662,11 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.cargo/bin:$PATH"
-          command -v rustup
-          "$HOME/.cargo/bin/rustup" --version
-          "$HOME/.cargo/bin/rustup" show active-toolchain
-          "$HOME/.cargo/bin/rustup" run "${{ env.RUST_VERSION }}" cargo --version
-          "$HOME/.cargo/bin/rustup" run "${{ env.RUST_VERSION }}" rustc --version
+          rustup_bin="$(command -v rustup)"
+          "$rustup_bin" --version
+          "$rustup_bin" show active-toolchain
+          "$rustup_bin" run "${{ env.RUST_VERSION }}" cargo --version
+          "$rustup_bin" run "${{ env.RUST_VERSION }}" rustc --version
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -1088,11 +1088,11 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.cargo/bin:$PATH"
-          command -v rustup
-          "$HOME/.cargo/bin/rustup" --version
-          "$HOME/.cargo/bin/rustup" show active-toolchain
-          "$HOME/.cargo/bin/rustup" run "${{ env.RUST_VERSION }}" cargo --version
-          "$HOME/.cargo/bin/rustup" run "${{ env.RUST_VERSION }}" rustc --version
+          rustup_bin="$(command -v rustup)"
+          "$rustup_bin" --version
+          "$rustup_bin" show active-toolchain
+          "$rustup_bin" run "${{ env.RUST_VERSION }}" cargo --version
+          "$rustup_bin" run "${{ env.RUST_VERSION }}" rustc --version
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
