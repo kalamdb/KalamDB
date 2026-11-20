@@ -16,7 +16,6 @@ pub const EXAMPLES_ARCHIVE_URL_ENV: &str = "KALAM_EXAMPLES_ARCHIVE_URL";
 pub const EXAMPLES_REF_ENV: &str = "KALAM_EXAMPLES_REF";
 pub const EXAMPLES_DIR_ENV: &str = "KALAM_EXAMPLES_DIR";
 pub const WORKSPACE_ENV: &str = "KALAM_WORKSPACE";
-const DEFAULT_EXAMPLES_REF: &str = "main";
 const TYPESCRIPT_SDK_PACKAGES_DIR: &str = "link/sdks/typescript";
 const DART_SDK_PACKAGES_DIR: &str = "link/sdks/dart";
 const DART_PACKAGES: &[(&str, &str)] = &[
@@ -112,8 +111,8 @@ fn examples_archive_url() -> String {
     let repo_ref = env::var_os(EXAMPLES_REF_ENV)
         .map(|value| value.to_string_lossy().trim().to_string())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| DEFAULT_EXAMPLES_REF.to_string());
-    format!("https://codeload.github.com/{GITHUB_REPO}/zip/refs/heads/{repo_ref}")
+        .unwrap_or_else(|| format!("refs/tags/v{}", crate::CLI_VERSION));
+    format!("https://codeload.github.com/{GITHUB_REPO}/zip/{repo_ref}")
 }
 
 pub(crate) fn copy_example_from_zip_bytes(
@@ -215,12 +214,12 @@ const SKIP_EXAMPLE_DIR_NAMES: &[&str] = &[
 ///
 /// A CLI running from this workspace points at `link/sdks/typescript/*` via
 /// `file:` so unpublished local packages still install. A released CLI pins
-/// each package to the `published` version baked into that CLI's
+/// each package to its compatible version from the CLI's baked-in
 /// `versions.json`.
 pub fn rewrite_sdk_dependencies(root: &Path) -> Result<()> {
     rewrite_sdk_dependencies_with(
         root,
-        |name| crate::versions_manifest::published_typescript_package_version(name).to_string(),
+        |name| crate::versions_manifest::scaffold_typescript_package_version(name).to_string(),
         discover_typescript_sdk_root().as_deref(),
     )?;
     rewrite_dart_sdk_dependencies(root)
@@ -315,7 +314,7 @@ fn sdk_dependency_spec(
 
 pub(crate) fn rewrite_dart_sdk_dependencies(root: &Path) -> Result<()> {
     rewrite_dart_sdk_dependencies_with(root, discover_dart_sdk_root().as_deref(), |name| {
-        crate::versions_manifest::published_dart_package_version(name).to_string()
+        crate::versions_manifest::scaffold_dart_package_version(name).to_string()
     })
 }
 
@@ -706,7 +705,7 @@ mod tests {
         } else {
             assert!(package_json.contains(&format!(
                 "\"@kalamdb/client\": \"{}\"",
-                crate::versions_manifest::published_typescript_package_version("@kalamdb/client")
+                crate::versions_manifest::scaffold_typescript_package_version("@kalamdb/client")
             )));
             assert!(!package_json.contains("file:"));
         }
@@ -783,15 +782,15 @@ mod tests {
 
         rewrite_sdk_dependencies_with(
             temp.path(),
-            |name| crate::versions_manifest::published_typescript_package_version(name).to_string(),
+            |name| crate::versions_manifest::scaffold_typescript_package_version(name).to_string(),
             None,
         )
         .expect("rewrite");
 
         let package_json = fs::read_to_string(temp.path().join("package.json")).expect("read");
         let client =
-            crate::versions_manifest::published_typescript_package_version("@kalamdb/client");
-        let orm = crate::versions_manifest::published_typescript_package_version("@kalamdb/orm");
+            crate::versions_manifest::scaffold_typescript_package_version("@kalamdb/client");
+        let orm = crate::versions_manifest::scaffold_typescript_package_version("@kalamdb/orm");
         assert!(
             package_json.contains(&format!("\"@kalamdb/client\": \"{client}\"")),
             "{package_json}"
@@ -812,12 +811,12 @@ mod tests {
         .expect("write pubspec");
 
         rewrite_dart_sdk_dependencies_with(temp.path(), None, |name| {
-            crate::versions_manifest::published_dart_package_version(name).to_string()
+            crate::versions_manifest::scaffold_dart_package_version(name).to_string()
         })
         .expect("rewrite");
 
         let pubspec = fs::read_to_string(temp.path().join("pubspec.yaml")).expect("read");
-        let version = crate::versions_manifest::published_dart_package_version("kalam_sync");
+        let version = crate::versions_manifest::scaffold_dart_package_version("kalam_sync");
         assert!(pubspec.contains(&format!("kalam_sync: \"{version}\"")), "{pubspec}");
         assert!(pubspec.contains("flutter:"), "{pubspec}");
         assert!(pubspec.contains("sdk: flutter"), "{pubspec}");
@@ -838,7 +837,7 @@ mod tests {
         .expect("write pubspec");
 
         rewrite_dart_sdk_dependencies_with(temp.path(), Some(&sdk_root), |name| {
-            crate::versions_manifest::published_dart_package_version(name).to_string()
+            crate::versions_manifest::scaffold_dart_package_version(name).to_string()
         })
         .expect("rewrite");
 

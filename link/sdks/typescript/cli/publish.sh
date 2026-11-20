@@ -13,7 +13,7 @@ if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
     [[ -n "$NODE_AUTH_TOKEN" ]] && echo "🔑 Loaded NODE_AUTH_TOKEN from .env"
   fi
 fi
-export NODE_AUTH_TOKEN
+export NODE_AUTH_TOKEN="${NODE_AUTH_TOKEN:-}"
 
 PUBLISH_REGISTRY_URL="${PUBLISH_REGISTRY_URL:-https://registry.npmjs.org}"
 PUBLISH_REGISTRY_URL="${PUBLISH_REGISTRY_URL%/}"
@@ -117,6 +117,11 @@ case "$PROVENANCE_MODE" in
     ;;
 esac
 
+if [[ "$PUBLISH_REGISTRY_URL" != "https://registry.npmjs.org" ]]; then
+  PROVENANCE_FLAG=""
+  PROVENANCE_STATUS="disabled (GitHub Packages does not accept npm provenance)"
+fi
+
 PACKAGE_JSON="$SDK_DIR/package.json"
 if [[ ! -f "$PACKAGE_JSON" ]]; then
   echo "❌ Could not find package.json at: $PACKAGE_JSON"
@@ -175,16 +180,32 @@ if [[ "$DRY_RUN" == "true" ]]; then
   exit 0
 fi
 
-if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
+if [[ "$PUBLISH_REGISTRY_URL" != "https://registry.npmjs.org" ]]; then
+  unset npm_config_registry || true
+fi
+
+if [[ -n "${NODE_AUTH_TOKEN:-}" ]]; then
+  LOCAL_NPMRC="$SDK_DIR/.npmrc"
+  publish_scope="${PUBLISH_SCOPE_OVERRIDE:-@kalamdb}"
+  npmrc_lines=(
+    "${publish_scope}:registry=${PUBLISH_REGISTRY_URL}"
+    "//${PUBLISH_REGISTRY_HOST}/:_authToken=${NODE_AUTH_TOKEN}"
+    "always-auth=true"
+  )
+  if [[ "$PUBLISH_REGISTRY_URL" != "https://registry.npmjs.org" ]]; then
+    npmrc_lines=("registry=${PUBLISH_REGISTRY_URL}" "${npmrc_lines[@]}")
+  fi
+  printf '%s\n' "${npmrc_lines[@]}" > "$LOCAL_NPMRC"
+elif [[ "$PUBLISH_REGISTRY_URL" == "https://registry.npmjs.org" && -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
+  echo "No NODE_AUTH_TOKEN; using GitHub OIDC trusted publisher for npm."
+else
   echo ""
   echo "❌ NODE_AUTH_TOKEN is not set."
   echo "   Either export it or add it to $SDK_DIR/.env:"
   echo "     NODE_AUTH_TOKEN=npm_xxxxxxxx"
+  echo "   On GitHub Actions, omit NODE_AUTH_TOKEN and use npm Trusted Publisher."
   exit 1
 fi
-
-LOCAL_NPMRC="$SDK_DIR/.npmrc"
-npm config set "//${PUBLISH_REGISTRY_HOST}/:_authToken" "${NODE_AUTH_TOKEN}" --location=project
 
 OTP_FLAG=""
 if [[ -n "$OTP_CODE" ]]; then

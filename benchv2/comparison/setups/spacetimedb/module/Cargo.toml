@@ -1,0 +1,14 @@
+[workspace]
+
+[package]
+name = "comparison_spacetimedb_module"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+log = "0.4"
+spacetimedb = "=2.16.1"

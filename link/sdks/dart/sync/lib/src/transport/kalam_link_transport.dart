@@ -175,11 +175,6 @@ final class KalamLinkTransport implements KalamSyncTransport {
   Future<void> resume() async {
     final client = await ensureClient();
     await client.reconnectWebSocket();
-    if (!await client.isConnected) {
-      // One retry — a single reconnect race should not swallow the resume
-      // signal the coordinator needs to drain the outbox.
-      await client.reconnectWebSocket();
-    }
     // Always notify listeners on resume. A coalesced connected→connected
     // skip would leave the coordinator paused-offline with a full outbox.
     _emitConnection(

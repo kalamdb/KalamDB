@@ -49,7 +49,6 @@ class KalamClient {
   Future<void>? _connectionEventPump;
   Future<void>? _refreshAuthInFlight;
   Future<void>? _basicAuthExchangeInFlight;
-  bool _skipNextAutoRefreshAuth = false;
   int _subscriptionIdCounter = 0;
 
   KalamClient._(this._handle, this._baseUrl, this._connectionHandlers,
@@ -231,7 +230,20 @@ class KalamClient {
       initialAuth: effectiveAuth,
       authProvider: authProvider,
     );
-    client._armInitialSubscriptionAuthReuse();
+    if (authProvider != _noAuth) {
+      await bridge.dartSetWebsocketAuthProvider(
+        client: handle,
+        initialAuth: _toBridgeAuth(effectiveAuth),
+        provider: () async {
+          try {
+            return _toBridgeAuth(await authProvider());
+          } catch (error) {
+            KalamLogger.warn('auth', 'WebSocket credential provider failed');
+            return null;
+          }
+        },
+      );
+    }
     client._startConnectionEventPumpIfNeeded();
 
     // When ws_lazy_connect is enabled (default), defer the WebSocket
@@ -241,9 +253,13 @@ class KalamClient {
       // Establish a shared WebSocket connection so all subscriptions are
       // multiplexed over a single connection.  The Rust SharedConnection
       // handles auto-reconnection and re-subscription internally.
-      await client._ensureJwtForBasicAuth();
       KalamLogger.debug('client', 'Calling Rust dartConnect...');
-      await bridge.dartConnect(client: client._handle);
+      try {
+        await bridge.dartConnect(client: client._handle);
+      } catch (_) {
+        await client.dispose();
+        rethrow;
+      }
       KalamLogger.info('client', 'Connected to $url successfully');
     } else {
       KalamLogger.info(
@@ -299,52 +315,6 @@ class KalamClient {
     _refreshAuthInFlight =
         refreshTask.whenComplete(() => _refreshAuthInFlight = null);
     return _refreshAuthInFlight;
-  }
-
-  void _armInitialSubscriptionAuthReuse() {
-    _skipNextAutoRefreshAuth = true;
-  }
-
-  Future<void> _refreshAuthBeforeSubscriptionConnect() async {
-    if (_skipNextAutoRefreshAuth) {
-      _skipNextAutoRefreshAuth = false;
-      KalamLogger.debug(
-        'auth',
-        'Skipping immediate auth refresh; reusing credentials resolved during connect()',
-      );
-      return;
-    }
-
-    await refreshAuth();
-  }
-
-  Future<void> _prepareSubscriptionConnect() async {
-    await _refreshAuthBeforeSubscriptionConnect();
-    await _ensureJwtForBasicAuth();
-  }
-
-  Future<void> _prepareManualReconnect() async {
-    await refreshAuth();
-    await _ensureJwtForBasicAuth();
-  }
-
-  static bool _isLikelyReconnectAuthError(Object error) {
-    final message = error.toString().toLowerCase();
-    const authMarkers = <String>[
-      '401',
-      '403',
-      'auth',
-      'authentication',
-      'authorization',
-      'credential',
-      'expired',
-      'forbidden',
-      'jwt',
-      'token',
-      'unauthorized',
-      'unauthenticated',
-    ];
-    return authMarkers.any(message.contains);
   }
 
   gen.DartSubscriptionConfig? _buildSubscriptionConfig({
@@ -638,7 +608,6 @@ class KalamClient {
     return runBridgeSubscriptionStream<bridge.DartLiveEventsSubscription,
         gen.DartChangeEvent, ChangeEvent>(
       description: 'live events for: $boundSql',
-      prepare: _prepareSubscriptionConnect,
       open: () => bridge.dartLiveEventsSubscribe(
         client: _handle,
         sql: boundSql,
@@ -682,7 +651,6 @@ class KalamClient {
     return runBridgeSubscriptionStream<bridge.DartLiveEventsSubscription,
         gen.DartChangeEvent, LiveEventDelivery>(
       description: 'acknowledged live events for: $boundSql',
-      prepare: _prepareSubscriptionConnect,
       open: () => bridge.dartLiveEventsSubscribe(
         client: _handle,
         sql: boundSql,
@@ -754,7 +722,6 @@ class KalamClient {
     return runBridgeSubscriptionStream<bridge.DartLiveRowsSubscription,
         gen.DartLiveRowsEvent, List<T>>(
       description: 'live rows subscription for: $sql',
-      prepare: _prepareSubscriptionConnect,
       open: () => bridge.dartLiveSubscribe(
         client: _handle,
         sql: sql,
@@ -854,38 +821,18 @@ class KalamClient {
     KalamLogger.debug('client', 'KalamClient disposed');
   }
 
-  /// Whether the shared WebSocket connection is currently open.
+  /// Whether the shared WebSocket and its resumed subscriptions are ready.
   Future<bool> get isConnected async => bridge.dartIsConnected(client: _handle);
 
   /// Disconnect the shared WebSocket connection.
   ///
-  /// Active subscriptions will stop receiving events until
-  /// [reconnectWebSocket] is called.
+  /// This ends active subscriptions. Open new subscriptions after
+  /// [reconnectWebSocket] when reconnecting after an intentional disconnect.
   Future<void> disconnectWebSocket() => bridge.dartDisconnect(client: _handle);
 
   /// Re-establish the shared WebSocket connection after a manual
   /// [disconnectWebSocket] or if the automatic reconnection was exhausted.
-  Future<void> reconnectWebSocket() async {
-    // The native connect call may return before WebSocket authentication
-    // finishes, so a rejected stale token is not necessarily thrown here.
-    // Resolve credentials before reconnecting instead of relying on a retry.
-    await _prepareManualReconnect();
-
-    try {
-      await bridge.dartConnect(client: _handle);
-    } catch (error) {
-      if (!_isLikelyReconnectAuthError(error)) {
-        rethrow;
-      }
-
-      KalamLogger.warn(
-        'auth',
-        'Reconnect failed with an auth-related error; refreshing credentials and retrying once',
-      );
-      await _prepareManualReconnect();
-      await bridge.dartConnect(client: _handle);
-    }
-  }
+  Future<void> reconnectWebSocket() => bridge.dartConnect(client: _handle);
 
   String _ensureSubscriptionId(String? subscriptionId,
       {required String prefix}) {

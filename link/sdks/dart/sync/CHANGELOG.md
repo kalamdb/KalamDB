@@ -1,4 +1,4 @@
-## 0.8.1 - Unreleased
+## 0.9.0 - Unreleased
 
 - Add account-scoped durable consumer event IDs and compare replayed JSON payloads independent of object key order.
 

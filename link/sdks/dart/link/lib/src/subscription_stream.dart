@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'logger.dart';
 
-typedef BridgeSubscriptionPrepare = Future<void> Function();
 typedef BridgeSubscriptionOpen<THandle> = Future<THandle> Function();
 typedef BridgeSubscriptionNext<THandle, TBridgeEvent> = Future<TBridgeEvent?>
     Function(THandle handle);
@@ -29,7 +28,6 @@ bool _isSubscriptionCancellation(Object error) {
 /// Dart-side stream lifecycle so all subscription APIs behave consistently.
 Stream<TEvent> runBridgeSubscriptionStream<THandle, TBridgeEvent, TEvent>({
   required String description,
-  required BridgeSubscriptionPrepare prepare,
   required BridgeSubscriptionOpen<THandle> open,
   required BridgeSubscriptionNext<THandle, TBridgeEvent> next,
   required BridgeSubscriptionClose<THandle> close,
@@ -48,7 +46,6 @@ Stream<TEvent> runBridgeSubscriptionStream<THandle, TBridgeEvent, TEvent>({
   Future<void> runLoop() async {
     THandle? handle;
     try {
-      await prepare();
       handle = await open();
       final openedHandle = handle as THandle;
 

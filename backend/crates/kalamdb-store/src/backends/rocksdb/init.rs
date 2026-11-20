@@ -5,7 +5,7 @@
 
 use std::{path::Path, sync::Arc};
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", debug_assertions))]
 use libc::{sigaction, SA_ONSTACK, SA_SIGINFO, SIGSEGV};
 
 use anyhow::{bail, Result};
@@ -26,48 +26,13 @@ use super::{
     restore::apply_pending_rocksdb_restore,
 };
 
-/// Print the mapping that contains the open thread's stack pointer.
-///
-/// `pthread_attr_setstacksize` can succeed while glibc still installs the
-/// default 8MB stack. The map size is the stack DB::Open actually gets.
-#[cfg(target_os = "linux")]
-fn log_open_thread_stack() {
-    let here = 0u8;
-    let sp = &here as *const u8 as usize;
-    let Ok(maps) = std::fs::read_to_string("/proc/self/maps") else {
-        eprintln!("startup: rocksdb stack map unavailable");
-        return;
-    };
-    for line in maps.lines() {
-        let Some((range, _)) = line.split_once(' ') else {
-            continue;
-        };
-        let Some((start_hex, end_hex)) = range.split_once('-') else {
-            continue;
-        };
-        let (Ok(start), Ok(end)) =
-            (usize::from_str_radix(start_hex, 16), usize::from_str_radix(end_hex, 16))
-        else {
-            continue;
-        };
-        if (start..end).contains(&sp) {
-            eprintln!("startup: rocksdb stack map {line} ({} bytes)", end.saturating_sub(start));
-            return;
-        }
-    }
-    eprintln!("startup: rocksdb stack map not found for {sp:#x}");
-}
-
-#[cfg(not(target_os = "linux"))]
-fn log_open_thread_stack() {}
-
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", debug_assertions))]
 unsafe extern "C" {
     fn backtrace(buffer: *mut *mut libc::c_void, size: libc::c_int) -> libc::c_int;
     fn backtrace_symbols_fd(buffer: *const *mut libc::c_void, size: libc::c_int, fd: libc::c_int);
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", debug_assertions))]
 unsafe extern "C" fn open_segfault_trace(
     sig: libc::c_int,
     _info: *mut libc::siginfo_t,
@@ -87,7 +52,7 @@ unsafe extern "C" fn open_segfault_trace(
 }
 
 /// Record C++ frames if `DB::Open` faults, then put the previous handler back.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", debug_assertions))]
 fn install_open_segfault_trace() -> libc::sigaction {
     let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
     action.sa_sigaction = open_segfault_trace as libc::sighandler_t;
@@ -106,7 +71,7 @@ fn install_open_segfault_trace() -> libc::sigaction {
     previous
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", debug_assertions))]
 fn restore_open_segfault_trace(previous: libc::sigaction) {
     // SAFETY: `previous` is the handler installed before `DB::Open`.
     unsafe {
@@ -114,12 +79,7 @@ fn restore_open_segfault_trace(previous: libc::sigaction) {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
-fn install_open_segfault_trace() {}
-
-#[cfg(not(target_os = "linux"))]
-fn restore_open_segfault_trace(_previous: ()) {}
-
+#[cfg(all(target_os = "linux", debug_assertions))]
 fn spawn_rocksdb_open(
     stack_size: usize,
     db_path: String,
@@ -131,8 +91,7 @@ fn spawn_rocksdb_open(
         .name("kalamdb-rocksdb-open".to_string())
         .stack_size(stack_size)
         .spawn(move || {
-            eprintln!("startup: rocksdb open thread entered (stack request {stack_size} bytes)");
-            log_open_thread_stack();
+            log::debug!("startup: rocksdb open thread entered (stack request {stack_size} bytes)");
             let previous_segfault_handler = install_open_segfault_trace();
             let opened = RocksDbInit::new(db_path, settings).open_with_cf_names_and_cache_here();
             restore_open_segfault_trace(previous_segfault_handler);
@@ -188,40 +147,46 @@ impl RocksDbInit {
     pub(crate) fn open_with_cf_names_and_cache(
         &self,
     ) -> Result<(Arc<DB>, Vec<String>, Cache, WriteBufferManager)> {
-        // DB::Open on x86_64 uses more stack than the Linux main thread or the
-        // 32MB process thread. The 128MB thread still hit its guard page on
-        // GitHub's glibc, so the open gets a 512MB stack and records the
-        // mapping actually installed.
-        let db_path = self.db_path.clone();
-        let settings = self.settings.clone();
-        let handle = spawn_rocksdb_open(512 * 1024 * 1024, db_path.clone(), settings.clone())
-            .or_else(|error| {
-                eprintln!("startup: rocksdb 512MB open thread failed: {error}");
-                spawn_rocksdb_open(128 * 1024 * 1024, db_path, settings)
-            })
-            .map_err(|error| anyhow::anyhow!("failed to start the rocksdb open thread: {error}"))?;
-        match handle.join() {
-            Ok(result) => result,
-            Err(payload) => std::panic::resume_unwind(payload),
+        // Unoptimized Linux debug builds of RocksDB need an oversized stack during
+        // DB::Open (glibc CI overflowed smaller stacks). Optimized and non-Linux
+        // builds open directly on the caller's stack without reserving 512MB VM.
+        #[cfg(all(target_os = "linux", debug_assertions))]
+        {
+            let db_path = self.db_path.clone();
+            let settings = self.settings.clone();
+            let handle = spawn_rocksdb_open(512 * 1024 * 1024, db_path.clone(), settings.clone())
+                .or_else(|error| {
+                    log::debug!("startup: rocksdb 512MB open thread failed: {error}");
+                    spawn_rocksdb_open(128 * 1024 * 1024, db_path, settings)
+                })
+                .map_err(|error| anyhow::anyhow!("failed to start the rocksdb open thread: {error}"))?;
+            return match handle.join() {
+                Ok(result) => result,
+                Err(payload) => std::panic::resume_unwind(payload),
+            };
+        }
+        #[cfg(not(all(target_os = "linux", debug_assertions)))]
+        {
+            self.open_with_cf_names_and_cache_here()
         }
     }
 
     fn open_with_cf_names_and_cache_here(
         &self,
     ) -> Result<(Arc<DB>, Vec<String>, Cache, WriteBufferManager)> {
-        eprintln!("startup: rocksdb options");
+        log::debug!("startup: rocksdb options");
         let mut db_opts = Options::default();
         db_opts.create_if_missing(true);
         db_opts.create_missing_column_families(true);
         apply_db_settings(&mut db_opts, &self.settings);
 
-        eprintln!("startup: rocksdb cache");
+        log::debug!("startup: rocksdb cache");
         let cache = new_block_cache(self.settings.block_cache_size);
         let block_opts = create_block_options_with_cache(&cache);
         db_opts.set_block_based_table_factory(&block_opts);
 
         let (db, cf_names, write_buffer_manager) = self.open_internal(&mut db_opts, &cache)?;
-        eprintln!("startup: rocksdb open returned {} column families", cf_names.len());
+        log::debug!("startup: rocksdb open returned {} column families", cf_names.len());
         Ok((db, cf_names, cache, write_buffer_manager))
     }
 
@@ -231,15 +196,15 @@ impl RocksDbInit {
         cache: &Cache,
     ) -> Result<(Arc<DB>, Vec<String>, WriteBufferManager)> {
         let path = Path::new(&self.db_path);
-        eprintln!("startup: rocksdb restore check");
+        log::debug!("startup: rocksdb restore check");
         apply_pending_rocksdb_restore(path)?;
-        eprintln!("startup: rocksdb listing column families");
+        log::debug!("startup: rocksdb listing column families");
         let cf_names = self.collect_column_family_names(db_opts, path)?;
-        eprintln!("startup: rocksdb opening {} column families", cf_names.len());
+        log::debug!("startup: rocksdb opening {} column families", cf_names.len());
         let write_buffer_manager =
-            install_write_buffer_manager(db_opts, &self.settings, cf_names.len());
+            install_write_buffer_manager(db_opts, &self.settings, &cf_names);
 
-        eprintln!("startup: rocksdb building column family options");
+        log::debug!("startup: rocksdb building column family options");
         let cf_descriptors: Vec<_> = cf_names
             .iter()
             .map(|name| {
@@ -250,9 +215,9 @@ impl RocksDbInit {
             })
             .collect();
 
-        eprintln!("startup: rocksdb calling DB::open");
+        log::debug!("startup: rocksdb calling DB::open");
         let db = DB::open_cf_descriptors(&db_opts, path, cf_descriptors)?;
-        eprintln!("startup: rocksdb DB::open returned");
+        log::debug!("startup: rocksdb DB::open returned");
         self.validate_partition_layout(&db)?;
         let db = Arc::new(db);
 
@@ -372,6 +337,9 @@ pub(crate) fn create_block_options_with_cache(cache: &Cache) -> BlockBasedOption
 }
 
 fn resolve_rocksdb_settings(settings: RocksDbSettings) -> RocksDbSettings {
+    if matches!(settings.memory_mode, kalamdb_configs::RocksDbMemoryMode::Micro) {
+        return settings.resolved_for_host_memory(None);
+    }
     if !settings.memory_mode.scales_from_host_ram() {
         return settings;
     }
@@ -388,7 +356,7 @@ fn resolve_rocksdb_settings(settings: RocksDbSettings) -> RocksDbSettings {
 }
 
 fn host_total_memory_bytes() -> Option<u64> {
-    let mut system = System::new();
+    let mut system = System::new().ok()?;
     system.refresh_memory_specifics(MemoryRefreshKind::everything());
     let total = system.total_memory();
     (total > 0).then_some(total)

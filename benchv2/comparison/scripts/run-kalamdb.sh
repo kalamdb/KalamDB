@@ -42,6 +42,9 @@ curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null
 cd "$ROOT"
 cargo build --release -p comparison_kalamdb
 OUT="$RESULTS/kalamdb-$(date +%Y%m%d-%H%M%S).txt"
+# shellcheck source=memory-sample.sh
+source "$ROOT/scripts/memory-sample.sh"
+memory_mark_ready "$SERVER_PID"
 {
   echo "# KalamDB comparison (hot-only, tuned RocksDB/cache)"
   echo "# server_bin=${BIN}"
@@ -57,5 +60,7 @@ OUT="$RESULTS/kalamdb-$(date +%Y%m%d-%H%M%S).txt"
   KALAMDB_URL="http://127.0.0.1:${PORT}" ./target/release/comparison_kalamdb
   echo "# finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } | tee "$OUT"
+
+memory_append_result "$SERVER_PID" "$OUT"
 
 echo "Wrote $OUT"

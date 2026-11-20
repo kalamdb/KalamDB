@@ -12,7 +12,7 @@ use crate::{
     error::Result,
     models::ChangeEvent,
     seq_tracking,
-    subscription::{buffer_event, event_progress, SubscriptionAckMode},
+    subscription::{buffer_event, event_progress, SubscriptionAckMode, SubscriptionDelivery},
     timeouts::KalamLinkTimeouts,
     VersionId,
 };
@@ -39,26 +39,28 @@ use crate::{
 /// # }
 /// ```
 pub struct SubscriptionManager {
-    subscription_id: String,
+    subscription_id:  String,
     /// Receives parsed events from the shared connection task.
-    event_rx: mpsc::Receiver<Result<ChangeEvent>>,
+    event_rx:         mpsc::Receiver<SubscriptionDelivery>,
     /// Sends unsubscribe and checkpoint progress back to the shared connection.
-    shared_control: Option<SharedSubscriptionControl>,
+    shared_control:   Option<SharedSubscriptionControl>,
     /// Generation tag assigned by the shared `connection_task`.
-    generation: u64,
+    generation:       u64,
     /// Local event buffer for yielding batched events from a single WS message.
-    event_queue: VecDeque<ChangeEvent>,
+    event_queue:      VecDeque<ChangeEvent>,
     /// Changes received while initial data is still loading.
     buffered_changes: Vec<ChangeEvent>,
     /// Whether initial data is still loading.
-    is_loading: bool,
+    is_loading:       bool,
     /// Original `from` cursor used to open this subscription, if any.
-    resume_from: Option<VersionId>,
+    resume_from:      Option<VersionId>,
     /// Highest progress delivered to the consumer, acknowledged or not.
     delivered_seq_id: Option<crate::VersionId>,
-    ack_mode: SubscriptionAckMode,
-    timeouts: KalamLinkTimeouts,
-    closed: bool,
+    ack_mode:         SubscriptionAckMode,
+    snapshot_epoch:   u64,
+    snapshot_reset:   bool,
+    timeouts:         KalamLinkTimeouts,
+    closed:           bool,
 }
 
 impl SubscriptionManager {
@@ -67,7 +69,7 @@ impl SubscriptionManager {
     /// owning its own WebSocket.
     pub(crate) fn from_shared(
         subscription_id: String,
-        event_rx: mpsc::Receiver<Result<ChangeEvent>>,
+        event_rx: mpsc::Receiver<SubscriptionDelivery>,
         shared_control: SharedSubscriptionControl,
         generation: u64,
         resume_from: Option<VersionId>,
@@ -85,6 +87,8 @@ impl SubscriptionManager {
             resume_from,
             delivered_seq_id: resume_from,
             ack_mode,
+            snapshot_epoch: 0,
+            snapshot_reset: false,
             timeouts: timeouts.clone(),
             closed: false,
         }
@@ -105,6 +109,7 @@ impl SubscriptionManager {
             .progress(
                 self.subscription_id.clone(),
                 self.generation,
+                self.snapshot_epoch,
                 progress.seq_id,
                 progress.advance_resume,
             )
@@ -150,11 +155,19 @@ impl SubscriptionManager {
 
             // 3. Read next parsed event from the shared connection task
             match self.event_rx.recv().await {
-                Some(Ok(event)) => {
+                Some(SubscriptionDelivery::Event(Ok(event))) => {
                     self.apply_buffering(event);
                     // Loop back to drain event_queue
                 },
-                Some(Err(e)) => return Some(Err(e)),
+                Some(SubscriptionDelivery::Event(Err(error))) => return Some(Err(error)),
+                Some(SubscriptionDelivery::ResetSnapshot { epoch }) => {
+                    self.snapshot_epoch = epoch;
+                    self.snapshot_reset = true;
+                    self.resume_from = None;
+                    self.delivered_seq_id = None;
+                    self.buffered_changes.clear();
+                    self.is_loading = true;
+                },
                 None => {
                     self.closed = true;
                     return None;
@@ -179,10 +192,20 @@ impl SubscriptionManager {
         seq_tracking::advance_seq(&mut self.resume_from, seq_id);
         if let Some(shared_control) = self.shared_control.as_ref() {
             shared_control
-                .progress(self.subscription_id.clone(), self.generation, seq_id, true)
+                .progress(
+                    self.subscription_id.clone(),
+                    self.generation,
+                    self.snapshot_epoch,
+                    seq_id,
+                    true,
+                )
                 .await;
         }
         Ok(())
+    }
+
+    pub(crate) fn take_snapshot_reset(&mut self) -> bool {
+        std::mem::take(&mut self.snapshot_reset)
     }
 
     /// Get the subscription ID assigned by the server
@@ -301,25 +324,25 @@ mod tests {
         let mut sub = make_test_sub();
         let event = ChangeEvent::InitialDataBatch {
             subscription_id: "unit-test-id".to_string(),
-            rows: vec![{
+            rows:            vec![{
                 let mut row = std::collections::HashMap::new();
                 row.insert("id".to_string(), crate::models::KalamCellValue::text("seed"));
                 row.insert("_version".to_string(), crate::models::KalamCellValue::text("10"));
                 row
             }],
-            batch_control: crate::models::BatchControl {
+            batch_control:   crate::models::BatchControl {
                 version_domain: None,
-                batch_num: 0,
-                has_more: true,
-                status: crate::models::BatchStatus::Loading,
-                last_seq_id: Some(VersionId::from(10)),
+                batch_num:      0,
+                has_more:       true,
+                status:         crate::models::BatchStatus::Loading,
+                last_seq_id:    Some(VersionId::from(10)),
             },
         };
 
         sub.report_shared_progress(&event).await;
         sub.apply_buffering(ChangeEvent::Insert {
             subscription_id: "unit-test-id".to_string(),
-            rows: vec![{
+            rows:            vec![{
                 let mut row = std::collections::HashMap::new();
                 row.insert("id".to_string(), crate::models::KalamCellValue::text("seed"));
                 row.insert("_version".to_string(), crate::models::KalamCellValue::text("10"));
@@ -337,7 +360,7 @@ mod tests {
         sub.ack_mode = SubscriptionAckMode::Explicit;
         sub.event_queue.push_back(ChangeEvent::Insert {
             subscription_id: "unit-test-id".to_string(),
-            rows: vec![{
+            rows:            vec![{
                 let mut row = std::collections::HashMap::new();
                 row.insert("id".to_string(), crate::models::KalamCellValue::text("one"));
                 row.insert("_version".to_string(), crate::models::KalamCellValue::text("10"));

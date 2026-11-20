@@ -26,14 +26,14 @@ impl Benchmark for ReconnectSubscribeBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
+                .sql_ok(&format!("CREATE SCHEMA IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!("DROP USER TABLE IF EXISTS {}.reconnect_sub", config.namespace))
+                .sql(&format!("DROP TABLE IF EXISTS {}.reconnect_sub", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
-                    "CREATE USER TABLE {}.reconnect_sub (id INT PRIMARY KEY, data TEXT)",
+                    "CREATE TABLE {}.reconnect_sub (id INT PRIMARY KEY, data TEXT) WITH (TYPE = 'USER')",
                     config.namespace
                 ))
                 .await?;
@@ -128,7 +128,7 @@ impl Benchmark for ReconnectSubscribeBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             let _ = client
-                .sql(&format!("DROP USER TABLE IF EXISTS {}.reconnect_sub", config.namespace))
+                .sql(&format!("DROP TABLE IF EXISTS {}.reconnect_sub", config.namespace))
                 .await;
             Ok(())
         })

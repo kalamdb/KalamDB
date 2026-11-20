@@ -1,5 +1,5 @@
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
     collections::HashMap,
     rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
@@ -9,25 +9,21 @@ static SUBSCRIPTION_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 use link_common::{
     models::{
-        ChangeEvent, ClientMessage, ConnectionOptions, SerializationType, ServerMessage,
-        SubscriptionOptions, SubscriptionRequest,
+        ChangeEvent, ClientMessage, SerializationType, ServerMessage, SubscriptionOptions,
+        SubscriptionRequest,
     },
+    realtime::{resume_acknowledged, SubscriptionRecovery},
     VersionDomain,
 };
 
 const MAX_LEARNED_DOMAINS: usize = 1_024;
 use serde::Serialize;
-use wasm_bindgen::{prelude::*, JsCast};
-use wasm_bindgen_futures::JsFuture;
-use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
+use wasm_bindgen::prelude::*;
+use web_sys::WebSocket;
 
 use super::{
-    helpers::{
-        create_promise, decode_ws_binary_payload, decode_ws_message, jwt_uses_upgrade_auth,
-        open_websocket, send_ws_message, serialize_json_to_js_value, subscription_hash,
-        ws_url_from_http_opts,
-    },
-    reconnect::{self, reconnect_internal_with_auth, resubscribe_all},
+    helpers::{create_promise, send_ws_message, serialize_json_to_js_value, subscription_hash},
+    reconnect::BrowserConnection,
     state::{
         callback_payload, filter_subscription_event, track_subscription_checkpoint,
         SubscriptionCallbackMode, SubscriptionState, WasmLiveRowsOptions,
@@ -35,15 +31,15 @@ use super::{
     validation::{
         quote_table_name, validate_column_name, validate_row_id, validate_sql_identifier,
     },
-    wasm_auth::{resolve_auth_provider, WasmAuthProvider},
+    wasm_auth::{perform_basic_login, resolve_auth_provider, WasmAuthProvider},
     wasm_debug_log,
 };
 
 #[derive(Serialize)]
 struct BorrowedQueryRequest<'a> {
-    sql: &'a str,
+    sql:          &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    params: Option<&'a [serde_json::Value]>,
+    params:       Option<&'a [serde_json::Value]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     namespace_id: Option<&'a str>,
 }
@@ -102,39 +98,14 @@ struct BorrowedQueryRequest<'a> {
 /// ```
 #[wasm_bindgen]
 pub struct KalamClient {
-    url: String,
-    /// Authentication provider (Basic, JWT, or None).
-    /// Wrapped in Rc<RefCell<>> for interior mutability so that auto-refresh
-    /// on TOKEN_EXPIRED can update credentials from `&self` methods.
-    auth: Rc<RefCell<WasmAuthProvider>>,
-    ws: Rc<RefCell<Option<WebSocket>>>,
-    /// Subscription state including callbacks and last seq_id for resumption
-    subscription_state: Rc<RefCell<HashMap<String, SubscriptionState>>>,
-    /// Connection options for auto-reconnect
-    connection_options: Rc<RefCell<ConnectionOptions>>,
-    /// Current reconnection attempt count
-    reconnect_attempts: Rc<RefCell<u32>>,
-    /// Flag indicating if we're currently reconnecting
-    is_reconnecting: Rc<RefCell<bool>>,
-    /// Active keepalive ping interval ID (from `setInterval`), or -1 if none.
-    ping_interval_id: Rc<RefCell<i32>>,
-    /// Connection lifecycle event handlers
-    on_connect_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_disconnect_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_error_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_receive_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_send_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    /// Optional async auth provider callback.
-    /// Called before each (re-)connection to obtain a fresh JWT token.
-    /// The callback must return a Promise that resolves to an object of the
-    /// shape `{ jwt: { token: string } }` or `{ none: null }`.
-    auth_provider_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    /// Default namespace applied to unqualified SQL requests and live queries.
-    default_namespace: Rc<RefCell<Option<String>>>,
-    /// Negotiated serialization format for this WebSocket connection.
-    negotiated_ser: Rc<Cell<SerializationType>>,
-    /// Version domains learned from subscription acks, keyed by SQL.
-    learned_domains: Rc<RefCell<HashMap<String, VersionDomain>>>,
+    realtime:          Rc<BrowserConnection>,
+    default_namespace: RefCell<Option<String>>,
+}
+
+impl Drop for KalamClient {
+    fn drop(&mut self) {
+        self.realtime.disconnect(false);
+    }
 }
 
 impl KalamClient {
@@ -145,13 +116,11 @@ impl KalamClient {
         callback: js_sys::Function,
         callback_mode: SubscriptionCallbackMode,
     ) -> Result<String, JsValue> {
-        if !self.is_connected() {
-            return Err(JsValue::from_str("Not connected to server. Call connect() first."));
-        }
+        self.realtime.connect().await?;
 
         let mut subscription_options = subscription_options;
         if subscription_options.from.is_some() && subscription_options.version_domain.is_none() {
-            if let Some(domain) = self.learned_domains.borrow().get(&sql).cloned() {
+            if let Some(domain) = self.realtime.learned_domains.borrow().get(&sql).cloned() {
                 subscription_options.version_domain = Some(domain);
             }
         }
@@ -163,13 +132,15 @@ impl KalamClient {
         );
         let (subscribe_promise, subscribe_resolve, subscribe_reject) = create_promise();
 
-        self.subscription_state.borrow_mut().insert(
+        self.realtime.subscriptions.borrow_mut().insert(
             subscription_id.clone(),
             SubscriptionState {
                 sql: sql.clone(),
                 options: subscription_options.clone(),
                 callback,
                 last_seq_id: None,
+                batch_seq_id: None,
+                resume_pending: false,
                 pending_subscribe_resolve: Some(subscribe_resolve),
                 pending_subscribe_reject: Some(subscribe_reject),
                 awaiting_initial_response: true,
@@ -177,11 +148,11 @@ impl KalamClient {
             },
         );
 
-        if let Some(ws) = self.ws.borrow().as_ref() {
+        if let Some(ws) = self.realtime.socket().as_ref() {
             let subscribe_msg = ClientMessage::Subscribe {
                 subscription: SubscriptionRequest {
-                    id: subscription_id.clone(),
-                    sql: sql.clone(),
+                    id:      subscription_id.clone(),
+                    sql:     sql.clone(),
                     options: Some(subscription_options),
                 },
             };
@@ -192,43 +163,31 @@ impl KalamClient {
             if let Err(error) = send_ws_message_traced(
                 ws,
                 &subscribe_msg,
-                self.negotiated_ser.get(),
-                &self.on_send_cb,
+                self.realtime.serialization.get(),
+                &self.realtime.on_send,
             ) {
-                self.subscription_state.borrow_mut().remove(&subscription_id);
+                self.realtime.subscriptions.borrow_mut().remove(&subscription_id);
                 return Err(error);
             }
         } else {
-            self.subscription_state.borrow_mut().remove(&subscription_id);
+            self.realtime.subscriptions.borrow_mut().remove(&subscription_id);
             return Err(JsValue::from_str(
                 "WebSocket connection is unavailable for subscription registration",
             ));
         }
 
-        JsFuture::from(subscribe_promise).await?;
+        if let Err(error) = self.realtime.await_subscription(subscribe_promise).await {
+            let _ = self.unsubscribe(subscription_id.clone()).await;
+            return Err(error);
+        }
         wasm_debug_log!(&format!("KalamClient: Subscribed with ID: {}", subscription_id));
         Ok(subscription_id)
     }
 
     fn new_with_auth(url: String, auth: WasmAuthProvider) -> KalamClient {
         KalamClient {
-            url,
-            auth: Rc::new(RefCell::new(auth)),
-            ws: Rc::new(RefCell::new(None)),
-            subscription_state: Rc::new(RefCell::new(HashMap::new())),
-            connection_options: Rc::new(RefCell::new(ConnectionOptions::default())),
-            reconnect_attempts: Rc::new(RefCell::new(0)),
-            is_reconnecting: Rc::new(RefCell::new(false)),
-            ping_interval_id: Rc::new(RefCell::new(-1)),
-            on_connect_cb: Rc::new(RefCell::new(None)),
-            on_disconnect_cb: Rc::new(RefCell::new(None)),
-            on_error_cb: Rc::new(RefCell::new(None)),
-            on_receive_cb: Rc::new(RefCell::new(None)),
-            on_send_cb: Rc::new(RefCell::new(None)),
-            auth_provider_cb: Rc::new(RefCell::new(None)),
-            default_namespace: Rc::new(RefCell::new(None)),
-            negotiated_ser: Rc::new(Cell::new(SerializationType::Json)),
-            learned_domains: Rc::new(RefCell::new(HashMap::new())),
+            realtime:          Rc::new(BrowserConnection::new(url, auth)),
+            default_namespace: RefCell::default(),
         }
     }
 }
@@ -242,7 +201,7 @@ fn emit_ws_send(on_send_cb: &Rc<RefCell<Option<js_sys::Function>>>, msg: &Client
     }
 }
 
-fn send_ws_message_traced(
+pub(crate) fn send_ws_message_traced(
     ws: &WebSocket,
     msg: &ClientMessage,
     serialization: SerializationType,
@@ -263,7 +222,7 @@ fn next_batch_message(
     }
 }
 
-fn send_next_batch_traced(
+pub(crate) fn send_next_batch_traced(
     ws: &WebSocket,
     subscription_id: &str,
     last_seq_id: Option<link_common::VersionId>,
@@ -401,7 +360,7 @@ fn qualify_subscription_sql(sql: &str, default_namespace: Option<&str>) -> Strin
     )
 }
 
-fn reject_pending_subscriptions(
+pub(crate) fn reject_pending_subscriptions(
     subscriptions: &Rc<RefCell<HashMap<String, SubscriptionState>>>,
     message: &str,
 ) {
@@ -436,16 +395,17 @@ fn reject_pending_subscriptions(
     }
 }
 
-struct SubscriptionDispatch {
-    callback: Option<js_sys::Function>,
-    payload: Option<String>,
-    resolve_subscribe: Option<js_sys::Function>,
-    reject_subscribe: Option<(js_sys::Function, String)>,
-    next_batch: Option<(String, Option<link_common::VersionId>)>,
+pub(crate) struct SubscriptionDispatch {
+    pub(crate) recovery: Option<SubscriptionRequest>,
+    callback:            Option<js_sys::Function>,
+    payload:             Option<String>,
+    resolve_subscribe:   Option<js_sys::Function>,
+    reject_subscribe:    Option<(js_sys::Function, String)>,
+    next_batch:          Option<(String, Option<link_common::VersionId>)>,
 }
 
 impl SubscriptionDispatch {
-    fn invoke(self) -> Option<(String, Option<link_common::VersionId>)> {
+    pub(crate) fn invoke(self) -> Option<(String, Option<link_common::VersionId>)> {
         if let Some(cb) = self.callback {
             if let Some(payload) = self.payload {
                 let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&payload));
@@ -545,7 +505,7 @@ fn remember_learned_domain(
     domains.insert(sql.to_string(), domain);
 }
 
-fn dispatch_subscription_server_message(
+pub(crate) fn dispatch_subscription_server_message(
     subscriptions: &Rc<RefCell<HashMap<String, SubscriptionState>>>,
     learned_domains: &RefCell<HashMap<String, VersionDomain>>,
     event: &ServerMessage,
@@ -558,7 +518,7 @@ fn dispatch_subscription_server_message(
             subscription_id,
             subs.len()
         ));
-        resolve_subscription_key(&subscription_id, &subs)
+        resolve_subscription_key(subscription_id, &subs)
     };
 
     let Some(client_id) = matched_key else {
@@ -575,23 +535,44 @@ fn dispatch_subscription_server_message(
     let mut reject_subscribe = None;
     let mut next_batch = None;
     let mut remove_state = false;
+    let mut recovery = None;
 
     {
         let mut subs = subscriptions.borrow_mut();
         if let Some(state) = subs.get_mut(client_id) {
-            callback = Some(state.callback.clone());
-            if let Some(filtered_event) = filter_subscription_event(&state.options, event) {
+            let recovery_action = match event {
+                ServerMessage::Error { code, message, .. } if !state.awaiting_initial_response => {
+                    SubscriptionRecovery::from_error(code, message)
+                },
+                _ => None,
+            };
+            if let Some(action) = recovery_action {
+                action.apply(&mut state.options, &mut state.last_seq_id);
+                state.batch_seq_id = None;
+                if action == SubscriptionRecovery::Snapshot {
+                    learned_domains.borrow_mut().remove(&state.sql);
+                    state.callback_mode.reset_snapshot();
+                }
+                recovery = Some(state.request(client_id));
+            } else if let Some(filtered_event) = filter_subscription_event(&state.options, event) {
+                callback = Some(state.callback.clone());
+                if resume_acknowledged(&filtered_event) {
+                    state.resume_pending = false;
+                }
                 track_subscription_checkpoint(&mut state.last_seq_id, &filtered_event);
                 payload = callback_payload(&mut state.callback_mode, &filtered_event);
                 if let ChangeEvent::InitialDataBatch { batch_control, .. } = filtered_event {
+                    state.batch_seq_id = batch_control.last_seq_id;
                     if batch_control.has_more && state.options.auto_fetch_batches.unwrap_or(false) {
-                        next_batch = Some((client_id.to_string(), state.last_seq_id));
+                        next_batch =
+                            Some((client_id.to_string(), state.batch_seq_id.or(state.last_seq_id)));
                     }
                 }
             }
 
             match event {
                 ServerMessage::SubscriptionAck { batch_control, .. } => {
+                    state.batch_seq_id = batch_control.last_seq_id;
                     if let Some(domain) = batch_control.version_domain.clone() {
                         let sql = state.sql.clone();
                         state.options.version_domain = Some(domain.clone());
@@ -614,6 +595,8 @@ fn dispatch_subscription_server_message(
                             ));
                         }
                         remove_state = true;
+                    } else if recovery.is_none() && state.resume_pending {
+                        remove_state = true;
                     }
                 },
                 _ => {},
@@ -626,6 +609,7 @@ fn dispatch_subscription_server_message(
     }
 
     Some(SubscriptionDispatch {
+        recovery,
         callback,
         payload,
         resolve_subscribe,
@@ -634,11 +618,12 @@ fn dispatch_subscription_server_message(
     })
 }
 
-fn emit_runtime_ws_error(
+pub(crate) fn emit_runtime_ws_error(
     on_error_cb: &Rc<RefCell<Option<js_sys::Function>>>,
     error: &link_common::event_handlers::ConnectionError,
 ) {
-    if let Some(cb) = on_error_cb.borrow().as_ref() {
+    let callback = on_error_cb.borrow().clone();
+    if let Some(cb) = callback {
         let err_obj = js_sys::Object::new();
         let _ =
             js_sys::Reflect::set(&err_obj, &"message".into(), &JsValue::from_str(&error.message));
@@ -661,7 +646,7 @@ fn emit_runtime_ws_error(
     }
 }
 
-fn auth_user_from_wasm_auth(auth: &WasmAuthProvider) -> Option<&str> {
+pub(crate) fn auth_user_from_wasm_auth(auth: &WasmAuthProvider) -> Option<&str> {
     match auth {
         WasmAuthProvider::Basic { username, .. } => Some(username.as_str()),
         _ => None,
@@ -700,7 +685,7 @@ fn connection_hint(detail: &str, recoverable: bool, auth_user: Option<&str>) -> 
     "Review the connection configuration and authentication settings for this client."
 }
 
-fn build_runtime_connection_error(
+pub(crate) fn build_runtime_connection_error(
     context: &str,
     detail: &str,
     recoverable: bool,
@@ -735,7 +720,7 @@ fn build_runtime_connection_error(
     error.with_hint(connection_hint(detail, recoverable, auth_user))
 }
 
-fn js_error_message(error: &JsValue) -> String {
+pub(crate) fn js_error_message(error: &JsValue) -> String {
     error
         .as_string()
         .or_else(|| {
@@ -760,7 +745,7 @@ fn is_recoverable_preconnect_error(message: &str) -> bool {
         || normalized.contains("base url"))
 }
 
-fn emit_runtime_js_error(
+pub(crate) fn emit_runtime_js_error(
     on_error_cb: &Rc<RefCell<Option<js_sys::Function>>>,
     error: &JsValue,
     context: &str,
@@ -771,375 +756,6 @@ fn emit_runtime_js_error(
     let recoverable = is_recoverable_preconnect_error(&detail);
     let event = build_runtime_connection_error(context, &detail, recoverable, url, auth_user);
     emit_runtime_ws_error(on_error_cb, &event);
-}
-
-fn clear_active_socket(
-    ws_ref: &Rc<RefCell<Option<WebSocket>>>,
-    source_ws: &WebSocket,
-    ping_interval_id: &Rc<RefCell<i32>>,
-) -> bool {
-    let should_clear = ws_ref
-        .borrow()
-        .as_ref()
-        .is_some_and(|current_ws| js_sys::Object::is(current_ws.as_ref(), source_ws.as_ref()));
-    if !should_clear {
-        return false;
-    }
-
-    if let Some(current_ws) = ws_ref.borrow_mut().take() {
-        current_ws.set_onclose(None);
-        current_ws.set_onerror(None);
-        current_ws.set_onmessage(None);
-    }
-
-    let id = *ping_interval_id.borrow();
-    if id >= 0 {
-        super::helpers::global_clear_interval(id);
-        *ping_interval_id.borrow_mut() = -1;
-    }
-
-    true
-}
-
-#[allow(clippy::too_many_arguments)]
-fn schedule_auto_reconnect(
-    connection_options: Rc<RefCell<ConnectionOptions>>,
-    subscription_state: Rc<RefCell<HashMap<String, SubscriptionState>>>,
-    reconnect_attempts: Rc<RefCell<u32>>,
-    is_reconnecting: Rc<RefCell<bool>>,
-    ws_ref: Rc<RefCell<Option<WebSocket>>>,
-    ping_interval_id: Rc<RefCell<i32>>,
-    url: String,
-    auth: WasmAuthProvider,
-    auth_provider_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_connect_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_disconnect_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_error_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_receive_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_send_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    negotiated_ser: Rc<Cell<SerializationType>>,
-    learned_domains: Rc<RefCell<HashMap<String, VersionDomain>>>,
-) {
-    let (delay, disable_compression) = {
-        let opts = connection_options.borrow();
-        if !opts.auto_reconnect || *is_reconnecting.borrow() {
-            return;
-        }
-
-        let current_attempts = *reconnect_attempts.borrow();
-        if let Some(max) = opts.max_reconnect_attempts {
-            if current_attempts >= max {
-                wasm_debug_log!(&format!(
-                    "KalamClient: Max reconnection attempts ({}) reached",
-                    max
-                ));
-                let event = build_runtime_connection_error(
-                    "Max reconnection attempts reached",
-                    "auto-reconnect stopped after exhausting the configured retry budget",
-                    false,
-                    &url,
-                    auth_user_from_wasm_auth(&auth),
-                );
-                emit_runtime_ws_error(&on_error_cb, &event);
-                return;
-            }
-        }
-
-        (
-            std::cmp::min(
-                opts.reconnect_delay_ms * (2u64.pow(current_attempts)),
-                opts.max_reconnect_delay_ms,
-            ),
-            opts.disable_compression,
-        )
-    };
-
-    wasm_debug_log!(&format!(
-        "KalamClient: Scheduling reconnection in {}ms (attempt {})",
-        delay,
-        *reconnect_attempts.borrow() + 1
-    ));
-
-    let reconnect_fn = Closure::wrap(Box::new(move || {
-        {
-            let opts = connection_options.borrow();
-            if !opts.auto_reconnect {
-                return;
-            }
-        }
-
-        if ws_ref.borrow().is_some() {
-            return;
-        }
-
-        *is_reconnecting.borrow_mut() = true;
-        *reconnect_attempts.borrow_mut() += 1;
-
-        let reconnect_url = url.clone();
-        let reconnect_auth = auth.clone();
-        let reconnect_auth_provider = Rc::clone(&auth_provider_cb);
-        let reconnect_connection_options = Rc::clone(&connection_options);
-        let reconnect_subscription_state = Rc::clone(&subscription_state);
-        let reconnect_reconnect_attempts = Rc::clone(&reconnect_attempts);
-        let reconnect_is_reconnecting = Rc::clone(&is_reconnecting);
-        let reconnect_ws_ref = Rc::clone(&ws_ref);
-        let reconnect_ping_interval_id = Rc::clone(&ping_interval_id);
-        let reconnect_on_connect = Rc::clone(&on_connect_cb);
-        let reconnect_on_disconnect = Rc::clone(&on_disconnect_cb);
-        let reconnect_on_error = Rc::clone(&on_error_cb);
-        let reconnect_on_receive = Rc::clone(&on_receive_cb);
-        let reconnect_on_send = Rc::clone(&on_send_cb);
-        let reconnect_negotiated_ser = Rc::clone(&negotiated_ser);
-        let next_url = url.clone();
-        let next_auth = auth.clone();
-        let next_auth_provider = Rc::clone(&auth_provider_cb);
-        let next_connection_options = Rc::clone(&connection_options);
-        let next_subscription_state = Rc::clone(&subscription_state);
-        let next_reconnect_attempts = Rc::clone(&reconnect_attempts);
-        let next_is_reconnecting = Rc::clone(&is_reconnecting);
-        let next_ws_ref = Rc::clone(&ws_ref);
-        let next_ping_interval_id = Rc::clone(&ping_interval_id);
-        let next_on_connect = Rc::clone(&on_connect_cb);
-        let next_on_disconnect = Rc::clone(&on_disconnect_cb);
-        let next_on_error = Rc::clone(&on_error_cb);
-        let next_on_receive = Rc::clone(&on_receive_cb);
-        let next_on_send = Rc::clone(&on_send_cb);
-        let next_negotiated_ser = Rc::clone(&negotiated_ser);
-        let reconnect_learned_domains = Rc::clone(&learned_domains);
-        let next_learned_domains = Rc::clone(&learned_domains);
-        let reconnect_error_url = reconnect_url.clone();
-        let reconnect_error_auth = reconnect_auth.clone();
-
-        wasm_bindgen_futures::spawn_local(async move {
-            match reconnect_internal_with_auth(
-                reconnect_url,
-                reconnect_auth,
-                reconnect_auth_provider.borrow().clone(),
-                disable_compression,
-                reconnect_connection_options.borrow().protocol,
-            )
-            .await
-            {
-                Ok(ws) => {
-                    *reconnect_ws_ref.borrow_mut() = Some(ws.clone());
-                    install_runtime_disconnect_handlers(
-                        &ws,
-                        Rc::clone(&reconnect_subscription_state),
-                        Rc::clone(&reconnect_ws_ref),
-                        Rc::clone(&reconnect_ping_interval_id),
-                        Rc::clone(&reconnect_on_disconnect),
-                        Rc::clone(&reconnect_on_error),
-                        reconnect_error_url.clone(),
-                        auth_user_from_wasm_auth(&reconnect_error_auth).map(str::to_owned),
-                    );
-                    install_runtime_message_handler(
-                        &ws,
-                        Rc::clone(&reconnect_subscription_state),
-                        Rc::clone(&reconnect_learned_domains),
-                        Rc::clone(&reconnect_on_receive),
-                        Rc::clone(&reconnect_on_send),
-                        Rc::clone(&reconnect_negotiated_ser),
-                    );
-                    if let Some(cb) = reconnect_on_connect.borrow().as_ref() {
-                        let _ = cb.call0(&JsValue::NULL);
-                    }
-                    wasm_debug_log!("KalamClient: Reconnection successful");
-                    *reconnect_reconnect_attempts.borrow_mut() = 0;
-                    install_auto_reconnect_listener(
-                        &ws,
-                        Rc::clone(&next_connection_options),
-                        Rc::clone(&reconnect_subscription_state),
-                        Rc::clone(&next_reconnect_attempts),
-                        Rc::clone(&next_is_reconnecting),
-                        Rc::clone(&next_ws_ref),
-                        Rc::clone(&next_ping_interval_id),
-                        next_url,
-                        next_auth,
-                        Rc::clone(&next_auth_provider),
-                        Rc::clone(&next_on_connect),
-                        Rc::clone(&next_on_disconnect),
-                        Rc::clone(&next_on_error),
-                        Rc::clone(&next_on_receive),
-                        Rc::clone(&next_on_send),
-                        Rc::clone(&next_negotiated_ser),
-                        Rc::clone(&next_learned_domains),
-                    );
-                    resubscribe_all(
-                        Rc::clone(&reconnect_ws_ref),
-                        Rc::clone(&reconnect_subscription_state),
-                        reconnect_negotiated_ser.get(),
-                        Some(Rc::clone(&reconnect_on_send)),
-                    )
-                    .await;
-                    reconnect::restart_ping_timer(
-                        &reconnect_ws_ref,
-                        &reconnect_connection_options,
-                        &reconnect_ping_interval_id,
-                        &reconnect_negotiated_ser,
-                    );
-                    *reconnect_is_reconnecting.borrow_mut() = false;
-                },
-                Err(_e) => {
-                    wasm_debug_log!(&format!("KalamClient: Reconnection failed: {:?}", _e));
-                    *reconnect_is_reconnecting.borrow_mut() = false;
-                    schedule_auto_reconnect(
-                        next_connection_options,
-                        next_subscription_state,
-                        next_reconnect_attempts,
-                        next_is_reconnecting,
-                        next_ws_ref,
-                        next_ping_interval_id,
-                        next_url,
-                        next_auth,
-                        next_auth_provider,
-                        next_on_connect,
-                        next_on_disconnect,
-                        next_on_error,
-                        next_on_receive,
-                        next_on_send,
-                        next_negotiated_ser,
-                        next_learned_domains,
-                    );
-                },
-            }
-        });
-    }) as Box<dyn FnMut()>);
-
-    super::helpers::global_set_timeout(reconnect_fn.as_ref().unchecked_ref(), delay as i32);
-    reconnect_fn.forget();
-}
-
-fn install_runtime_disconnect_handlers(
-    ws: &WebSocket,
-    subscriptions: Rc<RefCell<HashMap<String, SubscriptionState>>>,
-    ws_ref: Rc<RefCell<Option<WebSocket>>>,
-    ping_interval_id: Rc<RefCell<i32>>,
-    on_disconnect_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_error_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    url: String,
-    auth_user: Option<String>,
-) {
-    let subscriptions_for_error = Rc::clone(&subscriptions);
-    let on_error_for_err = Rc::clone(&on_error_cb);
-    let ws_ref_for_error = Rc::clone(&ws_ref);
-    let ping_interval_id_for_error = Rc::clone(&ping_interval_id);
-    let source_ws_for_error = ws.clone();
-    let onerror_callback = Closure::wrap(Box::new(move |_e: ErrorEvent| {
-        wasm_debug_log!(&format!("KalamClient: WebSocket error: {:?}", _e));
-        if !clear_active_socket(
-            &ws_ref_for_error,
-            &source_ws_for_error,
-            &ping_interval_id_for_error,
-        ) {
-            return;
-        }
-        let event = build_runtime_connection_error(
-            "Failed to connect to KalamDB",
-            "WebSocket connection failed",
-            true,
-            &url,
-            auth_user.as_deref(),
-        );
-        emit_runtime_ws_error(&on_error_for_err, &event);
-        reject_pending_subscriptions(
-            &subscriptions_for_error,
-            "WebSocket connection failed before the subscription was acknowledged",
-        );
-    }) as Box<dyn FnMut(ErrorEvent)>);
-    ws.set_onerror(Some(onerror_callback.as_ref().unchecked_ref()));
-    onerror_callback.forget();
-
-    let subscriptions_for_close = Rc::clone(&subscriptions);
-    let on_disconnect_for_close = Rc::clone(&on_disconnect_cb);
-    let ws_ref_for_close = Rc::clone(&ws_ref);
-    let ping_interval_id_for_close = Rc::clone(&ping_interval_id);
-    let source_ws_for_close = ws.clone();
-    let onclose_callback = Closure::wrap(Box::new(move |e: CloseEvent| {
-        wasm_debug_log!(&format!(
-            "KalamClient: WebSocket closed: code={}, reason={}",
-            e.code(),
-            e.reason()
-        ));
-        if !clear_active_socket(
-            &ws_ref_for_close,
-            &source_ws_for_close,
-            &ping_interval_id_for_close,
-        ) {
-            return;
-        }
-        if let Some(cb) = on_disconnect_for_close.borrow().as_ref() {
-            let reason_obj = js_sys::Object::new();
-            let _ = js_sys::Reflect::set(
-                &reason_obj,
-                &"message".into(),
-                &JsValue::from_str(&e.reason()),
-            );
-            let _ = js_sys::Reflect::set(
-                &reason_obj,
-                &"code".into(),
-                &JsValue::from_f64(e.code() as f64),
-            );
-            let _ = cb.call1(&JsValue::NULL, &reason_obj);
-        }
-        let close_message = if e.reason().is_empty() {
-            format!("WebSocket closed before the subscription was acknowledged (code {})", e.code())
-        } else {
-            format!("WebSocket closed before the subscription was acknowledged: {}", e.reason())
-        };
-        reject_pending_subscriptions(&subscriptions_for_close, &close_message);
-    }) as Box<dyn FnMut(CloseEvent)>);
-    ws.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
-    onclose_callback.forget();
-}
-
-fn install_runtime_message_handler(
-    ws: &WebSocket,
-    subscriptions: Rc<RefCell<HashMap<String, SubscriptionState>>>,
-    learned_domains: Rc<RefCell<HashMap<String, VersionDomain>>>,
-    on_receive_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_send_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    negotiated_ser: Rc<Cell<SerializationType>>,
-) {
-    let ws_for_next_batch = ws.clone();
-    let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
-        let event: Option<ServerMessage> = (|| {
-            let data = e.data();
-            if data.is_instance_of::<js_sys::JsString>() {
-                let text: String = data.dyn_into::<js_sys::JsString>().ok()?.into();
-                if let Some(cb) = on_receive_cb.borrow().as_ref() {
-                    let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&text));
-                }
-                serde_json::from_str::<ServerMessage>(&text).ok()
-            } else if negotiated_ser.get() == SerializationType::Domain {
-                let raw = decode_ws_binary_payload(&e)?;
-                link_common::ws_domain::decode_server_message(&raw).ok()
-            } else {
-                let message = decode_ws_message(&e)?;
-                if let Some(cb) = on_receive_cb.borrow().as_ref() {
-                    let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&message));
-                }
-                serde_json::from_str::<ServerMessage>(&message).ok()
-            }
-        })();
-
-        if let Some(event) = event {
-            if let Some(dispatch) =
-                dispatch_subscription_server_message(&subscriptions, &learned_domains, &event)
-            {
-                if let Some((subscription_id, last_seq_id)) = dispatch.invoke() {
-                    let _ = send_next_batch_traced(
-                        &ws_for_next_batch,
-                        &subscription_id,
-                        last_seq_id,
-                        negotiated_ser.get(),
-                        &on_send_cb,
-                    );
-                }
-            }
-        }
-    }) as Box<dyn FnMut(MessageEvent)>);
-    ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
-    onmessage_callback.forget();
 }
 
 #[wasm_bindgen]
@@ -1240,7 +856,7 @@ impl KalamClient {
     /// Returns one of: "basic", "jwt", or "none"
     #[wasm_bindgen(js_name = getAuthType)]
     pub fn get_auth_type(&self) -> String {
-        match &*self.auth.borrow() {
+        match &*self.realtime.auth.borrow() {
             WasmAuthProvider::Basic { .. } => "basic".to_string(),
             WasmAuthProvider::Jwt { .. } => "jwt".to_string(),
             WasmAuthProvider::None => "none".to_string(),
@@ -1253,7 +869,7 @@ impl KalamClient {
     /// * `enabled` - Whether to automatically reconnect on connection loss
     #[wasm_bindgen(js_name = setAutoReconnect)]
     pub fn set_auto_reconnect(&self, enabled: bool) {
-        self.connection_options.borrow_mut().auto_reconnect = enabled;
+        self.realtime.set_auto_reconnect(enabled);
     }
 
     /// Set reconnection delay parameters
@@ -1263,7 +879,7 @@ impl KalamClient {
     /// * `max_delay_ms` - Maximum delay (for exponential backoff)
     #[wasm_bindgen(js_name = setReconnectDelay)]
     pub fn set_reconnect_delay(&self, initial_delay_ms: u64, max_delay_ms: u64) {
-        let mut opts = self.connection_options.borrow_mut();
+        let mut opts = self.realtime.options.borrow_mut();
         opts.reconnect_delay_ms = initial_delay_ms;
         opts.max_reconnect_delay_ms = max_delay_ms;
     }
@@ -1274,7 +890,7 @@ impl KalamClient {
     /// * `max_attempts` - Maximum number of attempts (0 = infinite)
     #[wasm_bindgen(js_name = setMaxReconnectAttempts)]
     pub fn set_max_reconnect_attempts(&self, max_attempts: u32) {
-        self.connection_options.borrow_mut().max_reconnect_attempts = if max_attempts == 0 {
+        self.realtime.options.borrow_mut().max_reconnect_attempts = if max_attempts == 0 {
             None
         } else {
             Some(max_attempts)
@@ -1284,13 +900,13 @@ impl KalamClient {
     /// Get the current reconnection attempt count
     #[wasm_bindgen(js_name = getReconnectAttempts)]
     pub fn get_reconnect_attempts(&self) -> u32 {
-        *self.reconnect_attempts.borrow()
+        self.realtime.attempts()
     }
 
     /// Check if currently reconnecting
     #[wasm_bindgen(js_name = isReconnecting)]
     pub fn is_reconnecting_flag(&self) -> bool {
-        *self.is_reconnecting.borrow()
+        self.realtime.is_reconnecting()
     }
 
     /// Get the last received version for a subscription
@@ -1298,7 +914,8 @@ impl KalamClient {
     /// Useful for debugging or manual resumption tracking
     #[wasm_bindgen(js_name = getLastVersionId)]
     pub fn get_last_seq_id(&self, subscription_id: String) -> Option<String> {
-        self.subscription_state
+        self.realtime
+            .subscriptions
             .borrow()
             .get(&subscription_id)
             .and_then(|state| state.last_seq_id.map(|seq| seq.to_string()))
@@ -1314,7 +931,7 @@ impl KalamClient {
     /// ```
     #[wasm_bindgen(js_name = onConnect)]
     pub fn on_connect(&self, callback: js_sys::Function) {
-        *self.on_connect_cb.borrow_mut() = Some(callback);
+        *self.realtime.on_connect.borrow_mut() = Some(callback);
     }
 
     /// Register a callback invoked when the WebSocket connection is closed.
@@ -1327,7 +944,7 @@ impl KalamClient {
     /// ```
     #[wasm_bindgen(js_name = onDisconnect)]
     pub fn on_disconnect(&self, callback: js_sys::Function) {
-        *self.on_disconnect_cb.borrow_mut() = Some(callback);
+        *self.realtime.on_disconnect.borrow_mut() = Some(callback);
     }
 
     /// Register a callback invoked when a connection error occurs.
@@ -1340,7 +957,7 @@ impl KalamClient {
     /// ```
     #[wasm_bindgen(js_name = onError)]
     pub fn on_error(&self, callback: js_sys::Function) {
-        *self.on_error_cb.borrow_mut() = Some(callback);
+        *self.realtime.on_error.borrow_mut() = Some(callback);
     }
 
     /// Register a callback invoked when a connection or pre-connection error occurs.
@@ -1349,7 +966,7 @@ impl KalamClient {
     /// without re-implementing connection lifecycle semantics.
     #[wasm_bindgen(js_name = onConnectionError)]
     pub fn on_connection_error(&self, callback: js_sys::Function) {
-        *self.on_error_cb.borrow_mut() = Some(callback);
+        *self.realtime.on_error.borrow_mut() = Some(callback);
     }
 
     /// Register a callback invoked for every raw message received from the server.
@@ -1362,7 +979,7 @@ impl KalamClient {
     /// ```
     #[wasm_bindgen(js_name = onReceive)]
     pub fn on_receive(&self, callback: js_sys::Function) {
-        *self.on_receive_cb.borrow_mut() = Some(callback);
+        *self.realtime.on_receive.borrow_mut() = Some(callback);
     }
 
     /// Register a callback invoked for every raw message sent to the server.
@@ -1375,7 +992,7 @@ impl KalamClient {
     /// ```
     #[wasm_bindgen(js_name = onSend)]
     pub fn on_send(&self, callback: js_sys::Function) {
-        *self.on_send_cb.borrow_mut() = Some(callback);
+        *self.realtime.on_send.borrow_mut() = Some(callback);
     }
 
     /// Set an async authentication provider callback.
@@ -1401,7 +1018,7 @@ impl KalamClient {
     /// ```
     #[wasm_bindgen(js_name = setAuthProvider)]
     pub fn set_auth_provider(&self, callback: js_sys::Function) {
-        *self.auth_provider_cb.borrow_mut() = Some(callback);
+        *self.realtime.auth_provider.borrow_mut() = Some(callback);
     }
 
     /// Set the default namespace for unqualified SQL queries and live subscriptions.
@@ -1414,7 +1031,7 @@ impl KalamClient {
     /// configured at construction time.
     #[wasm_bindgen(js_name = clearAuthProvider)]
     pub fn clear_auth_provider(&self) {
-        *self.auth_provider_cb.borrow_mut() = None;
+        *self.realtime.auth_provider.borrow_mut() = None;
     }
 
     /// Enable or disable compression for WebSocket messages.
@@ -1432,7 +1049,7 @@ impl KalamClient {
     /// ```
     #[wasm_bindgen(js_name = setDisableCompression)]
     pub fn set_disable_compression(&self, disable: bool) {
-        self.connection_options.borrow_mut().disable_compression = disable;
+        self.realtime.options.borrow_mut().disable_compression = disable;
     }
 
     /// Control lazy WebSocket connections.
@@ -1454,452 +1071,25 @@ impl KalamClient {
     /// ```
     #[wasm_bindgen(js_name = setWsLazyConnect)]
     pub fn set_ws_lazy_connect(&self, lazy: bool) {
-        self.connection_options.borrow_mut().ws_lazy_connect = lazy;
+        self.realtime.options.borrow_mut().ws_lazy_connect = lazy;
     }
 
     /// # Returns
     /// Promise that resolves when connection is established and authenticated
-    pub async fn connect(&mut self) -> Result<(), JsValue> {
-        // Re-enable auto-reconnect in case a previous disconnect() disabled it.
-        // This ensures that calling connect() after disconnect() (e.g. React
-        // Strict Mode re-mount) restores the expected reconnection behavior.
-        self.connection_options.borrow_mut().auto_reconnect = true;
+    pub async fn connect(&self) -> Result<(), JsValue> {
+        self.realtime.connect().await
+    }
 
-        if self.auth_provider_cb.borrow().is_none()
-            && matches!(&*self.auth.borrow(), WasmAuthProvider::Basic { .. })
-        {
-            if let Err(error) = self.reauthenticate_for_http().await {
-                let auth_user = {
-                    let auth = self.auth.borrow();
-                    auth_user_from_wasm_auth(&auth).map(str::to_owned)
-                };
-                emit_runtime_js_error(
-                    &self.on_error_cb,
-                    &error,
-                    "Authentication failed",
-                    &self.url,
-                    auth_user.as_deref(),
-                );
-                return Err(error);
-            }
-        }
-
-        // Resolve auth: dynamic provider takes precedence over static auth.
-        let resolved_auth = match resolve_auth_provider(
-            self.auth_provider_cb.borrow().clone(),
-            self.auth.borrow().clone(),
-        )
-        .await
-        {
-            Ok(auth) => auth,
-            Err(error) => {
-                let auth_user = {
-                    let auth = self.auth.borrow();
-                    auth_user_from_wasm_auth(&auth).map(str::to_owned)
-                };
-                emit_runtime_js_error(
-                    &self.on_error_cb,
-                    &error,
-                    "Authentication failed",
-                    &self.url,
-                    auth_user.as_deref(),
-                );
-                return Err(error);
-            },
-        };
-
-        if matches!(resolved_auth, WasmAuthProvider::Basic { .. }) {
-            let error = JsValue::from_str(
-                "WebSocket authentication requires a JWT token. Use KalamClient.withJwt, login \
-                 first, or set an authProvider.",
-            );
-            emit_runtime_js_error(
-                &self.on_error_cb,
-                &error,
-                "Authentication failed",
-                &self.url,
-                auth_user_from_wasm_auth(&resolved_auth),
-            );
-            return Err(error);
-        }
-
-        // Check if already connected - prevent duplicate connections
-        if self.is_connected() {
-            wasm_debug_log!("KalamClient: Already connected, skipping reconnection");
-            return Ok(());
-        }
-
-        // T063O: Add console.log debugging for connection state changes
-        wasm_debug_log!("KalamClient: Connecting to WebSocket...");
-
-        // Convert http(s) URL to ws(s) URL (no auth in URL)
-        let disable_compression = self.connection_options.borrow().disable_compression;
-        let protocol_opts = self.connection_options.borrow().protocol;
-        let ws_url = match ws_url_from_http_opts(&self.url, disable_compression, protocol_opts) {
-            Ok(url) => url,
-            Err(error) => {
-                emit_runtime_js_error(
-                    &self.on_error_cb,
-                    &error,
-                    "Failed to connect to KalamDB",
-                    &self.url,
-                    auth_user_from_wasm_auth(&resolved_auth),
-                );
-                return Err(error);
-            },
-        };
-
-        let jwt_token = match &resolved_auth {
-            WasmAuthProvider::Jwt { token } => Some(token.as_str()),
-            _ => None,
-        };
-        let uses_upgrade_auth = jwt_token.is_some_and(jwt_uses_upgrade_auth);
-
-        let ws = match open_websocket(&ws_url, jwt_token) {
-            Ok(ws) => ws,
-            Err(error) => {
-                emit_runtime_js_error(
-                    &self.on_error_cb,
-                    &error,
-                    "Failed to connect to KalamDB",
-                    &self.url,
-                    auth_user_from_wasm_auth(&resolved_auth),
-                );
-                return Err(error);
-            },
-        };
-
-        // Set binaryType to arraybuffer so binary messages come as ArrayBuffer, not Blob
-        ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
-
-        // Create promises for connection and authentication
-        let (connect_promise, connect_resolve, connect_reject) = create_promise();
-
-        // For anonymous auth, we don't need to wait for auth_promise
-        let requires_auth = !matches!(resolved_auth, WasmAuthProvider::None);
-
-        let (auth_promise, auth_resolve, auth_reject) = create_promise();
-
-        let auth_message = if uses_upgrade_auth {
-            None
-        } else {
-            resolved_auth.to_ws_auth_message(protocol_opts)
-        };
-        let ws_clone_for_auth = ws.clone();
-        let auth_resolve_for_anon = auth_resolve.clone();
-        let on_send_for_open = Rc::clone(&self.on_send_cb);
-        let on_connect_for_open = Rc::clone(&self.on_connect_cb);
-
-        // Set up onopen handler. Header/subprotocol auth waits for AuthSuccess;
-        // message-auth sends Authenticate; anonymous resolves immediately.
-        let connect_resolve_clone = connect_resolve.clone();
-        let onopen_callback = Closure::wrap(Box::new(move || {
-            wasm_debug_log!("KalamClient: WebSocket connected");
-
-            if let Some(auth_msg) = &auth_message {
-                wasm_debug_log!("KalamClient: Sending authentication message");
-                if let Ok(json) = serde_json::to_string(&auth_msg) {
-                    if let Some(cb) = on_send_for_open.borrow().as_ref() {
-                        let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&json));
-                    }
-                    if let Err(_e) = ws_clone_for_auth.send_with_str(&json) {
-                        wasm_debug_log!(&format!(
-                            "KalamClient: Failed to send auth message: {:?}",
-                            _e
-                        ));
-                    }
-                }
-            } else if !requires_auth {
-                wasm_debug_log!("KalamClient: Anonymous connection, skipping authentication");
-                if let Some(cb) = on_connect_for_open.borrow().as_ref() {
-                    let _ = cb.call0(&JsValue::NULL);
-                }
-                let _ = auth_resolve_for_anon.call0(&JsValue::NULL);
-            }
-
-            let _ = connect_resolve_clone.call0(&JsValue::NULL);
-        }) as Box<dyn FnMut()>);
-        ws.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
-        onopen_callback.forget();
-
-        // T063L: Implement WebSocket error and close handlers
-        let connect_reject_clone = connect_reject.clone();
-        let auth_reject_clone = auth_reject.clone();
-        let on_error_for_err = Rc::clone(&self.on_error_cb);
-        let subscriptions_for_error = Rc::clone(&self.subscription_state);
-        let ws_ref_for_error = Rc::clone(&self.ws);
-        let ping_interval_id_for_error = Rc::clone(&self.ping_interval_id);
-        let source_ws_for_error = ws.clone();
-        let error_url = self.url.clone();
-        let error_auth_user = auth_user_from_wasm_auth(&resolved_auth).map(str::to_owned);
-        let onerror_callback = Closure::wrap(Box::new(move |_e: ErrorEvent| {
-            wasm_debug_log!(&format!("KalamClient: WebSocket error: {:?}", _e));
-            if !clear_active_socket(
-                &ws_ref_for_error,
-                &source_ws_for_error,
-                &ping_interval_id_for_error,
-            ) {
-                return;
-            }
-            let event = build_runtime_connection_error(
-                "Failed to connect to KalamDB",
-                "WebSocket connection failed",
-                true,
-                &error_url,
-                error_auth_user.as_deref(),
-            );
-            emit_runtime_ws_error(&on_error_for_err, &event);
-            reject_pending_subscriptions(
-                &subscriptions_for_error,
-                "WebSocket connection failed before the subscription was acknowledged",
-            );
-            let error_msg = JsValue::from_str(&event.message);
-            let _ = connect_reject_clone.call1(&JsValue::NULL, &error_msg);
-            let _ = auth_reject_clone.call1(&JsValue::NULL, &error_msg);
-        }) as Box<dyn FnMut(ErrorEvent)>);
-        ws.set_onerror(Some(onerror_callback.as_ref().unchecked_ref()));
-        onerror_callback.forget();
-
-        let on_disconnect_for_close = Rc::clone(&self.on_disconnect_cb);
-        let subscriptions_for_close = Rc::clone(&self.subscription_state);
-        let ws_ref_for_close = Rc::clone(&self.ws);
-        let ping_interval_id_for_close = Rc::clone(&self.ping_interval_id);
-        let source_ws_for_close = ws.clone();
-        let onclose_callback = Closure::wrap(Box::new(move |e: CloseEvent| {
-            wasm_debug_log!(&format!(
-                "KalamClient: WebSocket closed: code={}, reason={}",
-                e.code(),
-                e.reason()
-            ));
-            if !clear_active_socket(
-                &ws_ref_for_close,
-                &source_ws_for_close,
-                &ping_interval_id_for_close,
-            ) {
-                return;
-            }
-            // Emit on_disconnect callback
-            if let Some(cb) = on_disconnect_for_close.borrow().as_ref() {
-                let reason_obj = js_sys::Object::new();
-                let _ = js_sys::Reflect::set(
-                    &reason_obj,
-                    &"message".into(),
-                    &JsValue::from_str(&e.reason()),
-                );
-                let _ = js_sys::Reflect::set(
-                    &reason_obj,
-                    &"code".into(),
-                    &JsValue::from_f64(e.code() as f64),
-                );
-                let _ = cb.call1(&JsValue::NULL, &reason_obj);
-            }
-            let close_message = if e.reason().is_empty() {
-                format!(
-                    "WebSocket closed before the subscription was acknowledged (code {})",
-                    e.code()
-                )
-            } else {
-                format!("WebSocket closed before the subscription was acknowledged: {}", e.reason())
-            };
-            reject_pending_subscriptions(&subscriptions_for_close, &close_message);
-            // Note: Auto-reconnection is handled via the setup_auto_reconnect callback
-        }) as Box<dyn FnMut(CloseEvent)>);
-        ws.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
-        onclose_callback.forget();
-
-        // Set up auto-reconnect onclose handler
-        self.setup_auto_reconnect(&ws);
-
-        // T063K: Implement WebSocket onmessage handler to parse events and invoke registered
-        // callbacks
-        let subscriptions = Rc::clone(&self.subscription_state);
-        let learned_domains = Rc::clone(&self.learned_domains);
-        let auth_resolve_clone = auth_resolve.clone();
-        let auth_reject_clone2 = auth_reject.clone();
-        let auth_handled = Rc::new(RefCell::new(!requires_auth)); // Already handled if anonymous
-        let auth_handled_clone = Rc::clone(&auth_handled);
-        let on_receive_for_msg = Rc::clone(&self.on_receive_cb);
-        let on_send_for_msg = Rc::clone(&self.on_send_cb);
-        let on_connect_for_msg = Rc::clone(&self.on_connect_cb);
-        let on_error_for_msg = Rc::clone(&self.on_error_cb);
-        let negotiated_ser_for_msg = Rc::clone(&self.negotiated_ser);
-        let ws_for_next_batch = ws.clone();
-
-        let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
-            // Try to parse the message as a ServerMessage.
-            // Text frames are always JSON. Binary frames depend on negotiated format.
-            let event: Option<ServerMessage> = (|| {
-                let data = e.data();
-                if data.is_instance_of::<js_sys::JsString>() {
-                    // Text frame — always JSON (auth messages and JSON-mode data)
-                    let text: String = data.dyn_into::<js_sys::JsString>().ok()?.into();
-                    if let Some(cb) = on_receive_for_msg.borrow().as_ref() {
-                        let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&text));
-                    }
-                    serde_json::from_str::<ServerMessage>(&text).ok()
-                } else if negotiated_ser_for_msg.get() == SerializationType::Domain {
-                    let raw = decode_ws_binary_payload(&e)?;
-                    link_common::ws_domain::decode_server_message(&raw).ok()
-                } else {
-                    // Binary frame with JSON (gzip-compressed JSON)
-                    let message = decode_ws_message(&e)?;
-                    if let Some(cb) = on_receive_for_msg.borrow().as_ref() {
-                        let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&message));
-                    }
-                    serde_json::from_str::<ServerMessage>(&message).ok()
-                }
-            })();
-
-            let event = match event {
-                Some(e) => e,
-                None => return,
-            };
-
-            // Check for authentication response first
-            if !*auth_handled_clone.borrow() {
-                match &event {
-                    ServerMessage::AuthSuccess {
-                        user: _user_id,
-                        role: _role,
-                        protocol,
-                    } => {
-                        wasm_debug_log!(&format!(
-                            "KalamClient: Authentication successful - user_id: {}, role: {}",
-                            _user_id, _role
-                        ));
-                        // Store the negotiated serialization type
-                        negotiated_ser_for_msg.set(protocol.serialization);
-                        *auth_handled_clone.borrow_mut() = true;
-                        if let Some(cb) = on_connect_for_msg.borrow().as_ref() {
-                            let _ = cb.call0(&JsValue::NULL);
-                        }
-                        let _ = auth_resolve_clone.call0(&JsValue::NULL);
-                        return;
-                    },
-                    ServerMessage::AuthError { message: error_msg } => {
-                        wasm_debug_log!(&format!(
-                            "KalamClient: Authentication failed - {}",
-                            error_msg
-                        ));
-                        *auth_handled_clone.borrow_mut() = true;
-                        if let Some(cb) = on_error_for_msg.borrow().as_ref() {
-                            let err_obj = js_sys::Object::new();
-                            let _ = js_sys::Reflect::set(
-                                &err_obj,
-                                &"message".into(),
-                                &JsValue::from_str(&format!(
-                                    "Authentication failed: {}",
-                                    error_msg
-                                )),
-                            );
-                            let _ = js_sys::Reflect::set(
-                                &err_obj,
-                                &"recoverable".into(),
-                                &JsValue::FALSE,
-                            );
-                            let _ = cb.call1(&JsValue::NULL, &err_obj);
-                        }
-                        let error =
-                            JsValue::from_str(&format!("Authentication failed: {}", error_msg));
-                        let _ = auth_reject_clone2.call1(&JsValue::NULL, &error);
-                        return;
-                    },
-                    _ => {},
-                }
-            }
-
-            if let Some(dispatch) =
-                dispatch_subscription_server_message(&subscriptions, &learned_domains, &event)
-            {
-                if let Some((subscription_id, last_seq_id)) = dispatch.invoke() {
-                    let _ = send_next_batch_traced(
-                        &ws_for_next_batch,
-                        &subscription_id,
-                        last_seq_id,
-                        negotiated_ser_for_msg.get(),
-                        &on_send_for_msg,
-                    );
-                }
-            }
-        }) as Box<dyn FnMut(MessageEvent)>);
-        ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
-        onmessage_callback.forget();
-
-        // T063D: Store WebSocket instance in KalamClient struct
-        *self.ws.borrow_mut() = Some(ws);
-
-        wasm_debug_log!("KalamClient: Waiting for WebSocket to open...");
-
-        // Wait for the WebSocket to open
-        JsFuture::from(connect_promise).await?;
-
-        wasm_debug_log!("KalamClient: Waiting for authentication...");
-
-        // Wait for authentication to complete
-        JsFuture::from(auth_promise).await?;
-
-        wasm_debug_log!("KalamClient: WebSocket connection established and authenticated");
-
-        if !self.subscription_state.borrow().is_empty() {
-            resubscribe_all(
-                Rc::clone(&self.ws),
-                Rc::clone(&self.subscription_state),
-                self.negotiated_ser.get(),
-                Some(Rc::clone(&self.on_send_cb)),
-            )
-            .await;
-        }
-
-        // Start keepalive ping timer (no-op when interval is 0)
-        self.start_ping_timer();
-
+    /// Disconnect the WebSocket and end its subscriptions.
+    pub async fn disconnect(&self) -> Result<(), JsValue> {
+        self.realtime.disconnect(true);
         Ok(())
     }
 
-    /// Disconnect from KalamDB server (T046, T063E)
-    pub async fn disconnect(&mut self) -> Result<(), JsValue> {
-        wasm_debug_log!("KalamClient: Disconnecting from WebSocket...");
-
-        // Stop keepalive ping timer
-        self.stop_ping_timer();
-
-        // Disable auto-reconnect during intentional disconnect
-        self.connection_options.borrow_mut().auto_reconnect = false;
-
-        // T063E: Properly close WebSocket and cleanup resources
-        if let Some(ws) = self.ws.borrow_mut().take() {
-            ws.set_onclose(None);
-            ws.set_onerror(None);
-            ws.set_onmessage(None);
-            ws.close()?;
-
-            if let Some(cb) = self.on_disconnect_cb.borrow().as_ref() {
-                let reason_obj = js_sys::Object::new();
-                let _ = js_sys::Reflect::set(
-                    &reason_obj,
-                    &"message".into(),
-                    &JsValue::from_str("manual disconnect"),
-                );
-                let _ =
-                    js_sys::Reflect::set(&reason_obj, &"code".into(), &JsValue::from_f64(1000.0));
-                let _ = cb.call1(&JsValue::NULL, &reason_obj);
-            }
-        }
-
-        // Clear all subscriptions
-        self.subscription_state.borrow_mut().clear();
-
-        wasm_debug_log!("KalamClient: Disconnected");
-        Ok(())
-    }
-
-    /// Check if client is currently connected (T047)
-    ///
-    /// # Returns
-    /// true if WebSocket connection is active, false otherwise
+    /// Whether the socket is authenticated and its subscriptions have resumed.
     #[wasm_bindgen(js_name = isConnected)]
     pub fn is_connected(&self) -> bool {
-        self.ws.borrow().as_ref().is_some_and(|ws| ws.ready_state() == WebSocket::OPEN)
+        self.realtime.is_connected()
     }
 
     /// Set the application-level keepalive ping interval in milliseconds.
@@ -1914,7 +1104,7 @@ impl KalamClient {
     /// Takes `u32` (maps to TypeScript `number`); the internal store is `u64`.
     #[wasm_bindgen(js_name = setPingInterval)]
     pub fn set_ping_interval(&self, ms: u32) {
-        self.connection_options.borrow_mut().ping_interval_ms = ms as u64;
+        self.realtime.options.borrow_mut().ping_interval_ms = ms as u64;
     }
 
     /// Send a single application-level keepalive ping to the server.
@@ -1923,13 +1113,13 @@ impl KalamClient {
     /// callers can send an ad-hoc ping if needed.
     #[wasm_bindgen(js_name = sendPing)]
     pub fn send_ping(&self) -> Result<(), JsValue> {
-        if let Some(ws) = self.ws.borrow().as_ref() {
+        if let Some(ws) = self.realtime.socket().as_ref() {
             if ws.ready_state() == WebSocket::OPEN {
                 send_ws_message_traced(
                     ws,
                     &ClientMessage::Ping,
-                    self.negotiated_ser.get(),
-                    &self.on_send_cb,
+                    self.realtime.serialization.get(),
+                    &self.realtime.on_send,
                 )?;
             }
         }
@@ -1940,13 +1130,14 @@ impl KalamClient {
     #[wasm_bindgen(js_name = requestNextBatch)]
     pub fn request_next_batch(&self, subscription_id: String) -> Result<(), JsValue> {
         let last_seq_id = self
-            .subscription_state
+            .realtime
+            .subscriptions
             .borrow()
             .get(&subscription_id)
-            .map(|state| state.last_seq_id)
+            .map(|state| state.batch_seq_id.or(state.last_seq_id))
             .ok_or_else(|| JsValue::from_str("Unknown subscription id"))?;
 
-        let Some(ws) = self.ws.borrow().as_ref().cloned() else {
+        let Some(ws) = self.realtime.socket() else {
             return Err(JsValue::from_str("WebSocket connection is unavailable"));
         };
 
@@ -1958,48 +1149,9 @@ impl KalamClient {
             &ws,
             &subscription_id,
             last_seq_id,
-            self.negotiated_ser.get(),
-            &self.on_send_cb,
+            self.realtime.serialization.get(),
+            &self.realtime.on_send,
         )
-    }
-
-    /// Start the internal keepalive ping interval (idempotent).
-    ///
-    /// Called automatically by `connect()` and after a successful reconnect.
-    fn start_ping_timer(&self) {
-        self.stop_ping_timer();
-
-        let interval_ms = self.connection_options.borrow().ping_interval_ms;
-        if interval_ms == 0 {
-            return;
-        }
-
-        let ws_ref = Rc::clone(&self.ws);
-        let negotiated_ser_for_ping = Rc::clone(&self.negotiated_ser);
-        let ping_cb = Closure::wrap(Box::new(move || {
-            if let Some(ws) = ws_ref.borrow().as_ref() {
-                if ws.ready_state() == WebSocket::OPEN {
-                    let _ =
-                        send_ws_message(ws, &ClientMessage::Ping, negotiated_ser_for_ping.get());
-                }
-            }
-        }) as Box<dyn FnMut()>);
-
-        let id = super::helpers::global_set_interval(
-            ping_cb.as_ref().unchecked_ref(),
-            interval_ms as i32,
-        );
-        ping_cb.forget();
-        *self.ping_interval_id.borrow_mut() = id;
-    }
-
-    /// Stop the internal keepalive ping interval (idempotent).
-    fn stop_ping_timer(&self) {
-        let id = *self.ping_interval_id.borrow();
-        if id >= 0 {
-            super::helpers::global_clear_interval(id);
-            *self.ping_interval_id.borrow_mut() = -1;
-        }
     }
 
     /// Insert data into a table (T048, T063G)
@@ -2235,7 +1387,7 @@ impl KalamClient {
             parsed_options.subscription_options.unwrap_or_default(),
             callback,
             SubscriptionCallbackMode::live_rows(link_common::subscription::LiveRowsConfig {
-                limit: parsed_options.limit,
+                limit:       parsed_options.limit,
                 key_columns: parsed_options.key_columns,
             }),
         )
@@ -2247,23 +1399,22 @@ impl KalamClient {
     /// # Arguments
     /// * `subscription_id` - ID returned from subscribe()
     pub async fn unsubscribe(&self, subscription_id: String) -> Result<(), JsValue> {
-        if !self.is_connected() {
-            return Err(JsValue::from_str("Not connected to server. Call connect() first."));
+        let removed = self.realtime.subscriptions.borrow_mut().remove(&subscription_id);
+        if let Some(reject) = removed.and_then(|state| state.pending_subscribe_reject) {
+            let _ = reject.call1(&JsValue::NULL, &JsValue::from_str("Subscription cancelled"));
         }
-
-        // Remove from subscription state
-        self.subscription_state.borrow_mut().remove(&subscription_id);
+        self.realtime.check_resumed();
 
         // Send unsubscribe message via WebSocket
-        if let Some(ws) = self.ws.borrow().as_ref() {
+        if let Some(ws) = self.realtime.socket().as_ref() {
             let unsubscribe_msg = ClientMessage::Unsubscribe {
                 subscription_id: subscription_id.clone(),
             };
             send_ws_message_traced(
                 ws,
                 &unsubscribe_msg,
-                self.negotiated_ser.get(),
-                &self.on_send_cb,
+                self.realtime.serialization.get(),
+                &self.realtime.on_send,
             )?;
         }
 
@@ -2284,7 +1435,7 @@ impl KalamClient {
     /// ```
     #[wasm_bindgen(js_name = getSubscriptions)]
     pub fn get_subscriptions(&self) -> JsValue {
-        let state = self.subscription_state.borrow();
+        let state = self.realtime.subscriptions.borrow();
         let list: Vec<serde_json::Value> = state
             .iter()
             .map(|(id, entry)| {
@@ -2321,7 +1472,7 @@ impl KalamClient {
     /// await client.connect(); // Now uses JWT for WebSocket
     /// ```
     pub async fn login(&mut self) -> Result<JsValue, JsValue> {
-        let (user, password) = match &*self.auth.borrow() {
+        let (user, password) = match &*self.realtime.auth.borrow() {
             WasmAuthProvider::Basic { username, password } => (username.clone(), password.clone()),
             _ => {
                 return Err(JsValue::from_str(
@@ -2331,10 +1482,10 @@ impl KalamClient {
             },
         };
 
-        let login_response = self.perform_basic_login(&user, &password).await?;
+        let login_response = perform_basic_login(&self.realtime.url, &user, &password).await?;
 
         // Switch to JWT auth
-        *self.auth.borrow_mut() = WasmAuthProvider::Jwt {
+        *self.realtime.auth.borrow_mut() = WasmAuthProvider::Jwt {
             token: login_response.access_token.clone(),
         };
 
@@ -2368,7 +1519,7 @@ impl KalamClient {
     /// console.log(refreshResp.access_token);
     /// ```
     pub async fn refresh_access_token(&mut self, refresh_token: &str) -> Result<JsValue, JsValue> {
-        let url = format!("{}/v1/api/auth/refresh", self.url);
+        let url = format!("{}/v1/api/auth/refresh", self.realtime.url);
         let auth_header = format!("Bearer {}", refresh_token);
         let json_str = super::helpers::wasm_fetch(
             &url,
@@ -2383,7 +1534,7 @@ impl KalamClient {
             .map_err(|e| JsValue::from_str(&format!("Failed to parse refresh response: {}", e)))?;
 
         // Update to new JWT
-        *self.auth.borrow_mut() = WasmAuthProvider::Jwt {
+        *self.realtime.auth.borrow_mut() = WasmAuthProvider::Jwt {
             token: login_response.access_token.clone(),
         };
 
@@ -2408,7 +1559,7 @@ impl KalamClient {
         params: Option<Vec<serde_json::Value>>,
         namespace_id: Option<String>,
     ) -> Result<String, JsValue> {
-        if matches!(&*self.auth.borrow(), WasmAuthProvider::Basic { .. }) {
+        if matches!(&*self.realtime.auth.borrow(), WasmAuthProvider::Basic { .. }) {
             self.reauthenticate_for_http().await?;
         }
 
@@ -2470,8 +1621,8 @@ impl KalamClient {
         let body_str = serde_json::to_string(&body)
             .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))?;
 
-        let url = format!("{}/v1/api/sql", self.url);
-        let auth_header = self.auth.borrow().to_http_header();
+        let url = format!("{}/v1/api/sql", self.realtime.url);
+        let auth_header = self.realtime.auth.borrow().to_http_header();
         let mut hdrs: Vec<(&str, &str)> = vec![("Content-Type", "application/json")];
         if let Some(ref ah) = auth_header {
             hdrs.push(("Authorization", ah));
@@ -2495,10 +1646,11 @@ impl KalamClient {
     }
 
     /// Resolve fresh credentials from authProvider callback or stored basic
-    /// credentials, obtain a JWT, and update `self.auth`.
+    /// credentials, obtain a JWT, and update `self.realtime.auth`.
     async fn reauthenticate_for_http(&self) -> Result<(), JsValue> {
         // Try the dynamic auth provider callback first (set by TS/Dart SDK).
-        if let Some(cb) = self.auth_provider_cb.borrow().clone() {
+        let provider = self.realtime.auth_provider.borrow().clone();
+        if let Some(cb) = provider {
             let resolved_auth = resolve_auth_provider(Some(cb), WasmAuthProvider::None).await?;
             let _log_message = match &resolved_auth {
                 WasmAuthProvider::Jwt { .. } => {
@@ -2507,14 +1659,14 @@ impl KalamClient {
                 WasmAuthProvider::None => "KalamClient: authProvider returned no credentials",
                 WasmAuthProvider::Basic { .. } => unreachable!(),
             };
-            *self.auth.borrow_mut() = resolved_auth;
+            *self.realtime.auth.borrow_mut() = resolved_auth;
             wasm_debug_log!(_log_message);
             return Ok(());
         }
 
         // Fallback: if we have stored basic credentials, perform a login.
         let basic = {
-            let auth = self.auth.borrow();
+            let auth = self.realtime.auth.borrow();
             match &*auth {
                 WasmAuthProvider::Basic { username, password } => {
                     Some((username.clone(), password.clone()))
@@ -2524,8 +1676,8 @@ impl KalamClient {
         };
 
         if let Some((username, password)) = basic {
-            let login_resp = self.perform_basic_login(&username, &password).await?;
-            *self.auth.borrow_mut() = WasmAuthProvider::Jwt {
+            let login_resp = perform_basic_login(&self.realtime.url, &username, &password).await?;
+            *self.realtime.auth.borrow_mut() = WasmAuthProvider::Jwt {
                 token: login_resp.access_token,
             };
             wasm_debug_log!("KalamClient: Reauthenticated via basic login");
@@ -2536,109 +1688,6 @@ impl KalamClient {
             "Cannot reauthenticate: no authProvider callback or basic credentials available",
         ))
     }
-
-    /// Perform HTTP POST to /v1/api/auth/login and return the parsed response.
-    async fn perform_basic_login(
-        &self,
-        user: &str,
-        password: &str,
-    ) -> Result<link_common::models::LoginResponse, JsValue> {
-        let body = serde_json::json!({
-            "user": user,
-            "password": password,
-        });
-        let body_str = body.to_string();
-
-        let url = format!("{}/v1/api/auth/login", self.url);
-        let json_str = super::helpers::wasm_fetch(
-            &url,
-            "POST",
-            Some(&body_str),
-            &[("Content-Type", "application/json")],
-            "Login failed",
-        )
-        .await?;
-
-        serde_json::from_str(&json_str)
-            .map_err(|e| JsValue::from_str(&format!("Failed to parse login response: {}", e)))
-    }
-
-    /// Set up auto-reconnection handler for the WebSocket
-    fn setup_auto_reconnect(&self, ws: &WebSocket) {
-        install_auto_reconnect_listener(
-            ws,
-            Rc::clone(&self.connection_options),
-            Rc::clone(&self.subscription_state),
-            Rc::clone(&self.reconnect_attempts),
-            Rc::clone(&self.is_reconnecting),
-            Rc::clone(&self.ws),
-            Rc::clone(&self.ping_interval_id),
-            self.url.clone(),
-            self.auth.borrow().clone(),
-            Rc::clone(&self.auth_provider_cb),
-            Rc::clone(&self.on_connect_cb),
-            Rc::clone(&self.on_disconnect_cb),
-            Rc::clone(&self.on_error_cb),
-            Rc::clone(&self.on_receive_cb),
-            Rc::clone(&self.on_send_cb),
-            Rc::clone(&self.negotiated_ser),
-            Rc::clone(&self.learned_domains),
-        );
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn install_auto_reconnect_listener(
-    ws: &WebSocket,
-    connection_options: Rc<RefCell<ConnectionOptions>>,
-    subscription_state: Rc<RefCell<HashMap<String, SubscriptionState>>>,
-    reconnect_attempts: Rc<RefCell<u32>>,
-    is_reconnecting: Rc<RefCell<bool>>,
-    ws_ref: Rc<RefCell<Option<WebSocket>>>,
-    ping_interval_id: Rc<RefCell<i32>>,
-    url: String,
-    auth: WasmAuthProvider,
-    auth_provider_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_connect_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_disconnect_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_error_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_receive_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_send_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    negotiated_ser: Rc<Cell<SerializationType>>,
-    learned_domains: Rc<RefCell<HashMap<String, VersionDomain>>>,
-) {
-    let source_ws = ws.clone();
-    let onclose_reconnect = Closure::wrap(Box::new(move |_e: CloseEvent| {
-        let is_active_socket = ws_ref
-            .borrow()
-            .as_ref()
-            .is_some_and(|current_ws| js_sys::Object::is(current_ws.as_ref(), source_ws.as_ref()));
-        if !is_active_socket {
-            return;
-        }
-        schedule_auto_reconnect(
-            Rc::clone(&connection_options),
-            Rc::clone(&subscription_state),
-            Rc::clone(&reconnect_attempts),
-            Rc::clone(&is_reconnecting),
-            Rc::clone(&ws_ref),
-            Rc::clone(&ping_interval_id),
-            url.clone(),
-            auth.clone(),
-            Rc::clone(&auth_provider_cb),
-            Rc::clone(&on_connect_cb),
-            Rc::clone(&on_disconnect_cb),
-            Rc::clone(&on_error_cb),
-            Rc::clone(&on_receive_cb),
-            Rc::clone(&on_send_cb),
-            Rc::clone(&negotiated_ser),
-            Rc::clone(&learned_domains),
-        );
-    }) as Box<dyn FnMut(CloseEvent)>);
-
-    ws.add_event_listener_with_callback("close", onclose_reconnect.as_ref().unchecked_ref())
-        .ok();
-    onclose_reconnect.forget();
 }
 
 #[cfg(test)]

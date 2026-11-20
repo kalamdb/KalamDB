@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use super::registry::{
-    cache_entry_seq, clear_startup_deadline, effective_entry_seq, forget_resume_cursor,
-    is_delivery_gap, is_expired_resume, now_ms, refresh_startup_deadline, reset_startup_deadline,
-    resolve_subscription_key, should_send_subscription_options, ResumeCache, SubEntry,
+    cache_entry_seq, clear_startup_deadline, effective_entry_seq, forget_resume_cursor, now_ms,
+    refresh_startup_deadline, reset_startup_deadline, resolve_subscription_key,
+    should_send_subscription_options, ResumeCache, SubEntry,
 };
 use crate::{
     connection::{send_client_message, send_next_batch_request_with_format, WebSocketStream},
@@ -11,7 +11,10 @@ use crate::{
     models::{
         ChangeEvent, ClientMessage, SerializationType, SubscriptionOptions, SubscriptionRequest,
     },
-    subscription::{batch_envelope, filter_replayed_event, subscription_start_ready},
+    realtime::{resume_acknowledged, SubscriptionRecovery},
+    subscription::{
+        batch_envelope, filter_replayed_event, subscription_start_ready, SubscriptionDelivery,
+    },
     timeouts::KalamLinkTimeouts,
 };
 
@@ -21,7 +24,8 @@ async fn recover_lapsed_subscription(
     id: &str,
     timeouts: &KalamLinkTimeouts,
     serialization: SerializationType,
-    keep_cursor: bool,
+    recovery: SubscriptionRecovery,
+    awaiting_resume: bool,
 ) {
     if let Err(error) = send_unsubscribe(ws, id, serialization).await {
         log::warn!("Failed to drop lapsed subscription {id}: {error}");
@@ -29,23 +33,21 @@ async fn recover_lapsed_subscription(
     let Some(entry) = subs.get_mut(id) else {
         return;
     };
-    let resume_from = keep_cursor.then(|| effective_entry_seq(entry)).flatten();
-    if resume_from.is_none() {
-        entry.options.from = None;
-        entry.options.version_domain = None;
-        entry.last_seq_id = None;
-        entry.consumed_seq_id = None;
-        entry.batch_seq_id = None;
-        entry.is_loading = entry.request_initial_data;
-    } else {
-        entry.options.from = resume_from;
-        entry.batch_seq_id = None;
-        entry.is_loading = true;
+    let mut consumed = effective_entry_seq(entry);
+    recovery.apply(&mut entry.options, &mut consumed);
+    if recovery == SubscriptionRecovery::Snapshot {
+        entry.snapshot_epoch = entry.snapshot_epoch.wrapping_add(1);
+        let message = SubscriptionDelivery::ResetSnapshot {
+            epoch: entry.snapshot_epoch,
+        };
+        if entry.event_tx.send(message).await.is_err() {
+            subs.remove(id);
+            return;
+        }
     }
-    entry.reconnect_resubscribe_pending = false;
-    if entry.is_loading {
-        reset_startup_deadline(entry, timeouts, false);
-    }
+    entry.batch_seq_id = None;
+    entry.is_loading = true;
+    reset_startup_deadline(entry, timeouts, awaiting_resume);
     let sql = entry.sql.clone();
     let request_initial_data = entry.request_initial_data;
     let options = entry.options.clone();
@@ -147,18 +149,21 @@ pub(super) async fn route_event(
     if let Some(key) = matched_key {
         let mut remove_after_send = false;
         let mut delivered_event = false;
-        let mut resume_without_cursor = false;
-        let mut resume_from_cursor = false;
+        let mut recovery = None;
+        let mut awaiting_resume = false;
+        let mut failed_resume = false;
         let key_str = key.as_str(&incoming_sub_id);
 
         if let Some(entry) = subs.get_mut(key_str) {
             entry.last_event_time_ms = Some(event_time_ms);
             let is_ack = matches!(event, ChangeEvent::Ack { .. });
             let is_start_ready = subscription_start_ready(&event);
+            if resume_acknowledged(&event) {
+                entry.reconnect_resubscribe_pending = false;
+            }
 
             match &event {
                 ChangeEvent::Ack { .. } => {
-                    entry.reconnect_resubscribe_pending = false;
                     if let Some(result_tx) = entry.pending_result_tx.take() {
                         let _ = result_tx.send(Ok((entry.generation, entry.options.from)));
                     }
@@ -175,26 +180,21 @@ pub(super) async fn route_event(
                     }
                 },
                 ChangeEvent::Error { code, message, .. } => {
-                    let expired = is_expired_resume(code, message);
-                    let delivery_gap = is_delivery_gap(code);
-                    if expired {
+                    let action = SubscriptionRecovery::from_error(code, message);
+                    if action == Some(SubscriptionRecovery::Snapshot) {
                         forget_resume_cursor(entry, resume_cache, key_str);
                     }
+                    awaiting_resume = entry.reconnect_resubscribe_pending;
                     clear_startup_deadline(entry);
-                    if delivery_gap && entry.pending_result_tx.is_none() {
-                        // The row is still in the replay log. Resume from the last
-                        // cursor instead of scanning the table again.
-                        resume_from_cursor = true;
-                    } else if expired && entry.pending_result_tx.is_none() {
-                        // The stream was already live. A full server buffer asked for a
-                        // fresh snapshot; replace the subscription instead of ending it.
-                        resume_without_cursor = true;
-                    } else if let Some(result_tx) = entry.pending_result_tx.take() {
+                    if let Some(result_tx) = entry.pending_result_tx.take() {
                         let _ = result_tx.send(Err(KalamLinkError::WebSocketError(format!(
                             "Subscription failed ({}): {}",
                             code, message
                         ))));
                         remove_after_send = true;
+                    } else {
+                        recovery = action;
+                        failed_resume = awaiting_resume && recovery.is_none();
                     }
                 },
                 _ => {},
@@ -208,8 +208,8 @@ pub(super) async fn route_event(
                 }
             }
 
-            if !remove_after_send && !resume_without_cursor && !resume_from_cursor {
-                if entry.event_tx.send(Ok(event)).await.is_err() {
+            if !remove_after_send && recovery.is_none() {
+                if entry.event_tx.send(SubscriptionDelivery::Event(Ok(event))).await.is_err() {
                     log::debug!("Subscription {} receiver dropped", incoming_sub_id);
                 } else {
                     delivered_event = true;
@@ -217,20 +217,21 @@ pub(super) async fn route_event(
             }
         }
 
-        if remove_after_send {
+        if remove_after_send || failed_resume {
             if let Some(entry) = subs.remove(key_str) {
                 cache_entry_seq(resume_cache, key_str, &entry);
             }
         }
 
-        if resume_from_cursor || resume_without_cursor {
+        if let Some(recovery) = recovery {
             recover_lapsed_subscription(
                 ws,
                 subs,
                 key_str,
                 timeouts,
                 serialization,
-                resume_from_cursor,
+                recovery,
+                awaiting_resume,
             )
             .await;
         }

@@ -193,14 +193,14 @@ packages:
       path: "../../link"
       relative: true
     source: path
-    version: "0.8.1"
+    version: "0.9.0"
   kalam_sync:
     dependency: "direct main"
     description:
       path: ".."
       relative: true
     source: path
-    version: "0.8.1"
+    version: "0.9.0"
   kalam_sync_generator_example:
     dependency: "direct main"
     description:

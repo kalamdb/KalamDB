@@ -408,6 +408,10 @@ const LOG_CACHE_SIZE: usize = 1000;
 /// Maximum bytes of log entry payloads to keep in memory cache (16 MB)
 const LOG_CACHE_MAX_BYTES: usize = 16 * 1024 * 1024;
 
+/// Standalone single-node Raft groups have no followers replicating from the log cache.
+const STANDALONE_LOG_CACHE_SIZE: usize = 128;
+const STANDALONE_LOG_CACHE_MAX_BYTES: usize = 2 * 1024 * 1024;
+
 /// Combined Raft storage implementing both log and state machine storage.
 ///
 /// `new()` and `new_persistent()` both use `RaftPartitionStore`. `new()` backs that store with
@@ -594,27 +598,37 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
 
         diagnose_recovered_log(&records, last_purged, persisted_last_applied, snapshot_log)?;
 
+        let flush_log_on_append = store.read_flush_log_on_append()?.unwrap_or(true);
+        let (max_cache_entries, max_cache_bytes) = if flush_log_on_append {
+            (LOG_CACHE_SIZE, LOG_CACHE_MAX_BYTES as u64)
+        } else {
+            (STANDALONE_LOG_CACHE_SIZE, STANDALONE_LOG_CACHE_MAX_BYTES as u64)
+        };
+
         let mut log_cache = BTreeMap::new();
         let mut initial_cache_bytes: u64 = 0;
         let mut recovered_last_log_id: Option<KalamLogId> = None;
-        if let Some((last_idx, _)) = records.last() {
-            let start_idx = last_idx.saturating_sub(LOG_CACHE_SIZE as u64 - 1);
-            for (index, bytes) in &records {
-                if *index < start_idx {
-                    continue;
-                }
-                let entry = RaftLogEntry::decode_record(bytes)?;
-                initial_cache_bytes += bytes.len() as u64;
-                let log_id = stored_log_id(entry.term, entry.index);
+        for (index, bytes) in records.iter().rev() {
+            let entry = RaftLogEntry::decode_record(bytes)?;
+            let log_id = stored_log_id(entry.term, entry.index);
+            if recovered_last_log_id.is_none() {
                 recovered_last_log_id = Some(log_id);
-                log_cache.insert(
-                    *index,
-                    LogEntryData {
-                        log_id,
-                        payload: Arc::from(bytes.clone()),
-                    },
-                );
             }
+            let entry_bytes = bytes.len() as u64;
+            if !log_cache.is_empty()
+                && (log_cache.len() >= max_cache_entries
+                    || initial_cache_bytes.saturating_add(entry_bytes) > max_cache_bytes)
+            {
+                break;
+            }
+            initial_cache_bytes = initial_cache_bytes.saturating_add(entry_bytes);
+            log_cache.insert(
+                *index,
+                LogEntryData {
+                    log_id,
+                    payload: Arc::from(bytes.clone()),
+                },
+            );
         }
 
         // The Raft applied index is `meta:last_applied`. A leftover `meta:commit`
@@ -622,7 +636,6 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         // and OpenRaft keeps the runtime commit in memory via `save_committed`.
         let last_applied = persisted_last_applied.or(snapshot_last_applied);
         let committed = last_applied;
-        let flush_log_on_append = store.read_flush_log_on_append()?.unwrap_or(true);
 
         // Determine final last_membership: prefer persisted value, fall back to snapshot
         let last_membership = persisted_membership.or(snapshot_membership).unwrap_or_default();
@@ -1458,9 +1471,12 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
     }
 
     fn trim_log_cache(&self, log: &mut BTreeMap<u64, LogEntryData>) {
-        let max_bytes = LOG_CACHE_MAX_BYTES as u64;
-        while log.len() > LOG_CACHE_SIZE || self.log_cache_bytes.load(Ordering::Relaxed) > max_bytes
-        {
+        let (max_entries, max_bytes) = if self.flush_log_on_append.load(Ordering::Relaxed) {
+            (LOG_CACHE_SIZE, LOG_CACHE_MAX_BYTES as u64)
+        } else {
+            (STANDALONE_LOG_CACHE_SIZE, STANDALONE_LOG_CACHE_MAX_BYTES as u64)
+        };
+        while log.len() > max_entries || self.log_cache_bytes.load(Ordering::Relaxed) > max_bytes {
             let Some((&first_key, entry)) = log.iter().next() else {
                 break;
             };

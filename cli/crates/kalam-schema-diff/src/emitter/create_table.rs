@@ -12,19 +12,16 @@ pub(super) fn emit_create_table(table: &Table) -> String {
         parts.push(constraint.clone());
     }
 
-    let kind_prefix = table.kind.map(|kind| kind.as_create_prefix()).unwrap_or("");
-    let mut sql =
-        format!("CREATE {}TABLE {} (\n  {}\n)", kind_prefix, table.name_sql, parts.join(",\n  "));
+    let mut sql = format!("CREATE TABLE {} (\n  {}\n)", table.name_sql, parts.join(",\n  "));
+    let options = table
+        .kind
+        .into_iter()
+        .map(|kind| format!("TYPE = '{}'", kind.as_str()))
+        .chain(table.options.iter().map(|(key, value)| format!("{key} = {value}")))
+        .collect::<Vec<_>>();
 
-    if !table.options.is_empty() {
-        let options = table
-            .options
-            .iter()
-            .map(|(key, value)| format!("{key} = {value}"))
-            .collect::<Vec<_>>()
-            .join(",\n  ");
-
-        sql.push_str(&format!("\nWITH (\n  {options}\n)"));
+    if !options.is_empty() {
+        sql.push_str(&format!("\nWITH (\n  {}\n)", options.join(",\n  ")));
     }
 
     sql.push(';');

@@ -27,11 +27,11 @@ impl TableKind {
         }
     }
 
-    pub(crate) fn as_create_prefix(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
-            Self::User => "USER ",
-            Self::Shared => "SHARED ",
-            Self::Stream => "STREAM ",
+            Self::User => "USER",
+            Self::Shared => "SHARED",
+            Self::Stream => "STREAM",
         }
     }
 }

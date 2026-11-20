@@ -33,7 +33,8 @@ pub(crate) struct ProcedureSchedules {
 }
 
 impl ProcedureSchedules {
-    pub async fn tick(&mut self, app: &Arc<AppContext>) -> Result<(), KalamDbError> {
+    /// Returns `true` when at least one schedule exists (active polling needed).
+    pub async fn tick(&mut self, app: &Arc<AppContext>) -> Result<bool, KalamDbError> {
         while let Some(result) = self.running.try_join_next() {
             if let Err(error) = result {
                 log::warn!("Schedule task failed: {error}");
@@ -42,7 +43,7 @@ impl ProcedureSchedules {
         // Match jobs runner: standalone is always the schedule owner.
         if app.is_cluster_mode() && !app.executor().is_leader(GroupId::Meta).await {
             self.leader_since = None;
-            return Ok(());
+            return Ok(false);
         }
         let now = Utc::now().timestamp_millis();
         let since = *self.leader_since.get_or_insert(now);
@@ -51,6 +52,9 @@ impl ProcedureSchedules {
             .await
             .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?
             .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+        if rows.is_empty() {
+            return Ok(false);
+        }
         let mut claim_timeout_ms = None;
         let mut pending = Vec::new();
         let mut reserved = self.running.len();
@@ -149,7 +153,7 @@ impl ProcedureSchedules {
                 });
             }
         }
-        Ok(())
+        Ok(true)
     }
 }
 

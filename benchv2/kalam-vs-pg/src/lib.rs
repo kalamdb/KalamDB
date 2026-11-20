@@ -88,7 +88,7 @@ pub fn print_latencies(latencies: Vec<Duration>) {
 
 pub fn kalamdb_setup_sql() -> Vec<String> {
     vec![
-        format!("CREATE NAMESPACE IF NOT EXISTS {KALAMDB_NAMESPACE}"),
+        format!("CREATE SCHEMA IF NOT EXISTS {KALAMDB_NAMESPACE}"),
         format!("DROP TABLE IF EXISTS {TABLE}"),
         format!("CREATE TABLE {TABLE} (id INT PRIMARY KEY, owner TEXT, room TEXT, data TEXT)"),
     ]

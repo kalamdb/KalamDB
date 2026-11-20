@@ -13,6 +13,13 @@ transaction_timeout_secs = 300
 max_transaction_buffer_bytes = 104857600
 
 [server]
+# Runtime sizing profile:
+# - "standard" (default): normal multi-core/server behavior.
+# - "micro": caps threads, RocksDB micro memtables/cache, DataFusion memory,
+#   SQL/manifest caches, and procedure runtime for high-density multi-instance
+#   hosting. Also settable via KALAMDB_SERVER_PROFILE=micro.
+profile = "standard"
+
 # Server bind address (default: 127.0.0.1)
 host = "0.0.0.0"
 
@@ -116,6 +123,8 @@ request_timeout_secs = 60
 connect_timeout_secs = 10
 
 [storage.rocksdb]
+# micro: ultra-low-RAM preset (512KB shared block cache, 16-64KB memtables, 1 bg job).
+#        Applied automatically by server.profile = "micro".
 # compact (default): tiny cache and memtables for a few tables and low traffic.
 # auto: modest RAM scaling, still clamped (cache 2MB–256MB, hot memtable 128KB–64MB).
 # balanced: cache ≈ RAM/32, hot memtable ≈ RAM/256.

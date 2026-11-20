@@ -567,12 +567,25 @@ impl CommandExecutor for RaftExecutor {
             },
         };
 
-        // First start the RPC server so we can receive incoming Raft RPCs
-        // and cluster messages (both services share the same port)
+        // First start the RPC server when peers or extra gRPC routes (e.g. pg_extension)
+        // need it, or when an explicit RPC bind address is configured. Pure standalone
+        // mode (ephemeral "127.0.0.1:0" with no peers and no extra routes) skips Tonic.
         let rpc_addr = self.manager.config().rpc_addr.clone();
         let extra_routes = self.extra_rpc_routes.get().cloned();
-        crate::network::start_rpc_server(self.manager.clone(), rpc_addr, handler, extra_routes)
+        let needs_rpc_server = !self.manager.config().peers.is_empty()
+            || extra_routes.is_some()
+            || rpc_addr != "127.0.0.1:0";
+        if needs_rpc_server {
+            crate::network::start_rpc_server(
+                self.manager.clone(),
+                rpc_addr,
+                handler,
+                extra_routes,
+            )
             .await?;
+        } else {
+            log::debug!("Skipping Raft gRPC listener in pure standalone mode");
+        }
 
         // Then start the Raft groups
         self.manager.start().await

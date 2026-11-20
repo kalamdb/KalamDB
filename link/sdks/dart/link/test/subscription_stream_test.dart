@@ -10,14 +10,10 @@ void main() {
         () async {
       final source = Queue<String>.from(['alpha', 'beta']);
       final received = <String>[];
-      var prepareCalls = 0;
       var openCalls = 0;
       var closeCalls = 0;
       final stream = runBridgeSubscriptionStream<Object, String, String>(
         description: 'unit-stream',
-        prepare: () async {
-          prepareCalls += 1;
-        },
         open: () async {
           openCalls += 1;
           return Object();
@@ -36,7 +32,6 @@ void main() {
       }
 
       expect(received, ['ALPHA', 'BETA']);
-      expect(prepareCalls, 1);
       expect(openCalls, 1);
       expect(closeCalls, 1);
     });
@@ -49,7 +44,6 @@ void main() {
 
       final stream = runBridgeSubscriptionStream<Object, String, String>(
         description: 'cancel-stream',
-        prepare: () async {},
         open: () async => Object(),
         next: (_) {
           nextStarted.complete();
@@ -84,7 +78,6 @@ void main() {
       final received = <String>[];
       final stream = runBridgeSubscriptionStream<Object, String, String>(
         description: 'backpressured-stream',
-        prepare: () async {},
         open: () async => Object(),
         next: (_) async => source.isEmpty ? null : source.removeFirst(),
         close: (_) async {},

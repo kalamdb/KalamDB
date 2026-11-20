@@ -212,6 +212,52 @@ impl Default for FileUploadSettings {
     }
 }
 
+/// Deployment resource profile.
+///
+/// - `standard` (default): balanced standalone/server defaults.
+/// - `micro`: ultra-low-memory profile for high-density multi-instance hosting
+///   (single HTTP/Tokio worker, micro RocksDB cache/memtables, tight DataFusion/cache/job caps).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerProfile {
+    #[default]
+    Standard,
+    Micro,
+}
+
+impl ServerProfile {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Micro => "micro",
+        }
+    }
+
+    pub fn is_micro(self) -> bool {
+        matches!(self, Self::Micro)
+    }
+}
+
+impl std::fmt::Display for ServerProfile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for ServerProfile {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "standard" | "default" => Ok(Self::Standard),
+            "micro" => Ok(Self::Micro),
+            other => Err(format!(
+                "unsupported server profile '{other}'; expected 'standard' or 'micro'"
+            )),
+        }
+    }
+}
+
 /// Server settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerSettings {
@@ -219,6 +265,9 @@ pub struct ServerSettings {
     pub port: u16,
     #[serde(default)]
     pub public_origin: Option<String>,
+    /// Deployment resource profile (`standard` or `micro`).
+    #[serde(default)]
+    pub profile: ServerProfile,
     #[serde(default = "default_workers")]
     pub workers: usize,
     /// Enable HTTP/2 protocol support (default: true)
@@ -420,6 +469,8 @@ impl Default for RocksDbCfProfilesSettings {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RocksDbMemoryMode {
+    /// Ultra-tiny cache (512 KB) and memtables (16–64 KB) for cloud free-tier micro instances.
+    Micro,
     /// Tiny cache (2 MB) and hot memtable (128 KB). Product default.
     #[default]
     Compact,
@@ -436,6 +487,7 @@ pub enum RocksDbMemoryMode {
 impl RocksDbMemoryMode {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Micro => "micro",
             Self::Compact => "compact",
             Self::Auto => "auto",
             Self::Balanced => "balanced",
@@ -446,15 +498,35 @@ impl RocksDbMemoryMode {
 
     /// True when cache and memtables are derived from host RAM at open.
     pub fn scales_from_host_ram(self) -> bool {
-        !matches!(self, Self::Compact)
+        !matches!(self, Self::Micro | Self::Compact)
     }
 
     /// `(max_subcompactions, max_file_opening_threads)` for this profile.
     pub fn rocksdb_io_parallelism(self) -> (u32, i32) {
         match self {
+            Self::Micro => (1, 1),
             Self::Compact => (1, 2),
             Self::Auto | Self::Balanced => (2, 8),
             Self::Server | Self::Performance => (4, 16),
+        }
+    }
+}
+
+impl std::str::FromStr for RocksDbMemoryMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "micro" => Ok(Self::Micro),
+            "compact" => Ok(Self::Compact),
+            "auto" => Ok(Self::Auto),
+            "balanced" => Ok(Self::Balanced),
+            "server" => Ok(Self::Server),
+            "performance" => Ok(Self::Performance),
+            other => Err(format!(
+                "unsupported RocksDB memory_mode '{other}'; expected micro, compact, auto, \
+                 balanced, server, or performance"
+            )),
         }
     }
 }
@@ -529,13 +601,50 @@ impl Default for RocksDbSettings {
 impl RocksDbSettings {
     /// Apply `memory_mode` using the host's total RAM.
     ///
-    /// `compact` keeps the configured sizes. Other modes derive cache and
+    /// `compact` keeps the configured sizes; `micro` clamps to ultra-small limits
+    /// for multi-instance cloud free tiers. Other modes derive cache and
     /// write buffers from `total_memory_bytes`.
     pub fn resolved_for_host_memory(&self, total_memory_bytes: Option<u64>) -> Self {
+        if matches!(self.memory_mode, RocksDbMemoryMode::Micro) {
+            let mut settings = self.clone();
+            settings.apply_micro_caps();
+            return settings;
+        }
         if !self.memory_mode.scales_from_host_ram() {
             return self.clone();
         }
         self.scaled_for_ram(total_memory_bytes.unwrap_or(0))
+    }
+
+    /// Clamp RocksDB cache, memtable, file-handle, and background thread settings
+    /// for ultra-low-RSS micro / cloud free-tier instances.
+    pub fn apply_micro_caps(&mut self) {
+        const KIB: usize = 1024;
+        self.block_cache_size = self.block_cache_size.min(512 * KIB);
+        self.max_background_jobs = self.max_background_jobs.clamp(1, 1);
+        if self.max_open_files < 0 || self.max_open_files > 128 {
+            self.max_open_files = 128;
+        }
+        self.cf_profiles.system_meta.write_buffer_size =
+            self.cf_profiles.system_meta.write_buffer_size.min(16 * KIB);
+        self.cf_profiles.system_meta.max_write_buffers =
+            self.cf_profiles.system_meta.max_write_buffers.clamp(1, 2);
+        self.cf_profiles.system_index.write_buffer_size =
+            self.cf_profiles.system_index.write_buffer_size.min(16 * KIB);
+        self.cf_profiles.system_index.max_write_buffers =
+            self.cf_profiles.system_index.max_write_buffers.clamp(1, 2);
+        self.cf_profiles.hot_data.write_buffer_size =
+            self.cf_profiles.hot_data.write_buffer_size.min(32 * KIB);
+        self.cf_profiles.hot_data.max_write_buffers =
+            self.cf_profiles.hot_data.max_write_buffers.clamp(1, 2);
+        self.cf_profiles.hot_index.write_buffer_size =
+            self.cf_profiles.hot_index.write_buffer_size.min(16 * KIB);
+        self.cf_profiles.hot_index.max_write_buffers =
+            self.cf_profiles.hot_index.max_write_buffers.clamp(1, 2);
+        self.cf_profiles.raft.write_buffer_size =
+            self.cf_profiles.raft.write_buffer_size.min(64 * KIB);
+        self.cf_profiles.raft.max_write_buffers =
+            self.cf_profiles.raft.max_write_buffers.clamp(1, 2);
     }
 
     fn scaled_for_ram(&self, total_memory_bytes: u64) -> Self {
@@ -549,6 +658,9 @@ impl RocksDbSettings {
         let ram = usize::try_from(total_memory_bytes).unwrap_or(usize::MAX);
 
         match self.memory_mode {
+            RocksDbMemoryMode::Micro => {
+                settings.apply_micro_caps();
+            },
             RocksDbMemoryMode::Compact => {},
             RocksDbMemoryMode::Auto => {
                 let hot_data = (ram / 512).clamp(128 * KIB, 64 * MIB);
@@ -1674,6 +1786,7 @@ impl Default for ServerConfig {
                 host: "127.0.0.1".to_string(),
                 port: 2900,
                 public_origin: None,
+                profile: ServerProfile::default(),
                 workers: 0,
                 enable_http2: default_enable_http2(),
                 ui_path: default_ui_path(),

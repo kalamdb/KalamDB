@@ -3,7 +3,7 @@ use crate::error::Result;
 
 /// High-level subscription that yields materialized live-query row snapshots.
 pub struct LiveRowsSubscription {
-    inner: SubscriptionManager,
+    inner:        SubscriptionManager,
     materializer: LiveRowsMaterializer,
 }
 
@@ -19,6 +19,9 @@ impl LiveRowsSubscription {
     pub async fn next(&mut self) -> Option<Result<LiveRowsEvent>> {
         loop {
             let event = self.inner.next().await?;
+            if self.inner.take_snapshot_reset() {
+                self.materializer.reset_snapshot();
+            }
             match event {
                 Ok(change) => {
                     if let Some(update) = self.materializer.apply(change) {

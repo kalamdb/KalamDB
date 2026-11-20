@@ -253,14 +253,14 @@ impl Benchmark for SubscriberScaleBench {
             self.finish_pending_cleanup().await;
 
             client
-                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
+                .sql_ok(&format!("CREATE SCHEMA IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!("DROP USER TABLE IF EXISTS {}.scale_sub", config.namespace))
+                .sql(&format!("DROP TABLE IF EXISTS {}.scale_sub", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
-                    "CREATE USER TABLE {}.scale_sub (id INT PRIMARY KEY, payload TEXT)",
+                    "CREATE TABLE {}.scale_sub (id INT PRIMARY KEY, payload TEXT) WITH (TYPE = 'USER')",
                     config.namespace
                 ))
                 .await?;
@@ -721,7 +721,7 @@ impl Benchmark for SubscriberScaleBench {
             }
 
             let _ = client
-                .sql(&format!("DROP USER TABLE IF EXISTS {}.scale_sub", config.namespace))
+                .sql(&format!("DROP TABLE IF EXISTS {}.scale_sub", config.namespace))
                 .await;
             Ok(())
         })

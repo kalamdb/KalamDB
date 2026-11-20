@@ -1100,11 +1100,15 @@ fn write_auto_test_server_state_locked(
 }
 
 fn pid_is_alive(pid: u32) -> bool {
-    static PROCESS_SYSTEM: OnceLock<Mutex<System>> = OnceLock::new();
-    let system = PROCESS_SYSTEM
-        .get_or_init(|| Mutex::new(System::new_with_specifics(RefreshKind::nothing())));
+    static PROCESS_SYSTEM: OnceLock<Mutex<Option<System>>> = OnceLock::new();
+    let system = PROCESS_SYSTEM.get_or_init(|| {
+        Mutex::new(System::new_with_specifics(RefreshKind::nothing()).ok())
+    });
 
     let Ok(mut guard) = system.lock() else {
+        return false;
+    };
+    let Some(guard) = guard.as_mut() else {
         return false;
     };
 
@@ -6027,11 +6031,13 @@ pub fn server_target_is_local() -> bool {
 }
 
 fn read_local_process_rss_mb(pid: u32) -> Option<u64> {
-    static PROCESS_SYSTEM: OnceLock<Mutex<System>> = OnceLock::new();
-    let system = PROCESS_SYSTEM
-        .get_or_init(|| Mutex::new(System::new_with_specifics(RefreshKind::nothing())));
+    static PROCESS_SYSTEM: OnceLock<Mutex<Option<System>>> = OnceLock::new();
+    let system = PROCESS_SYSTEM.get_or_init(|| {
+        Mutex::new(System::new_with_specifics(RefreshKind::nothing()).ok())
+    });
 
     let mut guard = system.lock().ok()?;
+    let guard = guard.as_mut()?;
     let pid = Pid::from_u32(pid);
     let refresh = ProcessRefreshKind::nothing().with_memory();
     guard.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), false, refresh);

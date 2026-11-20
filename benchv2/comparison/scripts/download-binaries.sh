@@ -10,6 +10,8 @@ mkdir -p "$BIN"
 TRAIL_VERSION="v0.34.4"
 PB_VERSION="0.40.5"
 SURREAL_VERSION="v3.3.0"
+SPACETIME_VERSION="v2.16.1"
+CONVEX_VERSION="precompiled-2026-11-19-9fde7cb"
 KALAM_RELEASE="v0.5.5-rc.1"
 
 ARCH="$(uname -m)"
@@ -26,6 +28,8 @@ case "$OS-$ARCH" in
     trail_asset="trailbase_${TRAIL_VERSION}_aarch64_apple_darwin.zip"
     pb_asset="pocketbase_${PB_VERSION}_darwin_arm64.zip"
     surreal_asset="surreal-${SURREAL_VERSION}.darwin-arm64.tgz"
+    spacetime_asset="spacetime-aarch64-apple-darwin.tar.gz"
+    convex_asset="convex-local-backend-aarch64-apple-darwin.zip"
     ;;
   Darwin-x86_64)
     echo "No KalamDB macos-x86_64 release asset in ${KALAM_RELEASE}; use arm64 or Linux." >&2
@@ -36,12 +40,16 @@ case "$OS-$ARCH" in
     trail_asset="trailbase_${TRAIL_VERSION}_aarch64_linux.zip"
     pb_asset="pocketbase_${PB_VERSION}_linux_arm64.zip"
     surreal_asset="surreal-${SURREAL_VERSION}.linux-arm64.tgz"
+    spacetime_asset="spacetime-aarch64-unknown-linux-gnu.tar.gz"
+    convex_asset="convex-local-backend-aarch64-unknown-linux-gnu.zip"
     ;;
   Linux-x86_64)
     kalam_asset="kalamdb-server-0.5.5-rc.1-linux-x86_64.tar.gz"
     trail_asset="trailbase_${TRAIL_VERSION}_x86_64_linux.zip"
     pb_asset="pocketbase_${PB_VERSION}_linux_amd64.zip"
     surreal_asset="surreal-${SURREAL_VERSION}.linux-amd64.tgz"
+    spacetime_asset="spacetime-x86_64-unknown-linux-gnu.tar.gz"
+    convex_asset="convex-local-backend-x86_64-unknown-linux-gnu.zip"
     ;;
   *)
     echo "Unsupported platform: $OS-$ARCH" >&2
@@ -118,8 +126,33 @@ if needs_refresh "$BIN/surreal" "$BIN/.surreal-version" "$SURREAL_VERSION"; then
   printf '%s\n' "$SURREAL_VERSION" >"$BIN/.surreal-version"
 fi
 
+# SpaceTimeDB CLI + standalone (file-backed; module is built at publish time)
+if needs_refresh "$BIN/spacetimedb-cli" "$BIN/.spacetimedb-version" "$SPACETIME_VERSION"; then
+  download "https://github.com/clockworklabs/SpacetimeDB/releases/download/${SPACETIME_VERSION}/${spacetime_asset}" "$BIN/${spacetime_asset}"
+  rm -rf "$BIN/spacetime-extract"
+  mkdir -p "$BIN/spacetime-extract"
+  tar -xzf "$BIN/${spacetime_asset}" -C "$BIN/spacetime-extract"
+  cp "$BIN/spacetime-extract/spacetimedb-cli" "$BIN/spacetimedb-cli"
+  cp "$BIN/spacetime-extract/spacetimedb-standalone" "$BIN/spacetimedb-standalone"
+  chmod +x "$BIN/spacetimedb-cli" "$BIN/spacetimedb-standalone"
+  ln -sfn spacetimedb-cli "$BIN/spacetime"
+  printf '%s\n' "$SPACETIME_VERSION" >"$BIN/.spacetimedb-version"
+fi
+
+if needs_refresh "$BIN/convex-local-backend" "$BIN/.convex-version" "$CONVEX_VERSION"; then
+  download "https://github.com/get-convex/convex-backend/releases/download/${CONVEX_VERSION}/${convex_asset}" "$BIN/${convex_asset}"
+  rm -rf "$BIN/convex-extract"
+  mkdir -p "$BIN/convex-extract"
+  unzip -o "$BIN/${convex_asset}" -d "$BIN/convex-extract"
+  cp "$BIN/convex-extract/convex-local-backend" "$BIN/convex-local-backend"
+  chmod +x "$BIN/convex-local-backend"
+  printf '%s\n' "$CONVEX_VERSION" >"$BIN/.convex-version"
+fi
+
 echo "Binaries ready in $BIN"
 echo "  TrailBase ${TRAIL_VERSION}"
 echo "  PocketBase v${PB_VERSION}"
 echo "  SurrealDB ${SURREAL_VERSION}"
-ls -la "$BIN/kalamdb-server" "$BIN/trail" "$BIN/pocketbase" "$BIN/surreal"
+echo "  SpaceTimeDB ${SPACETIME_VERSION}"
+echo "  Convex ${CONVEX_VERSION}"
+ls -la "$BIN/kalamdb-server" "$BIN/trail" "$BIN/pocketbase" "$BIN/surreal" "$BIN/spacetimedb-cli" "$BIN/spacetimedb-standalone" "$BIN/convex-local-backend"

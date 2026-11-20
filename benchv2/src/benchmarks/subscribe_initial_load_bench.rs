@@ -28,14 +28,14 @@ impl Benchmark for SubscribeInitialLoadBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
+                .sql_ok(&format!("CREATE SCHEMA IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!("DROP USER TABLE IF EXISTS {}.sub_init_load", config.namespace))
+                .sql(&format!("DROP TABLE IF EXISTS {}.sub_init_load", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
-                    "CREATE USER TABLE {}.sub_init_load (id INT PRIMARY KEY, name TEXT, value INT)",
+                    "CREATE TABLE {}.sub_init_load (id INT PRIMARY KEY, name TEXT, value INT) WITH (TYPE = 'USER')",
                     config.namespace
                 ))
                 .await?;
@@ -124,7 +124,7 @@ impl Benchmark for SubscribeInitialLoadBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             let _ = client
-                .sql(&format!("DROP USER TABLE IF EXISTS {}.sub_init_load", config.namespace))
+                .sql(&format!("DROP TABLE IF EXISTS {}.sub_init_load", config.namespace))
                 .await;
             Ok(())
         })

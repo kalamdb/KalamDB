@@ -25,7 +25,7 @@ impl Benchmark for ConcurrentInsertBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
+                .sql_ok(&format!("CREATE SCHEMA IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
                 .sql(&format!("DROP TABLE IF EXISTS {}.conc_insert_bench", config.namespace))
@@ -107,7 +107,7 @@ impl Benchmark for ConcurrentSelectBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
+                .sql_ok(&format!("CREATE SCHEMA IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
                 .sql(&format!("DROP TABLE IF EXISTS {}.conc_select_bench", config.namespace))

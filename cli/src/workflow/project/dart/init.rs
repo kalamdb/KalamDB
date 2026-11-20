@@ -176,14 +176,14 @@ mod tests {
             pubspec.content,
             &[(
                 "kalam_sync_version",
-                crate::versions_manifest::published_dart_package_version("kalam_sync"),
+                crate::versions_manifest::scaffold_dart_package_version("kalam_sync"),
             )],
         )
         .unwrap();
         assert!(rendered_pubspec.contains("kalam_sync"));
         assert!(rendered_pubspec.contains(&format!(
             "kalam_sync: \"{}\"",
-            crate::versions_manifest::published_dart_package_version("kalam_sync")
+            crate::versions_manifest::scaffold_dart_package_version("kalam_sync")
         )));
         assert!(rendered_pubspec.contains("sdk: flutter"));
 

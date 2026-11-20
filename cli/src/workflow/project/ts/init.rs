@@ -183,11 +183,11 @@ pub async fn apply_scaffold(
         ("namespace", namespace),
         (
             "kalam_sdk_version",
-            crate::versions_manifest::published_typescript_package_version("@kalamdb/client"),
+            crate::versions_manifest::scaffold_typescript_package_version("@kalamdb/client"),
         ),
         (
             "kalam_sync_version",
-            crate::versions_manifest::published_dart_package_version("kalam_sync"),
+            crate::versions_manifest::scaffold_dart_package_version("kalam_sync"),
         ),
     ];
     for file in template.files {
@@ -454,7 +454,7 @@ mod tests {
                 ("project_name", "demo-app"),
                 (
                     "kalam_sdk_version",
-                    crate::versions_manifest::published_typescript_package_version(
+                    crate::versions_manifest::scaffold_typescript_package_version(
                         "@kalamdb/client",
                     ),
                 ),
@@ -464,7 +464,7 @@ mod tests {
         assert!(rendered_package.contains(r#""name": "demo-app""#));
         assert!(rendered_package.contains(&format!(
             r#""@kalamdb/client": "{}""#,
-            crate::versions_manifest::published_typescript_package_version("@kalamdb/client")
+            crate::versions_manifest::scaffold_typescript_package_version("@kalamdb/client")
         )));
         assert!(!rendered_package.contains("\"latest\""));
 

@@ -168,6 +168,12 @@ impl ServerConfig {
     }
 
     fn apply_server_env_overrides(&mut self) -> Result<()> {
+        if let Some(profile) = parse_env("KALAMDB_SERVER_PROFILE")? {
+            self.server.profile = profile;
+        }
+        if let Some(memory_mode) = parse_env("KALAMDB_ROCKSDB_MEMORY_MODE")? {
+            self.storage.rocksdb.memory_mode = memory_mode;
+        }
         if let Some(workers) = parse_env("KALAMDB_SERVER_WORKERS")? {
             self.server.workers = workers;
         }

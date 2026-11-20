@@ -277,8 +277,10 @@ fn test_project_workflow_dev_force_recovers_schema_pipeline() {
         &[
             "Schema applied",
             "Schema recovered",
+            "Schema draft ready",
             "schema pipeline completed",
             "schema pipeline recovered",
+            "schema draft pending",
         ],
         Duration::from_secs(10),
     );
@@ -286,12 +288,16 @@ fn test_project_workflow_dev_force_recovers_schema_pipeline() {
     assert!(
         stderr.contains("✓ Schema applied")
             || stderr.contains("✓ Schema recovered")
+            || stderr.contains("✓ Schema draft ready")
             || stderr.contains("schema pipeline completed")
             || stderr.contains("schema pipeline recovered")
+            || stderr.contains("schema draft pending")
             || log.contains("Schema applied")
             || log.contains("Schema recovered")
+            || log.contains("Schema draft ready")
             || log.contains("schema pipeline completed")
-            || log.contains("schema pipeline recovered"),
+            || log.contains("schema pipeline recovered")
+            || log.contains("schema draft pending"),
         "expected schema recovery with --force\nstderr: {stderr}\nlog: {log}"
     );
 }

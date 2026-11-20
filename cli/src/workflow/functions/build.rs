@@ -137,7 +137,7 @@ fn write_build_manifest(ctx: &WorkflowContext) -> Result<()> {
         .map(|binding| binding.routine_id.as_str())
         .collect();
     let mut procedures = serde_json::Map::new();
-    for routine in snapshot.routines.values() {
+    for routine in snapshot.routines.values().filter(|routine| !routine.is_internal) {
         let kind = if implemented.contains(routine.routine_id.as_str()) {
             "module"
         } else if routine.body.is_some() {
@@ -304,5 +304,6 @@ CREATE FUNCTION api.plus_one(x INT) RETURNS INT;
         assert_eq!(procedures.get("api.health").and_then(Value::as_str), Some("module"));
         assert_eq!(procedures.get("api.greet").and_then(Value::as_str), Some("inline"));
         assert_eq!(procedures.get("api.plus_one").and_then(Value::as_str), Some("missing"));
+        assert!(!procedures.keys().any(|name| name.starts_with("pg_catalog.file_")));
     }
 }

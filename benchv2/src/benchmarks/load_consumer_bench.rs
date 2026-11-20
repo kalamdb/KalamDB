@@ -25,7 +25,7 @@ impl Benchmark for ConcurrentConsumerBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
+                .sql_ok(&format!("CREATE SCHEMA IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
                 .sql(&format!("DROP TABLE IF EXISTS {}.consume_bench", config.namespace))

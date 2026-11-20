@@ -22,6 +22,8 @@ use crate::{app_context::AppContext, error::KalamDbError, sql::context::Executio
 const LEASE_MS: i64 = 30_000;
 const TRIGGER_DISPATCH_CONCURRENCY: usize = 8;
 const TRIGGER_CACHE_TTL: Duration = Duration::from_secs(1);
+const TRIGGER_ACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const TRIGGER_IDLE_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 struct TriggerListCache {
     generation: u64,
@@ -88,17 +90,19 @@ pub fn start_trigger_dispatcher(
     cancel: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut cache = None;
         loop {
+            let delay = match dispatch_once_with_cache(&app, &mut cache).await {
+                Ok(true) => TRIGGER_ACTIVE_POLL_INTERVAL,
+                Ok(false) => TRIGGER_IDLE_POLL_INTERVAL,
+                Err(error) => {
+                    tracing::warn!("trigger dispatcher: {error}");
+                    TRIGGER_IDLE_POLL_INTERVAL
+                },
+            };
             tokio::select! {
                 _ = cancel.cancelled() => break,
-                _ = interval.tick() => {
-                    if let Err(error) = dispatch_once_with_cache(&app, &mut cache).await {
-                        tracing::warn!("trigger dispatcher: {error}");
-                    }
-                }
+                _ = tokio::time::sleep(delay) => {}
             }
         }
     })
@@ -107,10 +111,10 @@ pub fn start_trigger_dispatcher(
 async fn dispatch_once_with_cache(
     app: &Arc<AppContext>,
     cache: &mut Option<TriggerListCache>,
-) -> Result<usize, KalamDbError> {
+) -> Result<bool, KalamDbError> {
     let triggers = cached_enabled_triggers(app, cache)?;
     if triggers.is_empty() {
-        return Ok(0);
+        return Ok(false);
     }
     let cap = TRIGGER_DISPATCH_CONCURRENCY.min(triggers.len()).max(1);
     let gate = Arc::new(Semaphore::new(cap));
@@ -123,12 +127,11 @@ async fn dispatch_once_with_cache(
             dispatch_trigger(&app, &trigger).await
         });
     }
-    let mut delivered = 0;
     while let Some(joined) = set.join_next().await {
-        delivered += joined
+        joined
             .map_err(|error| KalamDbError::ExecutionError(format!("trigger task: {error}")))??;
     }
-    Ok(delivered)
+    Ok(true)
 }
 
 pub(crate) fn delivery_action(

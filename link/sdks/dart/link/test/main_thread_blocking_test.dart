@@ -44,6 +44,8 @@ class _MockRustLibApi extends MockRustLibApi {
   int createClientCalls = 0;
   int updateAuthCalls = 0;
   int connectCalls = 0;
+  FutureOr<gen.DartAuthProvider?> Function()? websocketAuthProvider;
+
   int connectFailuresBeforeSuccess = 0;
   String connectFailureMessage = '401 unauthorized token expired';
 
@@ -81,6 +83,15 @@ class _MockRustLibApi extends MockRustLibApi {
     updateAuthCalls++;
     // Simulate lock contention + auth update — now async
     await Future<void>.delayed(asyncWorkDuration);
+  }
+
+  @override
+  Future<void> crateApiDartSetWebsocketAuthProvider({
+    required DartKalamClient client,
+    required gen.DartAuthProvider initialAuth,
+    required FutureOr<gen.DartAuthProvider?> Function() provider,
+  }) async {
+    websocketAuthProvider = provider;
   }
 
   @override
@@ -468,39 +479,31 @@ void main() {
       await client.dispose();
     });
 
-    test('reconnectWebSocket refreshes auth before connecting',
-        () async {
+    test('Rust receives a callback for fresh WebSocket credentials', () async {
+      var authCalls = 0;
       final client = await KalamClient.connect(
         url: 'https://test.example.com',
-        authProvider: () async => Auth.jwt('cached-token'),
+        authProvider: () async => Auth.jwt('fixture-${++authCalls}'),
       );
 
-      await client.reconnectWebSocket();
-
-      expect(mockApi.connectCalls, 1,
-          reason: 'manual reconnect should attempt one websocket connect');
-      expect(mockApi.updateAuthCalls, 1,
-          reason: 'manual reconnect should resolve fresh credentials first');
-
+      expect(authCalls, 1);
+      expect(await mockApi.websocketAuthProvider!(),
+          const gen.DartAuthProvider.jwtToken(token: 'fixture-2'));
+      expect(mockApi.updateAuthCalls, 0);
       await client.dispose();
     });
 
-    test('reconnectWebSocket refreshes auth and retries once on auth failure',
+    test('reconnectWebSocket delegates failures to the Rust connection',
         () async {
       mockApi.connectFailuresBeforeSuccess = 1;
-
       final client = await KalamClient.connect(
         url: 'https://test.example.com',
-        authProvider: () async => Auth.jwt('fresh-token'),
+        authProvider: () async => Auth.jwt('fixture-token'),
       );
 
-      await client.reconnectWebSocket();
-
-      expect(mockApi.connectCalls, 2,
-          reason: 'manual reconnect should retry once after auth refresh');
-      expect(mockApi.updateAuthCalls, 2,
-          reason: 'refresh before connecting and again after authentication failure');
-
+      await expectLater(client.reconnectWebSocket(), throwsStateError);
+      expect(mockApi.connectCalls, 1);
+      expect(mockApi.updateAuthCalls, 0);
       await client.dispose();
     });
   });

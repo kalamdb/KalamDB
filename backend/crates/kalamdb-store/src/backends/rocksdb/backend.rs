@@ -13,7 +13,7 @@ use rocksdb::{
 };
 
 use super::{
-    cf_tuning::{apply_cf_settings, db_write_buffer_budget},
+    cf_tuning::{apply_cf_settings, db_write_buffer_budget_for_cfs},
     group_commit::WalGroupCommit,
     init::{create_block_options_with_cache, new_block_cache},
     keyspace::{
@@ -209,8 +209,10 @@ impl RocksDBBackend {
         let Some(manager) = &self.write_buffer_manager else {
             return;
         };
-        let count = self.known_cf_names.read().map(|names| names.len()).unwrap_or(1);
-        let budget = db_write_buffer_budget(&self.settings, count);
+        let budget = match self.known_cf_names.read() {
+            Ok(names) => db_write_buffer_budget_for_cfs(&self.settings, &names),
+            Err(_) => db_write_buffer_budget_for_cfs(&self.settings, &[]),
+        };
         if manager.get_buffer_size() != budget {
             manager.set_buffer_size(budget);
         }
@@ -1558,8 +1560,8 @@ mod tests {
             }
         }
 
-        let open_families = backend.known_cf_names.read().unwrap().len();
-        let budget = db_write_buffer_budget(&settings, open_families);
+        let open_families = backend.known_cf_names.read().unwrap().clone();
+        let budget = db_write_buffer_budget_for_cfs(&settings, &open_families);
         let actual = backend.write_buffer_manager.as_ref().unwrap().get_buffer_size();
         assert_eq!(actual, budget);
         assert!(actual > 1024 * 1024, "budget {actual} still uses the 1MB profile cap");

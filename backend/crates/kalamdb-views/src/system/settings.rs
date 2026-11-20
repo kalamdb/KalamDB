@@ -133,6 +133,12 @@ impl VirtualView for SettingsView {
                     ("server.host", config.server.host, "Server bind address", "server"),
                     ("server.port", config.server.port, "Server port number", "server"),
                     (
+                        "server.profile",
+                        config.server.profile,
+                        "Deployment resource profile (standard | micro)",
+                        "server"
+                    ),
+                    (
                         "server.workers",
                         config.server.workers,
                         "Number of worker threads (0 = auto-detect CPU cores)",
@@ -255,8 +261,8 @@ impl VirtualView for SettingsView {
                     (
                         "storage.rocksdb.memory_mode",
                         config.storage.rocksdb.memory_mode,
-                        "RocksDB memory sizing: compact (tiny defaults) or auto (scale from host \
-                         RAM)",
+                        "RocksDB memory sizing: micro, compact, auto, balanced, server, or \
+                         performance",
                         "storage"
                     ),
                     (

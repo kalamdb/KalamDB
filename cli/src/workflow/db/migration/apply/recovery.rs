@@ -70,11 +70,9 @@ pub(crate) fn report_pending_migrations(
     }
     if options.force {
         if draft_pending {
-            output
-                .status("applying schema draft because --force was used; it will be sealed first");
+            output.status("sealing and applying the schema draft");
         } else {
-            output
-                .status(format!("applying {pending_count} migration(s) because --force was used"));
+            output.status(format!("applying {pending_count} migration(s)"));
         }
         return;
     }

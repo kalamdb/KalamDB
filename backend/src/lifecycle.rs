@@ -237,7 +237,9 @@ pub async fn bootstrap(
 ) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
     let app_context = create_app_context(config, AppContextMode::Global)?;
     kalamdb_pg_bridge::install(&app_context);
-    app_context.log_runtime_metrics();
+    if !config.server.profile.is_micro() {
+        app_context.log_runtime_metrics();
+    }
 
     // Start the executor (always Raft - single-node or cluster)
     let phase_start = std::time::Instant::now();
