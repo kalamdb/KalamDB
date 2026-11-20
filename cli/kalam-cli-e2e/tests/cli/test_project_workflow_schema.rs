@@ -285,6 +285,37 @@ fn test_project_workflow_schema_gen_python_target() {
     again.current_dir(&project_dir).args(["schema", "gen", "--languages", "python"]);
     assert!(again.output().expect("schema gen python again").status.success());
     assert_eq!(before, fs::read_to_string(&python_output).expect("reread python"));
+
+    // `--check` is what CI runs over the committed example, so it is checked
+    // in both directions: green when the file matches the contract, and red
+    // when it has drifted.
+    let mut check = create_isolated_workflow_command(&isolated_home, &credentials_path);
+    check
+        .current_dir(&project_dir)
+        .args(["schema", "gen", "--check", "--languages", "python"]);
+    let output = check.output().expect("schema gen --check");
+    assert!(
+        output.status.success(),
+        "--check should pass right after generating\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::write(&python_output, format!("{python}\n# hand edited\n")).expect("edit python");
+    let mut stale = create_isolated_workflow_command(&isolated_home, &credentials_path);
+    stale
+        .current_dir(&project_dir)
+        .args(["schema", "gen", "--check", "--languages", "python"]);
+    let output = stale.output().expect("schema gen --check stale");
+    assert!(!output.status.success(), "--check should fail on a stale artifact");
+    let message = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        message.contains("out of date"),
+        "--check should say the artifact is stale\n{message}"
+    );
 }
 
 #[test]

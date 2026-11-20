@@ -401,7 +401,7 @@ fn generate_does_not_require_a_server_url() {
     let schema = fs::read_to_string(root.join("src/generated/schema.ts")).unwrap();
     assert!(schema.contains("export const users"));
     assert!(dart.contains("KalamTableSpec<Users>"));
-    assert!(python.contains("users: Table[Users] = KTable.table("));
+    assert!(python.contains("users: Table[Users, UsersInsert, UsersUpdate] = KTable.table("));
     assert!(python.contains("from kalamdb.schema import ("));
     assert!(
         !root.join("functions").exists(),

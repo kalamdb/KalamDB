@@ -15,6 +15,7 @@ from __future__ import annotations
 from kalamdb.schema import (
 {{#each sdk_imports}}    {{this}},
 {{/each}})
+{{/if}}{{#if needs_client}}from kalamdb import KalamClient
 {{/if}}{{#if needs_sdk_alias}}from kalamdb import schema as {{sdk_alias}}
 {{/if}}{{#each enums}}
 
@@ -45,22 +46,24 @@ class {{ident}}:
     """Typed columns for {{table_label}}."""
 
 {{{body}}}
-{{/each}}{{#each tables}}
+{{/each}}{{#each typed_dicts}}
 
-{{var_name}}: Table[{{row_ident}}] = KTable.{{factory}}(
+{{{body}}}{{/each}}{{#each tables}}
+
+{{var_name}}: Table[{{row_ident}}, {{insert_ident}}, {{update_ident}}] = KTable.{{factory}}(
     "{{table_id}}",
     {{columns_ident}},
     row={{row_ident}},
 )
 {{/each}}{{#if has_tables}}
 
-KALAM_TABLES: Dict[str, Table[Any]] = {
+KALAM_TABLES: Dict[str, Table[Any, Any, Any]] = {
 {{#each tables}}    "{{table_id}}": {{var_name}},
 {{/each}}}
 {{else}}
 
-KALAM_TABLES: Dict[str, Table[Any]] = {}
-{{/if}}
+KALAM_TABLES: Dict[str, Table[Any, Any, Any]] = {}
+{{/if}}{{{functions_block}}}
 
 
 __all__ = [

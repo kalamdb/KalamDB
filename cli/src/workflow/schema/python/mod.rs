@@ -5,8 +5,11 @@
 //! in `kalamdb.schema`. Nothing here emits DDL or validates table options:
 //! those belong to `schema.sql` and the server.
 
+mod functions;
+mod idents;
 mod rows;
 mod tables;
+mod writes;
 
 use std::collections::BTreeSet;
 
@@ -14,8 +17,11 @@ use kalamdb_sql::contracts::{ContractField, ContractSnapshot, ContractTypeKind};
 use serde::Serialize;
 
 use self::{
+    functions::functions_block,
+    idents::python_names,
     rows::{assign_unique_field_names, escape_python_string, PyColumn, SDK_ALIAS},
     tables::{table_bindings, ColumnsClassContext, TableSpecContext},
+    writes::TypedDictContext,
 };
 use crate::{
     error::Result,
@@ -37,7 +43,7 @@ const PYTHON_TEMPLATE: &str = "generated/kalam.py";
 
 /// Runtime names the generated module may import. Kept explicit so the import
 /// list is exactly what the file uses, which keeps linters quiet.
-const RUNTIME_SYMBOLS: &[&str] = &[
+pub(super) const RUNTIME_SYMBOLS: &[&str] = &[
     "Column",
     "FileRef",
     "KTable",
@@ -79,11 +85,13 @@ const RUNTIME_SYMBOLS: &[&str] = &[
     "encode_enum",
     "encode_file",
     "encode_list",
+    "encode_param",
     "encode_row",
     "encode_time",
     "file",
     "integer",
     "json",
+    "routine_result",
     "smallint",
     "text",
     "time",
@@ -103,10 +111,14 @@ struct PythonContext {
     /// attribute can never shadow a factory.
     sdk_alias: &'static str,
     needs_sdk_alias: bool,
+    /// Generated routine clients, rendered whole.
+    functions_block: String,
+    needs_client: bool,
     enums: Vec<EnumContext>,
     dataclasses: Vec<DataclassContext>,
     aliases: Vec<AliasContext>,
     columns_classes: Vec<ColumnsClassContext>,
+    typed_dicts: Vec<TypedDictContext>,
     tables: Vec<TableSpecContext>,
     has_tables: bool,
     exports: Vec<String>,
@@ -181,10 +193,13 @@ fn render_python_source(
     names: &AssignedNames,
     procedures: &ProcedureCatalog<'_>,
 ) -> Result<String> {
+    // Python resolves classes and imports in one module namespace, so the
+    // shared idents are rewritten before anything is rendered from them.
+    let names = python_names(snapshot, names);
     render_schema_gen_file(
         "python",
         PYTHON_TEMPLATE,
-        &python_context(snapshot, hash, names, procedures),
+        &python_context(snapshot, hash, &names, procedures),
     )
 }
 
@@ -219,10 +234,7 @@ fn python_context(
                         member = format!("{base}_{index}");
                         index += 1;
                     }
-                    body.push_str(&format!(
-                        "    {member} = \"{}\"\n",
-                        escape_python_string(label)
-                    ));
+                    body.push_str(&format!("    {member} = \"{}\"\n", escape_python_string(label)));
                 }
                 enums.push(EnumContext {
                     doc: docstring(ty.comment.as_deref()),
@@ -331,6 +343,13 @@ fn python_context(
         }
     }
 
+    // Routine clients call the SQL the catalog built, so their decoders and
+    // `encode_param` are part of what the file imports.
+    let functions = functions_block(snapshot, names, procedures);
+    if !functions.is_empty() {
+        code.push(functions.clone());
+    }
+
     let bindings = table_bindings(snapshot, names);
     code.extend(bindings.exprs.iter().cloned());
     // `Table` annotates the registry whether or not any table exists; `KTable`
@@ -349,8 +368,18 @@ fn python_context(
     exports.extend(dataclasses.iter().map(|item| item.ident.clone()));
     exports.extend(aliases.iter().map(|item| item.ident.clone()));
     exports.extend(bindings.columns_classes.iter().map(|item| item.ident.clone()));
+    exports.extend(bindings.typed_dicts.iter().map(|item| item.ident.clone()));
     exports.extend(bindings.tables.iter().map(|item| item.var_name.clone()));
     exports.insert("KALAM_TABLES".to_string());
+    if !procedures.is_empty() {
+        exports.insert("KalamFunctions".to_string());
+        for namespace in procedures.namespaces() {
+            exports.insert(format!(
+                "{}Functions",
+                crate::workflow::schema::naming::pascal_case(namespace.schema)
+            ));
+        }
+    }
 
     let has_tables = !bindings.tables.is_empty();
     let needs_dataclass = !dataclasses.is_empty();
@@ -364,14 +393,74 @@ fn python_context(
         sdk_imports: sdk_imports(&code),
         sdk_alias: SDK_ALIAS,
         needs_sdk_alias: !bindings.columns_classes.is_empty(),
+        needs_client: !functions.is_empty(),
+        functions_block: functions,
         enums,
         dataclasses,
-        aliases,
+        aliases: order_aliases(aliases),
         columns_classes: bindings.columns_classes,
+        typed_dicts: bindings.typed_dicts,
         tables: bindings.tables,
         has_tables,
         exports: exports.into_iter().collect(),
     }
+}
+
+/// Order alias assignments so every name is bound before it is used.
+///
+/// `Aaa = Zzz` is a plain assignment: `from __future__ import annotations` makes
+/// annotations lazy, not module-level statements. Domains are emitted in
+/// contract order, which is alphabetical by qualified type id, so
+/// `CREATE DOMAIN aaa AS zzz` wrote `Aaa = Zzz` above `Zzz = str` and the module
+/// raised NameError on import.
+///
+/// Aliases that reference nothing keep their contract order. Only an alias
+/// whose target names another alias moves, and it moves no further than it has
+/// to, so output stays byte stable for `--check`.
+fn order_aliases(aliases: Vec<AliasContext>) -> Vec<AliasContext> {
+    let declared: BTreeSet<String> = aliases.iter().map(|alias| alias.ident.clone()).collect();
+    if !aliases.iter().any(|alias| {
+        identifiers(&alias.target).any(|token| token != alias.ident && declared.contains(token))
+    }) {
+        return aliases;
+    }
+
+    let mut pending: Vec<Option<AliasContext>> = aliases.into_iter().map(Some).collect();
+    let mut emitted: BTreeSet<String> = BTreeSet::new();
+    let mut ordered: Vec<AliasContext> = Vec::with_capacity(pending.len());
+
+    loop {
+        let mut progressed = false;
+        for slot in pending.iter_mut() {
+            let ready = match slot.as_ref() {
+                None => continue,
+                Some(alias) => identifiers(&alias.target).all(|token| {
+                    token == alias.ident || !declared.contains(token) || emitted.contains(token)
+                }),
+            };
+            if ready {
+                let alias = slot.take().expect("slot checked above");
+                emitted.insert(alias.ident.clone());
+                ordered.push(alias);
+                progressed = true;
+            }
+        }
+        if !progressed {
+            break;
+        }
+    }
+
+    // A cycle cannot be ordered, and the contract compiler is what rejects a
+    // recursive domain. Emitting the rest in contract order keeps generation
+    // deterministic and leaves the diagnostic to the compiler.
+    ordered.extend(pending.into_iter().flatten());
+    ordered
+}
+
+/// The identifier-shaped tokens in a rendered type expression.
+fn identifiers(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .filter(|token| !token.is_empty())
 }
 
 fn dataclass_context(
@@ -383,8 +472,10 @@ fn dataclass_context(
     emitted: &mut Vec<String>,
     code: &mut Vec<String>,
 ) -> DataclassContext {
-    let mut columns: Vec<PyColumn> =
-        fields.iter().map(|field| PyColumn::from_field(field, names, snapshot)).collect();
+    let mut columns: Vec<PyColumn> = fields
+        .iter()
+        .map(|field| PyColumn::from_field(field, names, snapshot))
+        .collect();
     assign_unique_field_names(&mut columns);
 
     let mut annotations = String::new();
@@ -453,13 +544,16 @@ fn typing_imports(emitted: &[String], needs_dataclass: bool, has_tables: bool) -
     if joined.contains("Union[") {
         names.insert("Union");
     }
-    // `KALAM_TABLES: Dict[str, Table[Any]]` is emitted even when a schema
-    // declares no tables, so its types are always imported.
-    let _ = has_tables;
+    // `KALAM_TABLES: Dict[str, Table[Any, Any, Any]]` is emitted even when a
+    // schema declares no tables, so its types are always imported.
     names.insert("Any");
     names.insert("Dict");
     if needs_dataclass {
         names.insert("Mapping");
+    }
+    // Every table declares a typed insert and update input.
+    if has_tables {
+        names.insert("TypedDict");
     }
     if names.is_empty() {
         return String::new();
@@ -637,9 +731,8 @@ CREATE TABLE chat.plain (id BIGINT PRIMARY KEY);
 
     #[test]
     fn colliding_field_names_stay_distinct_and_keep_their_sql_keys() {
-        let source = generate(
-            "CREATE TABLE t (id BIGINT PRIMARY KEY, user_id TEXT, \"user__id\" TEXT);",
-        );
+        let source =
+            generate("CREATE TABLE t (id BIGINT PRIMARY KEY, user_id TEXT, \"user__id\" TEXT);");
         assert!(source.contains("    user_id: Optional[str]"), "{source}");
         assert!(source.contains("    user_id2: Optional[str]"), "{source}");
         assert!(source.contains("user_id2=as_str_or_none(row.get(\"user__id\"))"), "{source}");
@@ -648,8 +741,7 @@ CREATE TABLE chat.plain (id BIGINT PRIMARY KEY);
 
     #[test]
     fn a_column_never_takes_a_generated_method_name() {
-        let source =
-            generate("CREATE TABLE t (id BIGINT PRIMARY KEY, \"to_row\" TEXT);");
+        let source = generate("CREATE TABLE t (id BIGINT PRIMARY KEY, \"to_row\" TEXT);");
         assert!(source.contains("    to_row2: Optional[str]"), "{source}");
         assert!(source.contains("\"to_row\": self.to_row2"), "{source}");
     }
@@ -657,7 +749,10 @@ CREATE TABLE chat.plain (id BIGINT PRIMARY KEY);
     #[test]
     fn a_table_never_replaces_a_runtime_import() {
         let source = generate("CREATE TABLE \"as_int\" (id BIGINT PRIMARY KEY);");
-        assert!(source.contains("as_int2: Table[AsInt] = KTable."), "{source}");
+        assert!(
+            source.contains("as_int2: Table[AsInt, AsIntInsert, AsIntUpdate] = KTable."),
+            "{source}"
+        );
         assert!(source.contains("as_int(row.get(\"id\"))"), "{source}");
     }
 
@@ -674,7 +769,10 @@ CREATE TABLE chat.plain (id BIGINT PRIMARY KEY);
     #[test]
     fn an_empty_schema_still_imports_the_registry_types() {
         let source = generate("CREATE SCHEMA empty_app;");
-        assert!(source.contains("KALAM_TABLES: Dict[str, Table[Any]] = {}"), "{source}");
+        assert!(
+            source.contains("KALAM_TABLES: Dict[str, Table[Any, Any, Any]] = {}"),
+            "{source}"
+        );
         assert!(source.contains("from typing import Any, Dict"), "{source}");
         assert!(source.contains("    Table,"), "{source}");
     }
@@ -694,11 +792,14 @@ CREATE TABLE chat.plain (id BIGINT PRIMARY KEY);
         let source = generate(GOLDEN_SQL);
         assert!(source.contains("class ChatProfilesColumns:"));
         assert!(source.contains("\"\"\"Typed columns for chat.profiles.\"\"\""));
-        assert!(source
-            .contains("    id: Column[int] = _kalam.bigint(\"id\").primary_key().not_null().server_default()"));
+        assert!(source.contains(
+            "    id: Column[int] = _kalam.bigint(\"id\").primary_key().not_null().server_default()"
+        ));
         assert!(source.contains("    email: Column[str] = _kalam.text(\"email\").not_null()"));
         assert!(source.contains("    avatar: Column[FileRef] = _kalam.file(\"avatar\")"));
-        assert!(source.contains("    tags: Column[List[str]] = _kalam.Column(\"tags\", \"TEXT[]\")"));
+        assert!(
+            source.contains("    tags: Column[List[str]] = _kalam.Column(\"tags\", \"TEXT[]\")")
+        );
         assert!(source
             .contains("    status: Column[ChatStatus] = _kalam.Column(\"status\", \"chat.status\").not_null()"));
     }
@@ -710,7 +811,8 @@ CREATE TABLE chat.plain (id BIGINT PRIMARY KEY);
         // need an ordinal. `Column.primary_key(ordinal)` in the runtime is
         // ready for when they land.
         let source = generate("CREATE STREAM TABLE log (seq BIGINT PRIMARY KEY);");
-        assert!(source.contains("    seq: Column[int] = _kalam.bigint(\"seq\").primary_key().not_null()"));
+        assert!(source
+            .contains("    seq: Column[int] = _kalam.bigint(\"seq\").primary_key().not_null()"));
         assert!(!source.contains(".primary_key(1)"));
     }
 
@@ -774,7 +876,7 @@ CREATE TABLE chat.plain (id BIGINT PRIMARY KEY);
     #[test]
     fn empty_schema_emits_an_importable_module() {
         let source = generate("CREATE SCHEMA empty_app;");
-        assert!(source.contains("KALAM_TABLES: Dict[str, Table[Any]] = {}"));
+        assert!(source.contains("KALAM_TABLES: Dict[str, Table[Any, Any, Any]] = {}"));
         assert!(!source.contains("from kalamdb.schema import ()"));
         assert!(source.contains("__all__ = ["));
     }
@@ -794,7 +896,159 @@ CREATE TABLE chat.plain (id BIGINT PRIMARY KEY);
             true,
         );
         assert!(source.contains("class Profiles:"), "{source}");
-        assert!(source.contains("profiles: Table[Profiles] = KTable.user("));
+        assert!(source
+            .contains("profiles: Table[Profiles, ProfilesInsert, ProfilesUpdate] = KTable.user("));
+    }
+
+    #[test]
+    fn a_type_named_enum_does_not_shadow_the_enum_import() {
+        // Left alone this emits `class Enum(str, Enum)`, which imports fine on
+        // its own and then makes every later enum fail with "cannot extend
+        // enumeration".
+        let source =
+            generate("CREATE TYPE \"enum\" AS ENUM ('a');\nCREATE TYPE mood AS ENUM ('calm');");
+        assert!(source.contains("from enum import Enum"), "{source}");
+        assert!(source.contains("class Enum2(str, Enum):"), "{source}");
+        assert!(source.contains("class Mood(str, Enum):"), "{source}");
+        assert!(!source.contains("class Enum(str, Enum):"), "{source}");
+    }
+
+    #[test]
+    fn a_table_named_after_a_module_import_keeps_the_import() {
+        // `dt` is the datetime alias and KALAM_TABLES is the registry; a table
+        // variable taking either would break the module at import.
+        let source = generate("CREATE TABLE dt (id BIGINT PRIMARY KEY, at TIMESTAMP NOT NULL);");
+        assert!(source.contains("import datetime as dt"), "{source}");
+        assert!(
+            source.contains("dt2: Table[Dt, DtInsert, DtUpdate] = KTable.table("),
+            "{source}"
+        );
+    }
+
+    #[test]
+    fn domain_aliases_are_emitted_in_dependency_order() {
+        // Contract order is alphabetical, so `aaa` is compiled before the `zzz`
+        // it is defined over. The assignment is eager, so the generated module
+        // raised NameError before this was ordered.
+        let source = generate("CREATE DOMAIN aaa AS zzz;\nCREATE DOMAIN zzz AS TEXT;");
+        let zzz = source.find("\nZzz = ").expect("Zzz alias");
+        let aaa = source.find("\nAaa = ").expect("Aaa alias");
+        assert!(zzz < aaa, "Aaa is bound before Zzz:\n{source}");
+    }
+
+    #[test]
+    fn independent_aliases_keep_their_contract_order() {
+        // Nothing to reorder here, so the aliases stay exactly where the
+        // contract put them and --check sees no churn.
+        let source = generate("CREATE DOMAIN bbb AS TEXT;\nCREATE DOMAIN aaa AS BIGINT;");
+        let aaa = source.find("\nAaa = ").expect("Aaa alias");
+        let bbb = source.find("\nBbb = ").expect("Bbb alias");
+        assert!(aaa < bbb, "{source}");
+    }
+
+    const ROUTINE_SQL: &str = r#"
+CREATE SCHEMA chat;
+CREATE FUNCTION chat.create_message(author TEXT NOT NULL, body TEXT NOT NULL) RETURNS BIGINT;
+CREATE PROCEDURE chat.ping();
+COMMENT ON FUNCTION chat.create_message IS 'Append a message and return its id';
+"#;
+
+    #[test]
+    fn routines_get_a_typed_client_per_schema() {
+        let source = generate(ROUTINE_SQL);
+        assert!(source.contains("class ChatFunctions:"), "{source}");
+        assert!(source.contains("from kalamdb import KalamClient"), "{source}");
+        assert!(
+            source.contains(
+                "    async def create_message(self, request: ChatCreateMessageInput) \
+                 -> ChatCreateMessageOutput:"
+            ),
+            "{source}"
+        );
+        // The catalog's SELECT form and placeholders are used as-is, so the
+        // call matches what the other targets send.
+        assert!(source.contains("\"SELECT chat.create_message($1, $2) AS result\","), "{source}");
+        assert!(
+            source.contains("[encode_param(request.author), encode_param(request.body)],"),
+            "{source}"
+        );
+        // RETURNS BIGINT is nullable, so the result decodes through the
+        // nullable codec and the alias is Optional.
+        assert!(
+            source.contains("return as_int_or_none(routine_result(\"chat.create_message\", rows))"),
+            "{source}"
+        );
+        assert!(source.contains("ChatCreateMessageOutput = Optional[int]"), "{source}");
+        assert!(source.contains("\"\"\"Append a message and return its id\"\"\""), "{source}");
+    }
+
+    #[test]
+    fn a_void_routine_awaits_the_call_without_reading_a_row() {
+        let source = generate(ROUTINE_SQL);
+        assert!(source.contains("    async def ping(self) -> None:"), "{source}");
+        assert!(
+            source.contains("await self._client.query(\n            \"CALL chat.ping()\","),
+            "{source}"
+        );
+    }
+
+    #[test]
+    fn the_functions_entry_point_groups_every_schema() {
+        let source = generate(ROUTINE_SQL);
+        assert!(source.contains("class KalamFunctions:"), "{source}");
+        assert!(source.contains("        self.chat = ChatFunctions(client)"), "{source}");
+        assert!(source.contains("    \"KalamFunctions\",\n"), "{source}");
+    }
+
+    #[test]
+    fn a_schema_without_routines_emits_no_client() {
+        let source = generate("CREATE TABLE t (id BIGINT PRIMARY KEY);");
+        // pg_catalog's file routines are always in the contract, so a schema
+        // with no routines of its own still gets their client; what must not
+        // appear is a client for a schema that declares none.
+        assert!(!source.contains("class PublicFunctions:"), "{source}");
+        assert!(!source.contains("from kalamdb import KalamClient"), "{source}");
+    }
+
+    #[test]
+    fn typed_write_inputs_split_required_and_optional_keys() {
+        let source = generate(GOLDEN_SQL);
+        // id and created_at have server defaults, so they are optional keys;
+        // email and status are NOT NULL with none, so they are required.
+        assert!(source.contains("class _ChatProfilesInsertRequired(TypedDict):"), "{source}");
+        assert!(source.contains("    email: str\n"), "{source}");
+        assert!(source.contains("    status: ChatStatus\n"), "{source}");
+        assert!(
+            source.contains("class ChatProfilesInsert(_ChatProfilesInsertRequired, total=False):"),
+            "{source}"
+        );
+        assert!(source.contains("    id: int\n"), "{source}");
+        assert!(source.contains("    created_at: dt.datetime\n"), "{source}");
+    }
+
+    #[test]
+    fn a_typed_update_input_drops_the_key_columns() {
+        let source = generate(GOLDEN_SQL);
+        let update = source
+            .split("class ChatProfilesUpdate(TypedDict, total=False):")
+            .nth(1)
+            .expect("update input")
+            .split("\n\n\n")
+            .next()
+            .unwrap();
+        assert!(update.contains("email: str"), "{update}");
+        // `id` is the primary key, and update_sql refuses to assign one.
+        assert!(!update.contains("    id:"), "{update}");
+    }
+
+    #[test]
+    fn a_keyword_column_forces_the_functional_typed_dict() {
+        // `class: str` in a class body is a syntax error, so the whole
+        // declaration drops to the form that takes any string as a key.
+        let source = generate("CREATE TABLE t (id BIGINT PRIMARY KEY, \"class\" TEXT);");
+        assert!(source.contains("TInsert = TypedDict("), "{source}");
+        assert!(source.contains("        \"class\": Optional[str],"), "{source}");
+        assert!(!source.contains("class TInsert("), "{source}");
     }
 
     #[test]

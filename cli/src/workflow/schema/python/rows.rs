@@ -44,17 +44,16 @@ impl PyColumn {
         let is_domain =
             resolved.is_some_and(|ty| matches!(ty.kind, ContractTypeKind::Domain { .. }));
 
-        let base_type = if let Some(ContractTypeKind::Domain { base_type, .. }) =
-            resolved.map(|ty| &ty.kind)
-        {
-            builtin(&base_type.type_name, TargetLang::Python).to_string()
-        } else if is_file {
-            "FileRef".to_string()
-        } else if let Some(type_id) = &field.type_id {
-            names.type_ident(type_id.as_str()).to_string()
-        } else {
-            builtin(&field.type_name, TargetLang::Python).to_string()
-        };
+        let base_type =
+            if let Some(ContractTypeKind::Domain { base_type, .. }) = resolved.map(|ty| &ty.kind) {
+                builtin(&base_type.type_name, TargetLang::Python).to_string()
+            } else if is_file {
+                "FileRef".to_string()
+            } else if let Some(type_id) = &field.type_id {
+                names.type_ident(type_id.as_str()).to_string()
+            } else {
+                builtin(&field.type_name, TargetLang::Python).to_string()
+            };
 
         // A domain decodes as its base scalar and FILE has its own codec, so
         // neither carries a named type through to the row class.
@@ -84,6 +83,12 @@ impl PyColumn {
     /// `as_int(row.get("id"))`
     pub fn decode(&self) -> String {
         self.decode_expr(&format!("row.get(\"{}\")", escape_python_string(&self.sql_name)))
+    }
+
+    /// The decoder for one value held in `value`, which may be any
+    /// expression: a row lookup, or the single cell a routine returns.
+    pub fn decode_value(&self, value: &str) -> String {
+        self.decode_expr(value)
     }
 
     fn decode_expr(&self, value: &str) -> String {
@@ -151,7 +156,14 @@ impl PyColumn {
     /// The encoder for one value, or `None` when the value goes out as-is.
     fn encode_callable(&self) -> Option<String> {
         if self.named_type.is_some() {
-            return Some(if self.is_enum { "encode_enum" } else { "encode_row" }.to_string());
+            return Some(
+                if self.is_enum {
+                    "encode_enum"
+                } else {
+                    "encode_row"
+                }
+                .to_string(),
+            );
         }
         match self.base_type.as_str() {
             "FileRef" => Some("encode_file".to_string()),
@@ -299,10 +311,19 @@ pub fn assign_unique_field_names(columns: &mut [PyColumn]) {
 /// carried separately, so renaming the attribute never renames the column.
 pub fn python_field_name(sql_name: &str) -> String {
     let mut ident = snake_case(sql_name);
-    if PYTHON_KEYWORDS.contains(&ident.as_str()) {
+    if is_python_keyword(&ident) {
         ident.push('_');
     }
     ident
+}
+
+/// True when `name` cannot be used as an attribute or class-body key.
+///
+/// The constants are matched in their real spelling as well: `snake_case`
+/// lowercases, so the list below only ever sees `true`, but a SQL column may
+/// be named `True`.
+pub fn is_python_keyword(name: &str) -> bool {
+    PYTHON_KEYWORDS.contains(&name) || matches!(name, "True" | "False" | "None")
 }
 
 /// Hard keywords, the three constants, and the soft keywords from 3.10/3.12 so
