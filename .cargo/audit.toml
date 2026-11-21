@@ -1,0 +1,16 @@
+# cargo audit ignores. Each entry is a finding that still has no compatible
+# upgrade on this branch. Do not add an advisory here once a patched release
+# fits the existing dependency requirement.
+
+[advisories]
+ignore = [
+    # actix-http 3.22 still requires h2 0.3.27, and 0.3.27 is the last 0.3
+    # release. The patched line is h2 >= 0.4.16, which is already locked for
+    # the HTTP stack that uses h2 0.4. Drop this ignore when actix-http moves
+    # off h2 0.3.
+    "RUSTSEC-2026-0258",
+    # openidconnect 4.1.0 requires rsa 0.9. The Marvin timing fix is rsa >= 0.10,
+    # which that crate does not accept. Password login uses bcrypt, not this
+    # dependency.
+    "RUSTSEC-2023-0071",
+]
