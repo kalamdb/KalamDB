@@ -616,8 +616,10 @@ This creates:
 # Regenerate workflow artifacts
 # TypeScript uses @kalamdb/orm against the resolved server/namespace.
 # Dart reads schema.sql and writes KalamTableSpec codecs plus typed KalamFunctions to lib/generated/kalam.dart.
+# Python reads schema.sql and writes row dataclasses plus KTable declarations to generated/kalam.py.
 kalam schema gen
 kalam schema gen --languages dart
+kalam schema gen --languages python
 
 # Create a migration from the current schema
 kalam db migration create add_profile
@@ -630,6 +632,35 @@ kalam db migrate
 ```
 
 Environment resolution order: CLI flag → environment variable (`KALAM_ENV`, `KALAM_URL`, `KALAM_NAMESPACE`) → `kalam.toml`. `--global` / `-g` selects the shared local database. `schema.mode = "remote"` is rejected.
+
+`kalam init` offers `typescript` and `dart`. The `rust` and `python` targets are
+enabled by hand in `kalam.toml`:
+
+```toml
+[schema]
+mode = "sql"
+path = "schema.sql"
+languages = ["typescript", "python"]
+
+[schema.targets.python]
+output = "generated/kalam.py"
+```
+
+Generated Python declares the tables from `schema.sql` and calls into the
+hand-written runtime in `kalamdb.schema`. It contains no DDL: table options
+(TTL, compression, eviction) belong to `schema.sql` and are enforced by the
+server.
+
+Each table gets a row dataclass, a typed columns class, typed `TypedDict`
+inputs for `insert_sql` and `update_sql`, and a `Table` declaration. Routines
+declared in `schema.sql` get a `KalamFunctions` client grouped by schema.
+
+`kalam schema gen --check` regenerates into a staging directory and fails if a
+committed artifact has drifted from the schema, so CI can gate on it:
+
+```bash
+kalam schema gen --check --languages python
+```
 
 ### Link environments
 

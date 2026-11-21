@@ -7,6 +7,7 @@ pub mod naming;
 pub mod output;
 pub mod procedure_bindings;
 pub mod procedures;
+pub mod python;
 pub mod rust;
 pub mod types;
 pub mod typescript;

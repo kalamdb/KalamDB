@@ -346,6 +346,23 @@ impl PyFileRef {
         self.inner.relative_url(namespace, table)
     }
 
+    /// Dict form matching the JSON stored in FILE columns, so a decoded
+    /// reference can be written straight back by generated `to_row`.
+    fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+        let dict = pyo3::types::PyDict::new(py);
+        dict.set_item("id", &self.inner.id)?;
+        dict.set_item("sub", &self.inner.sub)?;
+        dict.set_item("name", &self.inner.name)?;
+        dict.set_item("size", self.inner.size)?;
+        dict.set_item("mime", &self.inner.mime)?;
+        dict.set_item("sha256", &self.inner.sha256)?;
+        // `shard` is skipped when absent, matching FileRef's serde shape.
+        if let Some(shard) = self.inner.shard {
+            dict.set_item("shard", shard)?;
+        }
+        Ok(dict)
+    }
+
     fn __repr__(&self) -> String {
         format!("FileRef({}, {}, {})", self.inner.id, self.inner.name, self.inner.mime)
     }
