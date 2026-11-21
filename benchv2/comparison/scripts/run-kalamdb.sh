@@ -23,6 +23,9 @@ rm -rf "$SETUP/data" "$SETUP/logs"
 mkdir -p "$SETUP/data" "$SETUP/logs"
 
 cd "$SETUP"
+# shellcheck source=memory-sample.sh
+source "$ROOT/scripts/memory-sample.sh"
+startup_begin
 KALAMDB_SERVER_PORT="$PORT" \
 KALAMDB_CLUSTER_API_ADDR="127.0.0.1:$PORT" \
 KALAMDB_CLUSTER_RPC_ADDR="127.0.0.1:$RPC_PORT" \
@@ -31,13 +34,15 @@ SERVER_PID=$!
 cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
 trap cleanup EXIT
 
-for _ in $(seq 1 60); do
-  if curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null; then
+for _ in $(seq 1 400); do
+  if curl -sf --max-time 1 "http://127.0.0.1:${PORT}/health" >/dev/null; then
     break
   fi
-  sleep 0.5
+  sleep 0.05
 done
 curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null
+startup_finish
+startup_only_exit kalamdb-sql
 
 cd "$ROOT"
 cargo build --release -p comparison_kalamdb
@@ -57,6 +62,7 @@ memory_mark_ready "$SERVER_PID"
   echo "# http2_prior_knowledge=${KALAMDB_HTTP2:-0}"
   echo "# schema_response_cache=on; hot_only_pk_skip_cold=on"
   echo "# started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  startup_header
   KALAMDB_URL="http://127.0.0.1:${PORT}" ./target/release/comparison_kalamdb
   echo "# finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } | tee "$OUT"

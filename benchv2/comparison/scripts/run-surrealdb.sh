@@ -19,6 +19,9 @@ fi
 rm -rf "$SETUP/data"
 mkdir -p "$SETUP/data"
 
+# shellcheck source=memory-sample.sh
+source "$ROOT/scripts/memory-sample.sh"
+startup_begin
 "$BIN" start \
   --log error \
   --bind "127.0.0.1:${PORT}" \
@@ -30,13 +33,15 @@ SERVER_PID=$!
 cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
 trap cleanup EXIT
 
-for _ in $(seq 1 60); do
-  if curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null; then
+for _ in $(seq 1 400); do
+  if curl -sf --max-time 1 "http://127.0.0.1:${PORT}/health" >/dev/null; then
     break
   fi
-  sleep 0.5
+  sleep 0.05
 done
 curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null
+startup_finish
+startup_only_exit surrealdb
 
 cd "$ROOT"
 cargo build --release -p comparison_surrealdb
@@ -50,6 +55,7 @@ memory_mark_ready "$SERVER_PID"
   echo "# server_bin=${BIN}"
   echo "# version=$(cat "$ROOT/bin/.surreal-version" 2>/dev/null || echo unknown)"
   echo "# started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  startup_header
   SURREALDB_URL="http://127.0.0.1:${PORT}" ./target/release/comparison_surrealdb
   echo "# finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } | tee "$OUT"

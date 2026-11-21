@@ -19,6 +19,9 @@ fi
 rm -rf "$SETUP/pb_data"
 mkdir -p "$SETUP/pb_data"
 
+# shellcheck source=memory-sample.sh
+source "$ROOT/scripts/memory-sample.sh"
+startup_begin
 "$BIN" serve \
   --http="127.0.0.1:${PORT}" \
   --dir="$SETUP/pb_data" \
@@ -29,12 +32,14 @@ SERVER_PID=$!
 cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
 trap cleanup EXIT
 
-for _ in $(seq 1 60); do
-  if curl -sf "http://127.0.0.1:${PORT}/api/health" >/dev/null; then
+for _ in $(seq 1 400); do
+  if curl -sf --max-time 1 "http://127.0.0.1:${PORT}/api/health" >/dev/null; then
     break
   fi
-  sleep 0.5
+  sleep 0.05
 done
+startup_finish
+startup_only_exit pocketbase
 
 POCKETBASE_URL="http://127.0.0.1:${PORT}" "$ROOT/scripts/bootstrap-pocketbase.sh"
 
@@ -49,6 +54,7 @@ memory_mark_ready "$SERVER_PID"
   echo "# server_bin=${BIN}"
   echo "# version=$(cat "$ROOT/bin/.pocketbase-version" 2>/dev/null || echo unknown)"
   echo "# started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  startup_header
   POCKETBASE_URL="http://127.0.0.1:${PORT}" ./target/release/comparison_pocketbase
   echo "# finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } | tee "$OUT"

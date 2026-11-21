@@ -26,6 +26,9 @@ rm -rf "$DATA"
 mkdir -p "$DATA"
 
 export CARGO_INCREMENTAL=0
+# shellcheck source=memory-sample.sh
+source "$ROOT/scripts/memory-sample.sh"
+startup_begin
 "$CLI" start \
   --listen-addr "127.0.0.1:${PORT}" \
   --data-dir "$DATA" \
@@ -35,13 +38,15 @@ SERVER_PID=$!
 cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
 trap cleanup EXIT
 
-for _ in $(seq 1 60); do
-  if curl -sf -o /dev/null -X POST "${URL}/v1/identity"; then
+for _ in $(seq 1 400); do
+  if curl -sf --max-time 1 -o /dev/null -X POST "${URL}/v1/identity"; then
     break
   fi
-  sleep 0.5
+  sleep 0.05
 done
 curl -sf -o /dev/null -X POST "${URL}/v1/identity"
+startup_finish
+startup_only_exit spacetimedb
 
 "$CLI" publish bench \
   --server "$URL" \
@@ -72,6 +77,7 @@ memory_mark_ready "$SERVER_PID"
   echo "# server_bin=${SERVER_BIN}"
   echo "# version=$(cat "$ROOT/bin/.spacetimedb-version" 2>/dev/null || echo unknown)"
   echo "# started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  startup_header
   SPACETIMEDB_URL="$URL" ./target/release/comparison_spacetimedb
   echo "# finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } | tee "$OUT"

@@ -29,6 +29,48 @@ memory_mark_ready() {
   return 0
 }
 
+# Wall clock from startup_begin (immediately before the server process is
+# spawned) to startup_finish (the script's existing readiness probe). This
+# excludes client compilation, harness schema bootstrap, and the timed workload.
+startup_begin() {
+  STARTUP_BEGIN_NS="$(python3 -c 'import time; print(time.time_ns())')"
+}
+
+startup_finish() {
+  local end_ns
+  end_ns="$(python3 -c 'import time; print(time.time_ns())')"
+  STARTUP_SECONDS="$(
+    STARTUP_BEGIN_NS="$STARTUP_BEGIN_NS" STARTUP_END_NS="$end_ns" python3 -c \
+      'import os; b=int(os.environ["STARTUP_BEGIN_NS"]); e=int(os.environ["STARTUP_END_NS"]); print(f"{(e - b) / 1e9:.6f}")'
+  )"
+}
+
+startup_header() {
+  if [[ -n "${STARTUP_SECONDS:-}" ]]; then
+    echo "# startup_seconds=${STARTUP_SECONDS}"
+  fi
+}
+
+# COMPARISON_STARTUP_ONLY=1 records startup and stops before the workload.
+startup_only_exit() {
+  local track="$1"
+  if [[ "${COMPARISON_STARTUP_ONLY:-}" != "1" ]]; then
+    return 0
+  fi
+  local stamp out
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  out="${RESULTS:?}/startup-${track}-${stamp}.txt"
+  {
+    echo "# track=${track}"
+    echo "# startup_seconds=${STARTUP_SECONDS}"
+    echo "# startup_definition=process spawn until the readiness probe, before client build, schema bootstrap, and the timed workload"
+    echo "# measured_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } >"$out"
+  echo "Startup ${track} ${STARTUP_SECONDS}s"
+  echo "Wrote ${out}"
+  exit 0
+}
+
 memory_append_result() {
   local pid=$1
   local out=$2

@@ -24,6 +24,9 @@ mkdir -p "$DATA"
 SECRET="$(openssl rand -hex 32)"
 ADMIN_KEY="$("$BIN" keygen admin-key --instance-name "$INSTANCE_NAME" --instance-secret "$SECRET")"
 
+# shellcheck source=memory-sample.sh
+source "$ROOT/scripts/memory-sample.sh"
+startup_begin
 (
   cd "$DATA"
   exec "$BIN" \
@@ -38,13 +41,15 @@ SERVER_PID=$!
 cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
 trap cleanup EXIT
 
-for _ in $(seq 1 60); do
-  if curl -sf -o /dev/null "${URL}/version"; then
+for _ in $(seq 1 400); do
+  if curl -sf --max-time 1 -o /dev/null "${URL}/version"; then
     break
   fi
-  sleep 0.5
+  sleep 0.05
 done
 curl -sf -o /dev/null "${URL}/version"
+startup_finish
+startup_only_exit convex
 
 if [[ ! -d "$APP/node_modules/convex" ]]; then
   npm install --prefix "$APP" --no-audit --no-fund
@@ -73,6 +78,7 @@ memory_mark_ready "$SERVER_PID"
   echo "# server_bin=${BIN}"
   echo "# version=$(cat "$ROOT/bin/.convex-version" 2>/dev/null || echo unknown)"
   echo "# started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  startup_header
   CONVEX_URL="$URL" ./target/release/comparison_convex
   echo "# finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } | tee "$OUT"

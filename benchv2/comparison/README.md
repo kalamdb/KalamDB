@@ -319,6 +319,8 @@ This keeps client-side JSON parsing out of the server read comparison.
 
 Each result records the server process only. The metric is macOS `phys_footprint` from `footprint`, the same number Activity Monitor and jetsam use. `phys_footprint_peak` is the kernel high-water mark since that process started, so the sample taken after the timed client still contains the peak. Ready is the sample immediately before the client. Retained is the sample after the client, with the server still running. Virtual size is not used. A reserved page pool that was never touched does not count.
 
+Startup is `# startup_seconds`: wall clock from process spawn until that script's readiness probe. It does not include compiling the Rust client, harness schema bootstrap, or the timed inserts and reads. `COMPARISON_STARTUP_ONLY=1 ./scripts/run-all.sh` records startup and stops there. A full `./scripts/run-all.sh` writes the same field into each result log. Publish with `pnpm sync:comparisons` in KalamSite.
+
 ## Default credentials (local bench only)
 
 | System | User | Password |
