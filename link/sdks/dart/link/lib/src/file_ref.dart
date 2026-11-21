@@ -243,16 +243,16 @@ class KalamFileRef implements KalamFileRefData {
 }
 
 String _sanitizeFilename(String name) {
-  final withoutExt = name.contains('.')
-      ? name.substring(0, name.lastIndexOf('.'))
-      : name;
+  final withoutExt =
+      name.contains('.') ? name.substring(0, name.lastIndexOf('.')) : name;
   final buffer = StringBuffer();
   var lastWasDash = true;
   var accepted = 0;
   for (final char in withoutExt.split('')) {
     final code = char.codeUnitAt(0);
     final alphanumeric = (code >= 48 && code <= 57) ||
-        (code >= 97 && code <= 122) || (code >= 65 && code <= 90);
+        (code >= 97 && code <= 122) ||
+        (code >= 65 && code <= 90);
     String? next;
     if (alphanumeric) {
       next = char.toLowerCase();
@@ -279,12 +279,12 @@ String _sanitizeFilename(String name) {
 String _extractExtension(String name) {
   final dot = name.lastIndexOf('.');
   if (dot < 0) return 'bin';
-  final ext = name.substring(dot + 1).replaceAllMapped(
-    RegExp('[A-Z]'), (match) => match[0]!.toLowerCase());
+  final ext = name
+      .substring(dot + 1)
+      .replaceAllMapped(RegExp('[A-Z]'), (match) => match[0]!.toLowerCase());
   final valid = ext.length <= 10 &&
       ext.codeUnits.every((code) {
-        return (code >= 48 && code <= 57) ||
-            (code >= 97 && code <= 122);
+        return (code >= 48 && code <= 57) || (code >= 97 && code <= 122);
       });
   return valid ? ext : 'bin';
 }

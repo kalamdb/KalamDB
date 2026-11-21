@@ -61,7 +61,7 @@ pub fn storage_star_table_names(statement: &mut Statement) -> Vec<ObjectName> {
 
 struct StarExpander<'a> {
     columns_by_table: &'a HashMap<String, Vec<String>>,
-    row_id_only:      bool,
+    row_id_only: bool,
 }
 
 impl VisitorMut for StarExpander<'_> {

@@ -74,6 +74,41 @@ fn browser_origin(value: &str) -> Option<String> {
     }
 }
 
+/// Other loopback origins for the same scheme and port.
+///
+/// A page opened at `http://127.0.0.1:2900` sends that `Origin`. When
+/// `public_origin` is `http://localhost:2900`, an exact allowlist rejects the
+/// Admin UI WebSocket. Local servers accept every loopback spelling.
+fn loopback_origin_aliases(origin: &str) -> Vec<String> {
+    let Some((scheme, authority)) = origin.split_once("://") else {
+        return Vec::new();
+    };
+    let (host, port_suffix) = split_origin_authority(authority);
+    let bare = host.trim_matches(|ch| ch == '[' || ch == ']');
+    if !matches!(bare, "localhost" | "127.0.0.1" | "::1") {
+        return Vec::new();
+    }
+    ["localhost", "127.0.0.1", "[::1]"]
+        .into_iter()
+        .filter(|alias| *alias != host)
+        .map(|alias| format!("{scheme}://{alias}{port_suffix}"))
+        .collect()
+}
+
+fn split_origin_authority(authority: &str) -> (String, String) {
+    if let Some(rest) = authority.strip_prefix('[') {
+        if let Some((host, rest)) = rest.split_once(']') {
+            return (format!("[{host}]"), rest.to_string());
+        }
+    }
+    if let Some((host, port)) = authority.rsplit_once(':') {
+        if !port.is_empty() && port.chars().all(|ch| ch.is_ascii_digit()) {
+            return (host.to_string(), format!(":{port}"));
+        }
+    }
+    (authority.to_string(), String::new())
+}
+
 fn has_configured_origin_policy(origins: &[String]) -> bool {
     origins.iter().any(|origin| !origin.trim().is_empty())
 }
@@ -338,6 +373,7 @@ impl ServerConfig {
     ///
     /// Call this after applying environment overrides.
     pub fn finalize(&mut self) -> anyhow::Result<()> {
+        self.apply_server_profile();
         // Normalize local filesystem paths (rocksdb/logs/storage/snapshots)
         self.normalize_paths();
         self.allow_configured_public_origin();
@@ -345,6 +381,85 @@ impl ServerConfig {
         self.validate()?;
 
         Ok(())
+    }
+
+    /// Apply resource caps for the configured [`ServerProfile`].
+    ///
+    /// `standard` leaves all values as configured. `micro` tightens threads,
+    /// RocksDB buffers, DataFusion memory, caches, and procedure runtime caps so
+    /// many micro instances can share a single host with minimal RSS.
+    fn apply_server_profile(&mut self) {
+        if !self.server.profile.is_micro() {
+            return;
+        }
+
+        const MIB: usize = 1024 * 1024;
+
+        // Single HTTP worker + single Tokio worker keeps idle thread count and per-thread
+        // allocator arenas minimal. Respect explicit small values (1..=2).
+        self.server.workers = if self.server.workers == 0 {
+            1
+        } else {
+            self.server.workers.min(2)
+        };
+        self.performance.tokio_worker_threads = if self.performance.tokio_worker_threads == 0 {
+            1
+        } else {
+            self.performance.tokio_worker_threads.min(2)
+        };
+        self.performance.worker_max_blocking_threads =
+            if self.performance.worker_max_blocking_threads == 0 {
+                8
+            } else {
+                self.performance.worker_max_blocking_threads.min(8)
+            };
+        self.performance.max_connections = self.performance.max_connections.min(512);
+        self.performance.backlog = self.performance.backlog.min(512);
+
+        // Micro RocksDB profile: 512 KiB shared block cache, 16-64 KiB memtables, 1 bg job.
+        if matches!(
+            self.storage.rocksdb.memory_mode,
+            super::types::RocksDbMemoryMode::Compact
+        ) {
+            self.storage.rocksdb.memory_mode = super::types::RocksDbMemoryMode::Micro;
+        }
+        if matches!(
+            self.storage.rocksdb.memory_mode,
+            super::types::RocksDbMemoryMode::Micro
+        ) {
+            self.storage.rocksdb.apply_micro_caps();
+        }
+
+        // Tight DataFusion operator pool and low parallelism.
+        self.datafusion.memory_limit = self.datafusion.memory_limit.min(16 * MIB);
+        self.datafusion.query_parallelism = 1;
+        self.datafusion.max_partitions = 1;
+        self.datafusion.batch_size = self.datafusion.batch_size.min(512);
+
+        // Shrink in-memory caches and transaction staging buffers.
+        self.manifest_cache.max_entries = self.manifest_cache.max_entries.min(64);
+        self.execution.sql_plan_cache_max_entries =
+            self.execution.sql_plan_cache_max_entries.min(32);
+        self.execution.sql_plan_cache_ttl_seconds =
+            self.execution.sql_plan_cache_ttl_seconds.min(300);
+        self.rate_limit.cache_max_entries = self.rate_limit.cache_max_entries.min(128);
+        self.rate_limit.cache_ttl_seconds = self.rate_limit.cache_ttl_seconds.min(180);
+        self.max_transaction_buffer_bytes = self.max_transaction_buffer_bytes.min(8 * MIB);
+
+        // Low background job concurrency and tighter V8 isolate budgets.
+        self.jobs.max_concurrent = self.jobs.max_concurrent.clamp(1, 2);
+        let rt = &mut self.functions.runtime;
+        rt.workers = if rt.workers == 0 { 1 } else { rt.workers.min(1) };
+        rt.max_active = rt.max_active.clamp(1, 2);
+        rt.max_queued = rt.max_queued.min(16);
+        rt.heap_soft_mb = rt.heap_soft_mb.clamp(4, 8);
+        rt.heap_hard_mb = rt.heap_hard_mb.clamp(rt.heap_soft_mb, 32);
+        rt.max_memory_mb = rt
+            .max_memory_mb
+            .min(64)
+            .max(rt.max_active.saturating_mul(rt.heap_hard_mb));
+        rt.max_idle_per_lane = rt.max_idle_per_lane.min(1);
+        rt.idle_ttl_secs = rt.idle_ttl_secs.min(10);
     }
 
     /// The Admin UI is served from `public_origin`, so that browser origin must be allowed
@@ -359,10 +474,12 @@ impl ServerConfig {
         let Some(origin) = browser_origin(&public_origin) else {
             return;
         };
-        if self.security.cors.allowed_origins.iter().any(|allowed| allowed == &origin) {
-            return;
+        for candidate in std::iter::once(origin.clone()).chain(loopback_origin_aliases(&origin)) {
+            if self.security.cors.allowed_origins.iter().any(|allowed| allowed == &candidate) {
+                continue;
+            }
+            self.security.cors.allowed_origins.push(candidate);
         }
-        self.security.cors.allowed_origins.push(origin);
     }
 
     /// Returns true when startup should emit a security warning because the
@@ -617,7 +734,7 @@ mod tests {
         config.server.public_origin = Some("https://db.example.com/".to_string());
 
         assert_eq!(config.server.admin_ui_url(), "https://db.example.com/ui");
-        assert_eq!(config.server.local_admin_ui_url(), "http://127.0.0.1:2900/ui");
+        assert_eq!(config.server.local_admin_ui_url(), "http://localhost:2900/ui");
     }
 
     #[test]
@@ -665,6 +782,23 @@ mod tests {
             vec![
                 "http://localhost:2900".to_string(),
                 "https://db.example.com".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_finalize_allows_every_loopback_origin_for_local_admin_ui() {
+        let mut config = ServerConfig::default();
+        config.server.public_origin = Some("http://localhost:2900".to_string());
+
+        config.finalize().expect("local public origin should be allowed");
+
+        assert_eq!(
+            config.security.cors.allowed_origins,
+            vec![
+                "http://localhost:2900".to_string(),
+                "http://127.0.0.1:2900".to_string(),
+                "http://[::1]:2900".to_string(),
             ]
         );
     }

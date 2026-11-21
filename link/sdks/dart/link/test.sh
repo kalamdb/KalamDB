@@ -224,7 +224,7 @@ flutter analyze
 # ── Unit tests (offline, no server required) ─────────────────────────
 echo ""
 echo "🔬 Running unit tests (no server)..."
-run_flutter_test "$DART_SDK_MODELS_MACHINE_OUTPUT" test/models_test.dart
+DART_SDK_MODELS_MACHINE_OUTPUT="$DART_SDK_MODELS_MACHINE_OUTPUT" bash ./test-offline.sh
 
 # ── E2E tests (require running KalamDB server) ──────────────────────
 echo ""

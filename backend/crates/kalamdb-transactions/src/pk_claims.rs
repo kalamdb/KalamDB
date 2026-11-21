@@ -11,12 +11,13 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
 };
 
-use kalamdb_commons::models::{TableId, TransactionId};
+use kalamdb_commons::models::{TableId, TransactionId, UserId};
 use tokio::sync::Notify;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ClaimKey {
     table_id: TableId,
+    user_id: Option<UserId>,
     primary_key: String,
 }
 
@@ -37,8 +38,20 @@ impl PrimaryKeyClaims {
     ///
     /// A second acquire by the same owner returns immediately.
     pub async fn acquire(&self, table_id: &TableId, primary_key: &str, owner: &TransactionId) {
+        self.acquire_scoped(table_id, None, primary_key, owner).await;
+    }
+
+    /// Claims on USER tables include the user, so independent tenants do not contend.
+    pub async fn acquire_scoped(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        primary_key: &str,
+        owner: &TransactionId,
+    ) {
         let key = ClaimKey {
             table_id: table_id.clone(),
+            user_id: user_id.cloned(),
             primary_key: primary_key.to_string(),
         };
         loop {
@@ -70,8 +83,19 @@ impl PrimaryKeyClaims {
 
     /// Drop one key when the committed row no longer matches the statement.
     pub fn release_key(&self, table_id: &TableId, primary_key: &str, owner: &TransactionId) {
+        self.release_key_scoped(table_id, None, primary_key, owner);
+    }
+
+    pub fn release_key_scoped(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        primary_key: &str,
+        owner: &TransactionId,
+    ) {
         let key = ClaimKey {
             table_id: table_id.clone(),
+            user_id: user_id.cloned(),
             primary_key: primary_key.to_string(),
         };
         let mut claims = self.lock();
@@ -146,6 +170,25 @@ mod tests {
             .await
             .expect("waiter timed out")
             .expect("waiter task");
+    }
+
+    #[tokio::test]
+    async fn independent_users_do_not_contend_on_the_same_primary_key() {
+        let claims = PrimaryKeyClaims::default();
+        let table_id = table();
+        let first = transaction_id();
+        let second = transaction_id();
+        let alice = UserId::new("alice");
+        let bob = UserId::new("bob");
+        claims.acquire_scoped(&table_id, Some(&alice), "token", &first).await;
+        tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            claims.acquire_scoped(&table_id, Some(&bob), "token", &second),
+        )
+        .await
+        .expect("one user's key must not block another user");
+        claims.release_owner(&first);
+        claims.release_owner(&second);
     }
 
     #[tokio::test]

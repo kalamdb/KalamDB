@@ -1,5 +1,10 @@
 use std::{collections::HashMap, sync::Arc};
 
+use crate::support::{
+    create_cluster_app_context, create_context_files_table, create_executor, create_shared_table,
+    create_user_table, execute_ok, execute_ok_with_params, insert_sql, observer_exec_ctx,
+    result_rows, unique_namespace,
+};
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
     models::{
@@ -13,11 +18,6 @@ use kalamdb_commons::{
 use kalamdb_core::{
     app_context::AppContext,
     sql::{ExecutionContext, ExecutionResult, SqlExecutor},
-};
-use crate::support::{
-    create_cluster_app_context, create_context_files_table, create_executor, create_shared_table,
-    create_user_table, execute_ok, execute_ok_with_params, insert_sql, observer_exec_ctx,
-    result_rows, unique_namespace,
 };
 
 fn sql_string(value: &str) -> String {

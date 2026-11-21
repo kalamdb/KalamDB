@@ -18,7 +18,7 @@
 [server]
 host = "127.0.0.1"
 port = 2900
-workers = 0
+workers = 8
 enable_http2 = true
 
 [storage]
@@ -27,12 +27,11 @@ shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 
 [storage.rocksdb]
-# Product default is compact (2 MiB cache / 128 KiB hot memtables). This bake-off
-# uses the server profile so cache/memtables scale from host RAM:
-# cache ≈ RAM/8, hot_data memtable ≥ 64 MiB (192 MiB on a 24 GiB host).
-# Explicit sizes below are used only if host RAM cannot be detected.
-memory_mode = "server"
-block_cache_size = 1073741824         # 1 GiB fallback
+# Explicit right-sized RocksDB budgets under compact mode: holds the 110k-row
+# hot working set in memory without preallocating 100+ MiB of empty memtable
+# bloom filters and arenas across idle system column families.
+memory_mode = "compact"
+block_cache_size = 33554432           # 32 MiB shared block cache
 max_background_jobs = 8
 max_open_files = 8192
 sync_writes = false
@@ -40,23 +39,23 @@ disable_wal = false
 compact_on_startup = false
 
 [storage.rocksdb.cf_profiles.system_meta]
-write_buffer_size = 8388608
+write_buffer_size = 1048576           # 1 MiB
 max_write_buffers = 3
 
 [storage.rocksdb.cf_profiles.system_index]
-write_buffer_size = 8388608
+write_buffer_size = 1048576           # 1 MiB
 max_write_buffers = 3
 
 [storage.rocksdb.cf_profiles.hot_data]
-write_buffer_size = 134217728         # 128 MiB fallback
+write_buffer_size = 16777216          # 16 MiB
 max_write_buffers = 4
 
 [storage.rocksdb.cf_profiles.hot_index]
-write_buffer_size = 67108864
+write_buffer_size = 8388608           # 8 MiB
 max_write_buffers = 4
 
 [storage.rocksdb.cf_profiles.raft]
-write_buffer_size = 33554432
+write_buffer_size = 8388608           # 8 MiB
 max_write_buffers = 3
 
 [datafusion]
@@ -173,9 +172,10 @@ timeout_ms = 15000
 
 [cluster]
 node_id = 1
-rpc_addr = "127.0.0.1:2910"
+rpc_addr = "127.0.0.1:0"
 api_addr = "127.0.0.1:2900"
 user_shards = 8
 shared_shards = 1
+snapshot_policy = "LogsSinceLast(50000)"
 max_snapshots_to_keep = 1
 replication_timeout_ms = 5000

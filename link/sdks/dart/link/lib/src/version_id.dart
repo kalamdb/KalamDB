@@ -8,7 +8,6 @@
 /// print(version.toString());
 /// ```
 class VersionId implements Comparable<VersionId> {
-
   /// The raw 64-bit integer value (matches Rust `i64` / FFI `PlatformInt64`).
   final int value;
 
@@ -39,7 +38,8 @@ class VersionId implements Comparable<VersionId> {
         throw FormatException('VersionId.parse: failed to parse "$raw"');
       }
     }
-    throw FormatException('VersionId.parse: unsupported type ${raw.runtimeType}');
+    throw FormatException(
+        'VersionId.parse: unsupported type ${raw.runtimeType}');
   }
 
   /// Try to parse a [VersionId], returning `null` on failure.
@@ -95,4 +95,3 @@ class VersionId implements Comparable<VersionId> {
   @override
   String toString() => value.toString();
 }
-

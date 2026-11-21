@@ -1,8 +1,8 @@
 # Implementation Plan: Unified Table Processing and Atomic Transaction Optimization
 
-**Branch**: `feat/pg-dialect` | **Date**: 2026-10-27 | **Spec**: [spec.md](spec.md)
+**Branch**: `feat/0.9-unified-table-transactions` (PR #412) | **Date**: 2026-10-27 | **Spec**: [spec.md](spec.md)
 
-**Input**: Feature specification from `/specs/039-unified-table-transactions/spec.md`, reconciliation notes in `/specs/039-unified-table-transactions/source-review.md`, and reference material in `/specs/039-unified-table-transactions/references/storage-transaction-notes.md`.
+**Input**: Feature specification from `/specs/039-unified-table-transactions/spec.md`, reconciliation notes in `/specs/039-unified-table-transactions/source-review.md`, reference material in `/specs/039-unified-table-transactions/references/storage-transaction-notes.md`, and the performance program in [`dml-storage-performance-handoff.md`](dml-storage-performance-handoff.md) (same text as `docs/plans/2026-10-30-dml-storage-performance-handoff.md`).
 
 ## Summary
 
@@ -16,11 +16,17 @@ This eliminates the parallel provider hierarchies (`UserTableProvider`, `SharedT
 
 On top of this unified foundation, the plan delivers true group-wide atomic transaction commits (`PreparedCommitBatch` -> single `StorageBackend::batch`), snapshot-safe hot version replacement (`min_pinned_version`), commit-time write-set folding (**User Story 3**), secondary-index tombstone omission and complete-event/delete retention (**User Story 4**), short-lock flush publication and streaming archive transfers (**User Story 5**), transport-aware `PlanCacheKey` and AST-only `RETURNING`/stream target handling (**User Story 6**), and durable Row V2 compatibility gating plus typed job orchestration (**User Story 7**).
 
+The same branch then upgrades OpenRaft from 0.9.25 to 0.10.0 (**User Story 8**, tasks T090–T119, [contracts/openraft-010.md](contracts/openraft-010.md)). That upgrade is a merge gate for PR #412 (issue #451): type config with the standard leader id and KalamDB-owned persisted records, storage with one explicit batch per applied entry and no silent decode fallbacks, snapshot retention, chunked snapshot transfer, startup validation, real `system.cluster_groups.committed`, leadership transfer replacing the step-down workaround, and Pre-Vote. Optional helpers (`openraft-multi`, pipelined append, lease reads, API batching, runtime stats, OpenTelemetry) are adopted only after a written measurement. `RaftManager`, `RaftPartitionStore`, the single-entry WriteBatch commit, and the Meta-to-Data watermark stay. Cross-group XA and sharding stay out of this plan.
+
+Task T120 (Phase J) then merges the per-scope user and shared copies behind `VersionedTableEngine` into one implementation generic over a typed scope adapter (FR-057). Key layout, row encoding, and shared RLS do not change.
+
+The same feature then implements the staged DML, query, storage, and transaction performance program in [`dml-storage-performance-handoff.md`](dml-storage-performance-handoff.md). That document is the specification for tasks T069–T089. Its architecture acceptance section and correctness gates are completion gates. Phase E there is evidence-gated investigation, not a storage-format migration. Practical goals, not predicted speedups: at least 20% lower current-baseline `benchv2/pgwire-speed` total and 30% lower combined #8/#11/#12/#13/#15 time, on a new same-profile `dev` baseline. The saved 2026-10-27 release timings are not that baseline.
+
 ## Technical Context
 
 **Language/Version**: Rust 1.99.1 (workspace edition 2021)
 
-**Primary Dependencies**: `datafusion` 55.2, `arrow` 59, `sqlparser` 0.62 (`KalamDbDialect`), `tokio`, `dashmap`, `moka`, `openraft`, `rocksdb`, `parquet`, `pgwire` (workspace-pinned in `kalamdb-postgres-wire` only), `thiserror`, `serde`
+**Primary Dependencies**: `datafusion` 55.2, `arrow` 59, `sqlparser` 0.62 (`KalamDbDialect`), `tokio`, `dashmap`, `moka`, `openraft` 0.10.0 (`default-features = false`, `serde`, `tokio-rt`; `storage-v2` removed), `rocksdb`, `parquet`, `pgwire` (workspace-pinned in `kalamdb-postgres-wire` only), `thiserror`, `serde`
 
 **Storage**: RocksDB hot entity/index stores (`kalamdb-store`), Parquet cold segments & manifests (`kalamdb-filestore` + `kalamdb-flush`), append-only stream logs (`kalamdb-streams`), durable topic message stores (`kalamdb-publisher`)
 
@@ -33,6 +39,7 @@ On top of this unified foundation, the plan delivers true group-wide atomic tran
 **Performance Goals**:
 - Exactly **1** `StorageBackend::batch` submission per supported non-empty transaction commit across all touched tables and indexes in a commit domain (`0` for empty/no-op commits) (SC-001).
 - Positive median runtime improvement (reported in seconds across $\ge 5$ matched `dev`-profile repeats) exceeding baseline run-to-run spread on 25,000-row insert/update/delete transactions, 25,000-op repeated-key folding, and 100/1,000 dirty-transaction overlay reads, with $\le 5\%$ regression on unaffected workloads (SC-001, SC-003, SC-009, SC-010).
+- Handoff goals on the new `dev`-profile `benchv2/pgwire-speed` baseline: ≥20% lower total median and ≥30% lower combined #8/#11/#12/#13/#15 median; ≥30% lower peak tracked transient memory on the selected large-DML workload; flag any script-median regression above max(5%, 0.005s). These goals do not weaken correctness. See [`dml-storage-performance-handoff.md`](dml-storage-performance-handoff.md).
 - Zero wait on bulk Parquet I/O during ordinary `mark_pending_write` calls when cold storage is delayed by 1 second (SC-007).
 - Both `User` and `Shared` tables execute `columnar_hot_scan`, `sum_hot_covering_integers`, and `plan_literal_equality_updates` from the single shared `VersionedTableEngine` implementation (SC-013).
 - Persisted system-table point lookups and the recorded `pg_catalog` / `information_schema` introspection query have median and p99 latency less than or equal to the recorded baseline (SC-015). Zero regression is the gate. The user/shared 5% allowance does not apply.
@@ -43,6 +50,8 @@ On top of this unified foundation, the plan delivers true group-wide atomic tran
 - Mandatory net reduction in maintained production LOC across the consolidated provider, store, flush, and applier scope (~3,500–4,500+ lines targeted for removal); superseded duplicate paths and concrete provider downcasts must be deleted, not wrapped (FR-001, FR-038–FR-046, SC-005).
 - On-disk RocksDB key and KOBJ value layouts for `user_*` and `shared_*` partitions remain 100% byte-compatible (`ScopedRowKey` encodes `(user_id, version)` for User and `version` for Shared) (FR-032).
 - No SQL string stitching, regex/substring table scanning, or AST-to-string-to-AST reparsing in hot paths (Core Rules 12 & 13, FR-029).
+- OpenRaft 0.10 stays on this branch (FR-048–FR-056). Persisted 0.9.25 Raft bytes remain readable through KalamDB-owned records. Standalone single-entry commit stays one RocksDB `WriteBatch`. One SQL transaction stays one group-local `RaftCommand::TransactionCommit`. Rolling upgrade is a coordinated restart of the whole cluster, and mixed peers are refused by the RPC protocol version.
+- User and shared tables run one engine implementation (FR-057, T120). Key layout, row encoding, and shared RLS do not change. Optional OpenRaft crates are not added until their decision-log row is `adopt`.
 
 **Scale/Scope**:
 - 19 backend crates touched (`kalamdb-commons`, `kalamdb-macros`, `kalamdb-datafusion-sources`, `kalamdb-store`, `kalamdb-system`, `kalamdb-views`, `kalamdb-tables`, `kalamdb-flush`, `kalamdb-publisher`, `kalamdb-transactions`, `kalamdb-core`, `kalamdb-jobs`, `kalamdb-pg-bridge`, `kalamdb-dba`, `kalamdb-plan-cache`, `kalamdb-dialect`, `kalamdb-postgres-wire`, `kalamdb-transfer`, `kalamdb-serialization`).
@@ -56,7 +65,7 @@ On top of this unified foundation, the plan delivers true group-wide atomic tran
 | :--- | :--- | :--- | :--- |
 | **I. Performance-First Execution** | PASS | PASS | Eliminates 25,000x per-row `WriteBatch` submissions, eliminates whole-table `BTreeMap` row conversion in `TransactionOverlayExec`, brings `columnar_hot_scan`, `covering_aggregate`, and `equality_update` to User tables as well as Shared tables, replaces `returning_describe_sql` string round-trip with direct AST construction, and records all benchmark runtimes in seconds across $\ge 5$ matched `dev` runs. System catalog point lookups stay on `IndexedEntityStore` (PK equality is `store.get`; scans stay on `build_record_batch!`). `pg_catalog` and virtual system views stay in-memory projections. SC-015 blocks any median or p99 regression on those paths. |
 | **II. Boundary Ownership Before Convenience** | PASS | PASS | `kalamdb-datafusion-sources` owns generic DataFusion `TableProvider`/DML plan primitives; `kalamdb-tables` owns the unified `KalamTableProvider`, `VersionedTableEngine`, and `StreamTableEngine`; `kalamdb-store` owns RocksDB/index ops; `kalamdb-flush` owns unified versioned flush/compaction; `kalamdb-publisher` absorbs `topics/` from `kalamdb-tables` (dropping its `kalamdb-tables` dependency); `kalamdb-transfer` drops its `kalamdb-core` dependency (FR-033, FR-046). |
-| **III. Minimal Dependency Expansion** | PASS | PASS | Zero new external crate dependencies added to root `Cargo.toml`. Removes two unnecessary internal crate dependency edges (`kalamdb-transfer -> kalamdb-core` and `kalamdb-publisher -> kalamdb-tables`). |
+| **III. Minimal Dependency Expansion** | PASS | PASS | The table program adds no new external crate. It removes two internal edges (`kalamdb-transfer -> kalamdb-core`, `kalamdb-publisher -> kalamdb-tables`). User Story 8 bumps the existing `openraft` pin from 0.9.25 to 0.10.0 and drops `storage-v2`. `openraft-multi`, `openraft-metrics-otel`, and `runtime-stats` stay out of `Cargo.toml` until T107–T109 record an adopt decision. |
 | **IV. Validation, Testing, and Documentation Ship Together** | PASS | PASS | `quickstart.md` defines narrow-to-broad executable `cargo nextest run` gates for every user story (SC-001–SC-014) plus CLI smoke tests and architecture doc updates. |
 | **V. Composable, Low-Boilerplate APIs** | PASS | PASS | One `KalamTableProvider` implements DataFusion's `TableProvider` once for user/shared/stream, composed with `TableCapabilityProfile`, `TableScope`, and `TableStorageEngine` (`Versioned` vs `Stream`), eliminating 35+ `Any` downcasts. Persisted system tables use one `KeyedTableProvider`. Computed catalog relations use one `ComputedCatalogProvider`. `#[table]` remains the schema generator for all of them. |
 
@@ -72,12 +81,14 @@ specs/039-unified-table-transactions/
 ├── research.md                                      # Phase 0 research & duplication inventory
 ├── data-model.md                                    # Phase 1 domain entities & state transitions
 ├── quickstart.md                                    # Phase 1 validation & benchmark guide
+├── dml-storage-performance-handoff.md               # Performance program. Same text as docs/plans/2026-10-30-dml-storage-performance-handoff.md. Tasks T069–T089.
 ├── checklists/
 │   └── requirements.md                              # Specification quality checklist
 ├── contracts/
 │   ├── table-processing-and-storage.md              # Unified DataFusion provider, engine, index, and crate boundary contracts
 │   ├── transaction-atomicity-and-folding.md         # Atomic commit, folding, and overlay contracts
-│   └── query-cache-and-background-work.md           # Plan cache, AST, flush, and transfer contracts
+│   ├── query-cache-and-background-work.md           # Plan cache, AST, flush, and transfer contracts
+│   └── openraft-010.md                              # OpenRaft 0.9.25 → 0.10.0. Tasks T090–T119. Issue #451, PR #412.
 └── references/
     └── storage-transaction-notes.md                 # Supplied reference notes (read-only input)
 ```
@@ -253,6 +264,36 @@ Implementation MUST proceed in strict dependency order per `spec.md` Assumptions
 3. **Final Consolidation Accounting, Full Regression Sweep & Architecture Docs**:
    - Verify positive net LOC reduction and zero concrete provider downcasts (SC-005), run full `cargo nextest run` and CLI smoke suites (SC-012), and update `docs/architecture/`.
 
+### Phase H — DML, query, storage, and transaction performance (tasks T069–T089)
+
+Specified exactly by [`dml-storage-performance-handoff.md`](dml-storage-performance-handoff.md). This section is the phase index. The handoff section named on each task is the requirement, including its acceptance text, architecture review gate, and correctness gates 1–8. Do not add a parallel fast path, a second parser, or a new crate. Preserve the dirty tree and do not commit unless the user explicitly asks.
+
+Execution order from that document:
+
+1. **T069 A1** — current `dev`-profile baseline, stage attribution, ownership/call-path map. Revalidate folding, target cache, batching, and overlay.
+2. **T070 A2** and **T071 B1** together — inactive coalescing allocations, and consume the write set on commit. Measure before proceeding.
+3. **T072 B2** and **T073 B3** — one authoritative target decode, then batched post-commit work, on range DELETE and then UPDATE.
+4. **T075** — D3 reservation plumbing before streaming expansion. Then **T076 C1** and **T077 C2**, then **T078 C3**.
+5. **T079 D1** and **T080 D2** from profiles. **T081** finishes D3 resource tests. **T074 B4** only if concurrent-load evidence says claim contention matters.
+6. **T088** and **T089** — full correctness, benchmark, concurrency, and soak evidence. **T082 E1**, **T083 E2**, and **T084 E3** require a measured bottleneck and an ADR. **T085 F1** may follow T069. **T086 F2** follows T078. **T087 F3** follows the C/D stream and budget contracts.
+
+### Phase I — OpenRaft 0.10 (tasks T090–T119, Story 8, FR-048–FR-056)
+
+Specified by [`contracts/openraft-010.md`](contracts/openraft-010.md). Issue #451 and PR #412 require this on `feat/0.9-unified-table-transactions` before that PR merges. Capture 0.9.25 fixtures before changing the dependency. Compile against 0.10 before any performance rewrite. Optional crates stay out until their decision-log row says adopt.
+
+1. **T090** — 0.9.25 baseline and serialization fixtures (vote, membership, command, snapshot header, snapshot file, `KalamNode`), plus a 0.9 follower-restart test, while the pin is still 0.9.25.
+2. **T091–T097** — failing decode tests, then the 0.10.0 pin (`serde`, `tokio-rt`), `KalamTypeConfig` with the standard leader id and `Node = KalamNode`, `RaftCommandBytes`, KalamDB-owned membership and snapshot-header records, snapshot naming without `snapshot_id`, storage traits with errors propagated, `RaftNetworkV2` with chunked snapshots, byte-bounded append, and an RPC protocol version, and the `LeaseExpired` / `LogEntryDiscarded` handling. Behavior stays the current unary-append, WriteBatch, and watermark behavior.
+3. **T098, T115–T118, T099–T101** — bounded `entries_stream`, one explicit batch per applied entry replacing `write_coalesce`, one applied-index owner, no in-memory storage mode and one log reader, snapshot retention and atomic install, `truncate_after`, startup refusal, and the OpenRaft log-storage suite on `InMemoryBackend` and RocksDB.
+4. **T102–T106** — leadership transfer (also for step-down and shutdown), Pre-Vote, `system.cluster_groups.committed`, heartbeat age, `system.cluster` summaries that append columns with remote progress from `peer_stats_cache`, and the `cluster_nodes` doc fix.
+5. **T107–T109, T119** — written adopt-or-decline for `openraft-multi`, `stream_append`, log I/O workers (which must stop blocking Tokio), read policies, API batching, runtime stats, and OpenTelemetry, and a decision for each 0.10 behavior change.
+6. **T110–T114** — fault tests (including >4 MiB snapshot and entry, follower restart, expired lease), spec 039 transaction and `VersionId` regression, before/after timings, coordinated-restart policy with a protocol-version test, and removal of 0.9-only code and the leftovers named in T114.
+
+### Phase J — One versioned engine implementation (task T120, Story 2, FR-057)
+
+1. **T120** — after T088. Merge `versioned/engine/user` and `versioned/engine/shared` into one implementation over a typed scope adapter. Diff each method pair, move one body, delete the other, and replace the `include!` / `#[path]` assembly with normal modules. Record the T088 matrix and the T089 16-script timings before and after.
+
 ## Complexity Tracking
 
-> **No Constitution violations require justification.** The plan removes two crate dependency edges (`kalamdb-transfer -> kalamdb-core`, `kalamdb-publisher -> kalamdb-tables`), introduces zero new external dependencies, eliminates 35+ runtime `Any` downcasts, and removes ~3,500–4,500+ lines of duplicated code.
+> The table program adds no new external crate. It removes two internal edges (`kalamdb-transfer -> kalamdb-core`, `kalamdb-publisher -> kalamdb-tables`), eliminates 35+ runtime `Any` downcasts, and removes ~3,500–4,500+ lines of duplicated code.
+>
+> User Story 8 bumps the existing workspace `openraft` dependency from 0.9.25 to 0.10.0, drops the removed `storage-v2` feature, and turns default features off with `serde` and `tokio-rt` on (`tokio-rt` supplies the default async runtime; the default `clap` feature is not needed). That bump is required because 0.10 deletes the APIs this branch still calls. It removes `kalamdb-store`'s `write_coalesce` module once the Raft apply path no longer uses it. `openraft-multi` and `openraft-metrics-otel` are not part of the bump. A later task may add one only after the decision log in `contracts/openraft-010.md` records an adopt result and the workspace dependency is declared in the root `Cargo.toml`.

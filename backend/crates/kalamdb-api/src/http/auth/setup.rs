@@ -8,7 +8,7 @@ use std::sync::Arc;
 use actix_web::{web, HttpRequest, HttpResponse};
 use kalamdb_auth::{
     errors::error::AuthError,
-    extract_client_ip_secure,
+    extract_client_ip_secure, is_direct_localhost_request,
     security::password::{hash_password, validate_password_with_auth_settings},
     UserRepository,
 };
@@ -60,21 +60,20 @@ pub async fn server_setup_handler(
     rate_limiter: web::Data<Arc<RateLimiter>>,
     body: web::Json<ServerSetupRequest>,
 ) -> HttpResponse {
-    // Only allow setup from localhost
-    let connection_info = extract_client_ip_secure(&req);
+    // A loopback reverse proxy must not grant remote callers local access.
+    if !config.allow_remote_setup && !is_direct_localhost_request(&req) {
+        return HttpResponse::Forbidden().json(AuthErrorResponse::new(
+            "forbidden",
+            "Server setup can only be performed from localhost",
+        ));
+    }
 
+    let connection_info = extract_client_ip_secure(&req);
     // Rate limit setup attempts by client IP
     if !rate_limiter.get_ref().check_auth_rate(&connection_info) {
         return HttpResponse::TooManyRequests().json(AuthErrorResponse::new(
             "rate_limited",
             "Too many setup attempts. Please retry shortly.",
-        ));
-    }
-
-    if !connection_info.is_localhost() && !config.allow_remote_setup {
-        return HttpResponse::Forbidden().json(AuthErrorResponse::new(
-            "forbidden",
-            "Server setup can only be performed from localhost",
         ));
     }
 
@@ -257,9 +256,8 @@ pub async fn setup_status_handler(
     user_repo: web::Data<Arc<dyn UserRepository>>,
     config: web::Data<AuthSettings>,
 ) -> HttpResponse {
-    // Only allow status check from localhost
-    let connection_info = extract_client_ip_secure(&req);
-    if !connection_info.is_localhost() && !config.allow_remote_setup {
+    // Never infer local administrative access from a localhost proxy peer.
+    if !config.allow_remote_setup && !is_direct_localhost_request(&req) {
         return HttpResponse::Forbidden().json(AuthErrorResponse::new(
             "forbidden",
             "Setup status can only be checked from localhost",

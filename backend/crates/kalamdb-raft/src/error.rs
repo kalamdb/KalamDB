@@ -12,6 +12,18 @@ pub enum RaftError {
     #[error("Not leader for group {group}: leader is node {leader:?}")]
     NotLeader { group: String, leader: Option<u64> },
 
+    /// The leader's quorum lease expired. Retry locally; do not forward.
+    #[error("leader lease expired for group {group}")]
+    LeaseExpired { group: String },
+
+    /// Leadership is moving to another voter.
+    #[error("leadership transfer in progress for group {group}: target {target:?}")]
+    LeadershipTransfer { group: String, target: Option<u64> },
+
+    /// The log entry was discarded. Whether it committed is unknown.
+    #[error("raft write outcome unknown for group {group}")]
+    OutcomeUnknown { group: String },
+
     /// Raft group not found
     #[error("Raft group not found: {0}")]
     GroupNotFound(String),
@@ -114,6 +126,8 @@ impl RaftError {
         matches!(
             self,
             RaftError::NotLeader { .. }
+                | RaftError::LeaseExpired { .. }
+                | RaftError::LeadershipTransfer { .. }
                 | RaftError::Timeout(_)
                 | RaftError::Network(_)
                 | RaftError::ReplicationTimeout { .. }

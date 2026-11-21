@@ -1,12 +1,13 @@
 //! Sharded workers for Raft log `append()` IO.
 //!
-//! OpenRaft 0.9 [`RaftLogStorage::append`] must return immediately and later
-//! fire [`LogFlushed`]. Completing the RocksDB write on a worker lets the
-//! Raft core task yield on the flush oneshot and overlap with the previous
-//! apply. Consecutive appends still wait for `LogFlushed` (0.9 core limitation).
+//! [`RaftLogStorage::append`] returns before the flush callback. Completing
+//! the write on a worker lets the Raft core yield on [`IOFlushed`] and overlap
+//! with the previous apply.
 //!
 //! Each group always uses the same worker, so that group's appends stay ordered.
-//! A full shard queue blocks that caller instead of growing without a bound.
+//! A full shard queue is bounded. The caller uses `try_send` first. Only a full
+//! queue waits, and on a Tokio worker that wait is `block_in_place` so the
+//! runtime can move other tasks off this thread.
 
 use std::{
     io,
@@ -14,7 +15,7 @@ use std::{
 };
 
 use kalamdb_store::RaftPartitionStore;
-use openraft::storage::LogFlushed;
+use openraft::storage::IOFlushed;
 
 use crate::{storage::types::KalamTypeConfig, GroupId};
 
@@ -24,8 +25,8 @@ const LOG_IO_QUEUE_DEPTH: usize = 64;
 enum LogIoJob {
     Append {
         store: RaftPartitionStore,
-        records: Vec<(u64, Vec<u8>)>,
-        callback: LogFlushed<KalamTypeConfig>,
+        records: Vec<(u64, std::sync::Arc<[u8]>)>,
+        callback: IOFlushed<KalamTypeConfig>,
     },
 }
 
@@ -59,8 +60,10 @@ fn run_log_io_job(job: LogIoJob) {
             records,
             callback,
         } => {
+            let records =
+                records.into_iter().map(|(index, record)| (index, record.to_vec())).collect();
             let result = store.append_encoded(records).map_err(|e| io::Error::other(e.to_string()));
-            callback.log_io_completed(result);
+            callback.io_completed(result);
         },
     }
 }
@@ -68,11 +71,11 @@ fn run_log_io_job(job: LogIoJob) {
 /// Persist packed log records off the Raft core task, then complete `callback`.
 pub(super) fn flush_log_records(
     store: &RaftPartitionStore,
-    records: Vec<(u64, Vec<u8>)>,
-    callback: LogFlushed<KalamTypeConfig>,
+    records: Vec<(u64, std::sync::Arc<[u8]>)>,
+    callback: IOFlushed<KalamTypeConfig>,
 ) {
     if records.is_empty() {
-        callback.log_io_completed(Ok(()));
+        callback.io_completed(Ok(()));
         return;
     }
 
@@ -82,14 +85,60 @@ pub(super) fn flush_log_records(
         records,
         callback,
     };
-    if let Err(mpsc::SendError(job)) = log_io_senders()[shard].send(job) {
+    enqueue(&log_io_senders()[shard], job);
+}
+
+/// Queue `job` without blocking a Tokio worker.
+///
+/// `try_send` returns immediately. A full queue waits on `block_in_place`
+/// when a runtime is present, so other tasks can move to another worker.
+/// The send completes before this function returns, which keeps a group's
+/// appends in order on its shard. A disconnected worker runs the job inline.
+fn enqueue(sender: &mpsc::SyncSender<LogIoJob>, job: LogIoJob) {
+    match sender.try_send(job) {
+        Ok(()) => {},
+        Err(mpsc::TrySendError::Disconnected(job)) => run_log_io_job(job),
+        Err(mpsc::TrySendError::Full(job)) => {
+            if tokio::runtime::Handle::try_current().is_ok() {
+                tokio::task::block_in_place(|| send_or_run(sender, job));
+            } else {
+                send_or_run(sender, job);
+            }
+        },
+    }
+}
+
+fn send_or_run(sender: &mpsc::SyncSender<LogIoJob>, job: LogIoJob) {
+    if let Err(mpsc::SendError(job)) = sender.send(job) {
         run_log_io_job(job);
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
+    use kalamdb_store::{test_utils::InMemoryBackend, RaftPartitionStore};
+    use openraft::storage::IOFlushed;
+
     use super::*;
+
+    fn append_job(store: &RaftPartitionStore, index: u64) -> LogIoJob {
+        LogIoJob::Append {
+            store: store.clone(),
+            records: vec![(index, Arc::from([index as u8].as_slice()))],
+            callback: IOFlushed::noop(),
+        }
+    }
+
+    fn append_index(job: LogIoJob) -> u64 {
+        match job {
+            LogIoJob::Append { records, .. } => records[0].0,
+        }
+    }
 
     #[test]
     fn four_raft_groups_do_not_share_one_log_io_shard() {
@@ -110,5 +159,31 @@ mod tests {
             shard_for_group(GroupId::DataSharedShard(1)),
             shard_for_group(GroupId::DataSharedShard(1))
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn full_log_io_queue_lets_another_task_run() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let store = RaftPartitionStore::new(Arc::new(InMemoryBackend::new()), GroupId::Meta);
+        sender.try_send(append_job(&store, 1)).expect("prime the queue");
+
+        let queued = tokio::spawn(async move {
+            enqueue(&sender, append_job(&store, 2));
+        });
+        let ran = Arc::new(AtomicBool::new(false));
+        let flag = ran.clone();
+        tokio::spawn(async move {
+            flag.store(true, Ordering::SeqCst);
+        })
+        .await
+        .expect("companion task");
+        assert!(ran.load(Ordering::SeqCst), "a full log queue stalled the runtime");
+
+        assert_eq!(append_index(receiver.recv().expect("first")), 1);
+        assert_eq!(
+            append_index(receiver.recv_timeout(std::time::Duration::from_secs(1)).expect("second")),
+            2
+        );
+        queued.await.expect("enqueue");
     }
 }

@@ -1,17 +1,13 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
-    sync::{
-        atomic::{AtomicBool, AtomicU32, Ordering},
-        Arc, RwLock,
-    },
-    time::Duration,
+    sync::{Arc, RwLock},
 };
 
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use tokio::{
-    sync::{mpsc, oneshot},
+    sync::{mpsc, oneshot, watch},
     time::Instant as TokioInstant,
 };
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, protocol::Message};
@@ -26,7 +22,7 @@ use super::{
     routing::{route_event, send_subscribe, send_unsubscribe},
 };
 use crate::{
-    auth::{AuthProvider, ResolvedAuth},
+    auth::{exchange_login_credentials, AuthProvider, ResolvedAuth},
     connection::{
         apply_ws_auth_headers, authenticate_ws, connect_with_optional_local_bind,
         decode_ws_payload, jitter_keepalive_interval, parse_message, parse_message_domain,
@@ -35,15 +31,10 @@ use crate::{
     error::{KalamLinkError, Result},
     event_handlers::{ConnectionError, DisconnectReason, EventHandlers},
     models::{CompressionType, ConnectionOptions, SerializationType},
+    realtime::{resume_from, RetryBackoff},
+    subscription::SubscriptionDelivery,
     timeouts::KalamLinkTimeouts,
 };
-
-fn auth_user_from_auth(auth: &AuthProvider) -> Option<&str> {
-    match auth {
-        AuthProvider::BasicAuth(user, _) => Some(user.as_str()),
-        _ => None,
-    }
-}
 
 fn connection_hint(detail: &str, recoverable: bool, auth_user: Option<&str>) -> &'static str {
     let normalized = detail.to_lowercase();
@@ -99,33 +90,54 @@ fn all_resumes_ready(subs: &HashMap<String, SubEntry>) -> bool {
     subs.values().all(|entry| !entry.reconnect_resubscribe_pending)
 }
 
-fn mark_connected(connected: &Arc<AtomicBool>, event_handlers: &EventHandlers) {
-    if !connected.swap(true, Ordering::SeqCst) {
+fn mark_connected(connected: &watch::Sender<bool>, event_handlers: &EventHandlers) {
+    if !*connected.borrow() {
+        connected.send_replace(true);
         event_handlers.emit_connect();
     }
 }
 
 fn mark_disconnected(
-    connected: &Arc<AtomicBool>,
+    connected: &watch::Sender<bool>,
     event_handlers: &EventHandlers,
     reason: DisconnectReason,
 ) {
-    if connected.swap(false, Ordering::SeqCst) {
+    if connected.send_replace(false) {
         event_handlers.emit_disconnect(reason);
     }
 }
 
 async fn establish_ws(
     base_url: &str,
+    http_client: &reqwest::Client,
     resolved_auth: &RwLock<ResolvedAuth>,
     timeouts: &KalamLinkTimeouts,
     connection_options: &ConnectionOptions,
     event_handlers: &EventHandlers,
-) -> Result<(WebSocketStream, AuthProvider, SerializationType)> {
+) -> Result<(WebSocketStream, SerializationType)> {
     log::debug!("[kalam-sdk] Establishing WebSocket connection to {}", base_url);
     let resolved = resolved_auth.read().unwrap().clone();
-    let auth = resolved.resolve().await?;
-    let auth_user = auth_user_from_auth(&auth);
+    let auth = async {
+        match resolved.resolve().await? {
+            AuthProvider::BasicAuth(user, password) => {
+                let response =
+                    exchange_login_credentials(http_client, base_url, &user, &password).await?;
+                Ok::<_, KalamLinkError>((
+                    AuthProvider::jwt_token(response.access_token),
+                    Some(user),
+                ))
+            },
+            auth => Ok((auth, None)),
+        }
+    };
+    let (auth, auth_user) = if KalamLinkTimeouts::is_no_timeout(timeouts.auth_timeout) {
+        auth.await?
+    } else {
+        tokio::time::timeout(timeouts.auth_timeout, auth).await.map_err(|_| {
+            KalamLinkError::TimeoutError("WebSocket credential resolution timed out".to_string())
+        })??
+    };
+    let auth_user = auth_user.as_deref();
 
     let uses_header_auth = matches!(&auth, AuthProvider::JwtToken(_));
 
@@ -240,29 +252,25 @@ async fn establish_ws(
         uses_header_auth
     );
 
-    Ok((ws_stream, auth, serialization))
+    Ok((ws_stream, serialization))
 }
 
 async fn resubscribe_all(
     ws: &mut WebSocketStream,
     subs: &mut HashMap<String, SubEntry>,
     timeouts: &KalamLinkTimeouts,
-    event_handlers: &EventHandlers,
     serialization: SerializationType,
-) {
+) -> Result<()> {
     log::info!(
         "[kalam-sdk] Re-subscribing {} active subscription(s) after reconnect",
         subs.len()
     );
     for (id, entry) in subs.iter_mut() {
-        let mut options = entry.options.clone();
         entry.batch_seq_id = None;
         entry.is_loading = true;
         reset_startup_deadline(entry, timeouts, true);
-        if let Some(seq_id) = effective_entry_seq(entry) {
-            options.from = Some(seq_id);
-            entry.options.from = Some(seq_id);
-        }
+        let consumed = effective_entry_seq(entry);
+        resume_from(&mut entry.options, consumed);
 
         log::info!(
             "[kalam-sdk] Re-subscribing '{}' with from={:?}",
@@ -270,40 +278,19 @@ async fn resubscribe_all(
             entry.options.from.map(|seq| seq.to_string()),
         );
 
-        let send_options = should_send_subscription_options(entry.request_initial_data, &options)
-            .then_some(options);
-        if let Err(error) = send_subscribe(ws, id, &entry.sql, send_options, serialization).await {
-            log::warn!("Failed to re-subscribe {}: {}", id, error);
-            event_handlers.emit_error(ConnectionError::new(
-                format!("Failed to re-subscribe {}: {}", id, error),
-                true,
-            ));
-        }
+        let send_options =
+            should_send_subscription_options(entry.request_initial_data, &entry.options)
+                .then(|| entry.options.clone());
+        send_subscribe(ws, id, &entry.sql, send_options, serialization).await?;
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn route_event_and_refresh_connection(
-    event: crate::models::ChangeEvent,
-    ws: &mut WebSocketStream,
-    subs: &mut HashMap<String, SubEntry>,
-    resume_cache: &ResumeCache,
-    timeouts: &KalamLinkTimeouts,
-    serialization: SerializationType,
-    connected: &Arc<AtomicBool>,
-    event_handlers: &EventHandlers,
-) {
-    route_event(event, ws, subs, resume_cache, timeouts, serialization).await;
-    if all_resumes_ready(subs) {
-        mark_connected(connected, event_handlers);
-    }
+    Ok(())
 }
 
 async fn handle_startup_timeouts(
     subs: &mut HashMap<String, SubEntry>,
     resume_cache: &ResumeCache,
     ws_stream: &mut Option<WebSocketStream>,
-    connected: &Arc<AtomicBool>,
+    connected: &watch::Sender<bool>,
     timeouts: &KalamLinkTimeouts,
     event_handlers: &EventHandlers,
 ) -> bool {
@@ -334,7 +321,9 @@ async fn handle_startup_timeouts(
             if let Some(result_tx) = entry.pending_result_tx.take() {
                 let _ = result_tx.send(Err(KalamLinkError::TimeoutError(message)));
             } else {
-                let _ = entry.event_tx.try_send(Err(KalamLinkError::TimeoutError(message)));
+                let _ = entry.event_tx.try_send(SubscriptionDelivery::Event(Err(
+                    KalamLinkError::TimeoutError(message),
+                )));
             }
         }
     }
@@ -351,9 +340,7 @@ async fn handle_startup_timeouts(
     log::warn!("[kalam-sdk] {}", message);
     event_handlers.emit_error(ConnectionError::new(&message, true));
 
-    if let Some(mut ws) = ws_stream.take() {
-        let _ = ws.close(None).await;
-    }
+    *ws_stream = None;
 
     mark_disconnected(
         connected,
@@ -368,13 +355,13 @@ async fn handle_startup_timeouts(
 pub(super) async fn connection_task(
     mut cmd_rx: mpsc::Receiver<ConnCmd>,
     base_url: String,
+    http_client: reqwest::Client,
     resolved_auth: Arc<RwLock<ResolvedAuth>>,
     timeouts: KalamLinkTimeouts,
     connection_options: ConnectionOptions,
     event_handlers: EventHandlers,
-    connected: Arc<AtomicBool>,
-    reconnect_attempts: Arc<AtomicU32>,
-    ready_tx: Option<oneshot::Sender<Result<()>>>,
+    connected: watch::Sender<bool>,
+    mut ready_tx: oneshot::Sender<Result<()>>,
     resume_cache: Arc<ResumeCache>,
 ) {
     let mut subs: HashMap<String, SubEntry> = HashMap::new();
@@ -383,6 +370,7 @@ pub(super) async fn connection_task(
     let mut shutdown_completed: Option<oneshot::Sender<()>> = None;
     let mut next_generation: u64 = 1;
     let mut negotiated_ser = SerializationType::Json;
+    let mut retry = RetryBackoff::default();
 
     let keepalive_duration = if timeouts.keepalive_interval.is_zero() {
         FAR_FUTURE
@@ -397,22 +385,23 @@ pub(super) async fn connection_task(
     let mut awaiting_pong = false;
     let mut pong_deadline = TokioInstant::now() + FAR_FUTURE;
 
-    match establish_ws(&base_url, &resolved_auth, &timeouts, &connection_options, &event_handlers)
-        .await
-    {
-        Ok((stream, _auth, serialization)) => {
+    let initial = tokio::select! {
+        biased;
+        _ = ready_tx.closed() => return,
+        result = establish_ws(
+            &base_url, &http_client, &resolved_auth, &timeouts, &connection_options, &event_handlers,
+        ) => result,
+    };
+    match initial {
+        Ok((stream, serialization)) => {
             ws_stream = Some(stream);
             negotiated_ser = serialization;
             mark_connected(&connected, &event_handlers);
             ping_deadline = TokioInstant::now() + keepalive_duration;
-            if let Some(tx) = ready_tx {
-                let _ = tx.send(Ok(()));
-            }
+            let _ = ready_tx.send(Ok(()));
         },
         Err(error) => {
-            if let Some(tx) = ready_tx {
-                let _ = tx.send(Err(error));
-            }
+            let _ = ready_tx.send(Err(error));
         },
     }
 
@@ -424,7 +413,7 @@ pub(super) async fn connection_task(
                 }
                 let _ = ws.close(None).await;
             }
-            let was_connected = connected.swap(false, Ordering::SeqCst);
+            let was_connected = connected.send_replace(false);
             if was_connected {
                 event_handlers.emit_disconnect(DisconnectReason::new("Client disconnected"));
             }
@@ -548,6 +537,7 @@ pub(super) async fn connection_task(
                         Some(ConnCmd::Progress {
                             id,
                             generation,
+                            snapshot_epoch,
                             seq_id,
                             advance_resume,
                         }) => {
@@ -555,6 +545,7 @@ pub(super) async fn connection_task(
                                 advance_entry_progress(
                                     entry,
                                     generation,
+                                    snapshot_epoch,
                                     seq_id,
                                     advance_resume,
                                 );
@@ -611,15 +602,13 @@ pub(super) async fn connection_task(
                             event_handlers.emit_receive(&text);
                             match parse_message(&text) {
                                 Ok(Some(event)) => {
-                                    route_event_and_refresh_connection(
+                                    route_event(
                                         event,
                                         ws,
                                         &mut subs,
                                         &resume_cache,
                                         &timeouts,
                                         negotiated_ser,
-                                        &connected,
-                                        &event_handlers,
                                     )
                                     .await;
                                 },
@@ -646,15 +635,13 @@ pub(super) async fn connection_task(
                                     };
                                     match parse_message_domain(raw.as_ref()) {
                                         Ok(Some(event)) => {
-                                            route_event_and_refresh_connection(
+                                            route_event(
                                                 event,
                                                 ws,
                                                 &mut subs,
                                                 &resume_cache,
                                                 &timeouts,
                                                 negotiated_ser,
-                                                &connected,
-                                                &event_handlers,
                                             )
                                             .await;
                                         },
@@ -668,15 +655,13 @@ pub(super) async fn connection_task(
                                             event_handlers.emit_receive(&text);
                                             match parse_message(&text) {
                                                 Ok(Some(event)) => {
-                                                    route_event_and_refresh_connection(
+                                                    route_event(
                                                         event,
                                                         ws,
                                                         &mut subs,
                                                         &resume_cache,
                                                         &timeouts,
                                                         negotiated_ser,
-                                                        &connected,
-                                                        &event_handlers,
                                                     )
                                                     .await;
                                                 },
@@ -737,113 +722,36 @@ pub(super) async fn connection_task(
                     }
                 }
             }
+            if !*connected.borrow() && all_resumes_ready(&subs) {
+                retry.reset();
+                mark_connected(&connected, &event_handlers);
+            }
         } else {
-            if !connection_options.auto_reconnect || shutdown_requested {
-                match cmd_rx.recv().await {
-                    Some(ConnCmd::Subscribe { result_tx, .. }) => {
-                        let _ = result_tx.send(Err(KalamLinkError::WebSocketError(
-                            "Not connected and auto-reconnect is disabled".to_string(),
-                        )));
-                    },
-                    Some(ConnCmd::Unsubscribe { id, generation }) => {
-                        let _ =
-                            remove_subscription_entry(&mut subs, &resume_cache, &id, generation);
-                    },
-                    Some(ConnCmd::Progress {
-                        id,
-                        generation,
-                        seq_id,
-                        advance_resume,
-                    }) => {
-                        if let Some(entry) = subs.get_mut(&id) {
-                            advance_entry_progress(entry, generation, seq_id, advance_resume);
-                        }
-                    },
-                    Some(ConnCmd::ListSubscriptions { result_tx }) => {
-                        let _ = result_tx.send(snapshot_subscriptions(&subs, &resume_cache));
-                    },
-                    Some(ConnCmd::Shutdown { completed }) => {
-                        if let Some(completed) = completed {
-                            let _ = completed.send(());
-                        }
-                        return;
-                    },
-                    None => return,
-                }
-                continue;
-            }
-
-            let attempt = reconnect_attempts.fetch_add(1, Ordering::SeqCst);
-            if let Some(max_attempts) = connection_options.max_reconnect_attempts {
-                if attempt >= max_attempts {
-                    log::warn!("Max reconnection attempts ({}) reached", max_attempts);
-                    event_handlers.emit_error(ConnectionError::new(
-                        format!("Max reconnection attempts ({}) reached", max_attempts),
-                        false,
-                    ));
-                    let error_message = "Max reconnection attempts reached".to_string();
-                    for (id, mut entry) in subs.drain() {
-                        cache_entry_seq(&resume_cache, id.as_str(), &entry);
-                        if let Some(result_tx) = entry.pending_result_tx.take() {
-                            let _ = result_tx
-                                .send(Err(KalamLinkError::WebSocketError(error_message.clone())));
-                        }
-                        let _ = entry
-                            .event_tx
-                            .try_send(Err(KalamLinkError::WebSocketError(error_message.clone())));
+            let Some(delay) = retry.next_delay(&connection_options) else {
+                cmd_rx.close();
+                let message = if connection_options.auto_reconnect {
+                    "Max reconnection attempts reached"
+                } else {
+                    "WebSocket disconnected and auto-reconnect is disabled"
+                };
+                for (id, mut entry) in subs.drain() {
+                    cache_entry_seq(&resume_cache, &id, &entry);
+                    if let Some(result_tx) = entry.pending_result_tx.take() {
+                        let _ = result_tx.send(Err(KalamLinkError::WebSocketError(message.into())));
                     }
-                    loop {
-                        match cmd_rx.recv().await {
-                            Some(ConnCmd::Subscribe { result_tx, .. }) => {
-                                let _ = result_tx.send(Err(KalamLinkError::WebSocketError(
-                                    "Max reconnection attempts reached".to_string(),
-                                )));
-                            },
-                            Some(ConnCmd::Unsubscribe { id, .. }) => {
-                                let _ =
-                                    remove_subscription_entry(&mut subs, &resume_cache, &id, None);
-                            },
-                            Some(ConnCmd::Progress {
-                                id,
-                                generation,
-                                seq_id,
-                                advance_resume,
-                            }) => {
-                                if let Some(entry) = subs.get_mut(&id) {
-                                    advance_entry_progress(
-                                        entry,
-                                        generation,
-                                        seq_id,
-                                        advance_resume,
-                                    );
-                                }
-                            },
-                            Some(ConnCmd::ListSubscriptions { result_tx }) => {
-                                let _ =
-                                    result_tx.send(snapshot_subscriptions(&subs, &resume_cache));
-                            },
-                            Some(ConnCmd::Shutdown { completed }) => {
-                                if let Some(completed) = completed {
-                                    let _ = completed.send(());
-                                }
-                                return;
-                            },
-                            None => return,
-                        }
-                    }
+                    let _ = entry.event_tx.try_send(SubscriptionDelivery::Event(Err(
+                        KalamLinkError::WebSocketError(message.into()),
+                    )));
                 }
-            }
+                if connection_options.auto_reconnect {
+                    event_handlers.emit_error(ConnectionError::new(message, false));
+                }
+                return;
+            };
 
-            let delay = std::cmp::min(
-                connection_options
-                    .reconnect_delay_ms
-                    .saturating_mul(2u64.saturating_pow(attempt)),
-                connection_options.max_reconnect_delay_ms,
-            );
-
-            log::info!("Attempting reconnection in {}ms (attempt {})", delay, attempt + 1);
-
-            let sleep_future = tokio::time::sleep(Duration::from_millis(delay));
+            let attempt = retry.attempts();
+            log::info!("Attempting reconnection in {:?} (attempt {})", delay, attempt);
+            let sleep_future = tokio::time::sleep(delay);
             tokio::pin!(sleep_future);
 
             let mut got_shutdown = false;
@@ -897,6 +805,7 @@ pub(super) async fn connection_task(
                             Some(ConnCmd::Progress {
                                 id,
                                 generation,
+                                snapshot_epoch,
                                 seq_id,
                                 advance_resume,
                             }) => {
@@ -904,6 +813,7 @@ pub(super) async fn connection_task(
                                     advance_entry_progress(
                                         entry,
                                         generation,
+                                        snapshot_epoch,
                                         seq_id,
                                         advance_resume,
                                     );
@@ -934,6 +844,7 @@ pub(super) async fn connection_task(
 
             match establish_ws(
                 &base_url,
+                &http_client,
                 &resolved_auth,
                 &timeouts,
                 &connection_options,
@@ -941,20 +852,19 @@ pub(super) async fn connection_task(
             )
             .await
             {
-                Ok((mut stream, _auth, serialization)) => {
-                    log::info!("Reconnection successful");
+                Ok((mut stream, serialization)) => {
                     negotiated_ser = serialization;
-                    reconnect_attempts.store(0, Ordering::SeqCst);
-                    connected.store(false, Ordering::SeqCst);
-                    resubscribe_all(
-                        &mut stream,
-                        &mut subs,
-                        &timeouts,
-                        &event_handlers,
-                        negotiated_ser,
-                    )
-                    .await;
+                    if let Err(error) =
+                        resubscribe_all(&mut stream, &mut subs, &timeouts, serialization).await
+                    {
+                        event_handlers.emit_error(ConnectionError::new(
+                            format!("Failed to resume WebSocket subscriptions: {error}"),
+                            true,
+                        ));
+                        continue;
+                    }
                     if all_resumes_ready(&subs) {
+                        retry.reset();
                         mark_connected(&connected, &event_handlers);
                     }
                     ws_stream = Some(stream);
@@ -963,7 +873,7 @@ pub(super) async fn connection_task(
                     pong_deadline = TokioInstant::now() + FAR_FUTURE;
                 },
                 Err(error) => {
-                    log::warn!("Reconnection attempt {} failed: {}", attempt + 1, error);
+                    log::warn!("Reconnection attempt {} failed: {}", attempt, error);
                 },
             }
         }

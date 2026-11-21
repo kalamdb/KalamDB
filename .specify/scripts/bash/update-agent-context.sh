@@ -386,6 +386,13 @@ update_existing_agent_file() {
     local current_date="$2"
     
     log_info "Updating existing agent context file..."
+
+    # Hand-maintained context (AGENTS.md, specify-rules.mdc) opts out of the
+    # plan technology dump. That dump was being injected into every chat.
+    if grep -q 'speckit-context: skip' "$target_file"; then
+        log_info "Skipping plan dump for $target_file (manual context)"
+        return 0
+    fi
     
     # Use a single temporary file for atomic update
     local temp_file

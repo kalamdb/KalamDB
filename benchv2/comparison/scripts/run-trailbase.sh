@@ -40,6 +40,9 @@ done
 cd "$ROOT"
 cargo build --release -p comparison_trailbase
 OUT="$RESULTS/trailbase-$(date +%Y%m%d-%H%M%S).txt"
+# shellcheck source=memory-sample.sh
+source "$ROOT/scripts/memory-sample.sh"
+memory_mark_ready "$SERVER_PID"
 {
   echo "# TrailBase comparison (Record API)"
   echo "# server_bin=${BIN}"
@@ -49,5 +52,7 @@ OUT="$RESULTS/trailbase-$(date +%Y%m%d-%H%M%S).txt"
   TRAILBASE_URL="http://127.0.0.1:${PORT}" ./target/release/comparison_trailbase
   echo "# finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } | tee "$OUT"
+
+memory_append_result "$SERVER_PID" "$OUT"
 
 echo "Wrote $OUT"

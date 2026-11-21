@@ -22,16 +22,31 @@ use datafusion::arrow::{
     datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
-use kalamdb_commons::{
-    datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
-};
+use kalamdb_commons::schemas::TableDefinition;
+use kalamdb_macros::table;
 use kalamdb_system::SystemTable;
 
-use super::common::{system_view_definition, view_provider, SystemViewProvider};
+use super::common::{view_provider, SystemViewProvider};
 use crate::view_base::VirtualView;
 
 crate::memoized_view_schema!(datatypes_schema, DatatypesView);
+
+#[table(
+    name = "datatypes",
+    view = true,
+    comment = "Arrow to KalamDB SQL type mappings (read-only view)"
+)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DatatypeRow {
+    /// Arrow internal type name (e.g., Utf8, Int64)
+    pub arrow_type: String,
+    /// KalamDB type name (e.g., Text, BigInt)
+    pub kalam_type: String,
+    /// SQL type name for display (e.g., TEXT, BIGINT)
+    pub sql_name: String,
+    /// Human-readable description of the data type
+    pub description: String,
+}
 
 /// Virtual view that provides Arrow → KalamDB type mappings
 ///
@@ -51,58 +66,7 @@ impl DatatypesView {
     /// - sql_name TEXT NOT NULL (SQL type name for display)
     /// - description TEXT NOT NULL (Human-readable description)
     pub fn definition() -> TableDefinition {
-        let columns = vec![
-            ColumnDefinition::new(
-                1,
-                "arrow_type",
-                1,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Arrow internal type name (e.g., Utf8, Int64)".to_string()),
-            ),
-            ColumnDefinition::new(
-                2,
-                "kalam_type",
-                2,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("KalamDB type name (e.g., Text, BigInt)".to_string()),
-            ),
-            ColumnDefinition::new(
-                3,
-                "sql_name",
-                3,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("SQL type name for display (e.g., TEXT, BIGINT)".to_string()),
-            ),
-            ColumnDefinition::new(
-                4,
-                "description",
-                4,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Human-readable description of the data type".to_string()),
-            ),
-        ];
-
-        system_view_definition(
-            SystemTable::Datatypes,
-            columns,
-            "Arrow to KalamDB SQL type mappings (read-only view)",
-        )
+        DatatypeRow::definition()
     }
 
     /// Create a new datatypes view

@@ -1,14 +1,12 @@
-use std::{
-    collections::BTreeSet,
-    sync::{Arc, OnceLock},
-};
+use std::{collections::BTreeSet, sync::Arc};
 
 use datafusion::arrow::{
     array::{ArrayRef, Int64Builder, StringBuilder},
-    datatypes::{DataType, Field, Schema, SchemaRef},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use kalamdb_commons::Role;
+use kalamdb_macros::table;
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
@@ -18,17 +16,40 @@ use crate::{
     },
 };
 
+#[table(
+    name = "pg_namespace",
+    namespace = SchemaId::pg_catalog(),
+    view = true,
+    comment = "Schemas"
+)]
+#[derive(Debug)]
+struct PgNamespaceRow {
+    /// Namespace oid
+    oid: i64,
+    /// Schema name
+    nspname: String,
+    /// Owner oid
+    nspowner: i64,
+}
+
 fn schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("oid", DataType::Int64, false),
-                Field::new("nspname", DataType::Utf8, false),
-                Field::new("nspowner", DataType::Int64, false),
-            ]))
-        })
-        .clone()
+    PgNamespaceRow::arrow_schema()
+}
+
+pub(crate) fn column_order() -> &'static [&'static str] {
+    PgNamespaceRow::ordinal_column_order()
+}
+
+#[cfg(test)]
+mod schema_order {
+    use super::*;
+
+    #[test]
+    fn schema_follows_table_macro() {
+        let schema = schema();
+        let names: Vec<_> = schema.fields().iter().map(|field| field.name().as_str()).collect();
+        assert_eq!(names, PgNamespaceRow::ordinal_column_order());
+    }
 }
 
 #[derive(Debug)]

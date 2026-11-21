@@ -67,6 +67,15 @@ pub enum SharedDataCommand {
 }
 
 impl SharedDataCommand {
+    /// Short name recorded on the proposal span.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Insert { .. } => "insert",
+            Self::Update { .. } => "update",
+            Self::Delete { .. } => "delete",
+        }
+    }
+
     /// Get the required_meta_index watermark for this command
     pub fn required_meta_index(&self) -> u64 {
         match self {

@@ -26,14 +26,14 @@ impl Benchmark for SubscribeChangeLatencyBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
+                .sql_ok(&format!("CREATE SCHEMA IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!("DROP USER TABLE IF EXISTS {}.change_latency", config.namespace))
+                .sql(&format!("DROP TABLE IF EXISTS {}.change_latency", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
-                    "CREATE USER TABLE {}.change_latency (id INT PRIMARY KEY, ts TEXT)",
+                    "CREATE TABLE {}.change_latency (id INT PRIMARY KEY, ts TEXT) WITH (TYPE = 'USER')",
                     config.namespace
                 ))
                 .await?;
@@ -51,8 +51,8 @@ impl Benchmark for SubscribeChangeLatencyBench {
             let ns = config.namespace.clone();
             client
                 .sql_ok(&format!(
-                    "CREATE USER TABLE IF NOT EXISTS {}.change_latency (id INT PRIMARY KEY, ts \
-                     TEXT)",
+                    "CREATE TABLE IF NOT EXISTS {}.change_latency (id INT PRIMARY KEY, ts \
+                     TEXT) WITH (TYPE = 'USER')",
                     ns
                 ))
                 .await?;
@@ -143,7 +143,7 @@ impl Benchmark for SubscribeChangeLatencyBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             let _ = client
-                .sql(&format!("DROP USER TABLE IF EXISTS {}.change_latency", config.namespace))
+                .sql(&format!("DROP TABLE IF EXISTS {}.change_latency", config.namespace))
                 .await;
             Ok(())
         })

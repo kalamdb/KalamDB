@@ -1,35 +1,48 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, Int64Builder, StringBuilder, TimestampMicrosecondBuilder},
-    datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use kalamdb_commons::{Role, SystemTable};
+use kalamdb_macros::table;
 
-use crate::{error::RegistryError, pg_catalog::PgCatalogView, sessions::SessionsSnapshotCallback};
+use crate::{
+    error::RegistryError, pg_catalog::PgCatalogView, sessions::SessionsSnapshotCallback,
+    system::common::Timestamp,
+};
+
+#[table(
+    name = "pg_stat_activity",
+    namespace = SchemaId::pg_catalog(),
+    view = true,
+    comment = "Backend activity"
+)]
+#[derive(Debug)]
+struct PgStatActivityRow {
+    /// Backend process id
+    pid: Option<i64>,
+    /// Database name
+    datname: String,
+    /// User name
+    usename: Option<String>,
+    /// Client address
+    client_addr: Option<String>,
+    /// Backend state
+    state: String,
+    /// Backend start time
+    backend_start: Timestamp,
+    /// Transaction start time
+    xact_start: Option<Timestamp>,
+    /// Current query
+    query: Option<String>,
+    /// Backend type
+    backend_type: String,
+}
 
 fn schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("pid", DataType::Int64, true),
-                Field::new("datname", DataType::Utf8, false),
-                Field::new("usename", DataType::Utf8, true),
-                Field::new("client_addr", DataType::Utf8, true),
-                Field::new("state", DataType::Utf8, false),
-                Field::new(
-                    "backend_start",
-                    DataType::Timestamp(TimeUnit::Microsecond, None),
-                    false,
-                ),
-                Field::new("xact_start", DataType::Timestamp(TimeUnit::Microsecond, None), true),
-                Field::new("query", DataType::Utf8, true),
-                Field::new("backend_type", DataType::Utf8, false),
-            ]))
-        })
-        .clone()
+    PgStatActivityRow::arrow_schema()
 }
 
 #[derive(Clone)]

@@ -135,13 +135,21 @@ final class KalamLinkTransport implements KalamSyncTransport {
         )
         .map((delivery) {
           _emitConnection(KalamTransportConnection.connected);
-          return KalamRemoteBatch(
-            changes: decodeEvent(delivery.event),
-            checkpoint: delivery.checkpoint?.lastVersionId,
-            acknowledge: delivery.acknowledge,
-          );
+          return decodeDelivery(delivery);
         });
   }
+
+  /// Preserve the snapshot boundary even when the batch has no rows.
+  static KalamRemoteBatch decodeDelivery(LiveEventDelivery delivery) =>
+      KalamRemoteBatch(
+        changes: decodeEvent(delivery.event),
+        checkpoint: delivery.checkpoint?.lastVersionId,
+        acknowledge: delivery.acknowledge,
+        snapshotComplete: switch (delivery.event) {
+          InitialDataBatch(hasMore: false) => true,
+          _ => false,
+        },
+      );
 
   @override
   Future<void> ensureConnected() async {
@@ -167,11 +175,6 @@ final class KalamLinkTransport implements KalamSyncTransport {
   Future<void> resume() async {
     final client = await ensureClient();
     await client.reconnectWebSocket();
-    if (!await client.isConnected) {
-      // One retry — a single reconnect race should not swallow the resume
-      // signal the coordinator needs to drain the outbox.
-      await client.reconnectWebSocket();
-    }
     // Always notify listeners on resume. A coalesced connected→connected
     // skip would leave the coordinator paused-offline with a full outbox.
     _emitConnection(
@@ -235,7 +238,8 @@ final class KalamLinkTransport implements KalamSyncTransport {
     Map<String, KalamCellValue>? oldRow,
     bool initial = false,
   }) {
-    final seq = values['_version']?.asVersionId() ?? oldRow?['_version']?.asVersionId();
+    final seq =
+        values['_version']?.asVersionId() ?? oldRow?['_version']?.asVersionId();
     if (seq == null) {
       throw const FormatException(
         'A synchronized KalamDB row must include its _version value.',

@@ -1,7 +1,7 @@
-use kalamdb_core::sql::{ExecutionContext, ExecutionResult, SqlExecutor};
 use crate::support::{
     execute_ok, insert_sql, observer_exec_ctx, result_rows, setup_shared_table, setup_user_table,
 };
+use kalamdb_core::sql::{ExecutionContext, ExecutionResult, SqlExecutor};
 
 fn row_ids(result: ExecutionResult) -> Vec<String> {
     result_rows(result)

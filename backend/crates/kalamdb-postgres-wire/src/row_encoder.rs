@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{pin::Pin, sync::Arc};
 
 use arrow::{
     array::{
@@ -13,7 +13,7 @@ use arrow::{
     util::display::array_value_to_string,
 };
 use chrono::{DateTime, NaiveDate, NaiveTime};
-use futures_util::stream;
+use futures_util::{stream, Stream, StreamExt};
 use kalamdb_commons::models::datatypes::{KalamDataType, LogicalTypeRef};
 use kalamdb_core::sql::ExecutionResult;
 use pgwire::{
@@ -32,8 +32,35 @@ pub fn execution_result_to_responses(result: ExecutionResult) -> PgWireResult<Ve
     execution_result_to_responses_with_format(result, None)
 }
 
-/// Convert an execution result, honoring Bind result-column formats (text/binary).
+/// Convert an already-materialized result. Streaming SELECT uses
+/// [`execution_result_to_responses_with_format_async`].
 pub fn execution_result_to_responses_with_format(
+    result: ExecutionResult,
+    column_format: Option<&Format>,
+) -> PgWireResult<Vec<Response>> {
+    encode_materialized_result(result, column_format)
+}
+
+/// Convert an execution result, streaming SELECT batches into the wire encoder.
+pub async fn execution_result_to_responses_with_format_async(
+    result: ExecutionResult,
+    column_format: Option<&Format>,
+) -> PgWireResult<Vec<Response>> {
+    match result {
+        ExecutionResult::StreamingRows { stream } => {
+            let _encode_pg = kalamdb_observability::kdb_info_span_entered!("wire.encode.pg");
+            let (schema, batches) = stream.into_inner();
+            Ok(vec![Response::Query(streamed_batches_to_query_response(
+                schema,
+                batches,
+                column_format,
+            )?)])
+        },
+        other => encode_materialized_result(other, column_format),
+    }
+}
+
+fn encode_materialized_result(
     result: ExecutionResult,
     column_format: Option<&Format>,
 ) -> PgWireResult<Vec<Response>> {
@@ -74,14 +101,31 @@ pub fn execution_result_to_responses_with_format(
             schema,
             column_format,
         )?)]),
-        ExecutionResult::ScalarRows { .. } => {
+        // StreamingRows already rejected by into_arrow_rows above.
+        ExecutionResult::StreamingRows { .. } | ExecutionResult::ScalarRows { .. } => {
             Err(PgWireError::UserError(Box::new(ErrorInfo::new(
                 "ERROR".to_string(),
                 "XX000".to_string(),
-                "internal: scalar rows were not converted before PostgreSQL encoding".to_string(),
+                "internal: result was not materialized before PostgreSQL encoding".to_string(),
             ))))
         },
     }
+}
+
+fn field_infos_for_schema(
+    schema_ref: &SchemaRef,
+    column_format: Option<&Format>,
+) -> PgWireResult<(Arc<Vec<FieldInfo>>, Vec<LogicalTypeRef>)> {
+    let mut logical_types = Vec::with_capacity(schema_ref.fields().len());
+    let mut field_infos = Vec::with_capacity(schema_ref.fields().len());
+    for (index, field) in schema_ref.fields().iter().enumerate() {
+        let logical_type = logical_type_ref_for_field(field)?;
+        let pg_type = pg_type_for_logical_type(&logical_type)?;
+        let format = column_format.map(|fmt| fmt.format_for(index)).unwrap_or(FieldFormat::Text);
+        field_infos.push(FieldInfo::new(field.name().clone(), None, None, pg_type, format));
+        logical_types.push(logical_type);
+    }
+    Ok((Arc::new(field_infos), logical_types))
 }
 
 fn record_batches_to_query_response(
@@ -94,16 +138,7 @@ fn record_batches_to_query_response(
         .map(RecordBatch::schema)
         .or(empty_schema)
         .unwrap_or_else(|| Arc::new(arrow::datatypes::Schema::empty()));
-    let mut logical_types = Vec::with_capacity(schema_ref.fields().len());
-    let mut field_infos = Vec::with_capacity(schema_ref.fields().len());
-    for (index, field) in schema_ref.fields().iter().enumerate() {
-        let logical_type = logical_type_ref_for_field(field)?;
-        let pg_type = pg_type_for_logical_type(&logical_type)?;
-        let format = column_format.map(|fmt| fmt.format_for(index)).unwrap_or(FieldFormat::Text);
-        field_infos.push(FieldInfo::new(field.name().clone(), None, None, pg_type, format));
-        logical_types.push(logical_type);
-    }
-    let fields = Arc::new(field_infos);
+    let (fields, logical_types) = field_infos_for_schema(&schema_ref, column_format)?;
     let rows = EncodedRows {
         batches: batches.into_iter(),
         columns: Vec::new(),
@@ -113,6 +148,39 @@ fn record_batches_to_query_response(
         logical_types,
     };
     Ok(QueryResponse::new(fields, stream::iter(rows)))
+}
+
+fn streamed_batches_to_query_response(
+    schema_ref: SchemaRef,
+    batches: Pin<Box<dyn Stream<Item = Result<RecordBatch, String>> + Send>>,
+    column_format: Option<&Format>,
+) -> PgWireResult<QueryResponse> {
+    let (fields, logical_types) = field_infos_for_schema(&schema_ref, column_format)?;
+    let fields_for_rows = Arc::clone(&fields);
+    let row_stream = batches.flat_map(move |batch_result| {
+        let fields = Arc::clone(&fields_for_rows);
+        let logical_types = logical_types.clone();
+        let rows: Pin<Box<dyn Stream<Item = PgWireResult<pgwire::messages::data::DataRow>> + Send>> =
+            match batch_result {
+                Ok(batch) => Box::pin(stream::iter(EncodedRows {
+                    batches: vec![batch].into_iter(),
+                    columns: Vec::new(),
+                    rows_in_batch: 0,
+                    row: 0,
+                    encoder: DataRowEncoder::new(fields),
+                    logical_types,
+                })),
+                Err(error) => {
+                    let sqlstate =
+                        kalamdb_core::error::KalamDbError::sqlstate_for_message(&error);
+                    Box::pin(stream::iter(vec![Err(PgWireError::UserError(Box::new(
+                        ErrorInfo::new("ERROR".to_string(), sqlstate.to_string(), error),
+                    )))]))
+                },
+            };
+        rows
+    });
+    Ok(QueryResponse::new(fields, Box::pin(row_stream)))
 }
 
 /// Encodes one wire row at a time so a portal can stop after `max_rows`.

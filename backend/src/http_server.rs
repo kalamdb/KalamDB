@@ -2,7 +2,7 @@
 
 use std::{net::SocketAddr, sync::Arc};
 
-use actix_web::{web, App, HttpServer};
+use actix_web::{middleware::Condition, web, App, HttpServer};
 use anyhow::Result;
 use kalamdb_api::http::client_cancel::watch_http_client_disconnect;
 use kalamdb_configs::ServerConfig;
@@ -100,7 +100,10 @@ impl HttpServerRuntime {
             let runtime = runtime.clone();
             let mut app = App::new()
                 .wrap(runtime.connection_protection.clone())
-                .wrap(TracingLogger::<KalamDbRootSpanBuilder>::new())
+                .wrap(Condition::new(
+                    runtime.http_tracing_enabled,
+                    TracingLogger::<KalamDbRootSpanBuilder>::new(),
+                ))
                 .wrap(middleware::build_cors_from_settings(runtime.cors_settings.as_ref()))
                 .app_data(web::JsonConfig::default().limit(json_body_limit))
                 .app_data(web::PayloadConfig::new(payload_body_limit))
@@ -223,7 +226,7 @@ pub fn effective_workers(configured: usize) -> usize {
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
         .or_else(|| (configured > 0).then_some(configured))
-        .unwrap_or_else(|| num_cpus::get().min(4))
+        .unwrap_or_else(|| num_cpus::get().clamp(1, 16))
 }
 
 pub fn effective_max_blocking_threads(configured: usize) -> usize {

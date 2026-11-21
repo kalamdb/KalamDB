@@ -1,0 +1,29 @@
+name: Rust dependency security audit
+
+on:
+  pull_request:
+    paths:
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/security-audit.yml'
+  push:
+    branches: [main, feat/0.9-unified-table-transactions]
+    paths:
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/security-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  rustsec:
+    name: RustSec audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

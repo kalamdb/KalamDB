@@ -186,6 +186,20 @@ pub fn encode_raft_command(command: &RaftCommand) -> Result<Vec<u8>, RaftError> 
     encode_typed(ProtocolKind::RaftCommand, command)
 }
 
+/// Bytes stored in the Raft log for one proposal.
+///
+/// Meta, user, and shared commands keep their own encoders, including the
+/// packed insert and delete forms already stored in logs. `TransactionCommit`
+/// is a `RaftCommand` because both data state machines apply it.
+pub fn encode_proposed_command(command: &RaftCommand) -> Result<Vec<u8>, RaftError> {
+    match command {
+        RaftCommand::Meta(cmd) => encode_meta_command(cmd),
+        RaftCommand::UserData(cmd) => encode_user_data_command(cmd),
+        RaftCommand::SharedData(cmd) => encode_shared_data_command(cmd),
+        RaftCommand::TransactionCommit { .. } => encode_raft_command(command),
+    }
+}
+
 pub fn decode_raft_command(bytes: &[u8]) -> Result<RaftCommand, RaftError> {
     decode_typed(bytes, ProtocolKind::RaftCommand)
 }
@@ -318,6 +332,34 @@ mod tests {
             },
             _ => panic!("expected transaction commit variant"),
         }
+        assert_eq!(
+            encode_proposed_command(&command).expect("proposed"),
+            encode_raft_command(&command).expect("wrapper")
+        );
+        let shown =
+            crate::storage::RaftCommandBytes::new(encode_raft_command(&command).expect("wrapper"))
+                .to_string();
+        assert!(shown.contains("kind: raft_command"), "{shown}");
+        assert!(!shown.contains("01960f7b"), "{shown}");
+    }
+
+    #[test]
+    fn proposed_meta_command_matches_meta_encoder() {
+        let command = RaftCommand::Meta(MetaCommand::CreateNamespace {
+            namespace_id: SchemaId::from("ns"),
+            created_by: None,
+        });
+        let RaftCommand::Meta(meta) = &command else {
+            panic!("meta");
+        };
+        assert_eq!(
+            encode_proposed_command(&command).expect("proposed"),
+            encode_meta_command(meta).expect("meta")
+        );
+        let shown = crate::storage::RaftCommandBytes::new(encode_meta_command(meta).expect("meta"))
+            .to_string();
+        assert!(shown.contains("kind: meta"), "{shown}");
+        assert!(!shown.contains("ns"), "{shown}");
     }
 
     #[test]

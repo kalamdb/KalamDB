@@ -160,8 +160,8 @@ fn discover_file_bindings(
     for statement in &parsed.program.body {
         match statement {
             Statement::ImportDeclaration(decl) => collect_imports(decl, &mut imports),
-            Statement::ExportNamedDeclaration(decl) => {
-                let Some(Declaration::VariableDeclaration(var)) = &decl.declaration else {
+            Statement::ExportDeclaration(decl) => {
+                let Declaration::VariableDeclaration(var) = &decl.declaration else {
                     continue;
                 };
                 if var.kind != VariableDeclarationKind::Const {
@@ -239,7 +239,9 @@ fn imported_name(name: &ModuleExportName<'_>) -> String {
     match name {
         ModuleExportName::IdentifierName(id) => id.name.as_str().to_string(),
         ModuleExportName::IdentifierReference(id) => id.name.as_str().to_string(),
-        ModuleExportName::StringLiteral(literal) => literal.value.as_str().to_string(),
+        ModuleExportName::StringLiteral(literal) => {
+            literal.value.as_str().unwrap_or("").to_string()
+        }
     }
 }
 

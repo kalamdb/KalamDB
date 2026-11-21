@@ -116,11 +116,7 @@ impl<'a> FlushScopeWriter<'a> {
             .get_file_path(self.table_type, self.table_id, user_id, &batch_filename)
             .full_path;
 
-        log::debug!(
-            "📝 [ATOMIC] Writing Parquet to temp path: {}, rows={}",
-            temp_path,
-            rows_count
-        );
+        log::debug!("📝 [ATOMIC] Writing Parquet to temp path: {}, rows={}", temp_path, rows_count);
         let result = match self
             .storage_cached
             .write_parquet_with_compression_sync(
@@ -152,13 +148,7 @@ impl<'a> FlushScopeWriter<'a> {
         log::debug!("📝 [ATOMIC] Renaming {} -> {}", temp_path, destination_path);
         if let Err(error) = self
             .storage_cached
-            .rename_sync(
-                self.table_type,
-                self.table_id,
-                user_id,
-                &temp_filename,
-                &batch_filename,
-            )
+            .rename_sync(self.table_type, self.table_id, user_id, &temp_filename, &batch_filename)
             .into_flush_error("Failed to rename Parquet file to final location")
         {
             self.abandon_failed_upload(
@@ -183,31 +173,34 @@ impl<'a> FlushScopeWriter<'a> {
                 row_count,
                 result.size_bytes,
                 schema_version,
-            )?;
+            )
+        })?;
 
-            match (self.table_type, user_id) {
-                (TableType::User, Some(_)) | (TableType::Shared, None) => {},
-                (table_type, user_id) => {
-                    return Err(FlushError::InvalidOperation(format!(
-                        "invalid flush scope: table_type={:?}, user_id={:?}",
-                        table_type,
-                        user_id.map(UserId::as_str)
-                    )));
-                },
-            }
+        match (self.table_type, user_id) {
+            (TableType::User, Some(_)) | (TableType::Shared, None) => {},
+            (table_type, user_id) => {
+                return Err(FlushError::InvalidOperation(format!(
+                    "invalid flush scope: table_type={:?}, user_id={:?}",
+                    table_type,
+                    user_id.map(UserId::as_str)
+                )));
+            },
+        }
 
-            self.scope_hook.after_scope_write(
-                self.table_type,
-                self.table_id,
-                user_id,
-                self.schema,
-                self.storage_cached,
-            )?;
+        // Vector publication and other scope hooks can touch cold storage. They run after the
+        // manifest publication lock is released so ordinary pending-write registration does not
+        // wait on that work.
+        self.scope_hook.after_scope_write(
+            self.table_type,
+            self.table_id,
+            user_id,
+            self.schema,
+            self.storage_cached,
+        )?;
 
-            Ok(FlushScopeWriteResult {
-                rows_count,
-                destination_path,
-            })
+        Ok(FlushScopeWriteResult {
+            rows_count,
+            destination_path,
         })
     }
 
@@ -220,12 +213,10 @@ impl<'a> FlushScopeWriter<'a> {
         max_version: kalamdb_commons::ids::VersionId,
         schema_version: u32,
     ) {
-        if let Err(error) = self.storage_cached.delete_sync(
-            self.table_type,
-            self.table_id,
-            user_id,
-            temp_filename,
-        ) {
+        if let Err(error) =
+            self.storage_cached
+                .delete_sync(self.table_type, self.table_id, user_id, temp_filename)
+        {
             log::warn!("failed to delete flush temp file {temp_filename}: {error}");
         }
         if let Err(error) =

@@ -20,7 +20,7 @@ fi
 
 if [[ -z "${KALAMDB_SERVER_BIN:-}" || ! -x "$KALAMDB_SERVER_BIN" ]]; then
   echo "Building kalamdb-server --release for comparison SQL/functions tracks..." >&2
-  cargo build --release -p kalamdb-server --manifest-path "$REPO_ROOT/Cargo.toml"
+  cargo build --release -p kalamdb-server --features mimalloc --manifest-path "$REPO_ROOT/Cargo.toml"
   export KALAMDB_SERVER_BIN="$REPO_ROOT/target/release/kalamdb-server"
 fi
 

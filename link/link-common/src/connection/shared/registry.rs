@@ -11,17 +11,18 @@ use tokio::{
 use crate::{
     connection::FAR_FUTURE,
     error::Result,
-    models::{ChangeEvent, SubscriptionInfo, SubscriptionOptions},
+    models::{SubscriptionInfo, SubscriptionOptions},
+    realtime::resume_timeout,
     seq_tracking,
-    subscription::final_resume_seq,
+    subscription::{final_resume_seq, SubscriptionDelivery},
     timeouts::KalamLinkTimeouts,
 };
 
 /// Sequence cursor plus the version domain required to resume a shared table.
 #[derive(Clone, Debug)]
 pub(crate) struct CachedResume {
-    pub seq: Option<crate::VersionId>,
-    pub version_domain: Option<kalamdb_commons::ids::VersionDomain>,
+    pub seq:               Option<crate::VersionId>,
+    pub version_domain:    Option<kalamdb_commons::ids::VersionDomain>,
     /// Cursor stored for this subscription id. A different id for the same SQL
     /// is a new snapshot unless the caller passes `from`.
     pub same_subscription: bool,
@@ -29,7 +30,7 @@ pub(crate) struct CachedResume {
 
 #[derive(Default)]
 struct ResumeMaps {
-    by_id: HashMap<String, CachedResume>,
+    by_id:  HashMap<String, CachedResume>,
     by_sql: HashMap<String, CachedResume>,
 }
 
@@ -158,24 +159,24 @@ pub(super) fn snapshot_subscriptions(
     let mut out: Vec<SubscriptionInfo> = subs
         .iter()
         .map(|(id, entry)| SubscriptionInfo {
-            id: id.clone(),
-            query: entry.sql.clone(),
-            last_seq_id: effective_entry_seq(entry),
+            id:                 id.clone(),
+            query:              entry.sql.clone(),
+            last_seq_id:        effective_entry_seq(entry),
             last_event_time_ms: entry.last_event_time_ms,
-            created_at_ms: entry.created_at_ms,
-            closed: false,
+            created_at_ms:      entry.created_at_ms,
+            closed:             false,
         })
         .collect();
 
     for (id, seq) in resume_cache.closed_cursors() {
         if !subs.contains_key(&id) {
             out.push(SubscriptionInfo {
-                id: id.clone(),
-                query: String::new(),
-                last_seq_id: Some(seq),
+                id:                 id.clone(),
+                query:              String::new(),
+                last_seq_id:        Some(seq),
                 last_event_time_ms: None,
-                created_at_ms: 0,
-                closed: true,
+                created_at_ms:      0,
+                closed:             true,
             });
         }
     }
@@ -193,15 +194,6 @@ pub(super) fn forget_resume_cursor(entry: &mut SubEntry, resume_cache: &ResumeCa
     entry.options.from = None;
     entry.options.version_domain = None;
     resume_cache.forget(id, &entry.sql);
-}
-
-pub(super) fn is_expired_resume(code: &str, message: &str) -> bool {
-    code.eq_ignore_ascii_case("CURSOR_EXPIRED")
-        || message.to_ascii_lowercase().contains("stale resume cursor")
-}
-
-pub(super) fn is_delivery_gap(code: &str) -> bool {
-    code.eq_ignore_ascii_case("DELIVERY_GAP")
 }
 
 pub(super) fn cache_entry_seq(resume_cache: &ResumeCache, id: &str, entry: &SubEntry) {
@@ -255,7 +247,7 @@ pub(super) fn register_subscription_entry(
     sql: String,
     mut options: SubscriptionOptions,
     request_initial_data: bool,
-    event_tx: mpsc::Sender<Result<ChangeEvent>>,
+    event_tx: mpsc::Sender<SubscriptionDelivery>,
     result_tx: SubscriptionReadySender,
 ) -> (u64, Option<crate::VersionId>) {
     let inherited = resume_cache.take_for_subscribe(&id, &sql);
@@ -275,6 +267,7 @@ pub(super) fn register_subscription_entry(
             batch_seq_id: None,
             is_loading: true,
             generation,
+            snapshot_epoch: 0,
             created_at_ms: now_ms(),
             last_event_time_ms: None,
             pending_result_tx: Some(result_tx),
@@ -310,10 +303,11 @@ pub(super) fn remove_subscription_entry(
 pub(super) fn advance_entry_progress(
     entry: &mut SubEntry,
     generation: u64,
+    snapshot_epoch: u64,
     seq_id: crate::VersionId,
     advance_resume: bool,
 ) {
-    if entry.generation != generation {
+    if entry.generation != generation || entry.snapshot_epoch != snapshot_epoch {
         return;
     }
 
@@ -333,17 +327,7 @@ pub(super) fn startup_deadline(timeouts: &KalamLinkTimeouts) -> Option<TokioInst
 }
 
 pub(super) fn resume_startup_deadline(timeouts: &KalamLinkTimeouts) -> Option<TokioInstant> {
-    if KalamLinkTimeouts::is_no_timeout(timeouts.initial_data_timeout) {
-        return None;
-    }
-
-    let timeout = if KalamLinkTimeouts::is_no_timeout(timeouts.subscribe_timeout) {
-        timeouts.initial_data_timeout
-    } else {
-        timeouts.initial_data_timeout.min(timeouts.subscribe_timeout)
-    };
-
-    Some(TokioInstant::now() + timeout)
+    resume_timeout(timeouts).map(|timeout| TokioInstant::now() + timeout)
 }
 
 pub(super) fn reset_startup_deadline(
@@ -360,7 +344,7 @@ pub(super) fn reset_startup_deadline(
 }
 
 pub(super) fn refresh_startup_deadline(entry: &mut SubEntry, timeouts: &KalamLinkTimeouts) {
-    if entry.ready_deadline.is_some() {
+    if entry.ready_deadline.is_some() && !entry.reconnect_resubscribe_pending {
         entry.ready_deadline = startup_deadline(timeouts);
     }
 }
@@ -411,21 +395,22 @@ pub(super) fn resolve_subscription_key(
 
 pub(super) enum ConnCmd {
     Subscribe {
-        id: String,
-        sql: String,
-        options: SubscriptionOptions,
+        id:                   String,
+        sql:                  String,
+        options:              SubscriptionOptions,
         request_initial_data: bool,
-        event_tx: mpsc::Sender<Result<ChangeEvent>>,
-        result_tx: SubscriptionReadySender,
+        event_tx:             mpsc::Sender<SubscriptionDelivery>,
+        result_tx:            SubscriptionReadySender,
     },
     Unsubscribe {
-        id: String,
+        id:         String,
         generation: Option<u64>,
     },
     Progress {
-        id: String,
-        generation: u64,
-        seq_id: crate::VersionId,
+        id:             String,
+        generation:     u64,
+        snapshot_epoch: u64,
+        seq_id:         crate::VersionId,
         advance_resume: bool,
     },
     ListSubscriptions {
@@ -440,12 +425,13 @@ pub(super) struct SubEntry {
     pub(super) sql: String,
     pub(super) options: SubscriptionOptions,
     pub(super) request_initial_data: bool,
-    pub(super) event_tx: mpsc::Sender<Result<ChangeEvent>>,
+    pub(super) event_tx: mpsc::Sender<SubscriptionDelivery>,
     pub(super) last_seq_id: Option<crate::VersionId>,
     pub(super) consumed_seq_id: Option<crate::VersionId>,
     pub(super) batch_seq_id: Option<crate::VersionId>,
     pub(super) is_loading: bool,
     pub(super) generation: u64,
+    pub(super) snapshot_epoch: u64,
     pub(super) created_at_ms: u64,
     pub(super) last_event_time_ms: Option<u64>,
     pub(super) pending_result_tx: Option<SubscriptionReadySender>,

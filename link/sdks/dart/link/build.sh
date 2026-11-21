@@ -177,40 +177,35 @@ build_ios_staticlib() {
 build_ios() {
   info "Building iOS static library..."
 
-  ensure_target "aarch64-apple-ios"
+  ensure_target "aarch64-apple-ios" || return 1
+  ensure_target "aarch64-apple-ios-sim" || return 1
 
-  export IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-16.0}"
-  info "IPHONEOS_DEPLOYMENT_TARGET=$IPHONEOS_DEPLOYMENT_TARGET"
-
-  build_ios_staticlib aarch64-apple-ios || {
-    fail "iOS aarch64 build failed"
-    return 1
-  }
+  build_ios_staticlib aarch64-apple-ios || return 1
+  build_ios_staticlib aarch64-apple-ios-sim || return 1
 
   local ios_lib_dir="$SCRIPT_DIR/ios/Frameworks"
+  local staging_dir xcframework
   mkdir -p "$ios_lib_dir"
+  staging_dir="$(mktemp -d "${TMPDIR:-/tmp}/kalam-ios.XXXXXX")" || return 1
+  xcframework="$ios_lib_dir/kalam_link_dart.xcframework"
+  mkdir -p "$staging_dir/device" "$staging_dir/simulator"
+  cp "$TARGET_DIR/aarch64-apple-ios/release-dist/libkalam_link_dart.a" "$staging_dir/device/" || { rm -rf "$staging_dir"; return 1; }
+  cp "$TARGET_DIR/aarch64-apple-ios-sim/release-dist/libkalam_link_dart.a" "$staging_dir/simulator/" || { rm -rf "$staging_dir"; return 1; }
+  shrink_ios_staticlib "$staging_dir/device/libkalam_link_dart.a" || { rm -rf "$staging_dir"; return 1; }
+  shrink_ios_staticlib "$staging_dir/simulator/libkalam_link_dart.a" || { rm -rf "$staging_dir"; return 1; }
 
-  if rustup target list --installed | grep -q "aarch64-apple-ios-sim"; then
-    build_ios_staticlib aarch64-apple-ios-sim || {
-      warn "iOS simulator build failed — shipping device-only .a"
-    }
-    if [[ -f "$TARGET_DIR/aarch64-apple-ios-sim/release-dist/libkalam_link_dart.a" ]]; then
-      lipo -create \
-        "$TARGET_DIR/aarch64-apple-ios/release-dist/libkalam_link_dart.a" \
-        "$TARGET_DIR/aarch64-apple-ios-sim/release-dist/libkalam_link_dart.a" \
-        -output "$ios_lib_dir/libkalam_link_dart.a" 2>/dev/null || \
-      cp "$TARGET_DIR/aarch64-apple-ios/release-dist/libkalam_link_dart.a" "$ios_lib_dir/libkalam_link_dart.a"
-    else
-      cp "$TARGET_DIR/aarch64-apple-ios/release-dist/libkalam_link_dart.a" "$ios_lib_dir/libkalam_link_dart.a"
-    fi
-  else
-    cp "$TARGET_DIR/aarch64-apple-ios/release-dist/libkalam_link_dart.a" "$ios_lib_dir/libkalam_link_dart.a"
-    warn "iOS simulator target (aarch64-apple-ios-sim) not installed."
-    warn "Add it with: rustup target add aarch64-apple-ios-sim"
+  if ! xcodebuild -create-xcframework \
+    -library "$staging_dir/device/libkalam_link_dart.a" \
+    -library "$staging_dir/simulator/libkalam_link_dart.a" \
+    -output "$staging_dir/kalam_link_dart.xcframework"; then
+    rm -rf "$staging_dir"
+    fail "iOS XCFramework creation failed"
+    return 1
   fi
-
-  shrink_ios_staticlib "$ios_lib_dir/libkalam_link_dart.a"
-  ok "iOS: $(du -sh "$ios_lib_dir/libkalam_link_dart.a" | cut -f1) static lib"
+  rm -rf "$xcframework"
+  mv "$staging_dir/kalam_link_dart.xcframework" "$xcframework" || { rm -rf "$staging_dir"; return 1; }
+  rm -rf "$staging_dir"
+  ok "iOS: $(du -sh "$xcframework" | cut -f1) XCFramework (device and simulator)"
 }
 
 build_macos() {

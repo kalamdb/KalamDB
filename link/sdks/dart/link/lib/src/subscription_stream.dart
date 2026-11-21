@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'logger.dart';
 
-typedef BridgeSubscriptionPrepare = Future<void> Function();
 typedef BridgeSubscriptionOpen<THandle> = Future<THandle> Function();
 typedef BridgeSubscriptionNext<THandle, TBridgeEvent> = Future<TBridgeEvent?>
     Function(THandle handle);
@@ -17,13 +16,18 @@ typedef BridgeSubscriptionDecode<THandle, TBridgeEvent, TEvent> = TEvent
 );
 typedef BridgeSubscriptionWait<TEvent> = Future<void> Function(TEvent event);
 
+bool _isSubscriptionCancellation(Object error) {
+  final text = error.toString().toLowerCase();
+  return text.contains('operation cancelled') ||
+      text.contains('operation canceled');
+}
+
 /// Runs a Rust-backed pull subscription behind a Dart [Stream].
 ///
 /// Rust owns reconnect and replay filtering; this helper only manages the
 /// Dart-side stream lifecycle so all subscription APIs behave consistently.
 Stream<TEvent> runBridgeSubscriptionStream<THandle, TBridgeEvent, TEvent>({
   required String description,
-  required BridgeSubscriptionPrepare prepare,
   required BridgeSubscriptionOpen<THandle> open,
   required BridgeSubscriptionNext<THandle, TBridgeEvent> next,
   required BridgeSubscriptionClose<THandle> close,
@@ -42,7 +46,6 @@ Stream<TEvent> runBridgeSubscriptionStream<THandle, TBridgeEvent, TEvent>({
   Future<void> runLoop() async {
     THandle? handle;
     try {
-      await prepare();
       handle = await open();
       final openedHandle = handle as THandle;
 
@@ -59,7 +62,13 @@ Stream<TEvent> runBridgeSubscriptionStream<THandle, TBridgeEvent, TEvent>({
       }
     } catch (error, stackTrace) {
       if (!closed && !isDisposed()) {
-        KalamLogger.error('subscription', '$description error: $error');
+        // Replacing or unsubscribing a live query cancels the in-flight
+        // subscribe. That is lifecycle bookkeeping, not a failed stream.
+        if (_isSubscriptionCancellation(error)) {
+          KalamLogger.debug('subscription', '$description cancelled: $error');
+        } else {
+          KalamLogger.error('subscription', '$description error: $error');
+        }
         controller.addError(error, stackTrace);
       }
     } finally {

@@ -306,7 +306,7 @@ async fn spawn_wire_test_server() -> (String, PostgresWireListener, Arc<AppConte
     app_ctx.executor().start().await.expect("start raft");
     app_ctx.executor().initialize_cluster().await.expect("initialize raft cluster");
     app_ctx.wire_raft_appliers();
-    kalamdb_jobs::init_job_manager(&app_ctx);
+    kalamdb_jobs::init_job_manager(&app_ctx).expect("job capability");
 
     let storages = app_ctx.system_tables().storages();
     let storage_id = StorageId::from("local");

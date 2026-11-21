@@ -2,9 +2,9 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     fs::{self, File, OpenOptions},
-    io::{BufReader, BufWriter, Read, Write},
+    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
     time::Instant,
 };
 
@@ -30,6 +30,9 @@ use crate::{
 /// This keeps per-active-segment memory bounded while still amortising small
 /// append records into fewer `write()` syscalls.
 const SEGMENT_BUF_CAPACITY: usize = 128 * 1024;
+
+/// Fail closed before allocating a corrupt or untrusted oversized frame.
+const MAX_STREAM_FRAME_BYTES: usize = 64 * 1024 * 1024;
 
 /// Maximum cached segment writers per stream table.
 ///
@@ -78,6 +81,9 @@ pub struct FileStreamLogStore {
     schema: Arc<StorageSchema>,
     /// Cached open segment writers keyed by log-file path.
     segments: DashMap<PathBuf, Arc<Mutex<SegmentWriter>>>,
+    /// A shared guard for appends, exclusive for window-retention cleanup.
+    /// Prevents appending to an unlinked segment file during TTL eviction.
+    window_lifecycle: RwLock<()>,
 }
 
 impl fmt::Debug for FileStreamLogStore {
@@ -95,6 +101,7 @@ impl FileStreamLogStore {
             config,
             schema,
             segments: DashMap::new(),
+            window_lifecycle: RwLock::new(()),
         }
     }
 
@@ -225,6 +232,10 @@ impl FileStreamLogStore {
     }
 
     fn delete_expired_windows(&self, before_time: u64) -> Result<usize> {
+        let _lifecycle = self
+            .window_lifecycle
+            .write()
+            .map_err(|err| StreamLogError::Io(format!("stream cleanup lock: {err}")))?;
         let base_dir = &self.config.base_dir;
         if !base_dir.exists() {
             return Ok(0);
@@ -398,11 +409,32 @@ impl FileStreamLogStore {
     }
 
     fn window_dir(&self, window_start_ms: u64) -> PathBuf {
+        let duration = match self.config.bucket {
+            StreamTimeBucket::Month => {
+                // Month windows are calendar-aligned. A fixed 31-day span
+                // overlaps February/March and delays stream TTL cleanup.
+                Utc.timestamp_millis_opt(window_start_ms as i64)
+                    .single()
+                    .and_then(|dt| {
+                        let (year, month) = if dt.month() == 12 {
+                            (dt.year() + 1, 1)
+                        } else {
+                            (dt.year(), dt.month() + 1)
+                        };
+                        chrono::NaiveDate::from_ymd_opt(year, month, 1)
+                    })
+                    .and_then(|date| date.and_hms_opt(0, 0, 0))
+                    .map(|date| {
+                        (Utc.from_utc_datetime(&date).timestamp_millis() as u64)
+                            .saturating_sub(window_start_ms)
+                    })
+                    .unwrap_or(self.config.bucket.duration_ms())
+            },
+            _ => self.config.bucket.duration_ms(),
+        };
         self.config.base_dir.join(format!(
             "{}{}-{}",
-            WINDOW_DIR_PREFIX,
-            window_start_ms,
-            self.config.bucket.duration_ms()
+            WINDOW_DIR_PREFIX, window_start_ms, duration
         ))
     }
 
@@ -555,6 +587,10 @@ impl FileStreamLogStore {
         if encoded.is_empty() || record_count == 0 {
             return Ok(());
         }
+        let _lifecycle = self
+            .window_lifecycle
+            .read()
+            .map_err(|err| StreamLogError::Io(format!("stream append lock: {err}")))?;
         let seg = self.get_or_create_writer(path)?;
         let mut guard = seg
             .lock()
@@ -594,6 +630,11 @@ impl FileStreamLogStore {
                 },
             }
             let len = u32::from_le_bytes(len_buf) as usize;
+            if len > MAX_STREAM_FRAME_BYTES {
+                return Err(StreamLogError::Serialization(format!(
+                    "stream frame length {len} exceeds {MAX_STREAM_FRAME_BYTES} byte safety limit"
+                )));
+            }
             payload.resize(len, 0);
             match reader.read_exact(&mut payload) {
                 Ok(_) => {},
@@ -704,12 +745,82 @@ impl FileStreamLogStore {
     fn collect_range_from_entries(
         &self,
         entries: &[LogFileEntry],
+        start_time: u64,
+        end_time: u64,
         limit: usize,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>> {
-        let mut results: Vec<(StreamTableRowId, StreamTableRow)> = Vec::new();
-        let mut deleted: HashSet<i64> = HashSet::new();
+        // Replay all selected windows before applying LIMIT. Stopping at the
+        // first N puts could resurrect a row deleted later in the same window.
+        // Keep the latest visibility state by version, rather than O(N) retain
+        // scans for each DELETE frame.
+        let mut live: HashMap<i64, (StreamTableRowId, StreamTableRow)> = HashMap::new();
 
         for entry in entries {
+            self.flush_segment(&entry.path);
+            self.visit_records(&entry.path, |record| {
+                match record {
+                    StreamLogRecord::Put { row_id, row } => {
+                        live.insert(row_id.version().as_i64(), (row_id, row));
+                    },
+                    StreamLogRecord::Delete { row_id, .. } => {
+                        live.remove(&row_id.version().as_i64());
+                    },
+                }
+                Ok(true)
+            })?;
+        }
+
+        let mut rows: Vec<_> = live
+            .into_values()
+            .filter(|(_, row)| {
+                let timestamp = row._timestamp;
+                timestamp >= 0
+                    && (timestamp as u64) >= start_time
+                    && (timestamp as u64) <= end_time
+            })
+            .collect();
+        // Retain the original chronological semantics, independent of
+        // HashMap iteration order or append order inside a segment.
+        rows.sort_unstable_by_key(|(row_id, row)| (row._timestamp, row_id.version().as_i64()));
+        rows.truncate(limit);
+        Ok(rows)
+    }
+
+    /// Walk matching segments once. Cursor, TTL, and the page size are applied
+    /// before a row is counted, and each page is handed off before the next.
+    pub fn walk_ordered(
+        &self,
+        user_id: &UserId,
+        start_time: u64,
+        end_time: u64,
+        start_seq: Option<i64>,
+        ttl_ms: Option<u64>,
+        now_ms: u64,
+        page_rows: usize,
+        max_rows: Option<usize>,
+        mut on_page: impl FnMut(Vec<(StreamTableRowId, StreamTableRow)>) -> Result<bool>,
+    ) -> Result<()> {
+        if page_rows == 0 {
+            return Ok(());
+        }
+        let entries = self.list_log_files_for_user_in_range(user_id, start_time, end_time)?;
+        let mut deleted: HashSet<i64> = HashSet::new();
+        for entry in &entries {
+            self.flush_segment(&entry.path);
+            self.visit_records(&entry.path, |record| {
+                if let StreamLogRecord::Delete { row_id, .. } = record {
+                    deleted.insert(row_id.version().as_i64());
+                }
+                Ok(true)
+            })?;
+        }
+        let mut page = Vec::with_capacity(page_rows.min(1024));
+        let mut emitted = 0usize;
+        let mut failed = None;
+        for entry in &entries {
+            if failed.is_some() {
+                break;
+            }
             self.flush_segment(&entry.path);
             let should_continue = self.visit_records(&entry.path, |record| {
                 match record {
@@ -718,20 +829,31 @@ impl FileStreamLogStore {
                         if deleted.contains(&version) {
                             return Ok(true);
                         }
-                        results.push((row_id, row));
-                        if results.len() >= limit {
+                        if start_seq.is_some_and(|seq| version < seq) {
+                            return Ok(true);
+                        }
+                        if ttl_ms.is_some_and(|ttl| {
+                            (row._timestamp as u64).saturating_add(ttl) <= now_ms
+                        }) {
+                            return Ok(true);
+                        }
+                        page.push((row_id, row));
+                        emitted += 1;
+                        if page.len() >= page_rows {
+                            match on_page(std::mem::take(&mut page)) {
+                                Ok(true) => {},
+                                Ok(false) => return Ok(false),
+                                Err(error) => {
+                                    failed = Some(error);
+                                    return Ok(false);
+                                },
+                            }
+                        }
+                        if max_rows.is_some_and(|max| emitted >= max) {
                             return Ok(false);
                         }
                     },
-                    StreamLogRecord::Delete {
-                        row_id,
-                        timestamp: _,
-                    } => {
-                        let version = row_id.version().as_i64();
-                        deleted.insert(version);
-                        results
-                            .retain(|(existing_id, _)| existing_id.version().as_i64() != version);
-                    },
+                    StreamLogRecord::Delete { .. } => {},
                 }
                 Ok(true)
             })?;
@@ -739,8 +861,13 @@ impl FileStreamLogStore {
                 break;
             }
         }
-
-        Ok(results)
+        if let Some(error) = failed {
+            return Err(error);
+        }
+        if !page.is_empty() {
+            on_page(page)?;
+        }
+        Ok(())
     }
 
     fn read_range_internal(
@@ -750,7 +877,7 @@ impl FileStreamLogStore {
         end_time: u64,
         limit: usize,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>> {
-        if limit == 0 {
+        if limit == 0 || start_time > end_time {
             return Ok(Vec::new());
         }
 
@@ -759,7 +886,7 @@ impl FileStreamLogStore {
             return Ok(Vec::new());
         }
 
-        self.collect_range_from_entries(&entries, limit)
+        self.collect_range_from_entries(&entries, start_time, end_time, limit)
     }
 
     fn read_latest_internal(
@@ -772,32 +899,57 @@ impl FileStreamLogStore {
             return Ok(Vec::new());
         }
 
-        let mut results: Vec<(StreamTableRowId, StreamTableRow)> = Vec::with_capacity(limit);
+        let mut results: Vec<(StreamTableRowId, StreamTableRow)> = Vec::with_capacity(limit.min(1024));
         let mut deleted: HashSet<i64> = HashSet::new();
 
         for entry in &entries {
             self.flush_segment(&entry.path);
-            let file_bytes =
-                fs::read(&entry.path).map_err(|e| StreamLogError::Io(e.to_string()))?;
-            let mut frames: Vec<&[u8]> = Vec::new();
-            let mut cursor = 0usize;
-            while let Some(len_bytes) = file_bytes.get(cursor..cursor + 4) {
-                let len =
-                    u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
-                        as usize;
-                let start = cursor + 4;
-                let Some(end) = start.checked_add(len) else {
-                    break;
+            // Scan frame headers without reading payloads. A LIMIT 1 query
+            // decodes only the tail frame(s), rather than allocating the
+            // entire history file with fs::read.
+            let file = File::open(&entry.path).map_err(|e| StreamLogError::Io(e.to_string()))?;
+            let file_len = file.metadata().map_err(|e| StreamLogError::Io(e.to_string()))?.len();
+            let mut reader = BufReader::new(file);
+            let mut frame_offsets: Vec<(u64, usize)> = Vec::new();
+            let mut cursor = 0u64;
+            while cursor.saturating_add(4) <= file_len {
+                let mut len_buf = [0u8; 4];
+                reader
+                    .read_exact(&mut len_buf)
+                    .map_err(|e| StreamLogError::Io(e.to_string()))?;
+                let len = u32::from_le_bytes(len_buf) as usize;
+                if len > MAX_STREAM_FRAME_BYTES {
+                    return Err(StreamLogError::Serialization(format!(
+                        "stream frame length {len} exceeds {MAX_STREAM_FRAME_BYTES} byte safety limit"
+                    )));
+                }
+                let payload_start = cursor + 4;
+                let Some(next) = payload_start.checked_add(len as u64) else {
+                    return Err(StreamLogError::Serialization(
+                        "stream frame offset overflow".to_string(),
+                    ));
                 };
-                let Some(frame) = file_bytes.get(start..end) else {
+                if next > file_len {
+                    // The last partial frame is ignored like the forward
+                    // reader. No earlier complete frames are discarded.
                     break;
-                };
-                frames.push(frame);
-                cursor = end;
+                }
+                frame_offsets.push((payload_start, len));
+                reader
+                    .seek(SeekFrom::Start(next))
+                    .map_err(|e| StreamLogError::Io(e.to_string()))?;
+                cursor = next;
             }
 
-            for frame in frames.into_iter().rev() {
-                match kalamdb_serialization::decode_raw_stream_record(frame)
+            for (payload_start, len) in frame_offsets.into_iter().rev() {
+                reader
+                    .seek(SeekFrom::Start(payload_start))
+                    .map_err(|e| StreamLogError::Io(e.to_string()))?;
+                let mut frame = vec![0u8; len];
+                reader
+                    .read_exact(&mut frame)
+                    .map_err(|e| StreamLogError::Io(e.to_string()))?;
+                match kalamdb_serialization::decode_raw_stream_record(&frame)
                     .map_err(|e| StreamLogError::Serialization(e.to_string()))?
                 {
                     kalamdb_serialization::RawStreamRecord::Put {
@@ -1113,6 +1265,62 @@ mod tests {
     }
 
     #[test]
+    fn test_calendar_month_window_ends_at_next_month_boundary() {
+        let base_dir = temp_base_dir("kalamdb_streams_month_windows");
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("events"));
+        let store = create_store(
+            base_dir.clone(),
+            table_id,
+            ShardRouter::new(4, 1),
+            StreamTimeBucket::Month,
+        );
+        let start = chrono::Utc
+            .with_ymd_and_hms(2024, 2, 1, 0, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis() as u64;
+        let path = store.window_dir(start);
+        let (parsed_start, end) = FileStreamLogStore::parse_window_dir(&path).unwrap();
+        let march = chrono::Utc
+            .with_ymd_and_hms(2024, 3, 1, 0, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis() as u64;
+        assert_eq!(parsed_start, start);
+        assert_eq!(end, march);
+        assert_eq!(end - start, 29 * 24 * 60 * 60 * 1000);
+        let _ = fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn test_rejects_oversized_stream_frame_without_allocating_payload() {
+        let base_dir = temp_base_dir("kalamdb_streams_oversized_frame");
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("events"));
+        let store = create_store(
+            base_dir.clone(),
+            table_id.clone(),
+            ShardRouter::new(4, 1),
+            StreamTimeBucket::Hour,
+        );
+        let user_id = UserId::new("user-corrupt");
+        let now = chrono::Utc::now().timestamp_millis() as u64;
+        let window = store.window_start_ms(now);
+        let path = store.log_path(&user_id, window);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, u32::MAX.to_le_bytes()).unwrap();
+
+        assert!(
+            store.read_in_time_range(&table_id, &user_id, 0, u64::MAX, 1).is_err(),
+            "corrupt frame sizes must return an error rather than allocate gigabytes"
+        );
+        assert!(
+            store.read_with_limit(&table_id, &user_id, 1).is_err(),
+            "the reverse reader must reject oversized frame lengths too"
+        );
+        let _ = fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
     fn test_open_segment_cache_is_bounded() {
         let base_dir = temp_base_dir("kalamdb_streams_segment_cap");
         let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("events"));
@@ -1177,6 +1385,69 @@ mod tests {
         // Data should still be readable from disk.
         let read = store.read_with_limit(&table_id, &user_id, 10).unwrap();
         assert_eq!(read.len(), 1);
+
+        let _ = fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn test_range_limit_does_not_resurrect_deleted_rows() {
+        let base_dir = temp_base_dir("kalamdb_streams_range_delete_limit");
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("events"));
+        let store = create_store(
+            base_dir.clone(),
+            table_id.clone(),
+            ShardRouter::new(4, 1),
+            StreamTimeBucket::Hour,
+        );
+
+        let user_id = UserId::new("user-range");
+        let timestamp = chrono::Utc::now().timestamp_millis();
+        let first_version = version_from_local(1);
+        let second_version = version_from_local(2);
+        let first_id = StreamTableRowId::new(user_id.clone(), first_version);
+        let second_id = StreamTableRowId::new(user_id.clone(), second_version);
+
+        store
+            .append_row(
+                &table_id,
+                &user_id,
+                &first_id,
+                &build_row(&user_id, first_version, timestamp),
+            )
+            .unwrap();
+        store
+            .append_row(
+                &table_id,
+                &user_id,
+                &second_id,
+                &build_row(&user_id, second_version, timestamp),
+            )
+            .unwrap();
+        store.append_delete(&table_id, &user_id, &first_id, timestamp).unwrap();
+
+        let rows = store
+            .read_in_time_range(
+                &table_id,
+                &user_id,
+                (timestamp - 1000) as u64,
+                (timestamp + 1000) as u64,
+                1,
+            )
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows.contains_key(&second_id));
+        assert!(!rows.contains_key(&first_id));
+
+        let excluded = store
+            .read_in_time_range(
+                &table_id,
+                &user_id,
+                (timestamp + 1) as u64,
+                (timestamp + 2000) as u64,
+                10,
+            )
+            .unwrap();
+        assert!(excluded.is_empty(), "partial-window timestamp filtering must be exact");
 
         let _ = fs::remove_dir_all(&base_dir);
     }

@@ -1,7 +1,7 @@
 # docker-compose.yml
 services:
   minio:
-    image: minio/minio:latest
+    image: cgr.dev/chainguard/minio:latest
     entrypoint: >
       /bin/sh -c "
       minio server --address ':9000' --console-address ':9001' /data &

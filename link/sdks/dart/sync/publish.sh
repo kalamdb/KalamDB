@@ -36,5 +36,5 @@ if $DRY_RUN; then
   echo "Dry run complete. Run './publish.sh' (without --dry-run) to publish."
 else
   echo "==> Publishing kalam_sync to pub.dev..."
-  echo "y" | flutter pub publish
+  flutter pub publish --force
 fi

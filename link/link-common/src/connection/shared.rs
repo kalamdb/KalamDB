@@ -5,15 +5,12 @@
 //! event routing, and reconnect behavior.
 
 use std::{
-    sync::{
-        atomic::{AtomicBool, AtomicU32, Ordering},
-        Arc, RwLock,
-    },
+    sync::{Arc, RwLock},
     time::Duration,
 };
 
 use tokio::{
-    sync::{mpsc, oneshot},
+    sync::{mpsc, oneshot, watch},
     task::JoinHandle,
 };
 
@@ -21,7 +18,8 @@ use crate::{
     auth::ResolvedAuth,
     error::{KalamLinkError, Result},
     event_handlers::EventHandlers,
-    models::{ChangeEvent, ConnectionOptions, SubscriptionInfo, SubscriptionOptions},
+    models::{ConnectionOptions, SubscriptionInfo, SubscriptionOptions},
+    subscription::SubscriptionDelivery,
     timeouts::KalamLinkTimeouts,
 };
 
@@ -36,10 +34,9 @@ use registry::{ConnCmd, ResumeCache, SubscriptionReady};
 const DISCONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub(crate) struct SharedConnection {
-    cmd_tx: mpsc::Sender<ConnCmd>,
-    connected: Arc<AtomicBool>,
-    _reconnect_attempts: Arc<AtomicU32>,
-    _task: JoinHandle<()>,
+    cmd_tx:    mpsc::Sender<ConnCmd>,
+    connected: watch::Receiver<bool>,
+    _task:     JoinHandle<()>,
 }
 
 #[derive(Clone)]
@@ -69,6 +66,7 @@ impl SharedSubscriptionControl {
         &self,
         id: String,
         generation: u64,
+        snapshot_epoch: u64,
         seq_id: crate::VersionId,
         advance_resume: bool,
     ) {
@@ -77,6 +75,7 @@ impl SharedSubscriptionControl {
             .send(ConnCmd::Progress {
                 id,
                 generation,
+                snapshot_epoch,
                 seq_id,
                 advance_resume,
             })
@@ -93,6 +92,7 @@ impl SharedSubscriptionControl {
 impl SharedConnection {
     pub async fn connect(
         base_url: String,
+        http_client: reqwest::Client,
         resolved_auth: Arc<RwLock<ResolvedAuth>>,
         timeouts: KalamLinkTimeouts,
         connection_options: ConnectionOptions,
@@ -100,11 +100,7 @@ impl SharedConnection {
         resume_cache: Arc<ResumeCache>,
     ) -> Result<Self> {
         let (cmd_tx, cmd_rx) = mpsc::channel::<ConnCmd>(256);
-        let connected = Arc::new(AtomicBool::new(false));
-        let reconnect_attempts = Arc::new(AtomicU32::new(0));
-
-        let connected_clone = connected.clone();
-        let reconnect_clone = reconnect_attempts.clone();
+        let (connected_tx, connected) = watch::channel(false);
         let resume_cache_for_task = Arc::clone(&resume_cache);
         let auto_reconnect = connection_options.auto_reconnect;
         let (ready_tx, ready_rx) = oneshot::channel::<Result<()>>();
@@ -113,13 +109,13 @@ impl SharedConnection {
             connection_task(
                 cmd_rx,
                 base_url,
+                http_client,
                 resolved_auth,
                 timeouts,
                 connection_options,
                 event_handlers,
-                connected_clone,
-                reconnect_clone,
-                Some(ready_tx),
+                connected_tx,
+                ready_tx,
                 resume_cache_for_task,
             )
             .await;
@@ -144,7 +140,6 @@ impl SharedConnection {
         Ok(Self {
             cmd_tx,
             connected,
-            _reconnect_attempts: reconnect_attempts,
             _task: task,
         })
     }
@@ -160,7 +155,7 @@ impl SharedConnection {
         id: String,
         sql: String,
         options: Option<SubscriptionOptions>,
-    ) -> Result<(mpsc::Receiver<Result<ChangeEvent>>, oneshot::Receiver<SubscriptionReady>)> {
+    ) -> Result<(mpsc::Receiver<SubscriptionDelivery>, oneshot::Receiver<SubscriptionReady>)> {
         let (event_tx, event_rx) = mpsc::channel(crate::connection::DEFAULT_EVENT_CHANNEL_CAPACITY);
         let (result_tx, result_rx) = oneshot::channel();
         let request_initial_data = options.is_some();
@@ -186,7 +181,7 @@ impl SharedConnection {
     pub async fn unsubscribe(&self, id: &str) -> Result<()> {
         self.cmd_tx
             .send(ConnCmd::Unsubscribe {
-                id: id.to_string(),
+                id:         id.to_string(),
                 generation: None,
             })
             .await
@@ -198,20 +193,18 @@ impl SharedConnection {
 
     pub async fn disconnect(&self) {
         let (completed_tx, completed_rx) = oneshot::channel();
-        if self
-            .cmd_tx
-            .send(ConnCmd::Shutdown {
-                completed: Some(completed_tx),
-            })
-            .await
-            .is_ok()
-        {
-            if !matches!(tokio::time::timeout(DISCONNECT_TIMEOUT, completed_rx).await, Ok(Ok(()))) {
-                self._task.abort();
-                self.connected.store(false, Ordering::Release);
-            }
-        } else {
-            self.connected.store(false, Ordering::Release);
+        let shutdown = async {
+            self.cmd_tx
+                .send(ConnCmd::Shutdown {
+                    completed: Some(completed_tx),
+                })
+                .await
+                .ok()?;
+            completed_rx.await.ok()
+        };
+        if !matches!(tokio::time::timeout(DISCONNECT_TIMEOUT, shutdown).await, Ok(Some(()))) {
+            self._task.abort();
+            self.cmd_tx.closed().await;
         }
     }
 
@@ -224,7 +217,27 @@ impl SharedConnection {
     }
 
     pub fn is_connected(&self) -> bool {
-        self.connected.load(Ordering::Relaxed)
+        *self.connected.borrow() && self.is_active()
+    }
+
+    pub fn is_active(&self) -> bool {
+        !self.cmd_tx.is_closed()
+    }
+
+    pub async fn wait_until_ready(&self, timeout: Duration) -> Result<()> {
+        let mut connected = self.connected.clone();
+        let ready =
+            async {
+                connected.wait_for(|ready| *ready).await.map(|_| ()).map_err(|_| {
+                    KalamLinkError::WebSocketError("WebSocket reconnect stopped".into())
+                })
+            };
+        if KalamLinkTimeouts::is_no_timeout(timeout) {
+            return ready.await;
+        }
+        tokio::time::timeout(timeout, ready)
+            .await
+            .map_err(|_| KalamLinkError::TimeoutError("WebSocket did not become ready".into()))?
     }
 
     pub(crate) fn subscription_control(&self) -> SharedSubscriptionControl {
@@ -245,7 +258,7 @@ mod tests {
     use std::collections::HashMap;
 
     use tokio::{
-        sync::{mpsc, oneshot},
+        sync::{mpsc, oneshot, watch},
         time::Instant as TokioInstant,
     };
 
@@ -278,6 +291,7 @@ mod tests {
             batch_seq_id: None,
             is_loading: true,
             generation: 1,
+            snapshot_epoch: 0,
             created_at_ms: 0,
             last_event_time_ms: None,
             pending_result_tx: Some(result_tx),
@@ -342,6 +356,7 @@ mod tests {
             batch_seq_id: None,
             is_loading: true,
             generation: 1,
+            snapshot_epoch: 0,
             created_at_ms: 0,
             last_event_time_ms: None,
             pending_result_tx: Some(oneshot::channel().0),
@@ -353,12 +368,11 @@ mod tests {
     #[tokio::test]
     async fn disconnect_waits_for_connection_task_shutdown_ack() {
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<ConnCmd>(1);
-        let connected = Arc::new(AtomicBool::new(true));
-        let task_connected = Arc::clone(&connected);
+        let (task_connected, connected) = watch::channel(true);
         let task = tokio::spawn(async move {
             match cmd_rx.recv().await {
                 Some(ConnCmd::Shutdown { completed }) => {
-                    task_connected.store(false, Ordering::Release);
+                    task_connected.send_replace(false);
                     if let Some(completed) = completed {
                         let _ = completed.send(());
                     }
@@ -370,7 +384,6 @@ mod tests {
         let connection = SharedConnection {
             cmd_tx,
             connected,
-            _reconnect_attempts: Arc::new(AtomicU32::new(0)),
             _task: task,
         };
 
@@ -382,7 +395,7 @@ mod tests {
     #[tokio::test]
     async fn disconnect_marks_connection_closed_when_shutdown_ack_is_dropped() {
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<ConnCmd>(1);
-        let connected = Arc::new(AtomicBool::new(true));
+        let (_task_connected, connected) = watch::channel(true);
         let task = tokio::spawn(async move {
             match cmd_rx.recv().await {
                 Some(ConnCmd::Shutdown { completed }) => drop(completed),
@@ -392,13 +405,12 @@ mod tests {
 
         let connection = SharedConnection {
             cmd_tx,
-            connected: Arc::clone(&connected),
-            _reconnect_attempts: Arc::new(AtomicU32::new(0)),
+            connected,
             _task: task,
         };
 
         connection.disconnect().await;
-        assert!(!connected.load(Ordering::Acquire));
+        assert!(!connection.is_connected());
     }
 
     #[test]

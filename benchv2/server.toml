@@ -33,7 +33,10 @@ batch_size = 1024
 [flush]
 flush_batch_size = 10000
 check_interval_seconds = 30
-retain_latest_hot = true
+# Flushes must leave hot storage. Retaining the latest hot generation skips the
+# Parquet write, so the flushed-parquet benchmark never sees cold files and a
+# 200K-row filter scan hits the hot-scan cap.
+retain_latest_hot = false
 
 [flush.compaction]
 enabled = true

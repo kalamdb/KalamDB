@@ -100,7 +100,7 @@ impl JobExecutor for BackupExecutor {
 
         let result = tokio::task::spawn_blocking(move || -> Result<u64, KalamDbError> {
             let _transfer_guard = acquire_database_transfer_lock_blocking()?;
-            let plan = prepare_database_backup(&backup_target)?;
+            let plan = prepare_database_backup(&backup_target).map_err(super::transfer_error)?;
 
             // 1. RocksDB native backup (hot, consistent, with flush)
             storage_backend.backup_to(&plan.rocksdb_dir()).map_err(|e| {
@@ -110,13 +110,16 @@ impl JobExecutor for BackupExecutor {
             let mut total_bytes: u64 = 0;
 
             // 2. Parquet storage files
-            total_bytes += copy_dir_to_dir(&src_storage, &plan.storage_dir())?;
+            total_bytes += copy_dir_to_dir(&src_storage, &plan.storage_dir())
+                .map_err(super::transfer_error)?;
 
             // 3. Snapshot files
-            total_bytes += copy_dir_to_dir(&src_snapshots, &plan.snapshots_dir())?;
+            total_bytes += copy_dir_to_dir(&src_snapshots, &plan.snapshots_dir())
+                .map_err(super::transfer_error)?;
 
             // 4. Stream commit log files
-            total_bytes += copy_dir_to_dir(&src_streams, &plan.streams_dir())?;
+            total_bytes += copy_dir_to_dir(&src_streams, &plan.streams_dir())
+                .map_err(super::transfer_error)?;
 
             // 5. server.toml (look next to the binary / CWD)
             let server_toml = Path::new("server.toml");
@@ -128,6 +131,7 @@ impl JobExecutor for BackupExecutor {
             }
 
             finalize_database_backup(plan, &backup_target, total_bytes)
+                .map_err(super::transfer_error)
         })
         .await
         .map_err(|e| KalamDbError::InvalidOperation(format!("Backup task panicked: {}", e)))?;

@@ -15,6 +15,8 @@ pub use kalamdb_observability::{
 
 const IDLE_TRIM_GRACE: Duration = Duration::from_secs(60);
 const IDLE_TRIM_INTERVAL: Duration = Duration::from_secs(30);
+const MICRO_IDLE_TRIM_GRACE: Duration = Duration::from_secs(15);
+const MICRO_IDLE_TRIM_INTERVAL: Duration = Duration::from_secs(15);
 
 static LAST_IDLE_TRIM_MS: AtomicU64 = AtomicU64::new(0);
 
@@ -40,17 +42,24 @@ impl HealthMonitor {
         let active_subscriptions = app_context.connection_registry().subscription_count();
         let ws_sessions = get_websocket_session_count();
 
+        let (idle_trim_grace, idle_trim_interval) =
+            if app_context.config().server.profile.is_micro() {
+                (MICRO_IDLE_TRIM_GRACE, MICRO_IDLE_TRIM_INTERVAL)
+            } else {
+                (IDLE_TRIM_GRACE, IDLE_TRIM_INTERVAL)
+            };
+
         let Some(idle_for) = idle_duration() else {
             return;
         };
-        if idle_for < IDLE_TRIM_GRACE {
+        if idle_for < idle_trim_grace {
             return;
         }
 
         let now_ms = epoch_millis();
         let last_trim_ms = LAST_IDLE_TRIM_MS.load(Ordering::Acquire);
         if last_trim_ms != 0
-            && now_ms.saturating_sub(last_trim_ms) < IDLE_TRIM_INTERVAL.as_millis() as u64
+            && now_ms.saturating_sub(last_trim_ms) < idle_trim_interval.as_millis() as u64
         {
             return;
         }

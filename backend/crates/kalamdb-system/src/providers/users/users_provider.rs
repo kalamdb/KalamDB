@@ -11,26 +11,60 @@
 //!    - Key: `{role}:{user_id}`
 //!    - Enables: "All users with role 'admin'"
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, OnceLock},
-};
+use std::{collections::HashMap, sync::Arc};
 
-use datafusion::arrow::{array::RecordBatch, datatypes::SchemaRef};
-use kalamdb_commons::{models::rows::SystemTableRow, AuthType, Role, UserId};
+use datafusion::arrow::array::RecordBatch;
+use kalamdb_commons::{
+    models::rows::SystemTableRow, websocket::ChangeNotification, AuthType, Role, TableType, UserId,
+};
 use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBackend};
 use parking_lot::RwLock;
 
 use super::users_indexes::create_users_indexes;
 use crate::{
     error::{SystemError, SystemResultExt},
-    providers::{
-        base::{system_rows_to_batch, IndexedProviderDefinition},
-        users::models::User,
-    },
+    providers::{keyed_provider::KeyedTableProvider, users::models::User},
+    publish_live_table_change,
     system_row_mapper::{model_to_system_row, system_row_to_model},
-    SystemTable,
+    NotificationService, SystemTable,
 };
+
+/// Live fanout installed after the process notification service exists.
+#[derive(Clone)]
+struct DirectWriteNotifier {
+    inner: Arc<
+        std::sync::OnceLock<
+            Arc<dyn NotificationService<Notification = ChangeNotification> + Send + Sync>,
+        >,
+    >,
+}
+
+impl std::fmt::Debug for DirectWriteNotifier {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("DirectWriteNotifier").finish_non_exhaustive()
+    }
+}
+
+impl DirectWriteNotifier {
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(std::sync::OnceLock::new()),
+        }
+    }
+
+    fn install(
+        &self,
+        service: Arc<dyn NotificationService<Notification = ChangeNotification> + Send + Sync>,
+    ) {
+        let _ = self.inner.set(service);
+    }
+
+    fn get(
+        &self,
+    ) -> Option<&(dyn NotificationService<Notification = ChangeNotification> + Send + Sync)> {
+        self.inner.get().map(Arc::as_ref)
+    }
+}
 
 /// Type alias for the indexed users store
 pub type UsersStore = IndexedEntityStore<UserId, SystemTableRow>;
@@ -43,10 +77,11 @@ const PRIVILEGED_ROLE_CACHE_INITIAL_CAPACITY: usize = 32;
 ///
 /// All insert/update/delete operations automatically maintain secondary indexes
 /// using RocksDB's atomic WriteBatch - no manual index management needed.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct UsersTableProvider {
-    store: UsersStore,
+    sql: KeyedTableProvider<UserId, SystemTableRow>,
     privileged_roles: Arc<RwLock<HashMap<UserId, Role>>>,
+    direct_write_notifier: DirectWriteNotifier,
 }
 
 impl UsersTableProvider {
@@ -64,15 +99,31 @@ impl UsersTableProvider {
             create_users_indexes(),
         );
         let provider = Self {
-            store,
+            sql: KeyedTableProvider::from_indexed_rows(
+                store,
+                User::definition(),
+                SystemTable::Users.table_id(),
+                SystemTable::Users.table_name(),
+                "user_id",
+                |value| Some(UserId::new(value)),
+            ),
             privileged_roles: Arc::new(RwLock::new(HashMap::with_capacity(
                 PRIVILEGED_ROLE_CACHE_INITIAL_CAPACITY,
             ))),
+            direct_write_notifier: DirectWriteNotifier::new(),
         };
         provider
             .refresh_role_caches()
             .expect("failed to initialize system.users role caches from the role index");
         provider
+    }
+
+    /// Install the process live-notification service for direct system.users writes.
+    pub fn install_direct_write_notifier(
+        &self,
+        service: Arc<dyn NotificationService<Notification = ChangeNotification> + Send + Sync>,
+    ) {
+        self.direct_write_notifier.install(service);
     }
 
     /// Create a new user.
@@ -85,7 +136,7 @@ impl UsersTableProvider {
     /// # Returns
     /// Result indicating success or failure
     pub fn create_user(&self, user: User) -> Result<(), SystemError> {
-        if let Some(existing_row) = self.store.get(&user.user_id)? {
+        if let Some(existing_row) = self.sql.store().get(&user.user_id)? {
             let existing_user = Self::decode_user_row(&existing_row)?;
             if existing_user.deleted_at.is_none() {
                 return Err(SystemError::AlreadyExists(format!(
@@ -96,17 +147,31 @@ impl UsersTableProvider {
 
             // Reactivate soft-deleted user rows while preserving index consistency.
             let row = Self::encode_user_row(&user)?;
-            self.store
+            self.sql
+                .store()
                 .update_with_old(&user.user_id, Some(&existing_row), &row)
                 .into_system_error("reactivate user error")?;
             self.update_role_caches_for_user(&user);
+            self.notify_persisted_user(ChangeNotification::update(
+                SystemTable::Users.table_id(),
+                existing_row.fields,
+                row.fields,
+                vec!["user_id".to_string()],
+            ));
             return Ok(());
         }
 
         // Insert user - indexes are managed automatically
         let row = Self::encode_user_row(&user)?;
-        self.store.insert(&user.user_id, &row).into_system_error("insert user error")?;
+        self.sql
+            .store()
+            .insert(&user.user_id, &row)
+            .into_system_error("insert user error")?;
         self.update_role_caches_for_user(&user);
+        self.notify_persisted_user(ChangeNotification::insert(
+            SystemTable::Users.table_id(),
+            row.fields,
+        ));
         Ok(())
     }
 
@@ -122,7 +187,7 @@ impl UsersTableProvider {
     /// Result indicating success or failure
     pub fn update_user(&self, user: User) -> Result<(), SystemError> {
         // Check if user exists
-        let existing = self.store.get(&user.user_id)?;
+        let existing = self.sql.store().get(&user.user_id)?;
         if existing.is_none() {
             return Err(SystemError::NotFound(format!("User not found: {}", user.user_id)));
         }
@@ -138,10 +203,17 @@ impl UsersTableProvider {
 
         // Use update_with_old for efficiency (we already have old entity)
         let new_row = Self::encode_user_row(&user)?;
-        self.store
+        self.sql
+            .store()
             .update_with_old(&user.user_id, Some(&existing_row), &new_row)
             .into_system_error("update user error")?;
         self.update_role_caches_for_user(&user);
+        self.notify_persisted_user(ChangeNotification::update(
+            SystemTable::Users.table_id(),
+            existing_row.fields,
+            new_row.fields,
+            vec!["user_id".to_string()],
+        ));
         Ok(())
     }
 
@@ -161,7 +233,8 @@ impl UsersTableProvider {
 
         // Get existing user
         let mut user = self
-            .store
+            .sql
+            .store()
             .get(user_id)?
             .map(|row| Self::decode_user_row(&row))
             .transpose()?
@@ -172,9 +245,24 @@ impl UsersTableProvider {
 
         // Update user with deleted_at
         let row = Self::encode_user_row(&user)?;
-        self.store.update(user_id, &row).into_system_error("update user error")?;
+        self.sql.store().update(user_id, &row).into_system_error("update user error")?;
         self.update_role_caches_for_user(&user);
+        self.notify_persisted_user(ChangeNotification::delete_soft(
+            SystemTable::Users.table_id(),
+            row.fields,
+        ));
         Ok(())
+    }
+
+    fn notify_persisted_user(&self, notification: ChangeNotification) {
+        let Some(service) = self.direct_write_notifier.get() else {
+            return;
+        };
+        let table_id = SystemTable::Users.table_id();
+        if !service.has_subscribers(None, &table_id) {
+            return;
+        }
+        publish_live_table_change(Some(service), TableType::System, None, &table_id, notification);
     }
 
     /// Get a user by ID.
@@ -185,7 +273,7 @@ impl UsersTableProvider {
     /// # Returns
     /// Option<User> if found, None otherwise
     pub fn get_user_by_id(&self, user_id: &UserId) -> Result<Option<User>, SystemError> {
-        let row = self.store.get(user_id)?;
+        let row = self.sql.store().get(user_id)?;
         row.map(|value| Self::decode_user_row(&value)).transpose()
     }
 
@@ -200,7 +288,8 @@ impl UsersTableProvider {
 
         let prefix = format!("{}:", normalized_email);
         let user_ids = self
-            .store
+            .sql
+            .store()
             .scan_index_keys_iter(USER_EMAIL_INDEX, Some(prefix.as_bytes()), None)
             .into_system_error("scan user email index error")?;
 
@@ -234,7 +323,8 @@ impl UsersTableProvider {
 
         let prefix = format!("{}:invite:", normalized_email);
         let invite_ids = self
-            .store
+            .sql
+            .store()
             .scan_index_keys_iter(USER_EMAIL_INDEX, Some(prefix.as_bytes()), None)
             .into_system_error("scan user email index error")?;
 
@@ -276,23 +366,13 @@ impl UsersTableProvider {
     }
 
     /// Helper to create RecordBatch from users
-    fn create_batch(
-        &self,
-        users: Vec<(UserId, SystemTableRow)>,
-    ) -> Result<RecordBatch, SystemError> {
-        let rows = users.into_iter().map(|(_, row)| row).collect();
-        system_rows_to_batch(&Self::schema(), rows)
-    }
-
-    /// Scan all users and return as RecordBatch
     pub fn scan_all_users(&self) -> Result<RecordBatch, SystemError> {
-        let users = self.store.scan_all_typed(None, None, None)?;
-        self.create_batch(users)
+        self.sql.scan_all_to_batch()
     }
 
     /// Return all stored user records (including soft-deleted rows).
     pub fn list_users(&self) -> Result<Vec<User>, SystemError> {
-        let rows = self.store.scan_all_typed(None, None, None)?;
+        let rows = self.sql.store().scan_all_typed(None, None, None)?;
         rows.into_iter().map(|(_, row)| Self::decode_user_row(&row)).collect()
     }
 
@@ -312,7 +392,8 @@ impl UsersTableProvider {
     ) -> Result<(), SystemError> {
         let prefix = role_index_prefix(role);
         let users = self
-            .store
+            .sql
+            .store()
             .scan_index_keys_iter(USER_ROLE_INDEX, Some(prefix.as_slice()), None)
             .into_system_error("scan user role index error")?;
 
@@ -359,32 +440,20 @@ fn normalize_invite_email(email: &str) -> String {
     email.trim().to_ascii_lowercase()
 }
 
-crate::impl_system_table_provider_metadata!(
-    indexed,
-    provider = UsersTableProvider,
-    key = UserId,
-    table_name = SystemTable::Users.table_name(),
-    primary_key_column = "user_id",
-    parse_key = |value| Some(UserId::new(value)),
-    schema = User::definition().to_arrow_schema().expect("failed to build users schema")
-);
-
-crate::impl_indexed_system_table_provider!(
-    provider = UsersTableProvider,
-    key = UserId,
-    value = SystemTableRow,
-    store = store,
-    definition = provider_definition,
-    build_batch = create_batch
-);
+crate::impl_keyed_table_provider!(UsersTableProvider);
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use datafusion::datasource::TableProvider;
-    use kalamdb_commons::{conversions::record_batch_to_json_arrays, AuthType, Role, StorageId};
+    use kalamdb_commons::{
+        conversions::record_batch_to_json_arrays, websocket::ChangeNotification, AuthType, Role,
+        StorageId, TableId,
+    };
     use kalamdb_store::test_utils::InMemoryBackend;
 
-    use super::*;
+    use super::{NotificationService, *};
 
     fn create_test_provider() -> UsersTableProvider {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
@@ -412,6 +481,56 @@ mod tests {
             invite_expires_at: None,
             invited_by: None,
         }
+    }
+
+    #[test]
+    fn get_user_by_id_reads_the_entity_store_without_a_query_plan() {
+        let backend = Arc::new(InMemoryBackend::new());
+        let provider = UsersTableProvider::new(backend.clone());
+        provider.create_user(create_test_user("user1")).unwrap();
+        backend.clear_recorded_ops();
+
+        let user = provider.get_user_by_id(&UserId::new("user1")).unwrap().unwrap();
+
+        assert_eq!(user.user_id, UserId::new("user1"));
+        let users_partition =
+            SystemTable::Users.column_family_name().expect("users is a table").to_string();
+        let ops = backend.recorded_ops();
+        assert!(!ops.is_empty());
+        assert!(
+            ops.iter()
+                .all(|(kind, partition)| *kind == "get" && partition == &users_partition),
+            "get_user_by_id must call IndexedEntityStore::get, recorded {ops:?}"
+        );
+    }
+
+    #[test]
+    fn direct_write_notifies_after_create_user() {
+        struct Recording(Mutex<usize>);
+
+        impl NotificationService for Recording {
+            type Notification = ChangeNotification;
+
+            fn has_subscribers(&self, _user_id: Option<&UserId>, _table_id: &TableId) -> bool {
+                true
+            }
+
+            fn notify_table_change(
+                &self,
+                user_id: Option<UserId>,
+                _table_id: TableId,
+                _notification: ChangeNotification,
+            ) {
+                assert!(user_id.is_none());
+                *self.0.lock().expect("notifier lock") += 1;
+            }
+        }
+
+        let provider = create_test_provider();
+        let recording = Arc::new(Recording(Mutex::new(0)));
+        provider.install_direct_write_notifier(recording.clone());
+        provider.create_user(create_test_user("live-user")).unwrap();
+        assert_eq!(*recording.0.lock().expect("notifier lock"), 1);
     }
 
     #[test]

@@ -37,7 +37,7 @@ fn root_ctx(app: &Arc<AppContext>) -> ExecutionContext {
 
 async fn exec(app: &Arc<AppContext>, executor: &SqlExecutor, sql: &str) -> ExecutionResult {
     let ctx = root_ctx(app);
-    executor.execute(sql, &ctx, vec![]).await.expect(sql)
+    support::materialize_result(executor.execute(sql, &ctx, vec![]).await.expect(sql)).await
 }
 
 #[tokio::test]

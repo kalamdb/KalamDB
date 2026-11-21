@@ -14,7 +14,7 @@ use datafusion::{
 };
 use kalamdb_commons::{
     ids::{SharedTableRowId, VersionId},
-    models::{rows::Row, UserId},
+    models::{rows::Row, schemas::ColumnDefinition, UserId},
     AuthorizationRelation, PolicyCommand, PolicyProgram, Role, TableId,
 };
 use kalamdb_rls::{
@@ -23,7 +23,7 @@ use kalamdb_rls::{
     AuthorizationSet, BoundAuthorization, BoundLiveAuthorization, BoundTablePolicies,
 };
 
-use super::{SharedScanContext, SharedTableProvider};
+use crate::versioned::engine::{SharedScanContext, SharedTableProvider};
 
 fn snapshot_as_u64(snapshot: Option<VersionId>) -> Option<u64> {
     snapshot.map(|v| v.as_u64())
@@ -236,10 +236,10 @@ impl SharedTableAuthorization {
             .await?;
         if principal_filter.is_some() {
             // Prefix scan can return stale versions after the principal column
-            // changes. Resolve each PK to the live winner before binding.
+            // changes. Resolve the distinct keys in one batch before binding.
             let pk_name = relation_provider.primary_key_field_name();
             let mut seen = HashSet::new();
-            let mut winners = Vec::new();
+            let mut pk_values = Vec::new();
             for (_, row) in &relation_rows {
                 let Some(pk) = row.fields.get(pk_name) else {
                     continue;
@@ -247,7 +247,15 @@ impl SharedTableAuthorization {
                 if !seen.insert(pk.clone()) {
                     continue;
                 }
-                if let Some((_, winner)) = relation_provider.find_by_pk(pk).await? {
+                let Ok(text) = kalamdb_commons::conversions::scalar_to_pk_string(pk) else {
+                    continue;
+                };
+                pk_values.push(text);
+            }
+            let targets = relation_provider.load_mutation_targets(None, &pk_values).await?;
+            let mut winners = Vec::new();
+            for target in targets {
+                if let Some((_, winner)) = crate::versioned::optional_live_row(target) {
                     winners.push(winner.fields);
                 }
             }
@@ -351,19 +359,11 @@ impl SharedTableAuthorization {
         cold_columns: Option<&[String]>,
     ) -> Option<Vec<String>> {
         let mut columns = cold_columns?.to_vec();
-        for column_id in scan_context.policies.required_column_ids() {
-            if let Some(column) = host
-                .core
-                .table_def()
-                .columns
-                .iter()
-                .find(|column| column.column_id == column_id)
-            {
-                if !columns.iter().any(|name| name == &column.column_name) {
-                    columns.push(column.column_name.clone());
-                }
-            }
-        }
+        push_missing_column_names(
+            &mut columns,
+            &host.core.table_def().columns,
+            &scan_context.policies.required_column_ids(),
+        );
         Some(columns)
     }
 
@@ -537,6 +537,22 @@ impl SharedTableAuthorization {
     }
 }
 
+/// Append policy column names that are not already in `names`.
+pub(crate) fn push_missing_column_names(
+    names: &mut Vec<String>,
+    columns: &[ColumnDefinition],
+    column_ids: &[u64],
+) {
+    for column_id in column_ids {
+        let Some(column) = columns.iter().find(|column| column.column_id == *column_id) else {
+            continue;
+        };
+        if !names.iter().any(|name| name == &column.column_name) {
+            names.push(column.column_name.clone());
+        }
+    }
+}
+
 pub(crate) fn resolve_relation_provider(
     host: &SharedTableProvider,
     relation_table: &TableId,
@@ -551,14 +567,11 @@ pub(crate) fn resolve_relation_provider(
                 "RLS relation provider {relation_table} is unavailable"
             ))
         })?;
-    (provider.as_ref() as &dyn std::any::Any)
-        .downcast_ref::<SharedTableProvider>()
-        .cloned()
-        .ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!(
-                "RLS relation {relation_table} must be a shared table"
-            ))
-        })
+    crate::as_shared_table(provider.as_ref()).cloned().ok_or_else(|| {
+        KalamDbError::InvalidOperation(format!(
+            "RLS relation {relation_table} must be a shared table"
+        ))
+    })
 }
 
 fn append_policy_explain(details: &str, policies: &BoundTablePolicies) -> String {

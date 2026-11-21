@@ -38,7 +38,7 @@ fn detect_create_table() {
         "#,
     );
 
-    assert_contains(&diff.up, "CREATE USER TABLE app.users");
+    assert_contains(&diff.up, "CREATE TABLE app.users");
     assert_contains(&diff.up, "email TEXT NOT NULL");
 }
 
@@ -52,8 +52,8 @@ fn detect_create_namespaces_from_namespace_and_schema_syntax() {
         "#,
     );
 
-    assert_contains(&diff.up, "CREATE NAMESPACE IF NOT EXISTS analytics;");
-    assert_contains(&diff.up, "CREATE NAMESPACE IF NOT EXISTS app;");
+    assert_contains(&diff.up, "CREATE SCHEMA IF NOT EXISTS analytics;");
+    assert_contains(&diff.up, "CREATE SCHEMA IF NOT EXISTS app;");
 }
 
 #[test]
@@ -63,15 +63,22 @@ fn detect_create_table_kinds_from_prefix_and_type_option() {
         r#"
             CREATE USER TABLE app.users (id BIGINT PRIMARY KEY);
             CREATE SHARED TABLE app.shared_messages (id BIGINT PRIMARY KEY);
-            CREATE STREAM TABLE app.message_streams (id BIGINT PRIMARY KEY);
+            CREATE STREAM TABLE app.message_streams (id BIGINT PRIMARY KEY) WITH (TTL_SECONDS = 10);
             CREATE TABLE app.option_kind (id BIGINT PRIMARY KEY) WITH (TYPE = 'USER');
         "#,
     );
 
-    assert_contains(&diff.up, "CREATE USER TABLE app.option_kind");
-    assert_contains(&diff.up, "CREATE USER TABLE app.users");
-    assert_contains(&diff.up, "CREATE SHARED TABLE app.shared_messages");
-    assert_contains(&diff.up, "CREATE STREAM TABLE app.message_streams");
+    assert_contains(&diff.up, "CREATE TABLE app.option_kind");
+    assert_contains(&diff.up, "CREATE TABLE app.users");
+    assert_contains(&diff.up, "CREATE TABLE app.shared_messages");
+    assert_contains(&diff.up, "CREATE TABLE app.message_streams");
+    assert_contains(&diff.up, "TYPE = 'USER'");
+    assert_contains(&diff.up, "TYPE = 'SHARED'");
+    assert_contains(&diff.up, "TYPE = 'STREAM'");
+    assert_contains(&diff.up, "TTL_SECONDS = 10");
+    assert_not_contains(&diff.up, "CREATE USER TABLE");
+    assert_not_contains(&diff.up, "CREATE STREAM TABLE");
+    assert_not_contains(&diff.up, "CREATE SHARED TABLE");
 }
 
 #[test]
@@ -109,9 +116,9 @@ fn chat_with_ai_example_schema_emits_shared_stream_policy_and_topic() {
     let sql = include_str!("../../../../examples/chat-with-ai/kalam/schema.sql");
     let diff = diff("", sql);
 
-    assert_contains(&diff.up, "CREATE SHARED TABLE");
-    assert_contains(&diff.up, "CREATE STREAM TABLE");
-    assert_contains(&diff.up, "CREATE USER TABLE");
+    assert_contains(&diff.up, "TYPE = 'SHARED'");
+    assert_contains(&diff.up, "TYPE = 'STREAM'");
+    assert_contains(&diff.up, "TYPE = 'USER'");
     assert_contains(&diff.up, "CREATE POLICY rooms_visible");
     assert_contains(&diff.up, "CREATE TOPIC IF NOT EXISTS chat_demo.ai_inbox");
     assert_contains(
@@ -139,7 +146,7 @@ CREATE SHARED TABLE IF NOT EXISTS chat_demo.rooms (
 
     let diff = diff("", after);
 
-    assert_contains(&diff.up, "CREATE SHARED TABLE chat_demo.rooms");
+    assert_contains(&diff.up, "CREATE TABLE chat_demo.rooms");
 }
 
 #[test]
@@ -445,7 +452,7 @@ fn detect_schema_diff_order_is_deterministic() {
 
     assert_eq!(first.up, second.up);
     assert!(
-        first.up.find("CREATE NAMESPACE IF NOT EXISTS app;").unwrap()
+        first.up.find("CREATE SCHEMA IF NOT EXISTS app;").unwrap()
             < first.up.find("CREATE TABLE alpha").unwrap()
     );
     assert!(
@@ -594,7 +601,7 @@ fn detect_starter_rls_policy_for_new_shared_table_without_policy() {
 fn detect_user_table_does_not_emit_starter_rls_policy() {
     let diff = diff("", "CREATE USER TABLE app.inbox (id BIGINT PRIMARY KEY);");
 
-    assert_contains(&diff.up, "CREATE USER TABLE app.inbox");
+    assert_contains(&diff.up, "CREATE TABLE app.inbox");
     assert_not_contains(&diff.up, "CREATE POLICY");
 }
 
@@ -750,7 +757,7 @@ fn detect_create_table_includes_flush_policy() {
         "#,
     );
 
-    assert_contains(&diff.up, "CREATE USER TABLE app.messages");
+    assert_contains(&diff.up, "CREATE TABLE app.messages");
     assert_contains(&diff.up, "FLUSH_POLICY = 'rows:1000,interval:60'");
 }
 
@@ -841,7 +848,7 @@ fn detect_create_scalar_index_from_alter_table() {
         "#,
     );
 
-    assert_contains(&diff.up, "CREATE USER TABLE app.messages");
+    assert_contains(&diff.up, "CREATE TABLE app.messages");
     assert_contains(&diff.up, "ALTER TABLE app.messages CREATE INDEX idx_conv (conversation_id);");
 }
 

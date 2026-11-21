@@ -101,6 +101,19 @@ fn apply_unset_env(command: &mut tokio::process::Command, extra_env: &HashMap<St
     }
 }
 
+/// Listen overrides that must not follow a managed server.
+///
+/// `server.toml` already has the ports this process should bind. Ambient
+/// `KALAMDB_PGWIRE_PORT` / `KALAMDB_SERVER_PORT` values, such as those set for
+/// a test client, would move the new server onto a port another database owns.
+pub const MANAGED_SERVER_CLEARED_ENV: &[&str] = &[
+    "KALAMDB_SERVER_HOST",
+    "KALAMDB_SERVER_PORT",
+    "KALAMDB_ENABLE_PGWIRE",
+    "KALAMDB_PGWIRE_HOST",
+    "KALAMDB_PGWIRE_PORT",
+];
+
 /// Spawn a program directly as an async child with piped stdout/stderr.
 pub fn spawn_program_piped(
     program: &Path,
@@ -113,6 +126,9 @@ pub fn spawn_program_piped(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    for key in MANAGED_SERVER_CLEARED_ENV {
+        command.env_remove(key);
+    }
     if let Some(dir) = working_dir {
         command.current_dir(shell_working_directory(dir));
     }

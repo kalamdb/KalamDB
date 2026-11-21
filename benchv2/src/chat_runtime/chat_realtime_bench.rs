@@ -123,7 +123,7 @@ impl Benchmark for ChatRealtimeBench {
             let usernames = build_chat_users(&config.namespace, settings.user_count);
 
             client
-                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
+                .sql_ok(&format!("CREATE SCHEMA IF NOT EXISTS {}", config.namespace))
                 .await?;
 
             drop_chat_schema(client, &config.namespace).await;
@@ -364,24 +364,24 @@ async fn drop_chat_schema(client: &KalamClient, namespace: &str) {
         .sql(&format!("DROP TOPIC IF EXISTS {}.chat_typing_events", namespace))
         .await;
     let _ = client
-        .sql(&format!("DROP STREAM TABLE IF EXISTS {}.typing_events", namespace))
+        .sql(&format!("DROP TABLE IF EXISTS {}.typing_events", namespace))
         .await;
-    let _ = client.sql(&format!("DROP SHARED TABLE IF EXISTS {}.messages", namespace)).await;
+    let _ = client.sql(&format!("DROP TABLE IF EXISTS {}.messages", namespace)).await;
     let _ = client
-        .sql(&format!("DROP SHARED TABLE IF EXISTS {}.conversation_members", namespace))
-        .await;
-    let _ = client
-        .sql(&format!("DROP SHARED TABLE IF EXISTS {}.conversations", namespace))
+        .sql(&format!("DROP TABLE IF EXISTS {}.conversation_members", namespace))
         .await;
     let _ = client
-        .sql(&format!("DROP USER TABLE IF EXISTS {}.messages_ai", namespace))
+        .sql(&format!("DROP TABLE IF EXISTS {}.conversations", namespace))
         .await;
     let _ = client
-        .sql(&format!("DROP USER TABLE IF EXISTS {}.conversations_ai", namespace))
+        .sql(&format!("DROP TABLE IF EXISTS {}.messages_ai", namespace))
         .await;
-    let _ = client.sql(&format!("DROP USER TABLE IF EXISTS {}.messages", namespace)).await;
     let _ = client
-        .sql(&format!("DROP USER TABLE IF EXISTS {}.conversations", namespace))
+        .sql(&format!("DROP TABLE IF EXISTS {}.conversations_ai", namespace))
+        .await;
+    let _ = client.sql(&format!("DROP TABLE IF EXISTS {}.messages", namespace)).await;
+    let _ = client
+        .sql(&format!("DROP TABLE IF EXISTS {}.conversations", namespace))
         .await;
 }
 
@@ -389,9 +389,9 @@ async fn create_chat_schema(client: &KalamClient, namespace: &str) -> Result<(),
     run_sql_with_retry(
         client,
         &format!(
-            "CREATE USER TABLE IF NOT EXISTS {}.conversations_ai (id BIGINT PRIMARY KEY, title \
+            "CREATE TABLE IF NOT EXISTS {}.conversations_ai (id BIGINT PRIMARY KEY, title \
              TEXT NOT NULL, state TEXT NOT NULL, created_at_ms BIGINT NOT NULL) WITH \
-             (FLUSH_POLICY = 'rows:10000')",
+             (TYPE = 'USER', FLUSH_POLICY = 'rows:10000')",
             namespace
         ),
     )
@@ -400,9 +400,9 @@ async fn create_chat_schema(client: &KalamClient, namespace: &str) -> Result<(),
     run_sql_with_retry(
         client,
         &format!(
-            "CREATE USER TABLE IF NOT EXISTS {}.messages_ai (id BIGINT PRIMARY KEY, \
+            "CREATE TABLE IF NOT EXISTS {}.messages_ai (id BIGINT PRIMARY KEY, \
              conversation_id BIGINT NOT NULL, role TEXT NOT NULL, sender_user TEXT NOT NULL, body \
-             TEXT NOT NULL, created_at_ms BIGINT NOT NULL) WITH (FLUSH_POLICY = 'rows:10000')",
+             TEXT NOT NULL, created_at_ms BIGINT NOT NULL) WITH (TYPE = 'USER', FLUSH_POLICY = 'rows:10000')",
             namespace
         ),
     )
@@ -411,9 +411,9 @@ async fn create_chat_schema(client: &KalamClient, namespace: &str) -> Result<(),
     run_sql_with_retry(
         client,
         &format!(
-            "CREATE SHARED TABLE IF NOT EXISTS {}.conversations (id BIGINT PRIMARY KEY, title \
+            "CREATE TABLE IF NOT EXISTS {}.conversations (id BIGINT PRIMARY KEY, title \
              TEXT NOT NULL, created_by TEXT NOT NULL, created_at_ms BIGINT NOT NULL) WITH \
-             (FLUSH_POLICY = 'rows:10000')",
+             (TYPE = 'SHARED', FLUSH_POLICY = 'rows:10000')",
             namespace
         ),
     )
@@ -422,8 +422,8 @@ async fn create_chat_schema(client: &KalamClient, namespace: &str) -> Result<(),
     run_sql_with_retry(
         client,
         &format!(
-            "CREATE SHARED TABLE IF NOT EXISTS {}.conversation_members (id TEXT PRIMARY KEY, \
-             user_id TEXT NOT NULL, conversation_id BIGINT NOT NULL) WITH (FLUSH_POLICY = \
+            "CREATE TABLE IF NOT EXISTS {}.conversation_members (id TEXT PRIMARY KEY, \
+             user_id TEXT NOT NULL, conversation_id BIGINT NOT NULL) WITH (TYPE = 'SHARED', FLUSH_POLICY = \
              'rows:10000')",
             namespace
         ),
@@ -433,9 +433,9 @@ async fn create_chat_schema(client: &KalamClient, namespace: &str) -> Result<(),
     run_sql_with_retry(
         client,
         &format!(
-            "CREATE SHARED TABLE IF NOT EXISTS {}.messages (id BIGINT PRIMARY KEY, \
+            "CREATE TABLE IF NOT EXISTS {}.messages (id BIGINT PRIMARY KEY, \
              conversation_id BIGINT NOT NULL, sender_user TEXT NOT NULL, body TEXT NOT NULL, \
-             created_at_ms BIGINT NOT NULL) WITH (FLUSH_POLICY = 'rows:10000')",
+             created_at_ms BIGINT NOT NULL) WITH (TYPE = 'SHARED', FLUSH_POLICY = 'rows:10000')",
             namespace
         ),
     )
@@ -444,9 +444,9 @@ async fn create_chat_schema(client: &KalamClient, namespace: &str) -> Result<(),
     run_sql_with_retry(
         client,
         &format!(
-            "CREATE STREAM TABLE IF NOT EXISTS {}.typing_events (id BIGINT PRIMARY KEY, \
+            "CREATE TABLE IF NOT EXISTS {}.typing_events (id BIGINT PRIMARY KEY, \
              conversation_id BIGINT NOT NULL, sender_user TEXT NOT NULL, recipient_user TEXT NOT \
-             NULL, phase TEXT NOT NULL, created_at_ms BIGINT NOT NULL) WITH (TTL_SECONDS = 30)",
+             NULL, phase TEXT NOT NULL, created_at_ms BIGINT NOT NULL) WITH (TYPE = 'STREAM', TTL_SECONDS = 30)",
             namespace
         ),
     )

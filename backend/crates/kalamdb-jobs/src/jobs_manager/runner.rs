@@ -664,10 +664,12 @@ impl JobsManager {
     }
 
     async fn run_procedure_schedules(&self) {
+        const ACTIVE_SCHEDULE_POLL: Duration = Duration::from_secs(1);
+        const IDLE_SCHEDULE_POLL: Duration = Duration::from_secs(5);
+
         let app = self.get_attached_app_context();
         let mut schedules = crate::procedure_schedules::ProcedureSchedules::default();
-        let mut interval = tokio::time::interval(Duration::from_secs(1));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut next_delay = ACTIVE_SCHEDULE_POLL;
         loop {
             // Register before checking the flag so shutdown cannot be lost between them.
             let shutdown = self.shutdown_notify.notified();
@@ -679,13 +681,18 @@ impl JobsManager {
             tokio::select! {
                 biased;
                 _ = &mut shutdown => break,
-                _ = interval.tick() => {
+                _ = tokio::time::sleep(next_delay) => {
                     if self.is_shutting_down() {
                         break;
                     }
-                    if let Err(error) = schedules.tick(&app).await {
-                        log::warn!("Procedure schedules: {error}");
-                    }
+                    next_delay = match schedules.tick(&app).await {
+                        Ok(true) => ACTIVE_SCHEDULE_POLL,
+                        Ok(false) => IDLE_SCHEDULE_POLL,
+                        Err(error) => {
+                            log::warn!("Procedure schedules: {error}");
+                            IDLE_SCHEDULE_POLL
+                        },
+                    };
                 }
             }
         }

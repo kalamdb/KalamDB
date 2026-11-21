@@ -31,7 +31,7 @@ pub use helpers::extractor::{AuthExtractError, AuthSessionExtractor};
 #[cfg(feature = "http")]
 pub use helpers::ip_extractor::{
     extract_client_ip_addr_secure, extract_client_ip_secure, init_trusted_proxy_ranges,
-    is_localhost_address,
+    is_direct_localhost_request, is_localhost_address,
 };
 #[cfg(feature = "http")]
 pub use helpers::request_tokens::{

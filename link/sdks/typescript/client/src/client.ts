@@ -547,9 +547,8 @@ export class KalamDBClient {
       return;
     }
 
-    wasmClient.setAutoReconnect(false);
     try {
-      await this.serializeWasmCall(() => wasmClient.disconnect());
+      await wasmClient.disconnect();
       await new Promise((resolve) => setTimeout(resolve, 0));
     } finally {
       this.log(LogLevel.Debug, 'connection', 'Disconnected and subscriptions cleared');
@@ -580,8 +579,7 @@ export class KalamDBClient {
     }
 
     try {
-      wasmClient.setAutoReconnect(false);
-      await this.serializeWasmCall(() => wasmClient.disconnect());
+      await wasmClient.disconnect();
       await new Promise((resolve) => setTimeout(resolve, 0));
     } finally {
       if (typeof wasmClient.free === 'function') {
@@ -1529,7 +1527,7 @@ export class KalamDBClient {
     if (!wasmClient) throw new Error('WASM client not initialized');
     this.forgetSubscriptionMetadata(subscriptionId);
     try {
-      await this.serializeWasmCall(() => wasmClient.unsubscribe(subscriptionId));
+      await wasmClient.unsubscribe(subscriptionId);
       this.log(LogLevel.Info, 'subscription', `Unsubscribed: id=${subscriptionId}`);
     } catch (error) {
       this.log(LogLevel.Warn, 'subscription', `Unsubscribe failed for ${subscriptionId}: ${error}`);
@@ -1588,17 +1586,7 @@ export class KalamDBClient {
       throw new Error('WASM client not initialized');
     }
 
-    let subscriptionId: string;
-    try {
-      subscriptionId = await this.serializeWasmCall(() => register(wasmClient));
-    } catch (error) {
-      if (!String(error).includes('Not connected to server')) {
-        throw error;
-      }
-
-      await this.connectInternal();
-      subscriptionId = await this.serializeWasmCall(() => register(wasmClient));
-    }
+    const subscriptionId = await this.serializeWasmCall(() => register(wasmClient));
     this.trackSubscriptionMetadata(subscriptionId, tableName);
     // Harvest SHARED resume domains from WASM while this socket still knows them.
     this.getSubscriptions();
@@ -1896,11 +1884,8 @@ export class KalamDBClient {
     }
 
     try {
-      previousClient.setAutoReconnect(false);
-      if (previousClient.isConnected?.()) {
-        await this.serializeWasmCall(() => previousClient.disconnect());
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      }
+      await previousClient.disconnect();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     } catch (error) {
       this.log(LogLevel.Warn, 'connection', `Failed to clean up replaced WASM client: ${error}`);
     } finally {

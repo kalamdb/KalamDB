@@ -26,7 +26,7 @@ impl Benchmark for NamespaceIsolationBench {
             // Create 5 namespaces, each with the same table and data
             for i in 0..5 {
                 let ns = format!("{}_iso_{}", config.namespace, i);
-                client.sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
+                client.sql_ok(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await?;
                 let _ = client.sql(&format!("DROP TABLE IF EXISTS {}.iso_data", ns)).await;
                 client
                     .sql_ok(&format!(

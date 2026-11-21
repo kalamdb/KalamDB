@@ -3,6 +3,7 @@
 //! Provides functions to estimate the memory footprint of scalar values.
 //! Used for query planning, memory limits, and resource management.
 
+use arrow::array::Array;
 use datafusion_common::ScalarValue;
 
 /// Estimate memory size in bytes for a ScalarValue
@@ -85,12 +86,15 @@ pub fn estimate_scalar_value_size(value: &ScalarValue) -> usize {
         ScalarValue::Decimal128(_, _, _) => 16,
         ScalarValue::Decimal256(_, _, _) => 32,
 
-        // List types - conservative estimate (24 bytes for Vec overhead + average element size)
-        ScalarValue::List(_) => 24 + 64, // Assume average 64 bytes per list
-        ScalarValue::LargeList(_) => 24 + 64,
-
-        // Struct types - conservative estimate
-        ScalarValue::Struct(_) => 64, // Assume 64 bytes average struct size
+        // Nested Arrow-backed scalars: charge the array's reported buffer bytes.
+        // Shared Arc buffers are charged once per scalar owner (conservative).
+        ScalarValue::List(arr) => arr.get_array_memory_size(),
+        ScalarValue::LargeList(arr) => arr.get_array_memory_size(),
+        ScalarValue::FixedSizeList(arr) => arr.get_array_memory_size(),
+        ScalarValue::ListView(arr) => arr.get_array_memory_size(),
+        ScalarValue::LargeListView(arr) => arr.get_array_memory_size(),
+        ScalarValue::Struct(arr) => arr.get_array_memory_size(),
+        ScalarValue::Map(arr) => arr.get_array_memory_size(),
 
         // Dictionary types - assume 8 bytes for key + value size estimate
         ScalarValue::Dictionary(_, value) => 8 + estimate_scalar_value_size(value),

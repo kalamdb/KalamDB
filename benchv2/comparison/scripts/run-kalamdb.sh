@@ -42,12 +42,15 @@ curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null
 cd "$ROOT"
 cargo build --release -p comparison_kalamdb
 OUT="$RESULTS/kalamdb-$(date +%Y%m%d-%H%M%S).txt"
+# shellcheck source=memory-sample.sh
+source "$ROOT/scripts/memory-sample.sh"
+memory_mark_ready "$SERVER_PID"
 {
   echo "# KalamDB comparison (hot-only, tuned RocksDB/cache)"
   echo "# server_bin=${BIN}"
   echo "# flush.check_interval_seconds=0"
   echo "# table created without FLUSH_POLICY"
-  echo "# rocksdb.memory_mode=server (cache≈RAM/8, hot_data≥64MiB)"
+  echo "# rocksdb.memory_mode=compact (32MiB cache, 16MiB hot_data, 8MiB hot_index/raft, 1MiB system)"
   echo "# datafusion query_parallelism=2 max_partitions=1 batch_size=128"
   echo "# sql=parameterized; no multi-row batch (matches TB/PB one-row HTTP)"
   echo "# timed_read_response=bytes; HTTP status validation only (matches TB/PB)"
@@ -57,5 +60,7 @@ OUT="$RESULTS/kalamdb-$(date +%Y%m%d-%H%M%S).txt"
   KALAMDB_URL="http://127.0.0.1:${PORT}" ./target/release/comparison_kalamdb
   echo "# finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } | tee "$OUT"
+
+memory_append_result "$SERVER_PID" "$OUT"
 
 echo "Wrote $OUT"

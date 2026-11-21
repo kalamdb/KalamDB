@@ -1,11 +1,12 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, Float64Builder, Int64Builder, StringBuilder},
-    datatypes::{DataType, Field, Schema, SchemaRef},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use kalamdb_commons::{CatalogTypeKind, Role};
+use kalamdb_macros::table;
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
@@ -13,18 +14,26 @@ use crate::{
     pg_catalog::{catalog_type_oid, stable_oid, PgCatalogView},
 };
 
+#[table(
+    name = "pg_enum",
+    namespace = SchemaId::pg_catalog(),
+    view = true,
+    comment = "Enum labels"
+)]
+#[derive(Debug)]
+struct PgEnumRow {
+    /// Enum label oid
+    oid: i64,
+    /// Enum type oid
+    enumtypid: i64,
+    /// Sort order
+    enumsortorder: f64,
+    /// Label text
+    enumlabel: String,
+}
+
 fn schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("oid", DataType::Int64, false),
-                Field::new("enumtypid", DataType::Int64, false),
-                Field::new("enumsortorder", DataType::Float64, false),
-                Field::new("enumlabel", DataType::Utf8, false),
-            ]))
-        })
-        .clone()
+    PgEnumRow::arrow_schema()
 }
 
 #[derive(Debug)]

@@ -8,15 +8,32 @@ use datafusion::arrow::{
     record_batch::RecordBatch,
 };
 use kalamdb_commons::SystemTable;
+use kalamdb_macros::table;
 use kalamdb_system::SystemTablesRegistry;
 
-use super::common::{
-    int_col, nullable_text_col, registry_view_provider, system_view_definition, text_col,
-    SystemViewProvider,
-};
+use super::common::{registry_view_provider, SystemViewProvider};
 use crate::{error::RegistryError, view_base::VirtualView};
 
 crate::memoized_view_schema!(modules_schema, ModulesView);
+
+#[table(
+    name = "modules",
+    view = true,
+    comment = "Deployed function modules with the current revision pointer"
+)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModuleRow {
+    /// Project function module
+    pub module_id: String,
+    /// typescript
+    pub runtime: String,
+    /// Active immutable revision
+    pub current_revision_id: Option<String>,
+    /// Contract snapshot hash of the current revision
+    pub contract_hash: Option<String>,
+    /// Host ABI version
+    pub abi_version: i64,
+}
 
 /// Virtual view of deployed function modules and their current revision pointer.
 pub struct ModulesView {
@@ -35,21 +52,7 @@ impl ModulesView {
     }
 
     pub fn definition() -> kalamdb_commons::schemas::TableDefinition {
-        system_view_definition(
-            SystemTable::Modules,
-            vec![
-                text_col(1, "module_id", "Project function module"),
-                text_col(2, "runtime", "typescript"),
-                nullable_text_col(3, "current_revision_id", "Active immutable revision"),
-                nullable_text_col(
-                    4,
-                    "contract_hash",
-                    "Contract snapshot hash of the current revision",
-                ),
-                int_col(5, "abi_version", "Host ABI version"),
-            ],
-            "Deployed function modules with the current revision pointer",
-        )
+        ModuleRow::definition()
     }
 }
 
@@ -119,5 +122,15 @@ mod tests {
         let definition = ModulesView::definition();
         assert_eq!(definition.table_name.as_str(), "modules");
         assert_eq!(definition.columns.len(), 5);
+        assert_eq!(
+            ModuleRow::ordinal_column_order(),
+            [
+                "module_id",
+                "runtime",
+                "current_revision_id",
+                "contract_hash",
+                "abi_version"
+            ]
+        );
     }
 }

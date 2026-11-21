@@ -217,6 +217,9 @@ impl CoreClusterHandler {
             ExecutionResult::ScalarRows { .. } => {
                 unreachable!("converted by into_arrow_rows")
             },
+            ExecutionResult::StreamingRows { .. } => {
+                unreachable!("streaming rows must be materialized before forwarding")
+            },
         }
     }
 
@@ -492,6 +495,19 @@ impl ClusterMessageHandler for CoreClusterHandler {
                         400,
                         "SQL_EXECUTION_ERROR",
                         &e.statement_failure_message(idx + 1),
+                        started_at,
+                    ));
+                },
+            };
+            let exec_result = match exec_result.into_materialized_rows().await {
+                Ok(result) => result,
+                Err(err) => {
+                    let _ = request_transaction_guard
+                        .rollback_if_active(&request_transaction_coordinator);
+                    return Ok(Self::error_payload(
+                        500,
+                        "INTERNAL_ERROR",
+                        &format!("Failed to materialize forwarded SQL result: {err}"),
                         started_at,
                     ));
                 },

@@ -3,6 +3,25 @@ use link_common::models::{ClientMessage, ProtocolOptions, WsAuthCredentials};
 use wasm_bindgen::prelude::JsValue;
 use wasm_bindgen_futures::JsFuture;
 
+pub(crate) async fn perform_basic_login(
+    base_url: &str,
+    user: &str,
+    password: &str,
+) -> Result<link_common::LoginResponse, JsValue> {
+    let body = serde_json::json!({ "user": user, "password": password }).to_string();
+    let url = format!("{base_url}/v1/api/auth/login");
+    let json = crate::helpers::wasm_fetch(
+        &url,
+        "POST",
+        Some(&body),
+        &[("Content-Type", "application/json")],
+        "Login failed",
+    )
+    .await?;
+    serde_json::from_str(&json)
+        .map_err(|error| JsValue::from_str(&format!("Failed to parse login response: {error}")))
+}
+
 /// Authentication provider for WASM clients
 ///
 /// Supports three authentication modes:

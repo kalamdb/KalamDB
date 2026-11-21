@@ -72,8 +72,34 @@ pub async fn first_existing_pk_in_parquet_file(
     pk_column: &str,
     pk_values: &HashSet<&str>,
 ) -> Result<Option<String>, KalamDbError> {
+    let versions = pk_versions_in_parquet_file(
+        storage_cached,
+        table_type,
+        table_id,
+        user_id,
+        parquet_filename,
+        pk_column,
+        pk_values,
+    )
+    .await?;
+    Ok(versions.into_iter().find(|(_, (_, deleted))| !deleted).map(|(pk, _)| pk))
+}
+
+/// Latest `(sequence, deleted)` for each requested primary key in one segment.
+///
+/// The key is the primary-key display text. A referenced file that cannot be
+/// opened is an error.
+pub async fn pk_versions_in_parquet_file(
+    storage_cached: &StorageCached,
+    table_type: TableType,
+    table_id: &TableId,
+    user_id: Option<&UserId>,
+    parquet_filename: &str,
+    pk_column: &str,
+    pk_values: &HashSet<&str>,
+) -> Result<HashMap<String, (i64, bool)>, KalamDbError> {
     if pk_values.is_empty() {
-        return Ok(None);
+        return Ok(HashMap::new());
     }
 
     let columns_to_read = vec![
@@ -85,7 +111,7 @@ pub async fn first_existing_pk_in_parquet_file(
         .with_columns(columns_to_read)
         .with_pk_bloom_values(pk_column, pk_values.iter().copied());
 
-    let mut stream = match storage_cached
+    let mut stream = storage_cached
         .read_parquet_file_stream_with_options(
             table_type,
             table_id,
@@ -94,22 +120,12 @@ pub async fn first_existing_pk_in_parquet_file(
             &options,
         )
         .await
-    {
-        Ok(stream) => stream,
-        Err(err) => {
-            let err_msg = err.to_string().to_ascii_lowercase();
-            if err_msg.contains("not found") && err_msg.contains("object at location") {
-                log::warn!(
-                    "[pk_exists_in_parquet] skipping missing parquet file '{}' for {}: {}",
-                    parquet_filename,
-                    table_id,
-                    err
-                );
-                return Ok(None);
-            }
-            return Err(TableError::Other(format!("Failed to open Parquet stream: {}", err)));
-        },
-    };
+        .map_err(|err| {
+            TableError::Other(format!(
+                "referenced parquet file '{parquet_filename}' for {table_id} could not be opened: \
+                 {err}"
+            ))
+        })?;
 
     let mut versions: HashMap<PkBucketKey, (i64, bool)> = HashMap::with_capacity(pk_values.len());
     let mut wanted: Option<HashSet<PkBucketKey>> = None;
@@ -132,13 +148,11 @@ pub async fn first_existing_pk_in_parquet_file(
         observe_pk_versions(&batch, pk_i, wanted, &mut versions);
     }
 
-    for (pk, (_, is_deleted)) in versions {
-        if !is_deleted {
-            return Ok(Some(pk.to_string()));
-        }
+    let mut displayed = HashMap::with_capacity(versions.len());
+    for (pk, state) in versions {
+        displayed.insert(pk.to_string(), state);
     }
-
-    Ok(None)
+    Ok(displayed)
 }
 
 fn observe_pk_versions(

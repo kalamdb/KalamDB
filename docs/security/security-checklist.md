@@ -16,6 +16,7 @@ Use this checklist before production rollout and during operations.
 - [ ] Rate limiting enabled (`enable_connection_protection = true`)
 - [ ] Body/message limits set to safe values
 - [ ] Health/setup/admin-sensitive endpoints reachable only from trusted paths
+- [ ] Public reverse proxies block localhost-only health, setup and status routes, even if forwarded client headers are stripped
 
 ## B) Multi-node/cluster checklist
 

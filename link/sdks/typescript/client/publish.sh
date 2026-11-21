@@ -211,9 +211,25 @@ if [[ "$DRY_RUN" == "true" ]]; then
 fi
 
 # ─── Auth: npm token, or GitHub OIDC Trusted Publisher on npmjs ──────────────
+# The build keeps npm_config_registry on the public registry. GitHub Packages
+# publishes need that override cleared, plus a scope mapping and always-auth,
+# or npm authenticates the PUT with the wrong registry and GitHub returns 403.
+if [[ "$PUBLISH_REGISTRY_URL" != "https://registry.npmjs.org" ]]; then
+  unset npm_config_registry || true
+fi
+
 if [[ -n "${NODE_AUTH_TOKEN:-}" ]]; then
   LOCAL_NPMRC="$PUBLISH_DIR/.npmrc"
-  npm config set "//${PUBLISH_REGISTRY_HOST}/:_authToken" "${NODE_AUTH_TOKEN}" --location=project
+  publish_scope="${PUBLISH_SCOPE_OVERRIDE:-${PUBLISH_SCOPE_SOURCE:-@kalamdb}}"
+  npmrc_lines=(
+    "${publish_scope}:registry=${PUBLISH_REGISTRY_URL}"
+    "//${PUBLISH_REGISTRY_HOST}/:_authToken=${NODE_AUTH_TOKEN}"
+    "always-auth=true"
+  )
+  if [[ "$PUBLISH_REGISTRY_URL" != "https://registry.npmjs.org" ]]; then
+    npmrc_lines=("registry=${PUBLISH_REGISTRY_URL}" "${npmrc_lines[@]}")
+  fi
+  printf '%s\n' "${npmrc_lines[@]}" > "$LOCAL_NPMRC"
 elif [[ "$PUBLISH_REGISTRY_URL" == "https://registry.npmjs.org" && -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
   echo "No NODE_AUTH_TOKEN; using GitHub OIDC trusted publisher for npm."
 else

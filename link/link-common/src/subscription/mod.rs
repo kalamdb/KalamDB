@@ -18,15 +18,19 @@ pub use models::{
 };
 
 #[cfg(feature = "tokio-runtime")]
+mod delivery;
+#[cfg(feature = "tokio-runtime")]
 mod live_rows_subscription;
 #[cfg(feature = "tokio-runtime")]
 mod manager;
 #[cfg(any(feature = "client-core", test))]
 pub use checkpoint::filter_replayed_event;
 #[cfg(feature = "tokio-runtime")]
-pub(crate) use checkpoint::{
-    batch_envelope, buffer_event, event_progress, final_resume_seq, subscription_start_ready,
-};
+pub(crate) use checkpoint::{batch_envelope, buffer_event, final_resume_seq};
+#[cfg(feature = "client-core")]
+pub(crate) use checkpoint::{event_progress, subscription_start_ready};
+#[cfg(feature = "tokio-runtime")]
+pub(crate) use delivery::SubscriptionDelivery;
 #[cfg(feature = "tokio-runtime")]
 pub use live_rows_subscription::LiveRowsSubscription;
 #[cfg(feature = "tokio-runtime")]

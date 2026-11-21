@@ -50,6 +50,7 @@ use crate::{
 pub enum SchemaPipelineState {
     Idle,
     Synced,
+    DraftPending,
     Paused,
 }
 
@@ -185,7 +186,7 @@ impl DevSchemaLoop {
         ctx: &WorkflowContext,
         output: &WorkflowOutput,
     ) -> Result<DevLoopAction> {
-        if self.force && !output.is_agent() {
+        if !ctx.config.dev.apply_schema || (self.force && !output.is_agent()) {
             return Ok(DevLoopAction::Continue);
         }
 
@@ -279,6 +280,7 @@ impl DevSchemaLoop {
     fn schema_label(&self, ctx: &WorkflowContext) -> &'static str {
         match self.last_state {
             SchemaPipelineState::Synced => "synced",
+            SchemaPipelineState::DraftPending => "pending",
             SchemaPipelineState::Paused => "failed",
             SchemaPipelineState::Idle => schema_pipeline_label(ctx),
         }
@@ -562,6 +564,25 @@ fn finish_schema_pipeline_success(
     emit_task_success(output, "schema", progress_label, status_label);
 }
 
+fn finish_initial_schema_pipeline(
+    ctx: &WorkflowContext,
+    output: &WorkflowOutput,
+    progress_label: &str,
+    status_label: &str,
+) -> SchemaPipelineState {
+    if !ctx.config.dev.apply_schema {
+        finish_schema_pipeline_success(output, "Types generated", status_label);
+        return SchemaPipelineState::Idle;
+    }
+    if draft_migration_exists(&draft_migration_path(ctx)) {
+        finish_schema_pipeline_success(output, "Schema draft ready", "schema draft pending");
+        return SchemaPipelineState::DraftPending;
+    }
+    finish_schema_pipeline_success(output, progress_label, status_label);
+    emit_schema_applied(ctx, output);
+    SchemaPipelineState::Synced
+}
+
 async fn run_initial_schema_pipeline(
     ctx: &WorkflowContext,
     output: &WorkflowOutput,
@@ -575,11 +596,12 @@ async fn run_initial_schema_pipeline(
     output.clear_progress_details("schema");
 
     match run_schema_pipeline(ctx, output, force).await {
-        Ok(()) => {
-            finish_schema_pipeline_success(output, "Schema applied", "schema pipeline completed");
-            emit_schema_applied(ctx, output);
-            Ok(SchemaPipelineState::Synced)
-        },
+        Ok(()) => Ok(finish_initial_schema_pipeline(
+            ctx,
+            output,
+            "Schema applied",
+            "schema pipeline completed",
+        )),
         Err(error) => recover_schema_pipeline_error(ctx, output, force, error).await,
     }
 }
@@ -655,14 +677,12 @@ async fn recover_schema_pipeline_error(
     if force {
         output.warn("retrying schema pipeline (--force)");
         return match run_schema_pipeline(ctx, output, true).await {
-            Ok(()) => {
-                finish_schema_pipeline_success(
-                    output,
-                    "Schema recovered",
-                    "schema pipeline recovered",
-                );
-                Ok(SchemaPipelineState::Synced)
-            },
+            Ok(()) => Ok(finish_initial_schema_pipeline(
+                ctx,
+                output,
+                "Schema recovered",
+                "schema pipeline recovered",
+            )),
             Err(retry_error) => {
                 if is_fatal_schema_pipeline_error(&retry_error) {
                     emit_schema_failure(output, &retry_error);

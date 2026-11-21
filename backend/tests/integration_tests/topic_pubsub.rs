@@ -24,9 +24,9 @@ use kalamdb_commons::{
     Role,
 };
 use kalamdb_core::app_context::AppContext;
+use kalamdb_publisher::TopicMessage;
 use kalamdb_store::EntityStore;
 use kalamdb_system::providers::topic_offsets::models::TopicOffset;
-use kalamdb_tables::TopicMessage;
 use reqwest::StatusCode;
 use serde::Deserialize;
 use serde_json::{json, Value};

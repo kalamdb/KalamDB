@@ -117,15 +117,15 @@ fn load_pem_cert_dir(roots: &mut rustls::RootCertStore, dir: &Path) -> usize {
 impl KalamLinkClientBuilder {
     pub(crate) fn new() -> Self {
         Self {
-            base_url: None,
-            timeout: Duration::from_secs(30),
-            resolved_auth: ResolvedAuth::default(),
-            max_retries: 3,
+            base_url:                    None,
+            timeout:                     Duration::from_secs(30),
+            resolved_auth:               ResolvedAuth::default(),
+            max_retries:                 3,
             http_pool_max_idle_per_host: 10,
-            timeouts: KalamLinkTimeouts::default(),
-            connection_options: ConnectionOptions::default(),
-            event_handlers: crate::event_handlers::EventHandlers::default(),
-            custom_auth_refresher: None,
+            timeouts:                    KalamLinkTimeouts::default(),
+            connection_options:          ConnectionOptions::default(),
+            event_handlers:              crate::event_handlers::EventHandlers::default(),
+            custom_auth_refresher:       None,
         }
     }
 
@@ -318,6 +318,7 @@ impl KalamLinkClientBuilder {
             event_handlers: self.event_handlers,
             shared_resolved_auth: Arc::new(RwLock::new(self.resolved_auth)),
             connection: Arc::new(tokio::sync::Mutex::new(None)),
+            connection_gate: Arc::new(tokio::sync::Mutex::new(())),
             resume_cache: Arc::new(crate::connection::SharedResumeCache::default()),
         })
     }

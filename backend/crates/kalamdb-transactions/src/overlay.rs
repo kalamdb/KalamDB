@@ -5,10 +5,48 @@ use std::{
 
 use kalamdb_commons::{
     models::{rows::Row, OperationKind, TableId, TransactionId, UserId},
-    TableType,
+    PkBucketKey, TableType,
 };
 
 use crate::query_context::TransactionOverlayView;
+
+/// Owner of a versioned row. Shared rows have no user owner.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TableScope {
+    User(UserId),
+    Shared,
+}
+
+impl TableScope {
+    /// User and stream rows keep their owner. Shared and system rows do not.
+    pub fn for_mutation(table_type: TableType, user_id: Option<&UserId>) -> Self {
+        match table_type {
+            TableType::User | TableType::Stream => match user_id {
+                Some(user_id) => Self::User(user_id.clone()),
+                None => Self::Shared,
+            },
+            TableType::Shared | TableType::System => Self::Shared,
+        }
+    }
+}
+
+/// Canonical commit target: table, scope, and typed primary key.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ScopedTargetKey {
+    pub table_id: TableId,
+    pub scope: TableScope,
+    pub pk_bucket: PkBucketKey,
+}
+
+impl ScopedTargetKey {
+    pub fn new(table_id: TableId, scope: TableScope, pk_bucket: PkBucketKey) -> Self {
+        Self {
+            table_id,
+            scope,
+            pk_bucket,
+        }
+    }
+}
 
 /// Scope + PK identity for overlay and write-set maps without `format!` keys.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -186,7 +224,9 @@ impl TransactionOverlay {
     /// True when a staged update in this overlay assigned `column`.
     #[inline]
     pub fn column_was_updated(&self, table_id: &TableId, column: &str) -> bool {
-        self.updated_columns.get(table_id).is_some_and(|columns| columns.contains(column))
+        self.updated_columns
+            .get(table_id)
+            .is_some_and(|columns| columns.contains(column))
     }
 
     fn clear_key_membership(&mut self, table_id: &TableId, entry_key: &ScopedPkKey) {

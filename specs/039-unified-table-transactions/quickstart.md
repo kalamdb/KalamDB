@@ -1,7 +1,7 @@
 # Quickstart & Validation Guide: Unified Table Processing and Atomic Transaction Optimization
 
 **Feature**: `039-unified-table-transactions`  
-**Branch**: `feat/pg-dialect` (PR [#402](https://github.com/kalamdb/KalamDB/pull/402))  
+**Branch**: `feat/0.9-unified-table-transactions` (PR [#412](https://github.com/kalamdb/KalamDB/pull/412))  
 **Build Profile**: Default `dev` profile for all local checks, tests, and baseline/candidate A/B comparisons (per `AGENTS.md`).
 
 ---
@@ -180,3 +180,35 @@ For every benchmark or perf test run:
 1. Run at least **5 matched repeats** under identical hardware, data, concurrency, durability, and default `dev` profile settings.
 2. Record each run's elapsed time **in seconds** (`f64`), plus p50/p95/p99 latency, `StorageBackend::batch` call count, PK target loads, and retained memory bytes.
 3. Verify median improvement exceeds baseline run-to-run spread and unaffected p95/p99 metrics do not regress by more than 5%.
+
+---
+
+## 6. OpenRaft 0.10 Gate (User Story 8, SC-016, SC-017)
+
+Run T090 and save the 0.9.25 fixtures before editing the `openraft` pin. After T097, the crate must compile on 0.10.0:
+
+```bash
+cd backend
+cargo check -p kalamdb-raft -p kalamdb-views -p kalamdb-core > ../batch_compile_output.txt 2>&1
+cargo nextest run -p kalamdb-raft --offline openraft_compat
+```
+
+Before calling T114 done, also run the existing Raft cluster tests and confirm `system.cluster_groups.committed` is no longer hard-coded to `NULL`, and that the leftovers are gone:
+
+```bash
+cd backend
+cargo nextest run -p kalamdb-raft --offline --test cluster_integration
+rg -n 'with_write_coalesce|storage-v2|openraft-legacy|snapshot_id' crates/kalamdb-raft crates/kalamdb-store ../Cargo.toml
+```
+
+Record standalone and 3-node before/after seconds in `baselines.md`. Rolling upgrade is a coordinated restart of the whole cluster. T113 adds the test that a peer with another RPC protocol version is rejected. Do not disable a Raft test to finish the dependency bump.
+
+## 7. One Engine Implementation Gate (T120, FR-057)
+
+Before and after T120, run the T088 correctness matrix and the T089 16-script set on the same `dev` profile and record both in `baselines.md`. After T120:
+
+```bash
+rg -n 'include!\(' backend/crates/kalamdb-tables/src/versioned
+```
+
+returns nothing, and no script is slower than before by more than 5%.

@@ -1,7 +1,7 @@
 # Phase 0 Research: Unified Table Processing and Atomic Transaction Optimization
 
 **Feature**: `039-unified-table-transactions`  
-**Branch**: `feat/pg-dialect` (PR [#402](https://github.com/kalamdb/KalamDB/pull/402))  
+**Branch**: `feat/0.9-unified-table-transactions` (PR [#412](https://github.com/kalamdb/KalamDB/pull/412)); sections 1–10 were researched on `feat/pg-dialect` (PR [#402](https://github.com/kalamdb/KalamDB/pull/402))  
 **Date**: 2026-10-27  
 **Spec**: [spec.md](spec.md) | **Source Review**: [source-review.md](source-review.md)
 
@@ -192,3 +192,21 @@ Make hot-row replacement (`IndexedEntityStore::push_replace` / `VersionedTableEn
 ### Decision
 1. Gate `ROW_V2_WRITERS_ENABLED` behind a durable cluster compatibility floor (`FormatCompatibilityFloor`) verified across all eligible replicas (`FR-030`).
 2. Replace `job_manager: OnceCell<Arc<dyn Any + Send + Sync>>` in `AppContext` with a typed job manager trait capability and exhaustive startup executor registration check (`FR-034`).
+
+---
+
+## 11. OpenRaft 0.10 on the current branch (FR-048–FR-056, SC-016, SC-017)
+
+### Decision
+
+Recorded from issue #451 and PR #412 on 2026-11-15. The executable contract is [contracts/openraft-010.md](contracts/openraft-010.md). Tasks are T090–T119.
+
+1. Upgrade the existing workspace pin from OpenRaft 0.9.25 (`serde`, `storage-v2`) to 0.10.0 with `default-features = false` and `serde` plus `tokio-rt`. `tokio-rt` supplies the default async runtime. Keep edition 2021. Do not add `openraft-legacy`.
+2. Keep `RaftManager` as the owner of Meta, USER, and SHARED groups, and keep `RaftPartitionStore` as the log and state-machine store. Upstream `log-rocks` / `sm-rocks` examples are not a backend.
+3. Preserve one RocksDB `WriteBatch` for a standalone single-entry commit, and preserve the Meta-to-Data watermark independently of Raft `last_applied`.
+4. Keep one `RaftCommand::TransactionCommit` per single-group SQL transaction. This upgrade does not add cross-group atomicity.
+5. Fill `system.cluster_groups.committed` from the 0.10 cluster commit index and implement leadership transfer and Pre-Vote. Leave optional networking, batching, lease-read, and metrics-export choices in the contract decision log until T107–T109.
+6. Capture 0.9.25 serialization fixtures before the version bump. Rollout is a coordinated restart of the whole cluster: upstream states a 0.9 `ForwardToLeader` and `VoteRequest` do not decode on 0.10, and the leader id change alters the `LogId` wire layout. A Raft RPC protocol version rejects mixed peers before decode.
+7. Use the standard leader id on 0.10. 0.9 defaults to the advanced leader id, where a committed leader id is `(term, node_id)`, but KalamDB's log record stores only term and index, and `stored_log_id()` rebuilds node `0`. Disk-read log ids could then differ from in-memory ones on another node. With the standard leader id, the committed leader id is the term, which matches what is stored. Membership and the snapshot header move to KalamDB-owned records that read the 0.9 bincode layout once.
+8. Clean the Raft storage while the traits change: one explicit batch per applied entry replaces task-local `write_coalesce`, errors are returned instead of falling back to empty or default values, snapshots are retained and installed atomically, the test-only in-memory mode goes, and the four `log_io` workers stop blocking Tokio worker threads. Tasks T115–T118 and T109.
+9. 0.9.25 has no committed-index metric, no heartbeat map, no `transfer_leader`, and no Pre-Vote, so T102–T105 cannot be done before the bump.

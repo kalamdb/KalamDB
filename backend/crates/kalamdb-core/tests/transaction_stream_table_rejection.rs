@@ -1,5 +1,9 @@
 use std::sync::Arc;
 
+use crate::support::{
+    create_cluster_app_context, create_executor, execute_ok, request_exec_ctx, row, select_names,
+    unique_namespace,
+};
 use kalamdb_commons::{
     models::{
         datatypes::KalamDataType,
@@ -13,10 +17,6 @@ use kalamdb_commons::{
 use kalamdb_core::sql::executor::PreparedExecutionStatement;
 use kalamdb_pg::OperationExecutor;
 use kalamdb_pg_bridge::OperationService;
-use crate::support::{
-    create_cluster_app_context, create_executor, execute_ok, request_exec_ctx, row, select_names,
-    unique_namespace,
-};
 
 async fn create_stream_table(
     app_ctx: &Arc<kalamdb_core::app_context::AppContext>,

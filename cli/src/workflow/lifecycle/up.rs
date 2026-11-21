@@ -5,7 +5,8 @@ use crate::{
     output::WorkflowOutput,
     workflow::{
         db::seed::{maybe_seed_once, SeedMode},
-        instance::StartedBy,
+        instance::{self, StartedBy},
+        io::display_path,
         target::{resolve_lifecycle_target, TargetSelector},
         WorkflowContext,
     },
@@ -43,26 +44,35 @@ pub async fn start_database(
         maybe_seed_once(ctx, &environment, Some(&prepared.layout), SeedMode::Once, output).await?;
     }
 
-    output.agent_event(
-        "KALAM_UP",
-        &[
-            ("environment", target.display_kind()),
-            ("url", &prepared.record.url),
-            ("namespace", target.namespace.as_str()),
-        ],
-    );
+    let server_url = instance::browser_http_url(&prepared.record.url);
+    let postgres = postgres_port(&prepared).map(instance::postgres_client_url);
+    let admin_ui = instance::admin_ui_url(&server_url);
+    let mut event = vec![
+        ("environment", target.display_kind()),
+        ("url", server_url.as_str()),
+        ("admin_ui", admin_ui.as_str()),
+        ("namespace", target.namespace.as_str()),
+    ];
+    if let Some(postgres) = postgres.as_deref() {
+        event.insert(2, ("postgres", postgres));
+    }
+    output.agent_event("KALAM_UP", &event);
     if !output.is_agent() {
         let details = super::server_details::ServerDetails::read(&prepared.layout)?;
         let binary = server_binary_label(&prepared);
-        let mut fields = Vec::with_capacity(6);
-        fields.push(("Server", prepared.record.url.clone()));
+        let mut fields = Vec::with_capacity(8);
+        fields.push(("Server", server_url.clone()));
+        if let Some(port) = postgres_port(&prepared) {
+            fields.push(("Postgres", instance::postgres_client_url(port)));
+        }
+        fields.push(("Admin UI", instance::admin_ui_url(&server_url)));
         if let Some(binary) = binary {
             fields.push(("Binary", binary));
         }
         fields.extend([
-            ("Config", prepared.layout.config_path.display().to_string()),
-            ("Data", prepared.record.data_dir.display().to_string()),
-            ("Logs", prepared.record.log_path.display().to_string()),
+            ("Config", display_path(&prepared.layout.config_path)),
+            ("Data", display_path(&prepared.record.data_dir)),
+            ("Logs", display_path(&prepared.record.log_path)),
             ("User", "root".into()),
         ]);
         output.fields(&fields);
@@ -79,6 +89,14 @@ pub async fn start_database(
         output.detail(format!("Stop server: kalam down{scope}"));
     }
     Ok(())
+}
+
+fn postgres_port(prepared: &super::prepare::PreparedServer) -> Option<u16> {
+    prepared.record.postgres_port.or_else(|| {
+        instance::parse_server_listen_ports(&prepared.layout.config_path)
+            .ok()
+            .and_then(|(_, port)| port)
+    })
 }
 
 fn server_binary_label(prepared: &super::prepare::PreparedServer) -> Option<String> {

@@ -151,9 +151,21 @@ echo ""
 cd "$PUBLISH_DIR"
 
 ensure_registry_auth_configured() {
+  if [[ "$PUBLISH_REGISTRY_URL" != "https://registry.npmjs.org" ]]; then
+    unset npm_config_registry || true
+  fi
   if [[ -n "${NODE_AUTH_TOKEN:-}" ]]; then
     LOCAL_NPMRC="$PUBLISH_DIR/.npmrc"
-    npm config set "//${PUBLISH_REGISTRY_HOST}/:_authToken" "${NODE_AUTH_TOKEN}" --location=project
+    local publish_scope="${PUBLISH_SCOPE_OVERRIDE:-${PUBLISH_SCOPE_SOURCE:-@kalamdb}}"
+    local npmrc_lines=(
+      "${publish_scope}:registry=${PUBLISH_REGISTRY_URL}"
+      "//${PUBLISH_REGISTRY_HOST}/:_authToken=${NODE_AUTH_TOKEN}"
+      "always-auth=true"
+    )
+    if [[ "$PUBLISH_REGISTRY_URL" != "https://registry.npmjs.org" ]]; then
+      npmrc_lines=("registry=${PUBLISH_REGISTRY_URL}" "${npmrc_lines[@]}")
+    fi
+    printf '%s\n' "${npmrc_lines[@]}" > "$LOCAL_NPMRC"
   fi
 }
 

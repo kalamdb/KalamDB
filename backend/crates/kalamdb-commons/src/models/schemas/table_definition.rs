@@ -5,6 +5,9 @@
 //! Historical versions are stored as separate entries: `{tableId}<ver>{version:08}` ->
 //! TableDefinition The latest pointer `{tableId}<lat>` points to the current version.
 
+/// Arrow schema produced by [`TableDefinition::to_arrow_schema`].
+pub type TableArrowSchema = Arc<ArrowSchema>;
+
 use std::sync::Arc;
 
 use arrow_schema::{Field, Schema as ArrowSchema};

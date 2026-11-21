@@ -57,7 +57,7 @@ fn init_job_manager(app_context: &Arc<AppContext>) {
         registry,
         Arc::clone(app_context),
     ));
-    app_context.set_job_manager(job_manager.clone(), job_manager);
+    kalamdb_jobs::install_job_manager(app_context, job_manager);
 }
 
 async fn create_test_app_context() -> (Arc<AppContext>, TestDb) {
@@ -180,10 +180,14 @@ async fn execute_sql(
     exec_ctx: &ExecutionContext,
     sql: &str,
 ) -> ExecutionResult {
-    executor
+    let result = executor
         .execute(sql, exec_ctx, vec![])
         .await
-        .unwrap_or_else(|e| panic!("SQL failed: {}\nSQL: {}", e, sql))
+        .unwrap_or_else(|e| panic!("SQL failed: {}\nSQL: {}", e, sql));
+    result
+        .into_materialized_rows()
+        .await
+        .unwrap_or_else(|e| panic!("SQL stream failed: {}\nSQL: {}", e, sql))
 }
 
 async fn setup_vector_table(executor: &SqlExecutor, exec_ctx: &ExecutionContext) {

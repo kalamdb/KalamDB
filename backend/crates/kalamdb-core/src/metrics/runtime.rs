@@ -3,6 +3,7 @@ pub use kalamdb_observability::{
     collect_runtime_metrics, RuntimeMetrics, BUILD_DATE, GIT_BRANCH, GIT_COMMIT_HASH,
     SERVER_VERSION,
 };
+use kalamdb_functions::FunctionMemoryCensus;
 use kalamdb_observability::{
     collect_system_stats, CacheMetrics, ClusterMetrics, EntityCounts, LiveQueryMetrics,
     ServerConfigMetrics, SystemStatsSource,
@@ -144,7 +145,14 @@ impl SystemStatsSource for AppContextSystemStatsSource<'_> {
 /// - Server metadata (version, node ID, cluster info)
 pub fn compute_metrics(ctx: &crate::app_context::AppContext) -> Vec<(String, String)> {
     let mut metrics = collect_system_stats(&AppContextSystemStatsSource { ctx });
-    let census = ctx.function_runtime().memory_census();
+    let census = ctx
+        .try_function_runtime()
+        .map(|runtime| runtime.memory_census())
+        .unwrap_or_else(|| FunctionMemoryCensus {
+            limit_bytes: ctx.config().functions.runtime.max_memory_mb.saturating_mul(1024 * 1024)
+                as u64,
+            ..Default::default()
+        });
     metrics.push(("function_memory_reserved_bytes".to_string(), census.reserved_bytes.to_string()));
     metrics.push((
         "function_memory_reserved_mb".to_string(),

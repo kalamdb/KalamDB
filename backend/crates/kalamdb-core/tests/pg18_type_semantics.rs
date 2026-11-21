@@ -54,7 +54,8 @@ async fn exec(
     ctx: &ExecutionContext,
     sql: &str,
 ) -> Result<ExecutionResult, String> {
-    executor.execute(sql, ctx, vec![]).await.map_err(|error| error.to_string())
+    let result = executor.execute(sql, ctx, vec![]).await.map_err(|error| error.to_string())?;
+    result.into_materialized_rows().await.map_err(|error| error.to_string())
 }
 
 #[tokio::test]

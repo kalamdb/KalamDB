@@ -72,11 +72,11 @@ fn pg18_table_schema_diff_orders_schemas_types_tables_routines_and_drops() {
     let diff = diff_schema_sql("", after).expect("diff initial schema");
     let ns_pos = diff
         .up
-        .find("CREATE NAMESPACE IF NOT EXISTS commerce;")
+        .find("CREATE SCHEMA IF NOT EXISTS commerce;")
         .expect("namespace emitted");
     let type_pos = diff.up.find("CREATE TYPE commerce.order_status").expect("enum emitted");
     let domain_pos = diff.up.find("CREATE DOMAIN commerce.positive_cents").expect("domain emitted");
-    let table_pos = diff.up.find("CREATE SHARED TABLE commerce.orders").expect("table emitted");
+    let table_pos = diff.up.find("CREATE TABLE commerce.orders").expect("table emitted");
     let fn_pos = diff
         .up
         .find("CREATE OR REPLACE FUNCTION commerce.normalize_sku")

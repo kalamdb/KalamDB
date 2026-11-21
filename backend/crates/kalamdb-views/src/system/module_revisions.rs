@@ -8,14 +8,38 @@ use datafusion::arrow::{
     record_batch::RecordBatch,
 };
 use kalamdb_commons::SystemTable;
+use kalamdb_macros::table;
 use kalamdb_system::SystemTablesRegistry;
 
-use super::common::{
-    bool_col, int_col, registry_view_provider, system_view_definition, text_col, SystemViewProvider,
-};
+use super::common::{registry_view_provider, SystemViewProvider};
 use crate::{error::RegistryError, view_base::VirtualView};
 
 crate::memoized_view_schema!(module_revisions_schema, ModuleRevisionsView);
+
+#[table(
+    name = "module_revisions",
+    view = true,
+    comment = "Immutable function module revisions; is_current is derived from the module pointer"
+)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModuleRevisionRow {
+    /// Project function module
+    pub module_id: String,
+    /// Immutable module:artifact identity
+    pub revision_id: String,
+    /// Content-addressed artifact hash
+    pub artifact_id: String,
+    /// Artifact size in bytes
+    pub artifact_bytes: i64,
+    /// Contract snapshot hash
+    pub contract_hash: String,
+    /// Revision create time (ms)
+    pub created_at: i64,
+    /// True when modules.current_revision_id points here
+    pub is_current: bool,
+    /// Procedure IDs exported by this revision
+    pub exports: String,
+}
 
 /// Virtual view of immutable module revisions. `is_current` is derived from the
 /// module pointer and is never stored on the revision row.
@@ -35,20 +59,7 @@ impl ModuleRevisionsView {
     }
 
     pub fn definition() -> kalamdb_commons::schemas::TableDefinition {
-        system_view_definition(
-            SystemTable::ModuleRevisions,
-            vec![
-                text_col(1, "module_id", "Project function module"),
-                text_col(2, "revision_id", "Immutable module:artifact identity"),
-                text_col(3, "artifact_id", "Content-addressed artifact hash"),
-                int_col(4, "artifact_bytes", "Artifact size in bytes"),
-                text_col(5, "contract_hash", "Contract snapshot hash"),
-                int_col(6, "created_at", "Revision create time (ms)"),
-                bool_col(7, "is_current", "True when modules.current_revision_id points here"),
-                text_col(8, "exports", "Procedure IDs exported by this revision"),
-            ],
-            "Immutable function module revisions; is_current is derived from the module pointer",
-        )
+        ModuleRevisionRow::definition()
     }
 }
 

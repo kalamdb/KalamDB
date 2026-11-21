@@ -11,6 +11,12 @@ setups/trailbase/traildepot/uploads/
 setups/trailbase/traildepot/wasm/
 setups/trailbase/traildepot/metadata.textproto
 setups/surrealdb/data/
+setups/spacetimedb/data/
+setups/spacetimedb/module/target/
+setups/convex/data/
+setups/convex/node_modules/
+setups/convex/.env.local
+setups/convex/convex/_generated/
 *.log
 *.tar.gz
 *.zip

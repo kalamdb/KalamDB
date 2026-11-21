@@ -132,45 +132,6 @@ impl StagingManager {
         }
         Ok(())
     }
-
-    /// Cleanup all stale staging directories older than max_age_secs.
-    pub fn cleanup_stale_directories(&self, max_age_secs: u64) -> Result<usize> {
-        let mut cleaned = 0;
-
-        if !self.staging_dir.exists() {
-            return Ok(0);
-        }
-
-        let now = std::time::SystemTime::now();
-
-        for entry in fs::read_dir(&self.staging_dir).map_err(|e| {
-            FilestoreError::Other(format!("Failed to read staging directory: {}", e))
-        })? {
-            let entry = entry.map_err(|e| {
-                FilestoreError::Other(format!("Failed to read directory entry: {}", e))
-            })?;
-
-            if let Ok(metadata) = entry.metadata() {
-                if let Ok(created) = metadata.created().or_else(|_| metadata.modified()) {
-                    if let Ok(age) = now.duration_since(created) {
-                        if age.as_secs() > max_age_secs {
-                            if let Err(e) = fs::remove_dir_all(entry.path()) {
-                                log::warn!(
-                                    "Failed to cleanup stale staging dir {:?}: {}",
-                                    entry.path(),
-                                    e
-                                );
-                            } else {
-                                cleaned += 1;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(cleaned)
-    }
 }
 
 /// Sanitize a path component to prevent directory traversal attacks.

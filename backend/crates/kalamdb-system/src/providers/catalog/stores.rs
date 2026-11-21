@@ -95,87 +95,90 @@ fn is_user_routine(routine: &CatalogRoutine) -> bool {
 
 impl CatalogStores {
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
-        let routines: RoutinesStore = IndexedEntityStore::new(
+        Self::try_new(backend).expect("failed to load persisted system catalog")
+    }
+
+    /// Refuse startup when the persisted catalog cannot be read.
+    pub fn try_new(backend: Arc<dyn StorageBackend>) -> Result<Self, SystemError> {
+        let routines: RoutinesStore = IndexedEntityStore::try_new(
             backend.clone(),
             SystemTable::Routines.column_family_name().expect("Routines is a table"),
             Vec::new(),
-        );
+        )?;
         let routines_cache = DashMap::new();
         let mut initial_user_routines = 0usize;
-        if let Ok(existing) = list_models(&routines) {
-            for routine in existing {
-                if is_user_routine(&routine) {
-                    initial_user_routines += 1;
-                }
-                routines_cache.insert(routine.routine_id.clone(), routine);
+        for routine in list_models(&routines)? {
+            if is_user_routine(&routine) {
+                initial_user_routines += 1;
             }
+            routines_cache.insert(routine.routine_id.clone(), routine);
         }
 
-        Self(Arc::new(CatalogStoresInner {
-            types: IndexedEntityStore::new(
+        Ok(Self(Arc::new(CatalogStoresInner {
+            types: IndexedEntityStore::try_new(
                 backend.clone(),
                 SystemTable::Types.column_family_name().expect("Types is a table"),
                 Vec::new(),
-            ),
-            type_fields: IndexedEntityStore::new(
+            )?,
+            type_fields: IndexedEntityStore::try_new(
                 backend.clone(),
                 SystemTable::TypeFields.column_family_name().expect("TypeFields is a table"),
                 Vec::new(),
-            ),
+            )?,
             routines,
-            routine_parameters: IndexedEntityStore::new(
+            routine_parameters: IndexedEntityStore::try_new(
                 backend.clone(),
                 SystemTable::RoutineParameters
                     .column_family_name()
                     .expect("RoutineParameters is a table"),
                 Vec::new(),
-            ),
-            routine_grants: IndexedEntityStore::new(
+            )?,
+            routine_grants: IndexedEntityStore::try_new(
                 backend.clone(),
                 SystemTable::RoutineGrants
                     .column_family_name()
                     .expect("RoutineGrants is a table"),
                 Vec::new(),
-            ),
-            function_modules: IndexedEntityStore::new(
+            )?,
+            function_modules: IndexedEntityStore::try_new(
                 backend.clone(),
                 SystemTable::FunctionModules
                     .column_family_name()
                     .expect("FunctionModules is a table"),
                 Vec::new(),
-            ),
-            function_revisions: IndexedEntityStore::new(
+            )?,
+            function_revisions: IndexedEntityStore::try_new(
                 backend.clone(),
                 SystemTable::FunctionRevisions
                     .column_family_name()
                     .expect("FunctionRevisions is a table"),
                 Vec::new(),
-            ),
-            function_artifacts: IndexedEntityStore::new(
+            )?,
+            function_artifacts: IndexedEntityStore::try_new(
                 backend.clone(),
                 SystemTable::FunctionArtifacts
                     .column_family_name()
                     .expect("FunctionArtifacts is a table"),
                 Vec::new(),
-            ),
-            schedules: IndexedEntityStore::new(backend.clone(), "system_schedules", Vec::new()),
-            triggers: IndexedEntityStore::new(
+            )?,
+            schedules: IndexedEntityStore::try_new(backend.clone(), "system_schedules", Vec::new())?,
+            triggers: IndexedEntityStore::try_new(
                 backend.clone(),
                 SystemTable::Triggers.column_family_name().expect("Triggers is a table"),
                 Vec::new(),
-            ),
-            trigger_attempts: IndexedEntityStore::new(
+            )?,
+            trigger_attempts: IndexedEntityStore::try_new(
                 backend,
                 SystemTable::TriggerAttempts
                     .column_family_name()
                     .expect("TriggerAttempts is a table"),
                 Vec::new(),
-            ),
+            )?,
             routines_cache,
             parameters_cache: DashMap::new(),
             user_routine_count: AtomicUsize::new(initial_user_routines),
             contract_generation: AtomicU64::new(1),
-        }))
+        })))
     }
 
     /// Fast O(1) check for whether any non-`INTERNAL` user-defined routines exist.
@@ -340,7 +343,13 @@ impl CatalogStores {
         if let Some(routine) = self.routines_cache.get(routine_id) {
             return Ok(Some(routine.value().clone()));
         }
-        Ok(None)
+        // The cache is only an acceleration layer, not the durable source of
+        // truth; recover a missing entry instead of returning a false negative.
+        let routine = self.routines.get(routine_id)?;
+        if let Some(ref value) = routine {
+            self.routines_cache.insert(routine_id.clone(), value.clone());
+        }
+        Ok(routine)
     }
 
     pub fn list_routines(&self) -> Result<Vec<CatalogRoutine>, SystemError> {
@@ -1027,9 +1036,8 @@ where
     K: StorageKey,
     T: KSerializable,
 {
-    Ok(store
-        .scan_all_typed(None, None, None)?
-        .into_iter()
-        .map(|(_, model)| model)
-        .collect())
+    store
+        .scan_iterator(None, None)?
+        .map(|entry| entry.map(|(_, model)| model).map_err(SystemError::from))
+        .collect()
 }

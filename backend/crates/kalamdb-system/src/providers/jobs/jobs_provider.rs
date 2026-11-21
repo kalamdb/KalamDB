@@ -17,9 +17,8 @@
 //!
 //! Note: namespace_id and table_name are now stored in the parameters JSON field
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
-use datafusion::arrow::{array::RecordBatch, datatypes::SchemaRef};
 use kalamdb_commons::{models::rows::SystemTableRow, JobId, SystemTable};
 use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBackend};
 
@@ -29,7 +28,7 @@ use super::{
 };
 use crate::{
     error::{SystemError, SystemResultExt},
-    providers::base::{system_rows_to_batch, IndexedProviderDefinition},
+    providers::keyed_provider::KeyedTableProvider,
     system_row_mapper::{model_to_system_row, system_row_to_model},
     JobStatus,
 };
@@ -41,9 +40,9 @@ pub type JobsStore = IndexedEntityStore<JobId, SystemTableRow>;
 ///
 /// All insert/update/delete operations automatically maintain secondary indexes
 /// using RocksDB's atomic WriteBatch - no manual index management needed.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct JobsTableProvider {
-    store: JobsStore,
+    sql: KeyedTableProvider<JobId, SystemTableRow>,
 }
 
 impl JobsTableProvider {
@@ -60,7 +59,16 @@ impl JobsTableProvider {
             SystemTable::Jobs.column_family_name().expect("Jobs is a table, not a view"),
             create_jobs_indexes(),
         );
-        Self { store }
+        Self {
+            sql: KeyedTableProvider::from_indexed_rows(
+                store,
+                Job::definition(),
+                SystemTable::Jobs.table_id(),
+                SystemTable::Jobs.table_name(),
+                "job_id",
+                |value| Some(JobId::new(value)),
+            ),
+        }
     }
 
     /// Create a new job entry.
@@ -69,7 +77,10 @@ impl JobsTableProvider {
     /// TODO: Return a string message
     pub fn create_job(&self, job: Job) -> Result<String, SystemError> {
         let row = Self::encode_job_row(&job)?;
-        self.store.insert(&job.job_id, &row).into_system_error("insert job error")?;
+        self.sql
+            .store()
+            .insert(&job.job_id, &row)
+            .into_system_error("insert job error")?;
         Ok(format!("Job {} created", job.job_id))
     }
 
@@ -79,27 +90,24 @@ impl JobsTableProvider {
     pub async fn insert_job_async(&self, job: Job) -> Result<(), SystemError> {
         let job_id = job.job_id.clone();
         let row = Self::encode_job_row(&job)?;
-        self.store
+        self.sql
+            .store()
             .insert_async(job_id, row)
             .await
             .into_system_error("insert_async job error")
     }
 
     /// Get a job by ID
-    pub fn get_job_by_id(&self, job_id: &JobId) -> Result<Option<Job>, SystemError> {
-        let row = self.store.get(job_id)?;
-        row.map(|value| Self::decode_job_row(&value)).transpose()
-    }
-
-    /// Alias for get_job_by_id (for backward compatibility)
     pub fn get_job(&self, job_id: &JobId) -> Result<Option<Job>, SystemError> {
-        self.get_job_by_id(job_id)
+        let row = self.sql.store().get(job_id)?;
+        row.map(|value| Self::decode_job_row(&value)).transpose()
     }
 
     /// Async version of `get_job()`.
     pub async fn get_job_async(&self, job_id: &JobId) -> Result<Option<Job>, SystemError> {
         let row = self
-            .store
+            .sql
+            .store()
             .get_async(job_id.clone())
             .await
             .into_system_error("get_async error")?;
@@ -112,7 +120,7 @@ impl JobsTableProvider {
     /// Stale index entries are removed and new ones added atomically.
     pub fn update_job(&self, job: Job) -> Result<(), SystemError> {
         // Check if job exists
-        let old_row = self.store.get(&job.job_id)?;
+        let old_row = self.sql.store().get(&job.job_id)?;
         if old_row.is_none() {
             return Err(SystemError::NotFound(format!("Job not found: {}", job.job_id)));
         }
@@ -121,7 +129,8 @@ impl JobsTableProvider {
         validate_job_update(&job)?;
         let new_row = Self::encode_job_row(&job)?;
 
-        self.store
+        self.sql
+            .store()
             .update_with_old(&job.job_id, Some(&old_row), &new_row)
             .into_system_error("update job error")
     }
@@ -132,7 +141,8 @@ impl JobsTableProvider {
 
         // Check if job exists
         let old_row = self
-            .store
+            .sql
+            .store()
             .get_async(job.job_id.clone())
             .await
             .into_system_error("get_async error")?;
@@ -148,7 +158,7 @@ impl JobsTableProvider {
         let new_row = Self::encode_job_row(&job)?;
 
         // We need to do update in blocking context since update_with_old is sync
-        let store = self.store.clone();
+        let store = self.sql.store().clone();
         let job_id_clone = job.job_id.clone();
         let job_id = job.job_id.clone();
         tokio::task::spawn_blocking(move || {
@@ -166,7 +176,7 @@ impl JobsTableProvider {
     ///
     /// Indexes are automatically cleaned up via `IndexedEntityStore`.
     pub fn delete_job(&self, job_id: &JobId) -> Result<(), SystemError> {
-        self.store.delete(job_id).into_system_error("delete job error")
+        self.sql.store().delete(job_id).into_system_error("delete job error")
     }
 
     /// List all jobs
@@ -186,56 +196,65 @@ impl JobsTableProvider {
             && (filter.status.is_some() || filter.statuses.is_some());
 
         if use_index {
-            let mut jobs = Vec::new();
             let limit = filter.limit.unwrap_or(usize::MAX);
+            if limit == 0 {
+                return Ok(Vec::new());
+            }
 
-            // Collect statuses to scan
             let mut statuses = Vec::new();
-            if let Some(s) = filter.status {
-                statuses.push(s);
+            if let Some(status) = filter.status {
+                statuses.push(status);
             }
-            if let Some(ref s_list) = filter.statuses {
-                statuses.extend(s_list.iter().cloned());
+            if let Some(ref selected) = filter.statuses {
+                statuses.extend(selected.iter().copied());
             }
-            // Deduplicate and sort statuses to scan in order (New=0, Queued=1, etc.)
-            statuses.sort_by_key(|s| status_to_u8(*s));
+            statuses.sort_by_key(|status| status_to_u8(*status));
             statuses.dedup();
 
-            // Status index is index 0 (JobStatusCreatedAtIndex)
             const STATUS_INDEX: usize = 0;
-
+            let multiple_statuses = statuses.len() > 1;
+            let mut jobs = Vec::new();
             for status in statuses {
-                if jobs.len() >= limit {
+                if !multiple_statuses && jobs.len() >= limit {
                     break;
                 }
 
-                // Prefix for this status: [status_byte]
-                let prefix = vec![status_to_u8(status)];
-
-                // Scan by index - returns (JobId, Job) pairs
+                let prefix = [status_to_u8(status)];
+                // The secondary predicate may exclude early index hits; never
+                // cap the raw iterator to the requested number of matching jobs.
                 let iter = self
-                    .store
-                    .scan_by_index_iter(STATUS_INDEX, Some(&prefix), Some(limit - jobs.len()))
+                    .sql
+                    .store()
+                    .scan_by_index_iter(STATUS_INDEX, Some(&prefix), None)
                     .into_system_error("scan_by_index_iter error")?;
 
                 for entry in iter {
-                    let (_job_id, row) = entry.into_system_error("scan_by_index_iter error")?;
+                    let (_, row) = entry.into_system_error("scan_by_index_iter error")?;
                     let job = Self::decode_job_row(&row)?;
-                    // Apply other filters that index doesn't cover
                     if self.matches_filter(&job, filter) {
                         jobs.push(job);
-                        if jobs.len() >= limit {
+                        if !multiple_statuses && jobs.len() >= limit {
                             break;
                         }
                     }
                 }
             }
 
+            // Status prefixes are individually ordered by CreatedAt, not
+            // globally ordered across multiple statuses.
+            if multiple_statuses {
+                jobs.sort_by(|left, right| {
+                    left.created_at
+                        .cmp(&right.created_at)
+                        .then_with(|| left.job_id.as_str().cmp(right.job_id.as_str()))
+                });
+                jobs.truncate(limit);
+            }
             return Ok(jobs);
         }
 
         // Fallback to full scan
-        let all_rows = self.store.scan_all_typed(None, None, None)?;
+        let all_rows = self.sql.store().scan_iterator(None, None)?.collect::<Result<Vec<_>, _>>()?;
         let mut jobs: Vec<Job> = all_rows
             .into_iter()
             .map(|(_, row)| Self::decode_job_row(&row))
@@ -272,87 +291,12 @@ impl JobsTableProvider {
         &self,
         filter: JobFilter,
     ) -> Result<Vec<Job>, SystemError> {
-        // Optimization: If filtering by status(es) and sorting by CreatedAt ASC, use the status
-        // index
-        let use_index = filter.sort_by == Some(JobSortField::CreatedAt)
-            && filter.sort_order == Some(SortOrder::Asc)
-            && (filter.status.is_some() || filter.statuses.is_some());
-
-        if use_index {
-            let mut jobs = Vec::new();
-            let limit = filter.limit.unwrap_or(usize::MAX);
-
-            // Collect statuses to scan
-            let mut statuses = Vec::new();
-            if let Some(s) = filter.status {
-                statuses.push(s);
-            }
-            if let Some(ref s_list) = filter.statuses {
-                statuses.extend(s_list.iter().cloned());
-            }
-            statuses.sort_by_key(|s| status_to_u8(*s));
-            statuses.dedup();
-
-            // Status index is index 0 (JobStatusCreatedAtIndex)
-            const STATUS_INDEX: usize = 0;
-
-            for status in statuses {
-                if jobs.len() >= limit {
-                    break;
-                }
-
-                let prefix = vec![status_to_u8(status)];
-                let job_entries = self
-                    .store
-                    .scan_by_index_async(STATUS_INDEX, Some(prefix), Some(limit - jobs.len()))
-                    .await
-                    .into_system_error("scan_by_index_async error")?;
-
-                for (_job_id, row) in job_entries {
-                    let job = Self::decode_job_row(&row)?;
-                    if matches_filter_sync(&job, &filter) {
-                        jobs.push(job);
-                        if jobs.len() >= limit {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            return Ok(jobs);
-        }
-
-        // Fallback to full scan
-        let all_jobs: Vec<(Vec<u8>, SystemTableRow)> = self
-            .store
-            .scan_all_async(None, None, None)
+        // Reuse the single synchronous filtering/sorting implementation.
+        // Move blocking RocksDB work off the Tokio worker thread.
+        let provider = self.clone();
+        tokio::task::spawn_blocking(move || provider.list_jobs_filtered(&filter))
             .await
-            .into_system_error("scan_all_async error")?;
-        let mut jobs: Vec<Job> = all_jobs
-            .into_iter()
-            .map(|(_, row)| Self::decode_job_row(&row))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        jobs.retain(|job| matches_filter_sync(job, &filter));
-
-        if let Some(sort_by) = filter.sort_by {
-            match sort_by {
-                JobSortField::CreatedAt => jobs.sort_by_key(|j| j.created_at),
-                JobSortField::UpdatedAt => jobs.sort_by_key(|j| j.updated_at),
-                JobSortField::Priority => jobs.sort_by_key(|j| j.priority.unwrap_or(0)),
-            }
-            if filter.sort_order == Some(SortOrder::Desc) {
-                jobs.reverse();
-            }
-        }
-
-        if let Some(limit) = filter.limit {
-            if jobs.len() > limit {
-                jobs.truncate(limit);
-            }
-        }
-
-        Ok(jobs)
+            .into_system_error("list_jobs_filtered_async spawn_blocking error")?
     }
 
     fn matches_filter(&self, job: &Job, filter: &JobFilter) -> bool {
@@ -464,7 +408,8 @@ impl JobsTableProvider {
 
             // Keys are [status_byte][created_at_be][job_id_bytes], sorted by created_at ASC.
             let iter = self
-                .store
+                .sql
+                .store()
                 .scan_index_raw_typed_iter(STATUS_INDEX, Some(&prefix), None, None)
                 .into_system_error("scan_index_raw_typed_iter error")?;
 
@@ -488,7 +433,7 @@ impl JobsTableProvider {
                     break;
                 }
 
-                if let Some(row) = self.store.get(&job_id)? {
+                if let Some(row) = self.sql.store().get(&job_id)? {
                     let job = Self::decode_job_row(&row)?;
                     let reference_time =
                         job.finished_at.or(job.started_at).unwrap_or(job.created_at);
@@ -501,18 +446,6 @@ impl JobsTableProvider {
         }
 
         Ok(expired)
-    }
-
-    /// Helper to create RecordBatch from jobs
-    fn create_batch(&self, jobs: Vec<(JobId, SystemTableRow)>) -> Result<RecordBatch, SystemError> {
-        let rows = jobs.into_iter().map(|(_, row)| row).collect();
-        system_rows_to_batch(&Self::schema(), rows)
-    }
-
-    /// Scan all jobs and return as RecordBatch
-    pub fn scan_all_jobs(&self) -> Result<RecordBatch, SystemError> {
-        let jobs = self.store.scan_all_typed(None, None, None)?;
-        self.create_batch(jobs)
     }
 
     fn encode_job_row(job: &Job) -> Result<SystemTableRow, SystemError> {
@@ -571,41 +504,6 @@ fn validate_job_update(job: &Job) -> Result<(), SystemError> {
     Ok(())
 }
 
-/// Synchronous filter matching helper
-fn matches_filter_sync(job: &Job, filter: &JobFilter) -> bool {
-    if let Some(ref status) = filter.status {
-        if status != &job.status {
-            return false;
-        }
-    }
-    if let Some(ref statuses) = filter.statuses {
-        if !statuses.contains(&job.status) {
-            return false;
-        }
-    }
-    if let Some(ref job_type) = filter.job_type {
-        if job_type != &job.job_type {
-            return false;
-        }
-    }
-    if let Some(ref key) = filter.idempotency_key {
-        if job.idempotency_key.as_ref() != Some(key) {
-            return false;
-        }
-    }
-    if let Some(after) = filter.created_after {
-        if job.created_at < after {
-            return false;
-        }
-    }
-    if let Some(before) = filter.created_before {
-        if job.created_at >= before {
-            return false;
-        }
-    }
-    true
-}
-
 const TERMINAL_JOB_STATUSES: [JobStatus; 4] = [
     JobStatus::Completed,
     JobStatus::Failed,
@@ -623,24 +521,7 @@ fn history_cutoff_millis(retention_days: i64) -> Result<i64, SystemError> {
     Ok(chrono::Utc::now().timestamp_millis() - retention_ms)
 }
 
-crate::impl_system_table_provider_metadata!(
-    indexed,
-    provider = JobsTableProvider,
-    key = JobId,
-    table_name = SystemTable::Jobs.table_name(),
-    primary_key_column = "job_id",
-    parse_key = |value| Some(JobId::new(value)),
-    schema = Job::definition().to_arrow_schema().expect("failed to build jobs schema")
-);
-
-crate::impl_indexed_system_table_provider!(
-    provider = JobsTableProvider,
-    key = JobId,
-    value = SystemTableRow,
-    store = store,
-    definition = provider_definition,
-    build_batch = create_batch
-);
+crate::impl_keyed_table_provider!(JobsTableProvider);
 
 #[cfg(test)]
 mod tests {
@@ -683,6 +564,80 @@ mod tests {
     }
 
     #[test]
+    fn job_status_index_scan_reads_the_status_partition_without_a_query_plan() {
+        let backend = Arc::new(InMemoryBackend::new());
+        let provider = JobsTableProvider::new(backend.clone());
+        provider.create_job(create_test_job("running")).unwrap();
+        let mut queued = create_test_job("queued");
+        queued.status = JobStatus::Queued;
+        provider.create_job(queued).unwrap();
+        backend.clear_recorded_ops();
+
+        let jobs = provider
+            .list_jobs_filtered(&JobFilter {
+                status: Some(JobStatus::Running),
+                sort_by: Some(JobSortField::CreatedAt),
+                sort_order: Some(SortOrder::Asc),
+                limit: None,
+                ..JobFilter::default()
+            })
+            .unwrap();
+
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].job_id, JobId::new("running"));
+        let scans: Vec<_> = backend
+            .recorded_ops()
+            .into_iter()
+            .filter_map(|(kind, partition)| (kind == "scan").then_some(partition))
+            .collect();
+        assert_eq!(scans, vec!["system_jobs_status_idx".to_string()]);
+    }
+
+    #[test]
+    fn multi_status_index_is_globally_sorted_and_filters_before_limit() {
+        let provider = create_test_provider();
+        let mut running_late = create_test_job("running-late");
+        running_late.created_at = 300;
+        running_late.job_type = JobType::Flush;
+        let mut queued_early = create_test_job("queued-early");
+        queued_early.status = JobStatus::Queued;
+        queued_early.created_at = 100;
+        let mut running_middle = create_test_job("running-middle");
+        running_middle.created_at = 200;
+
+        provider.create_job(running_late).unwrap();
+        provider.create_job(queued_early).unwrap();
+        provider.create_job(running_middle).unwrap();
+
+        let jobs = provider
+            .list_jobs_filtered(&JobFilter {
+                statuses: Some(vec![JobStatus::Running, JobStatus::Queued]),
+                sort_by: Some(JobSortField::CreatedAt),
+                sort_order: Some(SortOrder::Asc),
+                limit: Some(2),
+                ..JobFilter::default()
+            })
+            .unwrap();
+        assert_eq!(
+            jobs.iter().map(|job| job.job_id.as_str()).collect::<Vec<_>>(),
+            vec!["queued-early", "running-middle"]
+        );
+
+        let sparse = provider
+            .list_jobs_filtered(&JobFilter {
+                status: Some(JobStatus::Running),
+                created_after: Some(250),
+                sort_by: Some(JobSortField::CreatedAt),
+                sort_order: Some(SortOrder::Asc),
+                limit: Some(1),
+                ..JobFilter::default()
+            })
+            .unwrap();
+        assert_eq!(sparse.len(), 1);
+        assert_eq!(sparse[0].job_id.as_str(), "running-late");
+    }
+
+    #[test]
     fn test_create_and_get_job() {
         let provider = create_test_provider();
         let job = create_test_job("job1");
@@ -690,7 +645,7 @@ mod tests {
         provider.create_job(job.clone()).unwrap();
 
         let job_id = JobId::new("job1");
-        let retrieved = provider.get_job_by_id(&job_id).unwrap();
+        let retrieved = provider.get_job(&job_id).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.job_id, job_id);
@@ -711,7 +666,7 @@ mod tests {
 
         // Verify
         let job_id = JobId::new("job1");
-        let retrieved = provider.get_job_by_id(&job_id).unwrap().unwrap();
+        let retrieved = provider.get_job(&job_id).unwrap().unwrap();
         assert_eq!(retrieved.status, JobStatus::Completed);
     }
 
@@ -760,7 +715,7 @@ mod tests {
         let job_id = JobId::new("job1");
         provider.delete_job(&job_id).unwrap();
 
-        let retrieved = provider.get_job_by_id(&job_id).unwrap();
+        let retrieved = provider.get_job(&job_id).unwrap();
         assert!(retrieved.is_none());
     }
 
@@ -775,7 +730,7 @@ mod tests {
         }
 
         // Scan
-        let batch = provider.scan_all_jobs().unwrap();
+        let batch = provider.sql.scan_all_to_batch().unwrap();
         assert_eq!(batch.num_rows(), 3);
         assert_eq!(batch.num_columns(), 20);
     }
@@ -790,9 +745,14 @@ mod tests {
 
         // Create DataFusion session
         let ctx = datafusion::execution::context::SessionContext::new();
-        let state = ctx.state();
-
-        // Scan via DataFusion
+        let mut state = ctx.state();
+        state.config_mut().options_mut().extensions.insert(
+            kalamdb_session_datafusion::SessionUserContext::new(
+                kalamdb_commons::models::UserId::new("system"),
+                kalamdb_commons::models::Role::System,
+                kalamdb_commons::models::ReadContext::Internal,
+            ),
+        );
         let plan = provider.scan(&state, None, &[], None).await.unwrap();
         assert!(!plan.schema().fields().is_empty());
     }
@@ -828,9 +788,9 @@ mod tests {
         assert_eq!(provider.cleanup_old_jobs(7).unwrap(), 2);
         assert!(!provider.has_expired_terminal_jobs(7).unwrap());
 
-        assert!(provider.get_job_by_id(&JobId::new("old_completed")).unwrap().is_none());
-        assert!(provider.get_job_by_id(&JobId::new("old_skipped")).unwrap().is_none());
-        assert!(provider.get_job_by_id(&JobId::new("recent_failed")).unwrap().is_some());
-        assert!(provider.get_job_by_id(&JobId::new("still_running")).unwrap().is_some());
+        assert!(provider.get_job(&JobId::new("old_completed")).unwrap().is_none());
+        assert!(provider.get_job(&JobId::new("old_skipped")).unwrap().is_none());
+        assert!(provider.get_job(&JobId::new("recent_failed")).unwrap().is_some());
+        assert!(provider.get_job(&JobId::new("still_running")).unwrap().is_some());
     }
 }

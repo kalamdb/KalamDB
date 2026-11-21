@@ -8,24 +8,39 @@ use datafusion::arrow::{
     record_batch::RecordBatch,
 };
 use kalamdb_commons::SystemTable;
+use kalamdb_macros::table;
 use parking_lot::RwLock;
 
-use super::common::{int_col, system_view_definition, text_col, SystemViewProvider};
+use super::common::SystemViewProvider;
 use crate::view_base::VirtualView;
 
 crate::memoized_view_schema!(module_instances_schema, ModuleInstancesView);
 
 /// Snapshot of one resident module isolate (idle or in-flight).
+#[table(
+    name = "module_instances",
+    view = true,
+    comment = "Resident module isolates (in-memory; idle included)"
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleInstanceSnapshot {
+    /// Engine-assigned isolate identifier
     pub instance_id: i64,
+    /// Owning function worker index
     pub worker: i64,
+    /// Project function module
     pub module_id: String,
+    /// Pinned module revision
     pub revision_id: String,
+    /// idle or active
     pub state: String,
+    /// Admission reservation including heap hard limit
     pub reserved_bytes: i64,
+    /// Last observed V8 heap plus external memory
     pub used_heap_bytes: i64,
+    /// High-water V8 heap plus external memory
     pub peak_heap_bytes: i64,
+    /// Calls served by this isolate
     pub invocations: i64,
 }
 
@@ -58,21 +73,7 @@ impl ModuleInstancesView {
     }
 
     pub fn definition() -> kalamdb_commons::schemas::TableDefinition {
-        system_view_definition(
-            SystemTable::ModuleInstances,
-            vec![
-                int_col(1, "instance_id", "Engine-assigned isolate identifier"),
-                int_col(2, "worker", "Owning function worker index"),
-                text_col(3, "module_id", "Project function module"),
-                text_col(4, "revision_id", "Pinned module revision"),
-                text_col(5, "state", "idle or active"),
-                int_col(6, "reserved_bytes", "Admission reservation including heap hard limit"),
-                int_col(7, "used_heap_bytes", "Last observed V8 heap plus external memory"),
-                int_col(8, "peak_heap_bytes", "High-water V8 heap plus external memory"),
-                int_col(9, "invocations", "Calls served by this isolate"),
-            ],
-            "Resident module isolates (in-memory; idle included)",
-        )
+        ModuleInstanceSnapshot::definition()
     }
 }
 

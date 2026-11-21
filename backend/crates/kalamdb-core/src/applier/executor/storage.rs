@@ -48,9 +48,9 @@ impl StorageExecutor {
         let storage_id = storage_id.clone();
         run_blocking_applier(move || {
             let storage =
-                app_context.system_tables().storages().get_storage(&storage_id).map_err(|e| {
-                    ApplierError::Execution(format!("Failed to read storage: {}", e))
-                })?;
+                app_context.system_tables().storages().get_storage_by_id(&storage_id).map_err(
+                    |e| ApplierError::Execution(format!("Failed to read storage: {}", e)),
+                )?;
             app_context
                 .system_tables()
                 .storages()

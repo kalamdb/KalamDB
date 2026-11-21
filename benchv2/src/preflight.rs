@@ -642,7 +642,7 @@ async fn check_sql_connectivity(client: &KalamClient) -> CheckResult {
 /// Check admin permissions by creating and dropping a test namespace.
 async fn check_admin_permissions(client: &KalamClient, config: &Config) -> CheckResult {
     let test_ns = format!("{}_preflight_check", config.namespace);
-    match client.sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", test_ns)).await {
+    match client.sql_ok(&format!("CREATE SCHEMA IF NOT EXISTS {}", test_ns)).await {
         Ok(_) => {
             let _ = client.sql(&format!("DROP SCHEMA IF EXISTS {}", test_ns)).await;
             CheckResult::pass("Admin permissions", "Can create/drop namespaces")

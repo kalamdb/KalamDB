@@ -22,7 +22,10 @@ use kalamdb_commons::{
 };
 use kalamdb_row_filter::{parse_where_clause, RowFilter};
 use kalamdb_sql::parser::query_parser::QueryParser;
-use kalamdb_system::LiveQuery as SystemLiveQuery;
+use kalamdb_system::{
+    classify_live_history, live_history_gap_message, LiveHistoryDecision,
+    LiveQuery as SystemLiveQuery, LiveReadContract,
+};
 use tokio::sync::OnceCell;
 
 use crate::{
@@ -357,27 +360,37 @@ impl LiveQueryManager {
         let initial_data = if let Some(mut fetch_options) = initial_data_options {
             let fetch_result: Result<InitialDataResult, LiveError> = async {
                 if let Some(from) = fetch_options.since_seq {
-                    match self.registry.replay().classify_cursor(
+                    let cursor = self.registry.replay().classify_cursor(
                         scope_user.as_ref(),
                         &table_id,
                         from,
-                    ) {
+                    );
+                    let (contract, expired) = match cursor {
                         crate::replay_log::ResumeCursor::Replay => {
-                            return self.resume_from_replay(
-                                connection_state,
-                                request,
-                                &table_id,
-                                scope_user.as_ref(),
-                                from,
-                            );
+                            (LiveReadContract::CompleteEvents, false)
+                        },
+                        crate::replay_log::ResumeCursor::Snapshot => {
+                            (LiveReadContract::LatestStateSinceCursor, false)
                         },
                         crate::replay_log::ResumeCursor::Expired => {
-                            return Err(LiveError::InvalidOperation(
-                                "stale resume cursor expired; resubscribe without a resume token"
-                                    .into(),
-                            ));
+                            (LiveReadContract::CompleteEvents, true)
                         },
-                        crate::replay_log::ResumeCursor::Snapshot => {},
+                    };
+                    let decision = classify_live_history(contract, expired);
+                    if let Some(reason) = live_history_gap_message(&decision) {
+                        return Err(LiveError::InvalidOperation(reason.to_string()));
+                    }
+                    if matches!(
+                        decision,
+                        LiveHistoryDecision::Ready(LiveReadContract::CompleteEvents)
+                    ) {
+                        return self.resume_from_replay(
+                            connection_state,
+                            request,
+                            &table_id,
+                            scope_user.as_ref(),
+                            from,
+                        );
                     }
                 }
 
@@ -478,9 +491,10 @@ impl LiveQueryManager {
         from: VersionId,
     ) -> Result<InitialDataResult, LiveError> {
         if !self.registry.replay().covers(scope_user, table_id, from) {
-            return Err(LiveError::InvalidOperation(
-                "stale resume cursor expired; resubscribe without a resume token".into(),
-            ));
+            let decision = classify_live_history(LiveReadContract::CompleteEvents, true);
+            let reason = live_history_gap_message(&decision)
+                .unwrap_or("complete-event history expired; resynchronize");
+            return Err(LiveError::InvalidOperation(reason.to_string()));
         }
 
         self.subscription_service.update_snapshot_boundaries(

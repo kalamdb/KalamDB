@@ -414,8 +414,16 @@ jobs:
             exit 1
           fi
 
-          mkdir -p "$HOME/.pub-cache"
-          printf '%s' "$PUB_DEV_CREDENTIALS_JSON" > "$HOME/.pub-cache/credentials.json"
+          # Modern Dart reads pub-credentials.json under XDG config, not the
+          # legacy ~/.pub-cache/credentials.json path. Writing the old path
+          # alone makes `pub publish` fall back to interactive browser OAuth
+          # and hang forever on CI.
+          CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/dart"
+          mkdir -p "$CONFIG_DIR" "$HOME/.pub-cache"
+          printf '%s' "$PUB_DEV_CREDENTIALS_JSON" > "$CONFIG_DIR/pub-credentials.json"
+          chmod 600 "$CONFIG_DIR/pub-credentials.json"
+          # Keep the legacy path as a fallback for older toolchains.
+          cp "$CONFIG_DIR/pub-credentials.json" "$HOME/.pub-cache/credentials.json"
           chmod 600 "$HOME/.pub-cache/credentials.json"
 
       - name: Publish kalam_link

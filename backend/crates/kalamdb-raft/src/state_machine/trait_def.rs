@@ -115,6 +115,22 @@ pub trait KalamStateMachine: Send + Sync {
     /// that have already been applied.
     async fn apply(&self, index: u64, term: u64, command: &[u8]) -> Result<ApplyResult, RaftError>;
 
+    /// Apply one command into a batch the Raft storage owns.
+    ///
+    /// The default runs [`Self::apply`]. Storage enters `batch` first, so
+    /// backend writes made by `apply` join that batch instead of hitting the
+    /// store immediately.
+    async fn apply_in_batch(
+        &self,
+        index: u64,
+        term: u64,
+        command: &[u8],
+        batch: &kalamdb_store::ApplyBatch,
+    ) -> Result<ApplyResult, RaftError> {
+        let _batch = batch;
+        self.apply(index, term, command).await
+    }
+
     /// Get the last applied log index
     ///
     /// Used for:
@@ -133,6 +149,12 @@ pub trait KalamStateMachine: Send + Sync {
     /// Blank and membership entries do not call [`Self::apply`], but apply barriers still need the
     /// state-machine watermark to advance past them.
     fn mark_applied_index(&self, _index: u64, _term: u64) {}
+
+    /// Move the applied watermark back after a durable batch failed.
+    ///
+    /// [`Self::mark_applied_index`] refuses to move backward. When the outer
+    /// flush fails, the same log index has to be applied again.
+    fn rewind_applied_index(&self, _index: u64, _term: u64) {}
 
     /// Get the last applied log term
     fn last_applied_term(&self) -> u64;

@@ -150,33 +150,35 @@ fn parse_rows_json(json: &str) -> Result<Vec<Row>, Status> {
     }
 }
 
-/// Encode Arrow RecordBatches into IPC bytes for gRPC transport.
+/// Encode all Arrow RecordBatches as one IPC stream for gRPC transport.
+///
+/// Keeping one stream avoids repeating the schema and dictionary state per batch.
+/// The existing gRPC repeated-bytes response and clients accept a stream containing
+/// multiple batches, so this does not change the wire contract.
 pub fn encode_batches(
     batches: &[RecordBatch],
 ) -> Result<(Vec<bytes::Bytes>, Option<bytes::Bytes>), Status> {
-    if batches.is_empty() {
+    let Some(first) = batches.first() else {
+        // ScanResult currently has no independent schema for zero-batch results.
         return Ok((Vec::new(), None));
-    }
+    };
 
-    let schema = batches[0].schema();
-    let mut ipc_batches = Vec::with_capacity(batches.len());
-
-    for batch in batches {
-        let mut buf = Vec::new();
-        {
-            let mut writer = StreamWriter::try_new(&mut buf, &schema)
-                .map_err(|e| Status::internal(format!("failed to create IPC writer: {}", e)))?;
+    let schema = first.schema();
+    let mut buf = Vec::new();
+    {
+        let mut writer = StreamWriter::try_new(&mut buf, &schema)
+            .map_err(|e| Status::internal(format!("failed to create IPC writer: {}", e)))?;
+        for batch in batches {
             writer
                 .write(batch)
                 .map_err(|e| Status::internal(format!("failed to write IPC batch: {}", e)))?;
-            writer
-                .finish()
-                .map_err(|e| Status::internal(format!("failed to finish IPC writer: {}", e)))?;
         }
-        ipc_batches.push(bytes::Bytes::from(buf));
+        writer
+            .finish()
+            .map_err(|e| Status::internal(format!("failed to finish IPC writer: {}", e)))?;
     }
 
-    Ok((ipc_batches, None))
+    Ok((vec![bytes::Bytes::from(buf)], None))
 }
 
 /// Convert a `ScanRpcRequest` into a domain `ScanRequest`.
@@ -244,6 +246,58 @@ pub fn update_request_from_rpc(rpc: &UpdateRpcRequest) -> Result<UpdateRequest, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ipc_multiple_batches_share_one_stream_and_round_trip() {
+        use std::{io::Cursor, sync::Arc};
+        use arrow::{
+            array::Int64Array,
+            datatypes::{DataType, Field, Schema},
+        };
+        use arrow_ipc::reader::StreamReader;
+
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, true)]));
+        let first = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::new(Int64Array::from(vec![Some(1), None]))],
+        ).unwrap();
+        let second = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::new(Int64Array::from(vec![Some(3)]))],
+        ).unwrap();
+
+        let (ipc, schema_ipc) = encode_batches(&[first.clone(), second.clone()]).unwrap();
+        assert_eq!(ipc.len(), 1, "one stream should carry both batches");
+        assert!(schema_ipc.is_none());
+        let decoded = StreamReader::try_new(Cursor::new(ipc[0].as_ref()), None)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(decoded, vec![first, second]);
+    }
+
+    #[test]
+    fn ipc_zero_row_batch_preserves_schema() {
+        use std::{io::Cursor, sync::Arc};
+        use arrow::datatypes::{DataType, Field, Schema};
+        use arrow_ipc::reader::StreamReader;
+
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, true)]));
+        let empty = RecordBatch::new_empty(schema.clone());
+        let (ipc, _) = encode_batches(&[empty]).unwrap();
+        assert_eq!(ipc.len(), 1);
+        let mut reader = StreamReader::try_new(Cursor::new(ipc[0].as_ref()), None).unwrap();
+        assert_eq!(reader.schema().as_ref(), schema.as_ref());
+        assert_eq!(reader.next().unwrap().unwrap().num_rows(), 0);
+        assert!(reader.next().is_none());
+    }
+
+    #[test]
+    fn ipc_no_batches_still_returns_no_payload() {
+        let (ipc, schema) = encode_batches(&[]).unwrap();
+        assert!(ipc.is_empty());
+        assert!(schema.is_none());
+    }
 
     #[test]
     fn parse_row_accepts_plain_json_scalars() {

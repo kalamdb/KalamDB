@@ -35,7 +35,9 @@
 
 mod ddl;
 pub(crate) mod dml;
+mod file_cleanup_queue;
 mod namespace;
+mod prepared_commit;
 mod storage;
 mod user;
 mod utils;

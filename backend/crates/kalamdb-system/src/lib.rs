@@ -9,7 +9,6 @@
 //! - SchemasTableProvider: Table metadata and schema registry
 //! - StoragesTableProvider: Storage backend configuration
 //! - AuditLogsTableProvider: System audit log entries
-//! - StatsTableProvider: Database statistics and metrics
 //!
 //! ## Architecture
 //!
@@ -35,8 +34,6 @@ pub mod macros;
 
 pub mod error;
 pub mod impls;
-pub mod initialization;
-pub mod models; // Re-export models for external usage
 pub mod providers;
 pub mod registry;
 pub mod services;
@@ -45,9 +42,10 @@ pub(crate) mod system_row_mapper;
 // Re-export main types
 pub use error::{Result, SystemError};
 pub use impls::{
-    ClusterCoordinator, ManifestService, NotificationService, SchemaRegistry, TopicPublisher,
+    classify_live_history, live_history_gap_message, live_notify_scope, publish_live_table_change,
+    ClusterCoordinator, LiveHistoryDecision, LiveReadContract, ManifestService,
+    NotificationService, SchemaRegistry, TopicPublisher,
 };
-pub use initialization::initialize_system_tables;
 // Re-export from kalamdb-commons for convenience
 pub use kalamdb_commons::models::{AuthType, Role};
 // Re-export SystemTable and StoragePartition from kalamdb_commons for consistent usage

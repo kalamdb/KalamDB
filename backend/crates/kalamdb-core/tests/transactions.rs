@@ -19,6 +19,8 @@ mod sql_transaction_rollback;
 mod sql_transaction_unclosed;
 #[path = "system_transactions_view.rs"]
 mod system_transactions_view;
+#[path = "t089_acceptance.rs"]
+mod t089_acceptance;
 #[path = "transaction_buffer_limit.rs"]
 mod transaction_buffer_limit;
 #[path = "transaction_cluster_failover.rs"]
@@ -27,6 +29,8 @@ mod transaction_cluster_failover;
 mod transaction_cluster_group_rejection;
 #[path = "transaction_commit_live_fanout.rs"]
 mod transaction_commit_live_fanout;
+#[path = "transaction_commit_replay.rs"]
+mod transaction_commit_replay;
 #[path = "transaction_ddl_rejection.rs"]
 mod transaction_ddl_rejection;
 #[path = "transaction_races.rs"]

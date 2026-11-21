@@ -7,23 +7,26 @@ use std::{
     time::{Duration, Instant},
 };
 
+use async_trait::async_trait;
 use kalamdb_commons::models::NodeId;
 use kalamdb_store::StorageBackend;
 use openraft::{
-    error::{ClientWriteError, RaftError as OpenRaftError},
-    Config, Raft, RaftMetrics,
+    async_runtime::watch::WatchReceiver,
+    error::{ClientWriteError, ForwardReason, RaftError as OpenRaftError},
+    raft::{AppendEntriesRequest, AppendEntriesResponse, TransferLeaderRequest, VoteRequest},
+    Config, Raft, RaftMetrics, SnapshotPolicy,
 };
 use parking_lot::RwLock;
 
 use crate::{
     network::{RaftChannelPool, RaftNetworkFactory},
-    state_machine::KalamStateMachine,
-    storage::{KalamNode, KalamRaftStorage, KalamTypeConfig},
+    state_machine::{decode, encode, KalamStateMachine},
+    storage::{KalamNode, KalamRaftStorage, KalamSnapshot, KalamTypeConfig, KalamVote},
     GroupId, RaftError,
 };
 
-/// Type alias for the openraft Raft instance
-pub type RaftInstance = Raft<KalamTypeConfig>;
+/// OpenRaft handle for one group. The state machine type is part of the handle.
+pub type RaftInstance<SM> = Raft<KalamTypeConfig, Arc<KalamRaftStorage<SM>>>;
 
 /// A single Raft consensus group
 ///
@@ -35,7 +38,7 @@ pub struct RaftGroup<SM: KalamStateMachine + Send + Sync + 'static> {
     group_id: GroupId,
 
     /// The Raft instance
-    raft: RwLock<Option<RaftInstance>>,
+    raft: RwLock<Option<RaftInstance<SM>>>,
 
     /// Combined storage for this group
     storage: Arc<KalamRaftStorage<SM>>,
@@ -58,6 +61,58 @@ enum ApplyBarrierOutcome {
 struct ApplyBarrierFlight {
     target: u64,
     outcome: tokio::sync::watch::Sender<ApplyBarrierOutcome>,
+}
+
+fn group_raft_config(
+    group_id: GroupId,
+    is_single_node: bool,
+    election_timeout_ms: (u64, u64),
+    heartbeat_interval_ms: u64,
+    snapshot_policy: SnapshotPolicy,
+    api_channel_size: Option<u64>,
+) -> Config {
+    let mut cfg = if is_single_node {
+        Config {
+            cluster_name: format!("kalamdb-{group_id}"),
+            election_timeout_min: 150,
+            election_timeout_max: 300,
+            heartbeat_interval: 50,
+            install_snapshot_timeout: 5000,
+            max_in_snapshot_log_to_keep: 0,
+            purge_batch_size: 64,
+            enable_heartbeat: false,
+            enable_elect: true,
+            enable_tick: true,
+            enable_pre_vote: Some(true),
+            ..Default::default()
+        }
+    } else {
+        Config {
+            cluster_name: format!("kalamdb-{group_id}"),
+            election_timeout_min: election_timeout_ms.0,
+            election_timeout_max: election_timeout_ms.1,
+            heartbeat_interval: heartbeat_interval_ms,
+            install_snapshot_timeout: 10000,
+            purge_batch_size: 256,
+            enable_pre_vote: Some(true),
+            ..Default::default()
+        }
+    };
+    cfg.snapshot_policy = snapshot_policy;
+    if let Some(size) = api_channel_size {
+        cfg.api_channel_size = Some(size);
+    }
+    cfg
+}
+
+/// Voter other than this node whose replicated log is furthest ahead.
+fn most_caught_up_voter(metrics: &RaftMetrics<KalamTypeConfig>) -> Option<u64> {
+    let others: Vec<u64> =
+        metrics.membership_config.voter_ids().filter(|id| *id != metrics.id).collect();
+    let Some(replication) = metrics.replication.as_ref() else {
+        return others.into_iter().next();
+    };
+    others.into_iter().max_by_key(|id| replication.get(id).cloned().flatten())
 }
 
 impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
@@ -150,7 +205,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     }
 
     /// Get the last applied log ID from storage
-    pub fn get_last_applied(&self) -> Option<openraft::LogId<u64>> {
+    pub fn get_last_applied(&self) -> Option<crate::storage::KalamLogId> {
         self.storage.get_last_applied()
     }
 
@@ -187,7 +242,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
 
         let (committed_index, snapshot_index, applied_index) = {
             let metrics = raft.metrics();
-            let metrics = metrics.borrow();
+            let metrics = metrics.borrow_watched();
             (
                 self.storage.get_committed().map(|log_id| log_id.index).unwrap_or(0),
                 metrics.snapshot.map(|log_id| log_id.index).unwrap_or(0),
@@ -220,7 +275,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     /// for the other sockets that joined the same catch-up.
     fn join_apply_barrier(
         &self,
-        raft: RaftInstance,
+        raft: RaftInstance<SM>,
         target: u64,
         timeout: Duration,
     ) -> tokio::sync::watch::Receiver<ApplyBarrierOutcome> {
@@ -325,7 +380,12 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
         };
 
-        let applied = raft.metrics().borrow().last_applied.map(|log_id| log_id.index).unwrap_or(0);
+        let applied = raft
+            .metrics()
+            .borrow_watched()
+            .last_applied
+            .map(|log_id| log_id.index)
+            .unwrap_or(0);
         if applied >= log_index {
             return Ok(applied);
         }
@@ -372,56 +432,25 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             kalamdb_configs::ClusterConfig::parse_snapshot_policy(&config.snapshot_policy)
                 .map_err(|e| RaftError::Config(format!("Invalid snapshot policy: {}", e)))?;
 
-        // Create Raft configuration with optimizations for single-node mode
-        // Single-node optimizations (OpenRaft recommendations):
-        // - Disable snapshot purging (max_in_snapshot_log_to_keep = 0)
-        // - Reduce heartbeat/election timeouts
-        // - Smaller purge batch to reduce CPU overhead
-        // - Keep tick and elect enabled (required for Raft state machine to function)
-        // - Snapshot policy from config (default: 1000 entries)
-        let raft_config = if is_single_node {
+        if is_single_node {
             log::debug!(
                 "[SINGLE-NODE] Applying lightweight Raft optimizations for {}",
                 self.group_id
             );
-            log::debug!("[SINGLE-NODE] Snapshot policy: {:?}", snapshot_policy);
-            let mut cfg = Config {
-                cluster_name: format!("kalamdb-{}", self.group_id),
-                election_timeout_min: 150, // Faster elections (default 150-300ms)
-                election_timeout_max: 300,
-                heartbeat_interval: 50, // Faster heartbeats (default 50ms)
-                install_snapshot_timeout: 5000,
-                max_in_snapshot_log_to_keep: 0, // Disable log retention after snapshot
-                purge_batch_size: 64,           // Smaller purge batches
-
-                enable_heartbeat: false, // Disable heartbeats (no followers to send to)
-                enable_elect: true,      // Keep elections enabled (needed to become leader)
-                enable_tick: true,       // Keep tick enabled (REQUIRED for Raft to function)
-                ..Default::default()
-            };
-
-            // Configure snapshot policy from config
-            cfg.snapshot_policy = snapshot_policy;
-            cfg
         } else {
-            // Multi-node cluster: use conservative settings for network reliability
             log::debug!("[MULTI-NODE] Cluster Raft configuration for {}", self.group_id);
-            log::debug!("[MULTI-NODE] Snapshot policy: {:?}", snapshot_policy);
-            let mut cfg = Config {
-                cluster_name: format!("kalamdb-{}", self.group_id),
-                election_timeout_min: config.election_timeout_ms.0,
-                election_timeout_max: config.election_timeout_ms.1,
-                heartbeat_interval: config.heartbeat_interval_ms,
-                install_snapshot_timeout: 10000,
-                max_in_snapshot_log_to_keep: config.max_snapshots_to_keep as u64,
-                purge_batch_size: 256,
-                ..Default::default()
-            };
+        }
+        log::debug!("Snapshot policy: {:?}", snapshot_policy);
+        let raft_config = group_raft_config(
+            self.group_id,
+            is_single_node,
+            config.election_timeout_ms,
+            config.heartbeat_interval_ms,
+            snapshot_policy,
+            config.api_channel_size,
+        );
 
-            // Configure snapshot policy from config
-            cfg.snapshot_policy = snapshot_policy;
-            cfg
-        };
+        self.storage.set_max_snapshots_to_keep(config.max_snapshots_to_keep);
 
         let config =
             Arc::new(raft_config.validate().map_err(|e| RaftError::Config(e.to_string()))?);
@@ -430,7 +459,9 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         // table insert (one WriteBatch). Cluster: persist the log in append() on
         // the log-IO thread so the core can yield while apply of the previous
         // entry runs.
-        self.storage.set_flush_log_on_append(!is_single_node);
+        self.storage
+            .set_flush_log_on_append(!is_single_node)
+            .map_err(|err| RaftError::Storage(err.to_string()))?;
 
         let storage = self.storage.clone();
         let raft = Raft::new(
@@ -438,10 +469,24 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             config,
             self.network_factory.clone(),
             storage.clone(),
-            storage,
+            storage.clone(),
         )
         .await
         .map_err(|e| RaftError::Internal(format!("Failed to create Raft: {:?}", e)))?;
+
+        // `Raft::build` already restored the state machine, including a snapshot
+        // rebuilt through `try_create_snapshot_builder`. Standalone can finish
+        // the commit wait locally. A cluster start returns before peers exist,
+        // so it cannot wait here for quorum.
+        if is_single_node && storage.get_last_applied().is_some() {
+            if let Err(err) = raft.wait_for_recovery(Some(Duration::from_secs(5))).await {
+                let _ = raft.shutdown().await;
+                return Err(RaftError::Storage(format!(
+                    "wait_for_recovery for group {}: {err}",
+                    self.group_id
+                )));
+            }
+        }
 
         // Store the instance
         {
@@ -489,6 +534,12 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
 
     /// Add a learner (non-voting member) to the cluster
     pub async fn add_learner(&self, node_id: NodeId, node: KalamNode) -> Result<(), RaftError> {
+        if !self.storage.flushes_log_on_append() {
+            return Err(RaftError::Config(format!(
+                "add_learner rejected on standalone group {}: restart with peers so the log is flushed before acknowledgment",
+                self.group_id
+            )));
+        }
         let raft = {
             let guard = self.raft.read();
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
@@ -525,7 +576,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
                 });
             }
 
-            let metrics = raft.metrics().borrow().clone();
+            let metrics = raft.metrics().borrow_watched().clone();
             if metrics.current_leader != Some(metrics.id) {
                 return Err(RaftError::not_leader(
                     self.group_id.to_string(),
@@ -578,7 +629,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
         };
 
-        let metrics = raft.metrics().borrow().clone();
+        let metrics = raft.metrics().borrow_watched().clone();
         if metrics.current_leader != Some(metrics.id) {
             return Err(RaftError::not_leader(self.group_id.to_string(), metrics.current_leader));
         }
@@ -598,13 +649,18 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     }
 
     /// Get the Raft instance (if started)
-    pub fn raft(&self) -> Option<RaftInstance> {
+    pub fn raft(&self) -> Option<RaftInstance<SM>> {
         self.raft.read().clone()
     }
 
     /// Get the group ID
     pub fn group_id(&self) -> GroupId {
         self.group_id
+    }
+
+    /// Outgoing Raft channels shared by the groups on this node.
+    pub fn outgoing_connection_count(&self) -> usize {
+        self.network_factory.outgoing_connection_count()
     }
 
     /// Check if this group has been started
@@ -619,7 +675,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             return false;
         };
         let metrics = r.metrics();
-        let metrics = metrics.borrow();
+        let metrics = metrics.borrow_watched();
         metrics.current_leader == Some(metrics.id)
     }
 
@@ -627,13 +683,13 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     pub fn current_leader(&self) -> Option<NodeId> {
         let raft = self.raft.read();
         raft.as_ref()
-            .and_then(|r| r.metrics().borrow().current_leader.map(NodeId::from))
+            .and_then(|r| r.metrics().borrow_watched().current_leader.map(NodeId::from))
     }
 
     /// Get the latest OpenRaft metrics for this group, if started
-    pub fn metrics(&self) -> Option<RaftMetrics<u64, KalamNode>> {
+    pub fn metrics(&self) -> Option<RaftMetrics<KalamTypeConfig>> {
         let raft = self.raft.read();
-        raft.as_ref().map(|r| r.metrics().borrow().clone())
+        raft.as_ref().map(|r| r.metrics().borrow_watched().clone())
     }
 
     /// Propose a command to this Raft group
@@ -659,24 +715,9 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         &self,
         command: crate::RaftCommand,
     ) -> Result<(crate::RaftResponse, u64), RaftError> {
-        // Serialize the INNER command (not the RaftCommand wrapper)
-        // The state machine expects MetaCommand, UserDataCommand, or SharedDataCommand directly
         let command_bytes = {
             let _encode_span = kalamdb_observability::kdb_info_span_entered!("raft.encode_cmd");
-            match &command {
-                crate::RaftCommand::Meta(cmd) => {
-                    crate::codec::command_codec::encode_meta_command(cmd)?
-                },
-                crate::RaftCommand::UserData(cmd) => {
-                    crate::codec::command_codec::encode_user_data_command(cmd)?
-                },
-                crate::RaftCommand::SharedData(cmd) => {
-                    crate::codec::command_codec::encode_shared_data_command(cmd)?
-                },
-                crate::RaftCommand::TransactionCommit { .. } => {
-                    crate::codec::command_codec::encode_raft_command(&command)?
-                },
-            }
+            crate::codec::command_codec::encode_proposed_command(&command)?
         };
 
         // Clone Arc once outside the lock scope to avoid holding read lock
@@ -686,17 +727,54 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             .as_ref()
             .ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
             .clone();
+        let local_id = raft.metrics().borrow_watched().id;
 
-        // Submit the command and wait until OpenRaft has applied it.
-        let response = match kalamdb_observability::kdb_await_in_info_span!(
-            raft.client_write(command_bytes),
-            "raft.client_write"
-        ) {
-            Ok(response) => response,
-            Err(OpenRaftError::APIError(ClientWriteError::ForwardToLeader(forward))) => {
-                return Err(RaftError::not_leader(self.group_id.to_string(), forward.leader_id));
-            },
-            Err(e) => return Err(RaftError::Proposal(format!("{:?}", e))),
+        // An expired lease is retried on this node. A discarded entry is not.
+        const LEASE_RETRIES: u32 = 3;
+        let mut lease_attempt = 0u32;
+        let response = loop {
+            let write = kalamdb_observability::kdb_await_in_info_span!(
+                raft.client_write(crate::storage::RaftCommandBytes::new(command_bytes.clone())),
+                "raft.client_write"
+            );
+            match write {
+                Ok(response) => break response,
+                Err(OpenRaftError::APIError(ClientWriteError::ForwardToLeader(forward))) => {
+                    let other_leader = forward.leader_id.filter(|id| *id != local_id);
+                    match forward.reason {
+                        ForwardReason::LeaseExpired if lease_attempt + 1 < LEASE_RETRIES => {
+                            lease_attempt += 1;
+                            tokio::time::sleep(Duration::from_millis(
+                                20 * u64::from(lease_attempt),
+                            ))
+                            .await;
+                        },
+                        ForwardReason::LeaseExpired => {
+                            return Err(RaftError::LeaseExpired {
+                                group: self.group_id.to_string(),
+                            });
+                        },
+                        ForwardReason::LeadershipTransfer => {
+                            return Err(RaftError::LeadershipTransfer {
+                                group: self.group_id.to_string(),
+                                target: other_leader,
+                            });
+                        },
+                        ForwardReason::NotLeader => {
+                            return Err(RaftError::not_leader(
+                                self.group_id.to_string(),
+                                other_leader,
+                            ));
+                        },
+                    }
+                },
+                Err(OpenRaftError::APIError(ClientWriteError::LogEntryDiscarded(_))) => {
+                    return Err(RaftError::OutcomeUnknown {
+                        group: self.group_id.to_string(),
+                    });
+                },
+                Err(e) => return Err(RaftError::Proposal(format!("{:?}", e))),
+            }
         };
 
         // Deserialize the response based on command type using centralized serde_helpers.
@@ -768,6 +846,9 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             // Get current leader
             match self.current_leader() {
                 Some(leader_id) => {
+                    if self.metrics().is_some_and(|metrics| NodeId::new(metrics.id) == leader_id) {
+                        return self.propose(command).await;
+                    }
                     // Get leader node info
                     match self.network_factory.get_node(leader_id) {
                         Some(leader_node) => {
@@ -903,18 +984,50 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         &self.network_factory
     }
 
-    /// Attempt to transfer leadership to another node
-    ///
-    /// In OpenRaft v0.9, we don't have explicit leadership transfer API.
-    /// Instead, we trigger an election by sending heartbeats with a hint
-    /// that another node should take over. If leadership transfer is not
-    /// supported, we just log and continue - the cluster will re-elect.
+    /// Transfer leadership to a current voter and wait until that node is leader.
     pub async fn transfer_leadership(&self, target_node_id: NodeId) -> Result<(), RaftError> {
-        Err(RaftError::InvalidState(format!(
-            "Leadership transfer is unsupported in current OpenRaft version for group {} (target \
-             node {})",
-            self.group_id, target_node_id
-        )))
+        let raft = {
+            let guard = self.raft.read();
+            guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
+        };
+
+        let target = target_node_id.as_u64();
+        let metrics = raft.metrics().borrow_watched().clone();
+        if metrics.current_leader != Some(metrics.id) {
+            return Err(RaftError::not_leader(self.group_id.to_string(), metrics.current_leader));
+        }
+        if target == metrics.id {
+            return Err(RaftError::InvalidState(format!(
+                "cannot transfer leadership of group {} to itself",
+                self.group_id
+            )));
+        }
+        if !metrics.membership_config.voter_ids().any(|id| id == target) {
+            return Err(RaftError::InvalidState(format!(
+                "transfer target {target} is not a current voter of group {}",
+                self.group_id
+            )));
+        }
+
+        raft.trigger().transfer_leader(target).await.map_err(|err| {
+            RaftError::Internal(format!(
+                "Failed to transfer leadership of group {} to {target}: {err:?}",
+                self.group_id
+            ))
+        })?;
+
+        let timeout =
+            Duration::from_millis(raft.config().election_timeout_max.saturating_mul(8).max(1_000));
+        raft.wait(Some(timeout))
+            .metrics(move |metrics| metrics.current_leader == Some(target), "leadership transfer")
+            .await
+            .map_err(|err| {
+                RaftError::Internal(format!(
+                    "Leadership transfer of group {} to {target} did not complete: {err}",
+                    self.group_id
+                ))
+            })?;
+        Ok(())
     }
 
     /// Trigger election for this Raft group
@@ -924,7 +1037,8 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
         };
 
-        raft.trigger().elect().await.map_err(|e| {
+        // `false` is a real election. Pre-Vote stays on the election timer.
+        raft.trigger().elect(false).await.map_err(|e| {
             RaftError::Internal(format!(
                 "Failed to trigger election for group {}: {:?}",
                 self.group_id, e
@@ -951,39 +1065,21 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         Ok(())
     }
 
-    /// Attempt to step down the leader for this group
+    /// Hand leadership to the voter with the greatest matching log.
+    ///
+    /// A group with no other voter, and a node that is not the leader, returns
+    /// success without an election.
     pub async fn step_down(&self) -> Result<(), RaftError> {
-        let raft = {
-            let guard = self.raft.read();
-            guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
-        };
-
         if !self.is_leader() {
             return Ok(());
         }
-
-        let cooldown_ms = raft.config().election_timeout_max * 2;
-        let cooldown = Duration::from_millis(cooldown_ms);
-
-        log::info!(
-            "Stepdown requested for group {} - disabling heartbeats/election for {}ms",
-            self.group_id,
-            cooldown_ms
-        );
-
-        let runtime = raft.runtime_config();
-        runtime.heartbeat(false);
-        runtime.elect(false);
-
-        let raft_clone = raft.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(cooldown).await;
-            let runtime = raft_clone.runtime_config();
-            runtime.heartbeat(true);
-            runtime.elect(true);
-        });
-
-        Ok(())
+        let Some(metrics) = self.metrics() else {
+            return Ok(());
+        };
+        let Some(target) = most_caught_up_voter(&metrics) else {
+            return Ok(());
+        };
+        self.transfer_leadership(NodeId::from(target)).await
     }
 
     /// Trigger a snapshot for this Raft group
@@ -996,7 +1092,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
         };
 
-        let metrics = raft.metrics().borrow().clone();
+        let metrics = raft.metrics().borrow_watched().clone();
         let snapshot_index = metrics.snapshot.map(|log_id| log_id.index);
         let last_log_index = metrics.last_log_index.unwrap_or(0);
         let last_applied_index = metrics.last_applied.map(|log_id| log_id.index).unwrap_or(0);
@@ -1030,15 +1126,14 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         self.metrics().and_then(|m| m.snapshot.map(|log_id| log_id.index))
     }
 
-    /// Shutdown this Raft group
+    /// Shutdown this Raft group.
     ///
-    /// Calls OpenRaft's Raft::shutdown() to cleanly terminate the internal tasks.
-    /// OpenRaft waits until RaftCore joins; on a single-node process that join
-    /// can hang forever, so this is bounded and then abandoned.
+    /// Sends OpenRaft's shutdown signal and waits until `RaftCore` and the tick
+    /// task join. The handle is dropped after that join returns.
     pub async fn shutdown(&self) -> Result<(), RaftError> {
         let raft = {
             let mut guard = self.raft.write();
-            guard.take() // Take ownership to drop after shutdown
+            guard.take()
         };
 
         let Some(raft) = raft else {
@@ -1046,33 +1141,154 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         };
 
         log::debug!("Shutting down Raft group {}", self.group_id);
-        const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
-        match tokio::time::timeout(SHUTDOWN_TIMEOUT, raft.shutdown()).await {
-            Ok(Ok(())) => {
-                log::debug!("Raft group {} shutdown complete", self.group_id);
-            },
-            Ok(Err(e)) => {
-                log::warn!("Failed to shutdown Raft group {}: {:?}", self.group_id, e);
-            },
-            Err(_) => {
-                log::warn!(
-                    "Raft group {} shutdown timed out after {:?}; abandoning RaftCore so process \
-                     exit can proceed",
-                    self.group_id,
-                    SHUTDOWN_TIMEOUT
-                );
-                std::mem::forget(raft);
-            },
-        }
-
+        raft.shutdown().await.map_err(|error| {
+            RaftError::Internal(format!(
+                "Failed to shutdown Raft group {}: {:?}",
+                self.group_id, error
+            ))
+        })?;
+        log::debug!("Raft group {} shutdown complete", self.group_id);
         Ok(())
+    }
+}
+
+/// One started Raft group, addressed by group id.
+///
+/// Meta, user, and shared groups expose the same RPC surface. The manager
+/// resolves a group id to this interface once.
+#[async_trait]
+pub trait GroupServer: Send + Sync {
+    async fn vote_rpc(&self, payload: &[u8]) -> Result<Vec<u8>, RaftError>;
+    async fn pre_vote_rpc(&self, payload: &[u8]) -> Result<Vec<u8>, RaftError>;
+    async fn append_entries_rpc(&self, payload: &[u8]) -> Result<Vec<u8>, RaftError>;
+    async fn transfer_leader_rpc(&self, payload: &[u8]) -> Result<Vec<u8>, RaftError>;
+    async fn install_snapshot_rpc(
+        &self,
+        vote: KalamVote,
+        snapshot: KalamSnapshot,
+    ) -> Result<Vec<u8>, RaftError>;
+}
+
+#[async_trait]
+impl<SM> GroupServer for RaftGroup<SM>
+where
+    SM: KalamStateMachine + Send + Sync + 'static,
+{
+    async fn vote_rpc(&self, payload: &[u8]) -> Result<Vec<u8>, RaftError> {
+        let request: VoteRequest<KalamTypeConfig> = decode(payload)?;
+        let response = self
+            .raft()
+            .ok_or_else(|| self.not_started())?
+            .vote(request)
+            .await
+            .map_err(|error| RaftError::Internal(format!("Vote RPC failed: {:?}", error)))?;
+        encode(&response)
+    }
+
+    async fn pre_vote_rpc(&self, payload: &[u8]) -> Result<Vec<u8>, RaftError> {
+        let request: VoteRequest<KalamTypeConfig> = decode(payload)?;
+        let response = self
+            .raft()
+            .ok_or_else(|| self.not_started())?
+            .pre_vote(request)
+            .await
+            .map_err(|error| RaftError::Internal(format!("PreVote RPC failed: {:?}", error)))?;
+        encode(&response)
+    }
+
+    async fn append_entries_rpc(&self, payload: &[u8]) -> Result<Vec<u8>, RaftError> {
+        let request: AppendEntriesRequest<KalamTypeConfig> = decode(payload)?;
+        let result = self
+            .raft()
+            .ok_or_else(|| self.not_started())?
+            .append_entries(request)
+            .await
+            .map_err(|error| {
+            RaftError::Internal(format!("AppendEntries RPC failed: {:?}", error))
+        })?;
+        encode(&AppendEntriesResponse::from(result))
+    }
+
+    async fn transfer_leader_rpc(&self, payload: &[u8]) -> Result<Vec<u8>, RaftError> {
+        let request: TransferLeaderRequest<KalamTypeConfig> = decode(payload)?;
+        let response = self
+            .raft()
+            .ok_or_else(|| self.not_started())?
+            .handle_transfer_leader(request)
+            .await
+            .map_err(|error| {
+                RaftError::Internal(format!("TransferLeader RPC failed: {:?}", error))
+            })?;
+        encode(&response)
+    }
+
+    async fn install_snapshot_rpc(
+        &self,
+        vote: KalamVote,
+        snapshot: KalamSnapshot,
+    ) -> Result<Vec<u8>, RaftError> {
+        let response = self
+            .raft()
+            .ok_or_else(|| self.not_started())?
+            .install_full_snapshot(vote, snapshot)
+            .await
+            .map_err(|error| {
+                RaftError::Internal(format!("InstallSnapshot RPC failed: {:?}", error))
+            })?;
+        encode(&response)
+    }
+}
+
+impl<SM> RaftGroup<SM>
+where
+    SM: KalamStateMachine + Send + Sync + 'static,
+{
+    fn not_started(&self) -> RaftError {
+        RaftError::NotStarted(format!("Group {:?} not started", self.group_id))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use kalamdb_commons::models::NodeId;
+
     use super::*;
-    use crate::state_machine::MetaStateMachine;
+    use crate::{
+        manager::RaftManagerConfig, state_machine::MetaStateMachine, storage::KalamNode, GroupId,
+    };
+
+    #[test]
+    fn shipped_and_test_raft_configs_validate() {
+        let snapshot = kalamdb_configs::ClusterConfig::parse_snapshot_policy("LogsSinceLast(1000)")
+            .expect("default snapshot policy");
+        let standalone =
+            group_raft_config(GroupId::Meta, true, (150, 300), 50, snapshot.clone(), None)
+                .validate()
+                .expect("standalone config");
+        assert_eq!(standalone.enable_pre_vote, Some(true));
+
+        let test_cfg = RaftManagerConfig {
+            election_timeout_ms: (150, 300),
+            heartbeat_interval_ms: 50,
+            ..RaftManagerConfig::for_single_node(
+                "cfg-validate".to_string(),
+                "127.0.0.1:0".to_string(),
+            )
+        };
+        let cluster = group_raft_config(
+            GroupId::DataUserShard(0),
+            false,
+            test_cfg.election_timeout_ms,
+            test_cfg.heartbeat_interval_ms,
+            snapshot,
+            None,
+        );
+        let cluster = cluster.validate().expect("cluster test config");
+        assert_eq!(cluster.enable_pre_vote, Some(true));
+        assert!(matches!(cluster.removed_leader_step_down, openraft::StepDownPolicy::After(150)));
+    }
 
     #[test]
     fn test_raft_group_creation() {
@@ -1082,5 +1298,89 @@ mod tests {
         assert_eq!(group.group_id(), GroupId::Meta);
         assert!(!group.is_started());
         assert!(!group.is_leader());
+    }
+
+    #[tokio::test]
+    async fn standalone_restart_waits_for_recovery() {
+        let group = RaftGroup::new(GroupId::Meta, MetaStateMachine::new());
+        let config = RaftManagerConfig::for_single_node(
+            "standalone-recovery".to_string(),
+            "127.0.0.1:0".to_string(),
+        );
+        let node_id = NodeId::new(1);
+        group.start(node_id, &config).await.expect("first start");
+        group.initialize(node_id, KalamNode::default()).await.expect("initialize");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if group.storage.get_last_applied().is_some() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("membership was not applied");
+        group.shutdown().await.expect("shutdown");
+
+        tokio::time::timeout(Duration::from_secs(15), group.start(node_id, &config))
+            .await
+            .expect("wait_for_recovery hung")
+            .expect("standalone recovery");
+        group.shutdown().await.expect("second shutdown");
+    }
+
+    #[tokio::test]
+    async fn transfer_rejects_a_node_that_is_not_a_voter() {
+        let group = RaftGroup::new(GroupId::Meta, MetaStateMachine::new());
+        let config = RaftManagerConfig::for_single_node(
+            "standalone-transfer".to_string(),
+            "127.0.0.1:0".to_string(),
+        );
+        let node_id = NodeId::new(1);
+        group.start(node_id, &config).await.expect("start");
+        group.initialize(node_id, KalamNode::default()).await.expect("initialize");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if group.is_leader() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("did not become leader");
+
+        let err = group.transfer_leadership(NodeId::new(2)).await.expect_err("non-voter");
+        assert!(err.to_string().contains("voter"), "{err}");
+        group.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn single_node_shutdown_returns() {
+        let group = RaftGroup::new(GroupId::Meta, MetaStateMachine::new());
+        let config = RaftManagerConfig::for_single_node(
+            "standalone-shutdown".to_string(),
+            "127.0.0.1:0".to_string(),
+        );
+        let node_id = NodeId::new(1);
+        group.start(node_id, &config).await.expect("start");
+        group.initialize(node_id, KalamNode::default()).await.expect("initialize");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if group.is_leader() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("did not become leader");
+
+        let started = std::time::Instant::now();
+        tokio::time::timeout(Duration::from_secs(2), group.shutdown())
+            .await
+            .expect("single-node shutdown hung")
+            .expect("shutdown");
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 }

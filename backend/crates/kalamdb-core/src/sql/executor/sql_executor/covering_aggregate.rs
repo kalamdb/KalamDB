@@ -6,7 +6,7 @@
 //! cannot prove — a second column, `LIKE`, cold segments, row-level security,
 //! a staged overlay, or a snapshot behind the frontier — falls back.
 
-use std::{any::Any, collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
 use arrow::datatypes::{DataType, SchemaRef};
 use datafusion::{
@@ -18,7 +18,6 @@ use kalamdb_commons::{
     models::{rows::row::Row, SchemaId, TableId},
     schemas::TableType,
 };
-use kalamdb_tables::SharedTableProvider;
 
 use crate::{
     error::KalamDbError,
@@ -37,10 +36,15 @@ enum Measure {
 
 struct PreparedCovering {
     table_id: TableId,
+    table_type: TableType,
     filters: Vec<Expr>,
     column: String,
     measures: Vec<Measure>,
     schema: SchemaRef,
+}
+
+fn covering_fast_path(table_type: TableType) -> bool {
+    matches!(table_type, TableType::User | TableType::Shared)
 }
 
 impl SqlExecutor {
@@ -57,34 +61,39 @@ impl SqlExecutor {
             return Ok(None);
         };
 
-        let provider = self.app_context.schema_registry().get_provider(&prepared.table_id);
+        let provider = self.app_context.schema_registry().get_kalam_provider(&prepared.table_id);
         let Some(provider) = provider else {
-            return Ok(None);
-        };
-        let Some(provider) =
-            (provider.as_ref() as &dyn Any).downcast_ref::<SharedTableProvider>()
-        else {
             return Ok(None);
         };
 
         let transaction_id = self.active_request_transaction_id(exec_ctx)?;
+        let subject = match prepared.table_type {
+            TableType::User => Some(exec_ctx.user_id()),
+            TableType::Shared => None,
+            TableType::Stream | TableType::System => return Ok(None),
+        };
         let coordinator = self.app_context.transaction_coordinator();
         if let Some(transaction_id) = transaction_id.as_ref() {
             if !overlay_is_empty(&coordinator, transaction_id, &prepared.table_id) {
                 return Ok(None);
             }
-            if !coordinator.shared_snapshot_is_frontier(transaction_id, &prepared.table_id)? {
+            if !coordinator.snapshot_matches_frontier(
+                transaction_id,
+                &prepared.table_id,
+                prepared.table_type,
+                subject,
+            )? {
                 return Ok(None);
             }
         }
         let frontier = if transaction_id.is_none() {
-            Some(coordinator.shared_group_frontier(&prepared.table_id)?)
+            Some(coordinator.group_frontier(&prepared.table_id, prepared.table_type, subject)?)
         } else {
             None
         };
 
         let summed = provider
-            .sum_hot_covering_integers(&prepared.filters, &prepared.column)
+            .sum_hot_covering_integers(subject, &prepared.filters, &prepared.column)
             .await?;
         let Some((count, sum)) = summed else {
             return Ok(None);
@@ -92,11 +101,18 @@ impl SqlExecutor {
 
         let coordinator = self.app_context.transaction_coordinator();
         if let Some(transaction_id) = transaction_id.as_ref() {
-            if !coordinator.shared_snapshot_is_frontier(transaction_id, &prepared.table_id)? {
+            if !coordinator.snapshot_matches_frontier(
+                transaction_id,
+                &prepared.table_id,
+                prepared.table_type,
+                subject,
+            )? {
                 return Ok(None);
             }
         } else if let Some(frontier) = frontier {
-            if coordinator.shared_group_frontier(&prepared.table_id)? != frontier {
+            if coordinator.group_frontier(&prepared.table_id, prepared.table_type, subject)?
+                != frontier
+            {
                 return Ok(None);
             }
         }
@@ -139,28 +155,32 @@ impl SqlExecutor {
             return Ok(None);
         };
         if measures.len() != schema.fields().len()
-            || !measures.iter().zip(schema.fields()).all(|(measure, field)| {
-                output_type_matches(*measure, field.data_type())
-            })
+            || !measures
+                .iter()
+                .zip(schema.fields())
+                .all(|(measure, field)| output_type_matches(*measure, field.data_type()))
         {
             return Ok(None);
         }
 
         let default_namespace = exec_ctx.default_namespace();
         let namespace = match scan.table_name.schema() {
-            Some(schema_name) => SchemaId::from_session_schema(schema_name, Some(&default_namespace)),
+            Some(schema_name) => {
+                SchemaId::from_session_schema(schema_name, Some(&default_namespace))
+            },
             None => default_namespace,
         };
         let table_id = TableId::from_namespace(namespace, scan.table_name.table());
         let Some(cached) = self.app_context.schema_registry().get(&table_id) else {
             return Ok(None);
         };
-        if cached.table.table_type != TableType::Shared {
+        if !covering_fast_path(cached.table.table_type) {
             return Ok(None);
         }
 
         Ok(Some(PreparedCovering {
             table_id,
+            table_type: cached.table.table_type,
             filters,
             column,
             measures,
@@ -234,7 +254,9 @@ fn limit_keeps_scalar_row(limit: &datafusion::logical_expr::Limit) -> bool {
     }
 }
 
-fn input_scan<'a>(plan: &'a LogicalPlan) -> Option<(&'a datafusion::logical_expr::TableScan, Vec<&'a Expr>)> {
+fn input_scan<'a>(
+    plan: &'a LogicalPlan,
+) -> Option<(&'a datafusion::logical_expr::TableScan, Vec<&'a Expr>)> {
     let mut predicates = Vec::new();
     let mut current = plan;
     loop {
@@ -264,9 +286,10 @@ fn projection_preserves_order(
 ) -> bool {
     let fields = aggregate.schema.as_arrow().fields();
     exprs.len() == fields.len()
-        && exprs.iter().zip(fields.iter()).all(|(expr, field)| {
-            expr_column_name(expr).is_some_and(|name| name == field.name())
-        })
+        && exprs
+            .iter()
+            .zip(fields.iter())
+            .all(|(expr, field)| expr_column_name(expr).is_some_and(|name| name == field.name()))
 }
 
 fn parse_measures(exprs: &[Expr], column: &str) -> Option<Vec<Measure>> {
@@ -291,10 +314,14 @@ fn parse_measure(expr: &Expr, column: &str) -> Option<Measure> {
     }
     match aggregate.func.name() {
         name if name.eq_ignore_ascii_case("count") => count_measure(&aggregate.params.args, column),
-        name if name.eq_ignore_ascii_case("sum") && value_argument(&aggregate.params.args, column) => {
+        name if name.eq_ignore_ascii_case("sum")
+            && value_argument(&aggregate.params.args, column) =>
+        {
             Some(Measure::Sum)
         },
-        name if name.eq_ignore_ascii_case("avg") && value_argument(&aggregate.params.args, column) => {
+        name if name.eq_ignore_ascii_case("avg")
+            && value_argument(&aggregate.params.args, column) =>
+        {
             Some(Measure::Avg)
         },
         _ => None,
@@ -348,7 +375,9 @@ fn flatten_and(expr: &Expr, out: &mut Vec<Expr>) {
 
 fn predicate_column(expr: &Expr) -> Option<&str> {
     if let Expr::Between(between) = expr {
-        if between.negated || !is_non_null_literal(between.low.as_ref()) || !is_non_null_literal(between.high.as_ref())
+        if between.negated
+            || !is_non_null_literal(between.low.as_ref())
+            || !is_non_null_literal(between.high.as_ref())
         {
             return None;
         }
@@ -363,12 +392,16 @@ fn predicate_column(expr: &Expr) -> Option<&str> {
     ) {
         return None;
     }
-    if let (Some(column), true) = (expr_column_name(binary.left.as_ref()), is_non_null_literal(binary.right.as_ref()))
-    {
+    if let (Some(column), true) = (
+        expr_column_name(binary.left.as_ref()),
+        is_non_null_literal(binary.right.as_ref()),
+    ) {
         return Some(column);
     }
-    if let (true, Some(column)) = (is_non_null_literal(binary.left.as_ref()), expr_column_name(binary.right.as_ref()))
-    {
+    if let (true, Some(column)) = (
+        is_non_null_literal(binary.left.as_ref()),
+        expr_column_name(binary.right.as_ref()),
+    ) {
         return Some(column);
     }
     None
@@ -418,15 +451,11 @@ fn output_type_matches(measure: Measure, data_type: &DataType) -> bool {
     }
 }
 
-fn aggregate_row(
-    measures: &[Measure],
-    schema: &SchemaRef,
-    count: u64,
-    sum: i128,
-) -> Option<Row> {
+fn aggregate_row(measures: &[Measure], schema: &SchemaRef, count: u64, sum: i128) -> Option<Row> {
     let mut values = BTreeMap::new();
     for (field, measure) in schema.fields().iter().zip(measures) {
-        values.insert(field.name().clone(), measure_scalar(*measure, field.data_type(), count, sum)?);
+        values
+            .insert(field.name().clone(), measure_scalar(*measure, field.data_type(), count, sum)?);
     }
     Some(Row::new(values))
 }
@@ -474,4 +503,17 @@ fn exact_f64(value: i128) -> Option<f64> {
         return None;
     }
     Some(value as f64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_and_shared_tables_use_the_covering_fast_path() {
+        assert!(covering_fast_path(TableType::User));
+        assert!(covering_fast_path(TableType::Shared));
+        assert!(!covering_fast_path(TableType::Stream));
+        assert!(!covering_fast_path(TableType::System));
+    }
 }

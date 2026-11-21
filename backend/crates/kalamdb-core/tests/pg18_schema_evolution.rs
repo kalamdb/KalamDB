@@ -28,15 +28,22 @@ async fn make_executor() -> (Arc<AppContext>, SqlExecutor, ExecutionContext, Tes
 }
 
 async fn exec_ok(executor: &SqlExecutor, ctx: &ExecutionContext, sql: &str) -> ExecutionResult {
-    executor
+    let result = executor
         .execute(sql, ctx, Vec::new())
         .await
-        .unwrap_or_else(|err| panic!("SQL failed: {sql}\nerror: {err}"))
+        .unwrap_or_else(|err| panic!("SQL failed: {sql}\nerror: {err}"));
+    result
+        .into_materialized_rows()
+        .await
+        .unwrap_or_else(|err| panic!("SQL stream failed: {sql}\nerror: {err}"))
 }
 
 async fn exec_err(executor: &SqlExecutor, ctx: &ExecutionContext, sql: &str) -> String {
     match executor.execute(sql, ctx, Vec::new()).await {
-        Ok(res) => panic!("Expected SQL error for:\n{sql}\ngot: {res:?}"),
+        Ok(res) => match res.into_materialized_rows().await {
+            Ok(res) => panic!("Expected SQL error for:\n{sql}\ngot: {res:?}"),
+            Err(err) => err,
+        },
         Err(err) => err.to_string(),
     }
 }
