@@ -103,6 +103,12 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn missing_peer_address_is_not_treated_as_loopback() {
+        let request = test::TestRequest::default().to_srv_request();
+        assert!(!extract_client_ip(&request).is_loopback());
+    }
+
     #[actix_web::test]
     async fn preflight_login_request_allows_vite_chat_origin() {
         let mut config = ServerConfig::default();
@@ -351,5 +357,5 @@ where
 /// Attackers cannot spoof X-Forwarded-For: 127.0.0.1 to bypass protections.
 fn extract_client_ip(req: &ServiceRequest) -> IpAddr {
     extract_client_ip_addr_secure(req.peer_addr().map(|addr| addr.ip()), req.headers())
-        .unwrap_or_else(|| "127.0.0.1".parse().unwrap())
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
 }

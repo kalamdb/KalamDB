@@ -53,6 +53,10 @@ Before exposing KalamDB outside localhost, at minimum:
 - validate WebSocket origins with strict origin checking where appropriate
 - enable pre-auth connection protection and rate limiting
 - keep health, setup, and admin-sensitive endpoints restricted to trusted paths
+- block `/v1/api/auth/setup`, `/v1/api/auth/status`, `/health`, and
+  `/v1/api/healthcheck` at public reverse proxies. The upstream loopback
+  peer alone does not establish the original caller's locality. A proxy
+  stripping every forwarded header cannot be identified by the server.
 - use least-privilege roles for users, service accounts, and automation
 - rotate secrets, tokens, and node certificates on a defined schedule
 

@@ -1,12 +1,11 @@
 use actix_web::{HttpRequest, HttpResponse};
-use kalamdb_auth::extract_client_ip_secure;
+use kalamdb_auth::is_direct_localhost_request;
 use kalamdb_commons::HealthCheckResponse;
 use kalamdb_observability::{BUILD_DATE, SERVER_VERSION};
 use serde_json::json;
 
 pub(crate) async fn healthcheck_handler(req: HttpRequest) -> HttpResponse {
-    let connection_info = extract_client_ip_secure(&req);
-    if !connection_info.is_localhost() {
+    if !is_direct_localhost_request(&req) {
         return HttpResponse::Forbidden().json(json!({
             "error": "Access denied. Health endpoint is localhost-only."
         }));
@@ -72,4 +71,15 @@ mod tests {
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert_eq!(body["error"], "Access denied. Health endpoint is localhost-only.");
     }
+    #[actix_rt::test]
+    async fn healthcheck_rejects_forwarded_request_from_loopback_proxy() {
+        let req = TestRequest::default()
+            .insert_header(("X-Forwarded-For", "198.51.100.8"))
+            .peer_addr(SocketAddr::from(([127, 0, 0, 1], 2900)))
+            .to_http_request();
+        let (status, body) = execute_healthcheck(req).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["error"], "Access denied. Health endpoint is localhost-only.");
+    }
+
 }

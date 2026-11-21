@@ -52,6 +52,36 @@ pub fn init_trusted_proxy_ranges(entries: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Check direct localhost access to administrative endpoints.
+///
+/// Never use a forwarded address to grant local access. A loopback TCP peer
+/// may itself be a public reverse proxy. Requests carrying proxy headers are
+/// denied, even when the forwarded address claims to be localhost.
+///
+/// If a proxy strips *all* forwarding headers it cannot be distinguished from
+/// a direct local client. Public proxies MUST block these routes themselves.
+pub fn is_direct_localhost_request(req: &HttpRequest) -> bool {
+    let Some(peer) = req.peer_addr() else {
+        return false;
+    };
+    if !peer.ip().is_loopback() {
+        return false;
+    }
+    const PROXY_HEADERS: &[&str] = &[
+        "forwarded",
+        "x-forwarded-for",
+        "x-real-ip",
+        "x-forwarded-host",
+        "x-forwarded-proto",
+        "x-forwarded-port",
+        "x-original-forwarded-for",
+        "x-envoy-external-address",
+        "cf-connecting-ip",
+        "true-client-ip",
+    ];
+    !PROXY_HEADERS.iter().any(|name| req.headers().contains_key(*name))
+}
+
 pub fn extract_client_ip_addr_secure(
     peer_addr: Option<IpAddr>,
     headers: &HeaderMap,
@@ -299,4 +329,44 @@ mod tests {
 
         assert_eq!(ip, Some("10.0.1.9".parse().unwrap()));
     }
+    #[test]
+    fn direct_loopback_without_forwarding_headers_is_local() {
+        for addr in ["127.0.0.1:2900", "[::1]:2900"] {
+            let req = actix_web::test::TestRequest::default()
+                .peer_addr(addr.parse().unwrap())
+                .to_http_request();
+            assert!(is_direct_localhost_request(&req), "{addr}");
+        }
+    }
+
+    #[test]
+    fn localhost_proxy_headers_and_remote_peers_are_never_local() {
+        let unknown = actix_web::test::TestRequest::default().to_http_request();
+        assert!(!is_direct_localhost_request(&unknown));
+
+        let remote = actix_web::test::TestRequest::default()
+            .peer_addr("203.0.113.8:2900".parse().unwrap())
+            .to_http_request();
+        assert!(!is_direct_localhost_request(&remote));
+
+        for header in [
+            "Forwarded",
+            "X-Forwarded-For",
+            "X-Real-IP",
+            "X-Forwarded-Host",
+            "X-Forwarded-Proto",
+            "X-Forwarded-Port",
+            "X-Original-Forwarded-For",
+            "X-Envoy-External-Address",
+            "CF-Connecting-IP",
+            "True-Client-IP",
+        ] {
+            let req = actix_web::test::TestRequest::default()
+                .peer_addr("127.0.0.1:2900".parse().unwrap())
+                .insert_header((header, "198.51.100.8"))
+                .to_http_request();
+            assert!(!is_direct_localhost_request(&req), "{header}");
+        }
+    }
+
 }
