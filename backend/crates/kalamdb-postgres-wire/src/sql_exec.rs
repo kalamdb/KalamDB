@@ -16,7 +16,10 @@ use pgwire::{
 
 use crate::{
     connection::WireConnectionState,
-    row_encoder::execution_result_to_responses_with_format_async,
+    row_encoder::{
+        execution_result_to_responses_with_format_async,
+        execution_result_to_responses_with_layout_async, CachedWireResultLayout,
+    },
     tx_control::{execute_transaction_control, WireTransactionControl, WireTransactionOutcome},
 };
 
@@ -37,7 +40,7 @@ pub(crate) fn execution_context_for_wire(
         state.current_schema(),
         app_context.base_session_context(),
     )
-    .with_request_id(format!("wire:{}", state.session_id()))
+    .with_request_id(state.wire_request_id().to_owned())
     .with_session_config(state.session_config());
     // `with_postgres_star` is the plan-cache boundary. HTTP SQL leaves the flag
     // unset, so the two `SELECT *` plans stay distinct in either warmup order.
@@ -157,6 +160,17 @@ impl WireSqlExecutor {
         params: Vec<ScalarValue>,
         column_format: Option<&Format>,
     ) -> PgWireResult<Vec<Response>> {
+        self.execute_metadata_with_layout(state, metadata, params, column_format, None).await
+    }
+
+    pub(crate) async fn execute_metadata_with_layout(
+        &self,
+        state: &WireConnectionState,
+        metadata: &PreparedExecutionStatement,
+        params: Vec<ScalarValue>,
+        column_format: Option<&Format>,
+        cached_layout: Option<&CachedWireResultLayout>,
+    ) -> PgWireResult<Vec<Response>> {
         if let Some(control) = connection_transaction_control(metadata) {
             return self.execute_connection_transaction(state, control).await;
         }
@@ -166,22 +180,26 @@ impl WireSqlExecutor {
             .as_ref()
             .is_some_and(|stmt| matches!(stmt.kind(), SqlStatementKind::RollbackToSavepoint(_)));
 
-        if !is_rollback_to_savepoint {
-            if let Err(error) = self.session_manager.ensure_block_allows_work(state.session_id()) {
-                return Ok(vec![Response::Error(Box::new(error_info(
-                    "ERROR",
-                    IN_FAILED_SQLSTATE,
-                    error.to_string(),
-                )))]);
+        let transaction_id = if is_rollback_to_savepoint {
+            self.session_manager
+                .transaction_id(state.session_id())
+                .map_err(|error| pg_error(error.to_string()))?
+        } else {
+            match self.session_manager.active_transaction_for_work(state.session_id()) {
+                Ok(transaction_id) => transaction_id,
+                Err(error @ BackendSessionError::FailedBlock(_)) => {
+                    return Ok(vec![Response::Error(Box::new(error_info(
+                        "ERROR",
+                        IN_FAILED_SQLSTATE,
+                        error.to_string(),
+                    )))]);
+                },
+                Err(error) => return Err(pg_error(error.to_string())),
             }
-        }
+        };
 
         let mut exec_ctx = self.execution_context(state);
-        if let Some(transaction_id) = self
-            .session_manager
-            .transaction_id(state.session_id())
-            .map_err(|error| pg_error(error.to_string()))?
-        {
+        if let Some(transaction_id) = transaction_id {
             exec_ctx = exec_ctx.with_transaction_id(transaction_id);
         }
 
@@ -196,7 +214,11 @@ impl WireSqlExecutor {
                         // `entered()` guards are !Send. Instrument the encode future so
                         // the wire handler stays Send under the traceability feature.
                         kalamdb_observability::kdb_await_in_info_span!(
-                            execution_result_to_responses_with_format_async(result, column_format),
+                            execution_result_to_responses_with_layout_async(
+                                result,
+                                column_format,
+                                cached_layout,
+                            ),
                             "wire.encode"
                         )
                     },

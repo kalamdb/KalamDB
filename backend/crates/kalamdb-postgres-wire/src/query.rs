@@ -209,7 +209,13 @@ impl KalamQueryHandler {
         column_format: &pgwire::api::portal::Format,
     ) -> PgWireResult<Vec<Response>> {
         self.sql_executor
-            .execute_metadata(state, &cached.metadata, params, Some(column_format))
+            .execute_metadata_with_layout(
+                state,
+                &cached.metadata,
+                params,
+                Some(column_format),
+                cached.cached_result_layout.as_ref(),
+            )
             .await
     }
 }
@@ -305,7 +311,7 @@ impl ExtendedQueryHandler for KalamQueryHandler {
             },
             None => client.portal_store().put_empty_statement(statement_name),
         }
-        client.send(PgWireBackendMessage::ParseComplete(ParseComplete::new())).await?;
+        client.feed(PgWireBackendMessage::ParseComplete(ParseComplete::new())).await?;
 
         Ok(())
     }
@@ -328,12 +334,16 @@ impl ExtendedQueryHandler for KalamQueryHandler {
         match client.portal_store().get_statement(statement_name) {
             Some(Entry::Value(statement)) => {
                 let portal = Portal::try_new(&message, statement)?;
-                state
-                    .put_portal(WirePortal {
-                        name: portal.name.clone(),
-                        statement_name: statement_name.to_string(),
-                    })
-                    .map_err(limit_error_to_pg)?;
+                if portal.name.is_empty() {
+                    state.put_unnamed_portal().map_err(limit_error_to_pg)?;
+                } else {
+                    state
+                        .put_portal(WirePortal {
+                            name: portal.name.clone(),
+                            statement_name: statement_name.to_string(),
+                        })
+                        .map_err(limit_error_to_pg)?;
+                }
                 client.portal_store().put_portal(Arc::new(portal));
             },
             Some(Entry::Empty) => {
@@ -355,7 +365,7 @@ impl ExtendedQueryHandler for KalamQueryHandler {
                 return Err(PgWireError::StatementNotFound(statement_name.to_string()));
             },
         }
-        client.send(PgWireBackendMessage::BindComplete(BindComplete::new())).await?;
+        client.feed(PgWireBackendMessage::BindComplete(BindComplete::new())).await?;
 
         Ok(())
     }
@@ -368,7 +378,7 @@ impl ExtendedQueryHandler for KalamQueryHandler {
         PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>,
     {
         if let Some(state) = client.session_extensions().get::<WireConnectionState>() {
-            state.remove_portal(DEFAULT_NAME);
+            state.clear_unnamed_portal();
         }
         client.portal_store().rm_portal(DEFAULT_NAME);
         let status = self.resolve_transaction_status(client);
@@ -402,7 +412,7 @@ impl ExtendedQueryHandler for KalamQueryHandler {
                 _ => {},
             }
         }
-        client.send(PgWireBackendMessage::CloseComplete(CloseComplete::new())).await?;
+        client.feed(PgWireBackendMessage::CloseComplete(CloseComplete::new())).await?;
 
         Ok(())
     }

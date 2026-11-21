@@ -62,7 +62,7 @@ impl SqlExecutor {
             None => return Ok(None),
         };
 
-        let has_active_tx = self.active_request_transaction_id(exec_ctx)?.is_some();
+        let active_tx = self.active_request_transaction_id(exec_ctx)?;
 
         // ON CONFLICT must be handled before the active-transaction bail-out below.
         if let Statement::Insert(insert) = parsed_statement {
@@ -101,12 +101,20 @@ impl SqlExecutor {
             return Ok(None);
         };
 
-        let foreign_keys = self
-            .app_context
-            .schema_registry()
-            .get_table_if_exists(table_id)?
-            .map(|definition| definition.foreign_keys.clone())
-            .unwrap_or_default();
+        let cached_table = self.app_context.schema_registry().get(table_id);
+        let foreign_keys = if let Some(cached) = cached_table.as_ref() {
+            if cached.table.foreign_keys.is_empty() {
+                Vec::new()
+            } else {
+                cached.table.foreign_keys.clone()
+            }
+        } else {
+            self.app_context
+                .schema_registry()
+                .get_table_if_exists(table_id)?
+                .map(|definition| definition.foreign_keys.clone())
+                .unwrap_or_default()
+        };
         if !foreign_keys.is_empty() {
             let session = self.create_session_with_transaction_context(exec_ctx)?;
             let state = session.state();
@@ -122,10 +130,7 @@ impl SqlExecutor {
             .map_err(Self::datafusion_to_execution_error)?;
         }
 
-        if has_active_tx {
-            let Some(transaction_id) = self.active_request_transaction_id(exec_ctx)? else {
-                return Ok(None);
-            };
+        if let Some(transaction_id) = active_tx {
             if !matches!(insert_rows.table_type, TableType::User | TableType::Shared) {
                 return Ok(None);
             }
@@ -133,15 +138,16 @@ impl SqlExecutor {
                 return Ok(None);
             };
             if insert_rows.table_type == TableType::Shared {
-                let provider =
-                    self.app_context.schema_registry().get_kalam_provider(table_id).ok_or_else(
-                        || {
-                            KalamDbError::InvalidOperation(format!(
-                                "Table provider not found for RLS check: {}",
-                                table_id
-                            ))
-                        },
-                    )?;
+                let provider = cached_table
+                    .as_ref()
+                    .and_then(|cached| cached.get_kalam_provider())
+                    .or_else(|| self.app_context.schema_registry().get_kalam_provider(table_id))
+                    .ok_or_else(|| {
+                        KalamDbError::InvalidOperation(format!(
+                            "Table provider not found for RLS check: {}",
+                            table_id
+                        ))
+                    })?;
                 if !provider.is_shared() {
                     return Err(KalamDbError::InvalidOperation(format!(
                         "Shared table provider type mismatch for RLS check: {}",

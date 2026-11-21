@@ -4,8 +4,11 @@ use std::sync::Arc;
 
 use arrow::{array::RecordBatch, datatypes::SchemaRef};
 use datafusion::{
-    common::tree_node::{Transformed, TransformedResult, TreeNode},
-    logical_expr::{Expr as DataFusionExpr, LogicalPlan},
+    common::{
+        tree_node::{Transformed, TransformedResult, TreeNode},
+        Column,
+    },
+    logical_expr::{BinaryExpr, Expr as DataFusionExpr, LogicalPlan, Operator},
     physical_plan::collect,
     scalar::ScalarValue,
 };
@@ -19,7 +22,10 @@ use kalamdb_observability::stage_trace::{stage_guard, SqlStage};
 use crate::{
     error::KalamDbError,
     sql::{
-        executor::{parameter_binding::bind_placeholders_in_expr, SqlExecutor},
+        executor::{
+            parameter_binding::{bind_placeholder_value, bind_placeholders_in_expr},
+            SqlExecutor,
+        },
         ExecutionContext, ExecutionResult,
     },
 };
@@ -101,7 +107,20 @@ impl SqlExecutor {
                 .iter()
                 .zip(target_schema.fields())
                 .all(|(left, right)| left.name() == right.name());
-        if names_already_match && projection_exprs.is_none() {
+        let identity_projection = names_already_match
+            && match projection_exprs {
+                None => true,
+                Some(exprs) => {
+                    exprs.len() == target_schema.fields().len()
+                        && exprs.iter().zip(target_schema.fields()).all(|(expr, field)| {
+                            matches!(
+                                expr,
+                                DataFusionExpr::Column(column) if column.name == *field.name()
+                            )
+                        })
+                },
+            };
+        if identity_projection {
             return Some(rows);
         }
 
@@ -143,6 +162,44 @@ impl SqlExecutor {
         Some(rows)
     }
 
+    /// Fast path for a single `pk = $n` or `$n = pk` equality filter.
+    /// Avoids cloning the `Expr` tree and running two `TreeNode::transform_up`
+    /// traversals on every point read.
+    fn try_bind_simple_pk_eq_filter(
+        filter: &DataFusionExpr,
+        primary_key: &str,
+        params: &[ScalarValue],
+    ) -> Option<DataFusionExpr> {
+        let DataFusionExpr::BinaryExpr(binary) = filter else {
+            return None;
+        };
+        if binary.op != Operator::Eq {
+            return None;
+        }
+        let placeholder = match (binary.left.as_ref(), binary.right.as_ref()) {
+            (DataFusionExpr::Column(col), DataFusionExpr::Placeholder(p))
+                if col.name == primary_key =>
+            {
+                p
+            },
+            (DataFusionExpr::Placeholder(p), DataFusionExpr::Column(col))
+                if col.name == primary_key =>
+            {
+                p
+            },
+            _ => return None,
+        };
+        let value = bind_placeholder_value(placeholder, params).ok().flatten()?;
+        if value.is_null() {
+            return None;
+        }
+        Some(DataFusionExpr::BinaryExpr(BinaryExpr::new(
+            Box::new(DataFusionExpr::Column(Column::new_unqualified(primary_key))),
+            Operator::Eq,
+            Box::new(DataFusionExpr::Literal(value, None)),
+        )))
+    }
+
     /// Execute a cached, optimized single-PK table scan without rebuilding a
     /// DataFusion logical/physical plan. Provider `scan` still enforces access,
     /// leader routing, transaction snapshots/overlays, MVCC, and tombstones.
@@ -166,7 +223,7 @@ impl SqlExecutor {
                     };
                     (
                         scan,
-                        Some(Arc::new(projection.schema.as_arrow().clone())),
+                        Some(Arc::clone(projection.schema.inner())),
                         // Needed so `name AS title` remaps scan-row keys.
                         Some(projection.expr.as_slice()),
                     )
@@ -190,28 +247,45 @@ impl SqlExecutor {
             return Ok(None);
         }
 
-        let primary_keys = cached_table.table.get_primary_key_columns();
-        let [primary_key] = primary_keys.as_slice() else {
+        let mut primary_key_iter = cached_table
+            .table
+            .columns
+            .iter()
+            .filter(|col| col.is_primary_key)
+            .map(|col| col.column_name.as_str());
+        let Some(primary_key) = primary_key_iter.next() else {
             return Ok(None);
         };
+        if primary_key_iter.next().is_some() {
+            return Ok(None);
+        }
 
         let _point_get = stage_guard(SqlStage::PointGet);
         let mut filters = Vec::with_capacity(scan.filters.len());
         {
             let _bind = stage_guard(SqlStage::Bind);
             let _span = kalamdb_observability::kdb_info_span_entered!("sql.point_get.bind");
-            for filter in &scan.filters {
-                let bound = match bind_placeholders_in_expr(filter.clone(), params) {
-                    Ok(expr) => expr,
-                    Err(_) => return Ok(None),
-                };
-                filters.push(Self::unqualify_scan_filter(bound)?);
+            if let [single] = scan.filters.as_slice() {
+                if let Some(bound_pk) =
+                    Self::try_bind_simple_pk_eq_filter(single, primary_key, params)
+                {
+                    filters.push(bound_pk);
+                }
             }
-            if !filters.iter().any(|filter| {
-                kalamdb_tables::utils::base::extract_pk_equality_literal(filter, primary_key)
-                    .is_some()
-            }) {
-                return Ok(None);
+            if filters.is_empty() {
+                for filter in &scan.filters {
+                    let bound = match bind_placeholders_in_expr(filter.clone(), params) {
+                        Ok(expr) => expr,
+                        Err(_) => return Ok(None),
+                    };
+                    filters.push(Self::unqualify_scan_filter(bound)?);
+                }
+                if !filters.iter().any(|filter| {
+                    kalamdb_tables::utils::base::extract_pk_equality_literal(filter, primary_key)
+                        .is_some()
+                }) {
+                    return Ok(None);
+                }
             }
         }
 

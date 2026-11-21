@@ -13,8 +13,12 @@ use arrow::{
     util::display::array_value_to_string,
 };
 use chrono::{DateTime, NaiveDate, NaiveTime};
+use datafusion::scalar::ScalarValue;
 use futures_util::{stream, Stream, StreamExt};
-use kalamdb_commons::models::datatypes::{KalamDataType, LogicalTypeRef};
+use kalamdb_commons::models::{
+    datatypes::{KalamDataType, LogicalTypeRef},
+    rows::Row,
+};
 use kalamdb_core::sql::ExecutionResult;
 use pgwire::{
     api::{
@@ -38,13 +42,105 @@ pub fn execution_result_to_responses_with_format(
     result: ExecutionResult,
     column_format: Option<&Format>,
 ) -> PgWireResult<Vec<Response>> {
-    encode_materialized_result(result, column_format)
+    encode_materialized_result(result, column_format, None)
+}
+
+/// Pre-resolved PostgreSQL wire field descriptors and logical types cached on
+/// a prepared statement so repeated executes avoid recomputing column metadata.
+#[derive(Debug, Clone)]
+pub(crate) struct CachedWireResultLayout {
+    schema: SchemaRef,
+    text_fields: Arc<Vec<FieldInfo>>,
+    binary_fields: Arc<Vec<FieldInfo>>,
+    logical_types: Arc<Vec<LogicalTypeRef>>,
+    supports_direct_scalar: bool,
+}
+
+pub(crate) fn build_cached_result_layout(schema: SchemaRef) -> Option<CachedWireResultLayout> {
+    let field_count = schema.fields().len();
+    let mut logical_types = Vec::with_capacity(field_count);
+    let mut text_fields = Vec::with_capacity(field_count);
+    let mut binary_fields = Vec::with_capacity(field_count);
+    let mut supports_direct_scalar = true;
+
+    for field in schema.fields() {
+        if !supports_direct_scalar_type(field.data_type()) {
+            supports_direct_scalar = false;
+        }
+        let logical_type = logical_type_ref_for_field(field).ok()?;
+        let pg_type = pg_type_for_logical_type(&logical_type).ok()?;
+        text_fields.push(FieldInfo::new(
+            field.name().clone(),
+            None,
+            None,
+            pg_type.clone(),
+            FieldFormat::Text,
+        ));
+        binary_fields.push(FieldInfo::new(
+            field.name().clone(),
+            None,
+            None,
+            pg_type,
+            FieldFormat::Binary,
+        ));
+        logical_types.push(logical_type);
+    }
+
+    Some(CachedWireResultLayout {
+        schema,
+        text_fields: Arc::new(text_fields),
+        binary_fields: Arc::new(binary_fields),
+        logical_types: Arc::new(logical_types),
+        supports_direct_scalar,
+    })
+}
+
+fn schemas_match_for_wire(left: &SchemaRef, right: &SchemaRef) -> bool {
+    if Arc::ptr_eq(left, right) {
+        return true;
+    }
+    let lf = left.fields();
+    let rf = right.fields();
+    lf.len() == rf.len()
+        && lf
+            .iter()
+            .zip(rf.iter())
+            .all(|(a, b)| a.name() == b.name() && a.data_type() == b.data_type())
+}
+
+fn resolve_cached_fields(
+    cached: &CachedWireResultLayout,
+    schema_ref: &SchemaRef,
+    column_format: Option<&Format>,
+) -> Option<(Arc<Vec<FieldInfo>>, Arc<Vec<LogicalTypeRef>>)> {
+    if !schemas_match_for_wire(&cached.schema, schema_ref) {
+        return None;
+    }
+    let Some(format) = column_format else {
+        return Some((Arc::clone(&cached.text_fields), Arc::clone(&cached.logical_types)));
+    };
+    let len = cached.logical_types.len();
+    if (0..len).all(|index| format.format_for(index) == FieldFormat::Text) {
+        return Some((Arc::clone(&cached.text_fields), Arc::clone(&cached.logical_types)));
+    }
+    if (0..len).all(|index| format.format_for(index) == FieldFormat::Binary) {
+        return Some((Arc::clone(&cached.binary_fields), Arc::clone(&cached.logical_types)));
+    }
+    None
 }
 
 /// Convert an execution result, streaming SELECT batches into the wire encoder.
 pub async fn execution_result_to_responses_with_format_async(
     result: ExecutionResult,
     column_format: Option<&Format>,
+) -> PgWireResult<Vec<Response>> {
+    execution_result_to_responses_with_layout_async(result, column_format, None).await
+}
+
+pub(crate) async fn execution_result_to_responses_with_layout_async(
+    result: ExecutionResult,
+    column_format: Option<&Format>,
+    cached_layout: Option<&CachedWireResultLayout>,
 ) -> PgWireResult<Vec<Response>> {
     match result {
         ExecutionResult::StreamingRows { stream } => {
@@ -56,14 +152,24 @@ pub async fn execution_result_to_responses_with_format_async(
                 column_format,
             )?)])
         },
-        other => encode_materialized_result(other, column_format),
+        other => encode_materialized_result(other, column_format, cached_layout),
     }
 }
 
 fn encode_materialized_result(
     result: ExecutionResult,
     column_format: Option<&Format>,
+    cached_layout: Option<&CachedWireResultLayout>,
 ) -> PgWireResult<Vec<Response>> {
+    if let ExecutionResult::ScalarRows { rows, schema, .. } = &result {
+        let _encode_pg = kalamdb_observability::kdb_info_span_entered!("wire.encode.pg");
+        if let Some(response) =
+            try_scalar_rows_to_query_response(rows, schema, column_format, cached_layout)?
+        {
+            return Ok(vec![Response::Query(response)]);
+        }
+    }
+
     let result = result.into_arrow_rows().map_err(|error| {
         PgWireError::UserError(Box::new(ErrorInfo::new(
             "ERROR".to_string(),
@@ -126,6 +232,148 @@ fn field_infos_for_schema(
         logical_types.push(logical_type);
     }
     Ok((Arc::new(field_infos), logical_types))
+}
+
+/// Encode `ExecutionResult::ScalarRows` directly into PostgreSQL wire `DataRow`s
+/// without building an intermediate Arrow `RecordBatch`. Returns `Ok(None)` for
+/// complex column types (lists, structs, decimals) so the caller falls back to
+/// `into_arrow_rows()`.
+fn try_scalar_rows_to_query_response(
+    rows: &[Row],
+    schema_ref: &SchemaRef,
+    column_format: Option<&Format>,
+    cached_layout: Option<&CachedWireResultLayout>,
+) -> PgWireResult<Option<QueryResponse>> {
+    let (fields, logical_types) = if let Some(cached) = cached_layout {
+        if !cached.supports_direct_scalar {
+            return Ok(None);
+        }
+        if let Some(hit) = resolve_cached_fields(cached, schema_ref, column_format) {
+            hit
+        } else {
+            for field in schema_ref.fields() {
+                if !supports_direct_scalar_type(field.data_type()) {
+                    return Ok(None);
+                }
+            }
+            let (fields, types) = field_infos_for_schema(schema_ref, column_format)?;
+            (fields, Arc::new(types))
+        }
+    } else {
+        for field in schema_ref.fields() {
+            if !supports_direct_scalar_type(field.data_type()) {
+                return Ok(None);
+            }
+        }
+        let (fields, types) = field_infos_for_schema(schema_ref, column_format)?;
+        (fields, Arc::new(types))
+    };
+
+    let mut encoder = DataRowEncoder::new(Arc::clone(&fields));
+    let mut encoded = Vec::with_capacity(rows.len());
+
+    for row in rows {
+        for (field, logical_type) in schema_ref.fields().iter().zip(logical_types.iter()) {
+            let value = row.values.get(field.name().as_str());
+            if !try_encode_scalar_value(&mut encoder, value, field.data_type(), logical_type)? {
+                return Ok(None);
+            }
+        }
+        encoded.push(Ok(encoder.take_row()));
+    }
+
+    Ok(Some(QueryResponse::new(fields, stream::iter(encoded))))
+}
+
+fn supports_direct_scalar_type(data_type: &DataType) -> bool {
+    matches!(
+        data_type,
+        DataType::Null
+            | DataType::Boolean
+            | DataType::Int8
+            | DataType::Int16
+            | DataType::Int32
+            | DataType::Int64
+            | DataType::UInt8
+            | DataType::UInt16
+            | DataType::UInt32
+            | DataType::UInt64
+            | DataType::Float32
+            | DataType::Float64
+            | DataType::Utf8
+            | DataType::LargeUtf8
+            | DataType::Utf8View
+            | DataType::Date32
+            | DataType::Date64
+            | DataType::Timestamp(_, _)
+            | DataType::Time32(TimeUnit::Second | TimeUnit::Millisecond)
+            | DataType::Time64(TimeUnit::Microsecond | TimeUnit::Nanosecond)
+            | DataType::FixedSizeBinary(16)
+    )
+}
+
+fn try_encode_scalar_value(
+    encoder: &mut DataRowEncoder,
+    value: Option<&ScalarValue>,
+    data_type: &DataType,
+    logical_type: &LogicalTypeRef,
+) -> PgWireResult<bool> {
+    let Some(value) = value else {
+        encoder.encode_field(&Option::<String>::None)?;
+        return Ok(true);
+    };
+    if value.is_null() {
+        encoder.encode_field(&Option::<String>::None)?;
+        return Ok(true);
+    }
+
+    let is_timestamptz = matches!(
+        logical_type,
+        LogicalTypeRef::TimestampTz | LogicalTypeRef::Builtin(KalamDataType::DateTime)
+    ) || matches!(data_type, DataType::Timestamp(_, Some(_)));
+
+    match value {
+        ScalarValue::Boolean(Some(v)) => encoder.encode_field(v)?,
+        ScalarValue::Int8(Some(v)) => encoder.encode_field(&(*v as i16))?,
+        ScalarValue::Int16(Some(v)) => encoder.encode_field(v)?,
+        ScalarValue::Int32(Some(v)) => encoder.encode_field(v)?,
+        ScalarValue::Int64(Some(v)) => encoder.encode_field(v)?,
+        ScalarValue::UInt8(Some(v)) => encoder.encode_field(&(*v as i32))?,
+        ScalarValue::UInt16(Some(v)) => encoder.encode_field(&(*v as i32))?,
+        ScalarValue::UInt32(Some(v)) => encoder.encode_field(&(*v as i64))?,
+        ScalarValue::UInt64(Some(v)) => encoder.encode_field(&v.to_string())?,
+        ScalarValue::Float32(Some(v)) => encoder.encode_field(v)?,
+        ScalarValue::Float64(Some(v)) => encoder.encode_field(v)?,
+        ScalarValue::Utf8(Some(v))
+        | ScalarValue::LargeUtf8(Some(v))
+        | ScalarValue::Utf8View(Some(v)) => encoder.encode_field(&v.as_str())?,
+        ScalarValue::TimestampSecond(Some(v), _) => {
+            encode_timestamp_micros(encoder, seconds_to_micros(*v)?, is_timestamptz)?;
+        },
+        ScalarValue::TimestampMillisecond(Some(v), _) => {
+            encode_timestamp_micros(encoder, millis_to_micros(*v)?, is_timestamptz)?;
+        },
+        ScalarValue::TimestampMicrosecond(Some(v), _) => {
+            encode_timestamp_micros(encoder, *v, is_timestamptz)?;
+        },
+        ScalarValue::TimestampNanosecond(Some(v), _) => {
+            encode_timestamp_micros(encoder, *v / 1_000, is_timestamptz)?;
+        },
+        ScalarValue::Date32(Some(v)) => encode_date32(encoder, *v)?,
+        ScalarValue::Date64(Some(v)) => encode_date64(encoder, *v)?,
+        ScalarValue::Time32Second(Some(v)) => encode_time_micros(encoder, i64::from(*v) * 1_000_000)?,
+        ScalarValue::Time32Millisecond(Some(v)) => encode_time_micros(encoder, i64::from(*v) * 1_000)?,
+        ScalarValue::Time64Microsecond(Some(v)) => encode_time_micros(encoder, *v)?,
+        ScalarValue::Time64Nanosecond(Some(v)) => encode_time_micros(encoder, *v / 1_000)?,
+        ScalarValue::FixedSizeBinary(16, Some(bytes)) => {
+            let uuid = uuid::Uuid::from_slice(bytes)
+                .map_err(|e| encode_value_error(format!("invalid UUID bytes: {e}")))?;
+            encoder.encode_field(&uuid.hyphenated().to_string())?;
+        },
+        _ => return Ok(false),
+    }
+
+    Ok(true)
 }
 
 fn record_batches_to_query_response(
