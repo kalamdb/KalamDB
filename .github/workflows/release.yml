@@ -843,6 +843,11 @@ jobs:
         env:
           CROSS_CONTAINER_ENGINE_NO_BUILDKIT: "0"
           SKIP_UI_BUILD: "1"
+          # Full LTO of kalamdb-server is SIGKILL'd inside the cross container
+          # on GitHub-hosted runners. Thin LTO and parallel codegen keep a
+          # release-quality binary and finish the link.
+          CARGO_PROFILE_DOCKER_LTO: thin
+          CARGO_PROFILE_DOCKER_CODEGEN_UNITS: "16"
         run: |
           set -euo pipefail
           cross build \
