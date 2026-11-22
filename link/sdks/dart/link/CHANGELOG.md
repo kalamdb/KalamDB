@@ -10,12 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Restore the standard Apache 2.0 license text and fix the README license link.
 
+### Changed
+- Improved pub.dev package discovery metadata, documentation links, and mobile platform guidance.
+- Clarified the difference between the connected SDK and the offline-first `kalam_sync` package.
+
 ## [0.8.0]
 
 ### Changed
 - Updated the package version to 0.8.0.
 
-## [0.7.0-dev.0] - Unreleased
+## [0.7.0-dev.0] - Earlier development notes
 
 ### Added
 - `KalamClient.exchangeOidcToken()` exchanges a Keycloak/OIDC ID token for KalamDB JWTs (`POST /v1/api/auth/oidc/exchange-token`).

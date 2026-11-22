@@ -73,10 +73,10 @@ fi
 echo "==> Running flutter pub get..."
 flutter pub get
 
-echo "==> Running dart analyze..."
-dart analyze lib
+echo "==> Running full package static analysis..."
+dart analyze --fatal-infos .
 
-echo "==> Running tests..."
+echo "==> Running offline tests (fail release on failing tests)..."
 bash ./test-offline.sh
 
 if $DRY_RUN; then

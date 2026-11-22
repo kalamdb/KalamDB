@@ -1,8 +1,9 @@
 ## 0.9.0 - Unreleased
 
 - Add account-scoped durable consumer event IDs and compare replayed JSON payloads independent of object key order.
-
 - Restore the standard Apache 2.0 license text.
+- Clarified the offline-first Flutter database, realtime synchronization, and durable action queue in the package description.
+- Added discoverability topics and guidance about account-scoped local caching.
 
 ## 0.8.0
 
