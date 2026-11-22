@@ -2,26 +2,16 @@
 //!
 //! Inserts call `messages:insertMessage`, which returns the document id.
 //! Point reads call `messages:getMessage` and use `db.get` on that id, the
-//! primary-key read. Convex reports function failures in an HTTP 200 body, so
-//! the driver checks the `status` field. That check is the status validation
-//! the other drivers get from the HTTP code.
-//!
-//! No user auth. TrailBase and PocketBase still enforce room membership.
+//! primary-key read. The driver checks the function status and returned row.
 //! Convex query caching stays at the backend default.
 
 use std::env;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use comparison_common::{
-    message_data, print_latencies, LATENCY_INSERTS, LATENCY_READS, LIMIT, N,
-};
-use crossbeam_queue::SegQueue;
-use lazy_static::lazy_static;
+use comparison_common::{expect_message, message_data, run};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::json;
-use tokio::sync::Semaphore;
 
 #[derive(Debug, Deserialize)]
 struct FunctionResponse {
@@ -33,13 +23,6 @@ struct FunctionResponse {
 
 fn base_url() -> String {
     env::var("CONVEX_URL").unwrap_or_else(|_| "http://127.0.0.1:3210".to_string())
-}
-
-fn rows(default: i64, name: &str) -> i64 {
-    env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(default)
 }
 
 async fn call(
@@ -59,7 +42,7 @@ async fn call(
         .send()
         .await?;
     let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
+    let body = resp.text().await?;
     if !status.is_success() {
         anyhow::bail!("{kind} {path} http {status} body={body}");
     }
@@ -91,118 +74,41 @@ async fn insert_message(http: &Client, base: &str, id: i64) -> anyhow::Result<St
     .await?;
     parsed
         .value
-        .and_then(|value| value.as_str().map(str::to_string))
+        .and_then(|value| value.as_str().filter(|id| !id.is_empty()).map(str::to_owned))
         .ok_or_else(|| anyhow::anyhow!("insert returned no document id"))
 }
 
-async fn read_message(http: &Client, base: &str, id: &str) -> anyhow::Result<()> {
+async fn read_message(
+    http: &Client,
+    base: &str,
+    document_id: String,
+    sequence: i64,
+) -> anyhow::Result<()> {
     let parsed = call(
         http,
         base,
         "query",
         "messages:getMessage",
-        json!({ "id": id }),
+        json!({ "id": document_id }),
     )
     .await?;
-    if parsed.value.as_ref().is_none_or(serde_json::Value::is_null) {
-        anyhow::bail!("getMessage returned null for {id}");
-    }
-    Ok(())
-}
-
-async fn insert_benchmark(http: &Client, base: &str) -> anyhow::Result<()> {
-    lazy_static! {
-        static ref THROTTLER: Semaphore = Semaphore::new(LIMIT);
-    }
-    let count = rows(N, "COMPARISON_INSERTS");
-    let start = Instant::now();
-    for id in 0..count {
-        let http = http.clone();
-        let base = base.to_string();
-        let handle = THROTTLER.acquire().await?;
-        tokio::spawn(async move {
-            insert_message(&http, &base, id).await.expect("insert");
-            drop(handle);
-        });
-    }
-    let _ = THROTTLER.acquire_many(LIMIT as u32).await?;
-    println!("Inserted {count} rows in {:?}", start.elapsed());
-    Ok(())
-}
-
-async fn latency_benchmark(http: &Client, base: &str) -> anyhow::Result<()> {
-    let latency_inserts = rows(LATENCY_INSERTS, "COMPARISON_LATENCY_INSERTS");
-    let latency_reads = rows(LATENCY_READS, "COMPARISON_READS");
-    let record_ids = Arc::new(SegQueue::<String>::new());
-    {
-        lazy_static! {
-            static ref THROTTLER: Semaphore = Semaphore::new(LIMIT);
-        }
-        let insert_latencies = Arc::new(SegQueue::<Duration>::new());
-        let start = Instant::now();
-        for id in 0..latency_inserts {
-            let http = http.clone();
-            let base = base.to_string();
-            let latencies = insert_latencies.clone();
-            let ids = record_ids.clone();
-            let handle = THROTTLER.acquire().await?;
-            tokio::spawn(async move {
-                let t0 = Instant::now();
-                let record_id = insert_message(&http, &base, 1_000_000 + id)
-                    .await
-                    .expect("insert");
-                latencies.push(t0.elapsed());
-                ids.push(record_id);
-                drop(handle);
-            });
-        }
-        let _ = THROTTLER.acquire_many(LIMIT as u32).await?;
-        println!("Inserted {latency_inserts} rows in {:?}", start.elapsed());
-        print_latencies(
-            Arc::into_inner(insert_latencies)
-                .unwrap()
-                .into_iter()
-                .collect(),
+    let mut row = parsed
+        .value
+        .ok_or_else(|| anyhow::anyhow!("getMessage returned no document"))?;
+    anyhow::ensure!(row["_id"] == document_id, "wrong Convex document ID: {row}");
+    // Convex `v.number()` is a float. Whole ids arrive as JSON floats.
+    if row.get("id").and_then(serde_json::Value::as_i64).is_none() {
+        let id = row
+            .get("id")
+            .and_then(serde_json::Value::as_f64)
+            .ok_or_else(|| anyhow::anyhow!("getMessage id is not a number: {row}"))?;
+        anyhow::ensure!(
+            id.fract() == 0.0 && id == sequence as f64,
+            "wrong message id: {row}"
         );
+        row["id"] = json!(sequence);
     }
-
-    let ids: Vec<String> = Arc::into_inner(record_ids).unwrap().into_iter().collect();
-    anyhow::ensure!(
-        ids.len() as i64 == latency_inserts,
-        "missing convex document ids"
-    );
-
-    {
-        lazy_static! {
-            static ref THROTTLER: Semaphore = Semaphore::new(LIMIT);
-        }
-        let read_latencies = Arc::new(SegQueue::<Duration>::new());
-        let ids = Arc::new(ids);
-        let start = Instant::now();
-        for idx in 0..latency_reads {
-            let http = http.clone();
-            let base = base.to_string();
-            let latencies = read_latencies.clone();
-            let ids = ids.clone();
-            let handle = THROTTLER.acquire().await?;
-            tokio::spawn(async move {
-                let id = &ids[(idx % latency_inserts) as usize];
-                let t0 = Instant::now();
-                read_message(&http, &base, id).await.expect("read");
-                latencies.push(t0.elapsed());
-                drop(handle);
-            });
-        }
-        let _ = THROTTLER.acquire_many(LIMIT as u32).await?;
-        println!("Read {latency_reads} rows in {:?}", start.elapsed());
-        print_latencies(
-            Arc::into_inner(read_latencies)
-                .unwrap()
-                .into_iter()
-                .collect(),
-        );
-    }
-    Ok(())
+    expect_message(&row, json!(sequence), "owner", "user1", "room0", sequence)
 }
 
 #[tokio::main]
@@ -212,10 +118,12 @@ async fn main() -> anyhow::Result<()> {
         .pool_max_idle_per_host(64)
         .timeout(Duration::from_secs(60))
         .build()?;
-    println!("logged in to {base}");
+    println!("endpoint={base}");
     println!("mode=self-hosted sqlite; POST /api/mutation messages:insertMessage; POST /api/query messages:getMessage db.get");
-    println!("timed_read=server query (Convex default query cache left on; repeated ids)");
-    insert_benchmark(&http, &base).await?;
-    latency_benchmark(&http, &base).await?;
-    Ok(())
+    println!("query_cache=backend default");
+    run(
+        |id| insert_message(&http, &base, id),
+        |key, id| read_message(&http, &base, key, id),
+    )
+    .await
 }

@@ -32,6 +32,6 @@ record_apis: [{
   name: "message_api"
   table_name: "message"
   autofill_missing_user_id_columns: false
+  enable_subscriptions: true
   acl_authenticated: [CREATE, READ, UPDATE, DELETE]
-  create_access_rule: "(SELECT 1 FROM room_members WHERE user = _USER_.id AND room = _REQ_.room)"
 }]

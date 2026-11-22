@@ -1,361 +1,84 @@
-# Backend comparison benchmarks (KalamDB SQL / KalamDB functions / TrailBase / PocketBase / SurrealDB / SpaceTimeDB / Convex)
+# Backend comparison benchmarks
 
-Public, reproducible bake-off adapted from
-[trailbaseio/trailbase-benchmark](https://github.com/trailbaseio/trailbase-benchmark)
-and TrailBase’s published methodology
-([reference](https://trailbase.io/reference/benchmarks/)).
+This suite compares single-node deployments on the same machine. It has two workloads: single-row API operations and realtime delivery. The results describe the tested versions, configurations, and client paths.
 
-This folder contains:
+## Single-row API operations
 
-- the **exact drivers** used for the comparison
-- server **setups** (schema / config)
-- scripts to download binaries and run each system
-- measured results from a local Apple Silicon run
+Every system receives the same logical messages (`id`, `owner`, `room`, `data`) at up to 16 concurrent operations. Drivers use each system's native record identifier. Each write inserts one message.
 
-For **KalamDB vs PostgreSQL** (pgwire plus a KalamDB HTTP SQL column, same
-SQL and phase sizes), see [`../kalam-vs-pg`](../kalam-vs-pg). The HTTP column
-there is KalamDB `/v1/api/sql` only — not this BaaS bake-off.
+| Phase | Operations | What is reported |
+|---|---:|---|
+| Throughput inserts | 100,000 | Wall time |
+| Timed inserts | 10,000 | Wall time and per-operation p50, p75, p90, p95 |
+| First-pass point reads | 10,000 | One read per timed-insert ID, wall time and latency percentiles |
+| Repeated-key point reads | 990,000 | Repeated reads of the same 10,000 IDs, wall time and latency percentiles |
+| Throughput verification | 100,000 | Read back every throughput insert after the timed reads |
 
-## What we measure
+Timers include full response consumption, decoding, and validation. Each driver checks the operation's application-level result and every returned row's key, owner, room, and data. When a create returns an acknowledgment or an assigned ID, the readback verifies the stored row. Every worker error fails the workload. Use only logs that end the workload with `verified=true`.
 
-Shared protocol (`common/src/lib.rs`):
+The first pass uses previously unread IDs from the timed inserts. Fresh writes can still be in memory, and each server keeps its normal caches. The repeated-key pass lets features such as Convex's default query-result cache contribute. Treat these as separate measurements and label each explicitly.
 
-| Phase | Work | Concurrency |
+| Track | Operation path | Durability before successful write acknowledgment |
 |---|---|---|
-| A | Insert **100,000** chat-room messages | **16** in-flight HTTP requests |
-| B | Insert **10,000** messages, record per-op latency | 16 |
-| C | Point-read **1,000,000** times over the phase-B ids | 16 |
+| KalamDB SQL | Parameterized HTTP SQL | RocksDB synchronous WAL |
+| KalamDB Functions | HTTP functions with JSON by default | Same KalamDB configuration |
+| TrailBase v0.34.4 | HTTP Record API | SQLite WAL with `synchronous=FULL` in the pinned source build |
+| PocketBase v0.40.5 | HTTP Collection API | SQLite WAL with `synchronous=FULL` in the pinned source build |
+| SurrealDB v3.3.0 | HTTP record API, `POST` and `GET /key/message/{id}` | RocksDB `sync=every` |
+| SpacetimeDB v2.16.1 | Rust SDK, one request per persistent WebSocket, insert reducer and primary-key read procedure | On-disk commit log with confirmed reads explicitly enabled |
+| Convex precompiled-2026-11-19-9fde7cb source | HTTP mutation and `db.get` query, default query-result caching | SQLite rollback journal with `synchronous=EXTRA` in the pinned source build |
 
-Each row is a message with `owner`, `room`, and `data` (`"a message {i}"`).
+The durability target is a local disk sync before a successful write response. The engines can group syncs internally. KalamDB uses its hot RocksDB path with an explicit 32 MiB block cache, `memory_mode = "compact"`, and Parquet flushing disabled. SpacetimeDB's table uses the version's default in-memory residency policy with disk-backed durability.
 
-Reported metrics:
+The fixture performs no room-membership checks. TrailBase and PocketBase use signed-in users and retain their native owner and room relation fields. KalamDB and SurrealDB reuse a privileged bearer token. Convex uses public functions and SpacetimeDB uses anonymous SDK identities. Transport, serialization, schema validation, and auth overhead remain part of the end-to-end measurements.
 
-- wall clock for phase A / B / C
-- latency percentiles **p50 / p75 / p90 / p95** for inserts and reads
+## Realtime delivery
 
-## Purity rules (what is fair / what is not)
+Each server starts with a fresh fixture. The client seeds one room with 20 messages, opens 16 independent subscriptions, and verifies each subscriber's complete initial history. A separate writer then sends 100 more messages, spaced 50 ms apart. Each message must reach every subscriber with the expected contents and key.
 
-We keep the comparison **honest**:
+The output reports p50 and p95 for initial history, write acknowledgment, and send-to-subscriber delivery. It includes expected, received, missed, and duplicate delivery counts. Delivery latency starts when the writer invokes the operation and ends when the native client observes the message. A subscription event can reach a client before the writer receives its durable acknowledgment. The harness waits up to 15 seconds after the final write for expected deliveries and observes a 250 ms drain window for duplicates. A Convex replacement snapshot naturally includes earlier rows. The harness verifies the snapshot and records delivery when a row first appears.
 
-1. **Same machine**, same concurrency, same phase sizes.
-2. **Rust HTTP clients** for all three (no Dart/Node client-floor bias).
-3. Each system uses a **documented public write/read path** (KalamDB has two columns):
-   - TrailBase → Record API (`/api/records/v1/message_api`)
-   - PocketBase → Collections API (`/api/collections/message/records`)
-   - KalamDB SQL → SQL HTTP API (`/v1/api/sql`) with **parameterized** `$1` binds
-   - KalamDB functions → REST `POST /v1/functions/bench/{insert_message,get_message}`
-   - SurrealDB → REST `/key/:table/:id` (not `/sql` CREATE, not in-memory)
-   - SpaceTimeDB → persistent WebSocket. Writes call the `insert_message` reducer. Point reads call the `get_message` procedure, which returns the primary-key row. This is a server round trip, not a client subscription cache. The Rust SDK has no one-off SQL API. File-backed, not `--in-memory`.
-   - Convex → self-hosted `POST /api/mutation` `messages:insertMessage` and `POST /api/query` `messages:getMessage` (`db.get` on the document id). Default SQLite storage. Query cache left at the backend default.
-4. **No multi-row batch inserts** on any side. Every system issues one create and one point read per row, with 16 in-flight calls. SpaceTimeDB keeps 16 WebSockets open and pipelines one call per socket. The others use an HTTP connection pool.
-5. **KalamDB is hot-only** for this suite (no Parquet / cold flush):
-   - table created **without** `FLUSH_POLICY`
-   - `setups/kalamdb/server.toml` sets `flush.check_interval_seconds = 0`
-   - drivers never call `STORAGE FLUSH`
-6. KalamDB comparison `server.toml` uses `storage.rocksdb.memory_mode = "server"`
-   so cache/memtables scale from host RAM (cache ≈ RAM/8, hot memtable ≥ 64 MiB).
-   Product default remains `compact` (2 MiB cache / 128 KiB memtables). DataFusion
-   is still raised for the bake-off.
-7. Auth / ACL differences are documented, not hidden:
-   - TrailBase create rule checks `room_members`
-   - PocketBase create rule checks `room_members`
-   - KalamDB SQL and functions use a DBA session (no row-level ACL equivalent in these paths)
-   - SurrealDB uses root user `root`/`root` (table `PERMISSIONS FULL`; no room ACL)
-   - SurrealDB signs in once (`POST /signin`) and reuses a Bearer JWT. HTTP
-     Basic on every request re-runs Argon2id and is **not** fair usage.
-   - SpaceTimeDB calls `insert_message` and `get_message` on persistent WebSockets. The `message` table is public. There is no room-membership ACL.
-   - Convex public functions have no user auth. Document ids come back from the insert mutation and are the point-read keys.
-8. Timed point reads consume the complete response body as **bytes** and validate
-   the HTTP status for all systems. JSON decoding needed for setup and
-   generated insert IDs stays outside the timed point-read comparison.
-9. **SurrealDB is RocksDB-backed** (`rocksdb://…`), not `--mem` / `memory://`.
-   In-memory would not be comparable to the other file-backed engines.
-
-Do **not** collapse results into a single “X is faster” headline. Writes and reads can rank differently.
-
-## Layout
-
-```text
-benchv2/comparison/
-  Cargo.toml                 # workspace
-  common/                    # shared constants + percentile helper
-   drivers/
-    kalamdb/                 # hot-only SQL HTTP driver
-    kalamdb_functions/       # hot-only functions REST driver
-    trailbase/               # Record API driver
-    pocketbase/              # Collections API driver
-    surrealdb/               # REST /key API driver (RocksDB)
-    spacetimedb/             # WebSocket reducer + procedure driver
-    convex/                  # self-hosted HTTP query/mutation driver
-  setups/
-    kalamdb/server.toml      # flush scheduler disabled
-    trailbase/traildepot/    # migrations + message_api config
-    pocketbase/pb_*          # collections migrations (+ hooks)
-  scripts/
-    download-binaries.sh
-    bootstrap-pocketbase.sh
-    run-kalamdb.sh
-    run-kalamdb-functions.sh
-    run-trailbase.sh
-    run-pocketbase.sh
-    run-surrealdb.sh
-    run-spacetimedb.sh
-    run-convex.sh
-    run-all.sh
-  results/                   # timestamped run outputs
-```
-
-## Prerequisites
-
-- Rust toolchain (edition 2021 / recent stable)
-- `curl`, `python3`, `unzip`, `tar`
-- Ports free: **2900** (KalamDB SQL and KalamDB functions, sequential), **4000** (TrailBase), **8090** (PocketBase), **8000** (SurrealDB), **3000** (SpaceTimeDB), **3210** (Convex)
-
-## How to run
-
-```bash
-cd benchv2/comparison
-chmod +x scripts/*.sh
-
-# 1) Download release binaries into ./bin
-./scripts/download-binaries.sh
-
-# 2) Run one system
-./scripts/run-kalamdb.sh
-./scripts/run-kalamdb-functions.sh
-./scripts/run-trailbase.sh
-./scripts/run-pocketbase.sh
-./scripts/run-surrealdb.sh
-./scripts/run-spacetimedb.sh
-./scripts/run-convex.sh
-
-# Or all sequentially
-./scripts/run-all.sh
-
-# Recommended for publishable results: repeat with rotated server order
-COMPARISON_ORDER="trailbase pocketbase surrealdb kalamdb kalamdb-functions" ./scripts/run-all.sh
-COMPARISON_ORDER="pocketbase surrealdb kalamdb kalamdb-functions trailbase" ./scripts/run-all.sh
-```
-
-Outputs land in `results/*.txt`.
-
-Current GitHub release pins (`scripts/download-binaries.sh`):
-
-- TrailBase **v0.34.4**
-- PocketBase **v0.40.5**
-- SurrealDB **v3.3.0**
-- SpaceTimeDB **v2.16.1**
-- Convex local backend **precompiled-2026-11-19-9fde7cb** (npm `convex` 1.31.7)
-
-Re-run `./scripts/download-binaries.sh` after a pin bump; it refreshes `./bin`
-when the stamped version no longer matches.
-
-### Environment overrides
-
-| Variable | Default |
+| System | Native subscription path and how initial history is loaded |
 |---|---|
-| `KALAMDB_URL` | `http://127.0.0.1:2900` |
-| `KALAMDB_SERVER_BIN` | `../../target/release/kalamdb-server`, else `./bin/kalamdb-server` |
-| `TRAILBASE_URL` | `http://127.0.0.1:4000` |
-| `POCKETBASE_URL` | `http://127.0.0.1:8090` |
-| `SURREALDB_URL` | `http://127.0.0.1:8000` |
-| `SPACETIMEDB_URL` | `http://127.0.0.1:3000` |
-| `CONVEX_URL` | `http://127.0.0.1:3210` |
-| `COMPARISON_ORDER` | `kalamdb kalamdb-functions trailbase pocketbase surrealdb spacetimedb convex` |
+| KalamDB | SQL WebSocket subscription with native initial batches and insert notifications. The writer uses HTTP SQL. |
+| TrailBase | Record API SSE subscription and a Record API list after registration. The writer uses the Record API. |
+| PocketBase | Realtime SSE collection subscription and a Collection API list after registration. The writer uses the Collection API. |
+| SurrealDB | WebSocket `LIVE SELECT`, followed by a history query on that WebSocket before writes start. The writer uses the HTTP record API. |
+| SpacetimeDB | Rust SDK subscription and local cache, with inserts observed through SDK callbacks. The writer calls the reducer on a separate SDK connection. |
+| Convex | Official Convex client, indexed reactive room query over WebSocket, and a separate WebSocket mutation client. |
 
-### Build drivers only
+KalamDB's two operation APIs share one subscription path, so the realtime suite has six entries. This workload measures one room and continuous delivery over an established connection. It leaves reconnect and replay for separate workloads.
+
+## Running the suite
+
+Use an isolated local machine. The runners bind to loopback and reset their benchmark data directories. Keep the benchmark ports free (2900, 4000, 8090, 8000, 3000, 3210). Use the same host and versions for every track.
+
+- The SQLite source build helper pins the upstream commits, applies the durability changes, and writes binary and source stamps under `bin/`. It needs Git, Python 3, and each upstream build toolchain. TrailBase uses Rust 1.98.1, Node 22, pnpm 12, Protobuf and a C/C++ toolchain. PocketBase uses Go 1.27.2. Convex uses its pinned nightly Rust toolchain, WebAssembly target, Node 24.22.3, npm 11.11.0, and Just. [TrailBase release build](https://github.com/trailbaseio/trailbase/blob/v0.34.4/.github/workflows/release.yml) · [PocketBase Go module](https://github.com/pocketbase/pocketbase/blob/v0.40.5/go.mod) · [Convex build instructions](https://github.com/convex/convex-backend/blob/9fde7cb10083b101c27cd99a83553ce59d7b2034/BUILD.md)
+- Realtime clients other than SpacetimeDB use Node.js 22.15 or newer. SpacetimeDB uses the pinned Rust SDK and generates bindings during setup. Install the Rust WebAssembly target required by the SpacetimeDB CLI. For KalamDB, use a release build from this checkout or set `KALAMDB_SERVER_BIN` to a compatible build.
+- `KALAMDB_FUNCTION_CODEC=kalam-packed` exercises the native binary codec. `KALAMDB_HTTP2=1` exercises HTTP/2 for KalamDB. Record either override with the results.
 
 ```bash
 cd benchv2/comparison
-cargo build --release -p comparison_kalamdb -p comparison_kalamdb_functions -p comparison_trailbase -p comparison_pocketbase -p comparison_surrealdb -p comparison_spacetimedb
+bash scripts/build-durable-sqlite.sh
+bash scripts/download-binaries.sh
+
+bash scripts/run-all.sh
+bash scripts/run-realtime.sh
 ```
 
-## KalamDB hot-only details
+Run selected systems with the same workload settings.
 
-Cold storage (Parquet flush) would change the comparison mid-run. For this suite we
-force hot RocksDB paths:
-
-```toml
-# setups/kalamdb/server.toml
-[flush]
-check_interval_seconds = 0   # disable background flush scheduler
+```bash
+COMPARISON_ORDER="surrealdb convex spacetimedb kalamdb" bash scripts/run-all.sh
+REALTIME_SUBSCRIBERS=64 bash scripts/run-realtime.sh convex spacetimedb surrealdb
 ```
 
-```sql
--- created by drivers/kalamdb (no FLUSH_POLICY)
-CREATE TABLE bench.message (
-  id INT PRIMARY KEY,
-  owner TEXT,
-  room TEXT,
-  data TEXT
-);
-```
+Realtime also accepts `REALTIME_HISTORY`, `REALTIME_MESSAGES`, and `REALTIME_INTERVAL_MS`. History and message counts must be positive and sum to at most 500. Use 1–128 subscribers and an interval of 1–60,000 ms. Keep the same settings across systems. `COMPARISON_ORDER` controls the operation runner's order. The realtime wrapper runs systems in argument order.
 
-The flush scheduler explicitly skips tables with no flush policy (“hot-only”).
+Operation logs are written as `results/verified-*.txt`. Realtime logs use `results/realtime-*.txt`. Repeat on the same host with rotated order and share the raw successful logs alongside any published summary. Startup probes finish before database-specific fixture initialization and are useful for local diagnostics. Report their definitions when citing them.
 
-`setups/kalamdb/server.toml` sets `storage.rocksdb.memory_mode = "server"` so the
-block cache and hot memtables scale from host RAM. Product default remains
-`compact`. Point `KALAMDB_SERVER_BIN` at a server built from this tree; the
-downloaded `v0.5.5-rc.1` binary does not know the `server` profile or ABI v2
-host SQL (`ctx.db.execute` / `ctx.db.query`).
+## Historical results
 
-The SQL and functions tracks share this config. `[functions.runtime]` sets
-`max_active = 16` (same as harness concurrency) and a 15s procedure timeout.
+Dated reports under `results/` record earlier harnesses. Those runs used different durability and validation settings. This methodology requires fresh measurements. The [PostgreSQL comparison](../kalam-vs-pg) is a separate workload.
 
-## Driver code (what each request looks like)
-
-### KalamDB insert / point read
-
-Use **parameterized** SQL so the server plan cache can reuse one template
-(`PlanCacheKey` is keyed by full SQL text; DML plan reuse requires `params`):
-
-```http
-POST /v1/api/sql
-Authorization: Bearer <access_token>
-{
-  "sql": "INSERT INTO bench.message (id, owner, room, data) VALUES ($1, $2, $3, $4)",
-  "params": [1, "user1", "room0", "a message 1"]
-}
-
-POST /v1/api/sql
-{
-  "sql": "SELECT id, owner, room, data FROM bench.message WHERE id = $1",
-  "params": [1]
-}
-```
-
-Do **not** string-interpolate literals into SQL for this bench — that defeats caching
-(unique SQL → unique cache key → replan every request).
-
-### KalamDB functions REST insert / point read
-
-Second KalamDB column. Setup still uses SQL HTTP (`CREATE TABLE` + `CREATE PROCEDURE`).
-Timed requests are functions REST only — not `/v1/api/sql`:
-
-```http
-POST /v1/functions/bench/insert_message
-Authorization: Bearer <access_token>
-{ "id": 1, "owner": "user1", "room": "room0", "data": "a message 1" }
-
-POST /v1/functions/bench/get_message
-{ "id": 1 }
-```
-
-Procedures are schema-first inline JavaScript (`RETURNS` + `LANGUAGE JAVASCRIPT`
-+ dollar-quoted body). They issue nested `ctx.db.execute` / `ctx.db.query` with
-`$n` placeholders and named `input` (`input.id`, …) so the nested statements
-share the SQL HTTP plan cache. That is still **not** a Surreal `/key` equivalent:
-each call still pays V8 + nested SQL + Raft.
-
-KalamDB SQL and functions share port **2900** and the same `setups/kalamdb` data dir.
-Run them sequentially (as `run-all.sh` does), or set `KALAMDB_PORT` for one of them.
-
-### TrailBase insert / point read
-
-```http
-POST /api/records/v1/message_api
-Authorization: Bearer <auth_token>
-{ "_owner": "…", "room": "…", "data": "a message N" }
-
-GET /api/records/v1/message_api/{id}
-```
-
-### PocketBase insert / point read
-
-```http
-POST /api/collections/message/records
-Authorization: <token>
-{ "owner": "…", "room": "…", "data": "a message N" }
-
-GET /api/collections/message/records/{id}
-```
-
-### SurrealDB insert / point read
-
-Durable engine: `surreal start … rocksdb://setups/surrealdb/data`. Namespace/database `bench`. Client-chosen integer ids (same as KalamDB).
-
-```http
-POST /signin
-{ "user": "root", "pass": "root" }
-→ { "token": "<jwt>" }
-
-POST /key/message/{id}
-Authorization: Bearer <jwt>
-Accept: application/json
-Surreal-NS: bench
-Surreal-DB: bench
-{ "owner": "user1", "room": "room0", "data": "a message 1" }
-
-GET /key/message/{id}
-```
-
-Do **not** send `Authorization: Basic` on the timed create/get path. SurrealDB
-verifies root passwords with Argon2id, so Basic-per-request adds tens of
-milliseconds that the other drivers do not pay (they all log in once).
-
-### SpaceTimeDB insert / point read
-
-File-backed `spacetime start` (no `--in-memory`). Database name `bench`. Sixteen persistent WebSockets. Inserts call the reducer `insert_message`. Point reads call the procedure `get_message`, which does a primary-key lookup and returns the row to that caller. Subscribing to the table and reading the client cache is a different measurement and is not used here.
-
-### Convex insert / point read
-
-Self-hosted `convex-local-backend` with its default SQLite database. No user auth.
-
-```http
-POST /api/mutation
-{"path":"messages:insertMessage","args":{"id":1,"owner":"user1","room":"room0","data":"a message 1"},"format":"json"}
-
-POST /api/query
-{"path":"messages:getMessage","args":{"id":"<document id from the insert>"},"format":"json"}
-```
-
-`getMessage` uses `db.get`. The backend query cache stays at its default. Reads repeat the same document ids, so that cache is part of the result. Function errors come back as HTTP 200 with `status: "error"`, and the driver treats that as failure.
-
-Concurrency is a Tokio `Semaphore` of size **16** (same as TrailBase’s Rust harness).
-Timed point reads consume response bytes without decoding JSON in all five drivers.
-This keeps client-side JSON parsing out of the server read comparison.
-
-## Memory
-
-Each result records the server process only. The metric is macOS `phys_footprint` from `footprint`, the same number Activity Monitor and jetsam use. `phys_footprint_peak` is the kernel high-water mark since that process started, so the sample taken after the timed client still contains the peak. Ready is the sample immediately before the client. Retained is the sample after the client, with the server still running. Virtual size is not used. A reserved page pool that was never touched does not count.
-
-Startup is `# startup_seconds`: wall clock from process spawn until that script's readiness probe. It does not include compiling the Rust client, harness schema bootstrap, or the timed inserts and reads. `COMPARISON_STARTUP_ONLY=1 ./scripts/run-all.sh` records startup and stops there. A full `./scripts/run-all.sh` writes the same field into each result log. Publish with `pnpm sync:comparisons` in KalamSite.
-
-## Default credentials (local bench only)
-
-| System | User | Password |
-|---|---|---|
-| KalamDB | `admin` | `kalamdb123` |
-| TrailBase | `user@localhost` | `secret` |
-| PocketBase | `user@bar.com` / admin `admin@bar.com` | `1234567890` |
-| SurrealDB | `root` | `root` |
-
-## Measured snapshot (2026-09-16)
-
-Machine: **Apple M5 Pro**, 15 cores, 24 GB RAM.
-
-Versions:
-
-- KalamDB **v0.7.0-dev.0** (`902bf610`, local release binary)
-- TrailBase **v0.33.14**
-- PocketBase **v0.40.3**
-- SurrealDB **v3.2.4**
-
-| Metric | KalamDB SQL | KalamDB functions | TrailBase | PocketBase | SurrealDB |
-|---|---:|---:|---:|---:|---:|
-| 100k inserts (wall) | 3.38 s | 11.82 s | 6.62 s | 12.30 s | 2.59 s |
-| Insert p50 / p95 | 356 µs / 509 µs | 1.69 ms / 2.56 ms | 1.02 ms / 1.59 ms | 1.65 ms / 4.38 ms | 341 µs / 464 µs |
-| 1M point reads (wall) | 15.05 s | 78.48 s | 49.79 s | 19.24 s | 14.31 s |
-| Read p50 / p95 | 218 µs / 298 µs | 1.18 ms / 1.80 ms | 724 µs / 1.06 ms | 248 µs / 497 µs | 194 µs / 281 µs |
-
-KalamDB functions use schema-first inline JS (`ctx.db.execute` / `ctx.db.query`).
-That column is not a Record/CRUD GET: each call still pays V8 + nested SQL.
-
-Full captured logs: `results/2026-09-16-apple-m5-pro.md`.
-
-## Attribution
-
-TrailBase setups / protocol inspiration:
-[trailbaseio/trailbase-benchmark](https://github.com/trailbaseio/trailbase-benchmark)
-(Apache-2.0 / project license). PocketBase collection migrations were adapted from
-that harness’s `setups/pocketbase`.
+The original operation workload was adapted from [TrailBase's benchmark harness](https://github.com/trailbaseio/trailbase-benchmark).

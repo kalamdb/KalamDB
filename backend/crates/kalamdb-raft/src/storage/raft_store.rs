@@ -29,7 +29,7 @@ use kalamdb_store::{
     raft_storage::{
         RaftLogEntry, RaftLogId, RaftPartitionStore, RaftSnapshotData, RaftSnapshotMeta, RaftVote,
     },
-    ApplyBatch, StorageBackend,
+    ApplyBatch, PendingEffects, StorageBackend,
 };
 use openraft::{
     storage::{IOFlushed, LogState, RaftLogReader, RaftLogStorage, RaftStateMachine},
@@ -1614,6 +1614,9 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         let backend_owner = backend.coalesce_token();
         bind_commit_target(Arc::clone(&backend));
         let mut results = Vec::with_capacity(entries.len());
+        let mut written_backends: Vec<Arc<dyn StorageBackend>> = Vec::with_capacity(1);
+        let mut pending_effects: Vec<PendingEffects> = Vec::with_capacity(entries.len());
+
         for entry in entries {
             let prior_index = self.state_machine.last_applied_index();
             let prior_term = self.state_machine.last_applied_term();
@@ -1628,13 +1631,21 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
                 .await;
             let finished = batch.finish();
             let failed = match result {
-                Ok(mut responses) => {
-                    if let Err(error) = finished.commit_await().await {
-                        Some(StorageError::<KalamTypeConfig>::write(error_source(&error)).into())
-                    } else {
+                Ok(mut responses) => match finished.commit_unsynced() {
+                    Ok((backends, effects)) => {
+                        for b in backends {
+                            let token = b.coalesce_token();
+                            if !written_backends.iter().any(|w| w.coalesce_token() == token) {
+                                written_backends.push(b);
+                            }
+                        }
+                        pending_effects.push(effects);
                         results.append(&mut responses);
                         None
-                    }
+                    },
+                    Err(error) => {
+                        Some(StorageError::<KalamTypeConfig>::write(error_source(&error)).into())
+                    },
                 },
                 Err(error) => Some(error),
             };
@@ -1646,8 +1657,19 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
                 {
                     self.rewind_unpersisted_apply(prior_index, prior_term, prior_applied);
                 }
+                for b in &written_backends {
+                    let _ = b.sync_wal();
+                }
                 return Err(error);
             }
+        }
+
+        for b in &written_backends {
+            b.sync_wal()
+                .map_err(|error| StorageError::<KalamTypeConfig>::write(error_source(&error)))?;
+        }
+        for effects in pending_effects {
+            effects.finish().await;
         }
         Ok(results)
     }
@@ -1896,16 +1918,41 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftStateMachine<KalamTypeCo
             > + Unpin
             + OptionalSend,
     {
+        const APPLY_SYNC_BATCH_LIMIT: usize = 256;
+        let mut batch_entries = Vec::new();
+        let mut batch_responders = Vec::new();
+
         while let Some(item) = tokio_stream::StreamExt::next(&mut entries).await {
             let (entry, responder) = item?;
-            let mut results = kalamdb_observability::kdb_await_in_info_span!(
-                KalamRaftStorage::apply_to_state_machine(self, std::slice::from_ref(&entry)),
+            batch_entries.push(entry);
+            batch_responders.push(responder);
+            if batch_entries.len() >= APPLY_SYNC_BATCH_LIMIT {
+                let results = kalamdb_observability::kdb_await_in_info_span!(
+                    KalamRaftStorage::apply_to_state_machine(self, &batch_entries),
+                    "raft.apply",
+                    entry_count = batch_entries.len() as u64
+                )
+                .map_err(storage_io)?;
+                for (responder, result) in batch_responders.drain(..).zip(results) {
+                    if let Some(responder) = responder {
+                        responder.send(result);
+                    }
+                }
+                batch_entries.clear();
+            }
+        }
+
+        if !batch_entries.is_empty() {
+            let results = kalamdb_observability::kdb_await_in_info_span!(
+                KalamRaftStorage::apply_to_state_machine(self, &batch_entries),
                 "raft.apply",
-                entry_count = 1u64
+                entry_count = batch_entries.len() as u64
             )
             .map_err(storage_io)?;
-            if let Some(responder) = responder {
-                responder.send(results.pop().unwrap_or_default());
+            for (responder, result) in batch_responders.drain(..).zip(results) {
+                if let Some(responder) = responder {
+                    responder.send(result);
+                }
             }
         }
         Ok(())

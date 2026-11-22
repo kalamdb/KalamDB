@@ -168,12 +168,26 @@ pub struct CoalescedBatch {
     async_hooks: Vec<AsyncPersistHook>,
 }
 
+/// Deferred sync and async hooks that must run only after WAL durability is confirmed.
+pub struct PendingEffects {
+    after_persist: Vec<PersistHook>,
+    async_hooks: Vec<AsyncPersistHook>,
+}
+
+impl PendingEffects {
+    /// Run synchronous hooks, then await deferred async hooks.
+    pub async fn finish(self) {
+        for hook in self.after_persist {
+            hook();
+        }
+        for hook in self.async_hooks {
+            hook.await;
+        }
+    }
+}
+
 impl CoalescedBatch {
-    /// Write each backend's buffered operations, then run after-persist hooks.
-    ///
-    /// The session owner is written last. Hooks run only after every leg
-    /// succeeds. An unbound token is an error and does not run the hooks.
-    pub fn commit(mut self) -> Result<(), StorageError> {
+    fn take_ordered_pieces(&mut self) -> Vec<(usize, Vec<Operation>)> {
         let ops = std::mem::take(&mut self.ops);
         let mut remaining = ops;
         let mut pieces = Vec::with_capacity(self.legs.len());
@@ -185,7 +199,15 @@ impl CoalescedBatch {
         }
         let owner = self.owner;
         pieces.sort_by_key(|(token, _)| (*token == owner, *token));
-        for (token, leg) in pieces {
+        pieces
+    }
+
+    /// Write each backend's buffered operations, then run after-persist hooks.
+    ///
+    /// The session owner is written last. Hooks run only after every leg
+    /// succeeds. An unbound token is an error and does not run the hooks.
+    pub fn commit(mut self) -> Result<(), StorageError> {
+        for (token, leg) in self.take_ordered_pieces() {
             if leg.is_empty() {
                 continue;
             }
@@ -200,6 +222,35 @@ impl CoalescedBatch {
             hook();
         }
         Ok(())
+    }
+
+    /// Write each backend's buffered operations via [`StorageBackend::batch_unsynced`]
+    /// and return the written backends plus deferred hooks.
+    ///
+    /// Callers must call [`StorageBackend::sync_wal`] on every returned backend
+    /// before calling [`PendingEffects::finish`] or acknowledging durability.
+    pub fn commit_unsynced(
+        mut self,
+    ) -> Result<(Vec<Arc<dyn StorageBackend>>, PendingEffects), StorageError> {
+        let pieces = self.take_ordered_pieces();
+        let mut backends = Vec::with_capacity(pieces.len());
+        for (token, leg) in pieces {
+            if leg.is_empty() {
+                continue;
+            }
+            let backend = commit_target(token).ok_or_else(|| {
+                StorageError::Other(format!(
+                    "coalesced writes for backend {token} have no commit target"
+                ))
+            })?;
+            backend.batch_unsynced(leg)?;
+            backends.push(backend);
+        }
+        let effects = PendingEffects {
+            after_persist: std::mem::take(&mut self.after_persist),
+            async_hooks: std::mem::take(&mut self.async_hooks),
+        };
+        Ok((backends, effects))
     }
 
     /// Persist buffered writes, run synchronous hooks, then await deferred async work.

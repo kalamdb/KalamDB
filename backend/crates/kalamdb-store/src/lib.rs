@@ -64,7 +64,7 @@ pub use storage_trait::{
 };
 pub use write_coalesce::{
     bind_commit_target, buffer_operations, coalesce_session_active, defer_after_persist,
-    defer_after_persist_async, with_write_coalesce, ApplyBatch, CoalescedBatch,
+    defer_after_persist_async, with_write_coalesce, ApplyBatch, CoalescedBatch, PendingEffects,
 };
 
 // Make test_utils available for testing in dependent crates

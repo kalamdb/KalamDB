@@ -8,13 +8,13 @@ ADMIN_EMAIL="admin@bar.com"
 USER_EMAIL="user@bar.com"
 PASSWORD="1234567890"
 ROOM_NAME="room0"
-BIN="${ROOT}/bin/pocketbase"
+BIN="${ROOT}/bin/pocketbase-durable"
 DATA="${ROOT}/setups/pocketbase/pb_data"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 if [[ ! -x "$BIN" ]]; then
-  echo "Missing $BIN — run scripts/download-binaries.sh first" >&2
+  echo "Missing $BIN — run bash scripts/build-durable-sqlite.sh pocketbase first" >&2
   exit 1
 fi
 

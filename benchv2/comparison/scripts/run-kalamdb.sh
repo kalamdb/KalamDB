@@ -31,7 +31,10 @@ KALAMDB_CLUSTER_API_ADDR="127.0.0.1:$PORT" \
 KALAMDB_CLUSTER_RPC_ADDR="127.0.0.1:$RPC_PORT" \
     "$BIN" "$SETUP/server.toml" >"$RESULTS/kalamdb-server.log" 2>&1 &
 SERVER_PID=$!
-cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
+cleanup() {
+  kill "$SERVER_PID" 2>/dev/null || true
+  wait "$SERVER_PID" 2>/dev/null || true
+}
 trap cleanup EXIT
 
 for _ in $(seq 1 400); do
@@ -43,10 +46,15 @@ done
 curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null
 startup_finish
 startup_only_exit kalamdb-sql
+if [[ "${COMPARISON_WORKLOAD:-operations}" == "realtime" ]]; then
+  COMPARISON_SERVER_BUILD="$BIN RocksDB synchronous WAL" \
+    bash "$ROOT/scripts/run-realtime.sh" --client kalamdb "http://127.0.0.1:${PORT}"
+  exit 0
+fi
 
 cd "$ROOT"
 cargo build --release -p comparison_kalamdb
-OUT="$RESULTS/kalamdb-$(date +%Y%m%d-%H%M%S).txt"
+OUT="$RESULTS/verified-kalamdb-$(date +%Y%m%d-%H%M%S).txt"
 # shellcheck source=memory-sample.sh
 source "$ROOT/scripts/memory-sample.sh"
 memory_mark_ready "$SERVER_PID"
@@ -58,14 +66,14 @@ memory_mark_ready "$SERVER_PID"
   echo "# rocksdb.memory_mode=compact (32MiB cache, 16MiB hot_data, 8MiB hot_index/raft, 1MiB system)"
   echo "# datafusion query_parallelism=2 max_partitions=1 batch_size=128"
   echo "# sql=parameterized; no multi-row batch (matches TB/PB one-row HTTP)"
-  echo "# timed_read_response=bytes; HTTP status validation only (matches TB/PB)"
+  echo "# durability=RocksDB synchronous WAL"
   echo "# http2_prior_knowledge=${KALAMDB_HTTP2:-0}"
   echo "# schema_response_cache=on; hot_only_pk_skip_cold=on"
   echo "# started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   startup_header
   KALAMDB_URL="http://127.0.0.1:${PORT}" ./target/release/comparison_kalamdb
   echo "# finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-} | tee "$OUT"
+} 2>&1 | tee "$OUT"
 
 memory_append_result "$SERVER_PID" "$OUT"
 

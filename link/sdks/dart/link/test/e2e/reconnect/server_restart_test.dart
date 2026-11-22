@@ -9,8 +9,9 @@ import '../helpers.dart';
 Future<void> waitFor(bool Function() condition) async {
   final until = DateTime.now().add(const Duration(seconds: 120));
   while (!condition()) {
-    if (DateTime.now().isAfter(until))
+    if (DateTime.now().isAfter(until)) {
       throw TimeoutException('waiting for event');
+    }
     await Future<void>.delayed(const Duration(milliseconds: 50));
   }
 }

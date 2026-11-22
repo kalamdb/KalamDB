@@ -37,6 +37,11 @@ pub(crate) fn apply_db_settings(db_opts: &mut Options, settings: &RocksDbSetting
     db_opts.set_avoid_unnecessary_blocking_io(true);
     db_opts.set_bytes_per_sync(BYTES_PER_SYNC);
     db_opts.set_wal_bytes_per_sync(BYTES_PER_SYNC);
+    if settings.sync_writes && !settings.disable_wal {
+        // Group commit calls `flush_wal(true)` before acknowledging writes, so
+        // buffering WAL bytes in user space avoids a per-write kernel flush.
+        db_opts.set_manual_wal_flush(true);
+    }
     // A flush storm writes tens of kilobytes of info log per second. Roll it.
     db_opts.set_max_log_file_size(INFO_LOG_MAX_BYTES);
     db_opts.set_keep_log_file_num(INFO_LOG_KEEP_FILES);

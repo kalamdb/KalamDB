@@ -4,18 +4,14 @@
 //! Expects seeded admin/user/room from `scripts/bootstrap-pocketbase.sh`.
 
 use comparison_common::{
-    message_data, print_latencies, LATENCY_INSERTS, LATENCY_READS, LIMIT, N, POCKETBASE_PASSWORD,
-    POCKETBASE_ROOM_NAME, POCKETBASE_USER_EMAIL,
+    expect_message, message_data, run, POCKETBASE_PASSWORD, POCKETBASE_ROOM_NAME,
+    POCKETBASE_USER_EMAIL,
 };
-use crossbeam_queue::SegQueue;
-use lazy_static::lazy_static;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::json;
 use std::env;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::Semaphore;
+use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
 struct AuthResponse {
@@ -37,11 +33,6 @@ struct ListResponse<T> {
 struct NamedRecord {
     id: String,
     name: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CreatedRecord {
-    id: String,
 }
 
 fn base_url() -> String {
@@ -103,132 +94,33 @@ async fn create_message(
         let body = resp.text().await.unwrap_or_default();
         anyhow::bail!("create failed status={status} body={body}");
     }
-    let created: CreatedRecord = resp.json().await?;
-    Ok(created.id)
+    let row: serde_json::Value = resp.json().await?;
+    let key = row["id"]
+        .as_str()
+        .filter(|key| !key.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("missing PocketBase record ID: {row}"))?;
+    expect_message(&row, json!(key), "owner", owner, room, i)?;
+    Ok(key.to_owned())
 }
 
-async fn read_message(http: &Client, base: &str, token: &str, id: &str) -> anyhow::Result<()> {
-    let resp = http
+async fn read_message(
+    http: &Client,
+    base: &str,
+    token: &str,
+    owner: &str,
+    room: &str,
+    id: String,
+    sequence: i64,
+) -> anyhow::Result<()> {
+    let row: serde_json::Value = http
         .get(format!("{base}/api/collections/message/records/{id}"))
         .bearer_auth(token)
         .send()
+        .await?
+        .error_for_status()?
+        .json()
         .await?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        anyhow::bail!("read failed status={status} body={body}");
-    }
-    let _ = resp.bytes().await?;
-    Ok(())
-}
-
-async fn insert_benchmark(
-    http: &Client,
-    base: &str,
-    token: &str,
-    owner: &str,
-    room: &str,
-) -> anyhow::Result<()> {
-    lazy_static! {
-        static ref THROTTLER: Semaphore = Semaphore::new(LIMIT);
-    }
-    let start = Instant::now();
-    for id in 0..N {
-        let http = http.clone();
-        let base = base.to_string();
-        let token = token.to_string();
-        let owner = owner.to_string();
-        let room = room.to_string();
-        let handle = THROTTLER.acquire().await?;
-        tokio::spawn(async move {
-            create_message(&http, &base, &token, &owner, &room, id)
-                .await
-                .expect("insert");
-            drop(handle);
-        });
-    }
-    let _ = THROTTLER.acquire_many(LIMIT as u32).await?;
-    println!("Inserted {N} rows in {:?}", start.elapsed());
-    Ok(())
-}
-
-async fn latency_benchmark(
-    http: &Client,
-    base: &str,
-    token: &str,
-    owner: &str,
-    room: &str,
-) -> anyhow::Result<()> {
-    let record_ids = Arc::new(SegQueue::<String>::new());
-
-    {
-        lazy_static! {
-            static ref THROTTLER: Semaphore = Semaphore::new(LIMIT);
-        }
-        let insert_latencies = Arc::new(SegQueue::<Duration>::new());
-        let start = Instant::now();
-        for id in 0..LATENCY_INSERTS {
-            let http = http.clone();
-            let base = base.to_string();
-            let token = token.to_string();
-            let owner = owner.to_string();
-            let room = room.to_string();
-            let latencies = insert_latencies.clone();
-            let ids = record_ids.clone();
-            let handle = THROTTLER.acquire().await?;
-            tokio::spawn(async move {
-                let t0 = Instant::now();
-                let record_id = create_message(&http, &base, &token, &owner, &room, id)
-                    .await
-                    .expect("insert");
-                latencies.push(t0.elapsed());
-                ids.push(record_id);
-                drop(handle);
-            });
-        }
-        let _ = THROTTLER.acquire_many(LIMIT as u32).await?;
-        println!("Inserted {LATENCY_INSERTS} rows in {:?}", start.elapsed());
-        print_latencies(
-            Arc::into_inner(insert_latencies)
-                .unwrap()
-                .into_iter()
-                .collect(),
-        );
-    }
-
-    let ids: Vec<String> = Arc::into_inner(record_ids).unwrap().into_iter().collect();
-    anyhow::ensure!(!ids.is_empty(), "no record ids for read phase");
-
-    {
-        lazy_static! {
-            static ref THROTTLER: Semaphore = Semaphore::new(LIMIT);
-        }
-        let read_latencies = Arc::new(SegQueue::<Duration>::new());
-        let start = Instant::now();
-        for idx in 0..LATENCY_READS {
-            let http = http.clone();
-            let base = base.to_string();
-            let token = token.to_string();
-            let latencies = read_latencies.clone();
-            let id = ids[(idx as usize) % ids.len()].clone();
-            let handle = THROTTLER.acquire().await?;
-            tokio::spawn(async move {
-                let t0 = Instant::now();
-                read_message(&http, &base, &token, &id).await.expect("read");
-                latencies.push(t0.elapsed());
-                drop(handle);
-            });
-        }
-        let _ = THROTTLER.acquire_many(LIMIT as u32).await?;
-        println!("Read {LATENCY_READS} rows in {:?}", start.elapsed());
-        print_latencies(
-            Arc::into_inner(read_latencies)
-                .unwrap()
-                .into_iter()
-                .collect(),
-        );
-    }
-    Ok(())
+    expect_message(&row, json!(id), "owner", owner, room, sequence)
 }
 
 #[tokio::main]
@@ -243,7 +135,9 @@ async fn main() -> anyhow::Result<()> {
     let room_id = find_room_id(&http, &base, &token).await?;
     println!("logged in to {base} owner={owner_id} room={room_id}");
 
-    insert_benchmark(&http, &base, &token, &owner_id, &room_id).await?;
-    latency_benchmark(&http, &base, &token, &owner_id, &room_id).await?;
-    Ok(())
+    run(
+        |id| create_message(&http, &base, &token, &owner_id, &room_id, id),
+        |key, id| read_message(&http, &base, &token, &owner_id, &room_id, key, id),
+    )
+    .await
 }

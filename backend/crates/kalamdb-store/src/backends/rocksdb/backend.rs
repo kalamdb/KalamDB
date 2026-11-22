@@ -338,6 +338,90 @@ impl RocksDBBackend {
         }
     }
 
+    fn write_batch(&self, operations: Vec<Operation>, sync: bool) -> Result<()> {
+        let _backend = kalamdb_observability::dml_stage::stage_guard(
+            kalamdb_observability::dml_stage::DmlStage::BackendSubmit,
+        );
+        if kalamdb_observability::dml_stage::tracing_enabled() {
+            let submitted_bytes = operations
+                .iter()
+                .map(|op| match op {
+                    Operation::Put { key, value, .. } => key.len() + value.len(),
+                    Operation::Delete { key, .. } => key.len(),
+                })
+                .sum::<usize>() as u64;
+            kalamdb_observability::dml_stage::add_units(
+                kalamdb_observability::dml_stage::DmlStage::BackendSubmit,
+                operations.len() as u64,
+            );
+            kalamdb_observability::dml_stage::add_count(
+                kalamdb_observability::dml_stage::DmlCount::SubmittedBytes,
+                submitted_bytes,
+            );
+        }
+        let _span = kalamdb_observability::kdb_debug_span_entered!(
+            "rocksdb.batch",
+            op_count = operations.len()
+        );
+
+        if operations.is_empty() {
+            return Ok(());
+        }
+
+        let mut batch = WriteBatch::default();
+        // Most write batches touch 1-4 partitions (row, pk index, raft log);
+        // linear lookup over borrowed names avoids per-batch HashMap + String allocations.
+        let mut partition_cache: Vec<(&str, Arc<BoundColumnFamily<'_>>, Vec<u8>)> =
+            Vec::with_capacity(operations.len().min(4));
+        let mut physical_key = Vec::with_capacity(64);
+
+        for op in &operations {
+            let (partition, key, value) = match op {
+                Operation::Put {
+                    partition,
+                    key,
+                    value,
+                } => (partition, key.as_slice(), Some(value.as_slice())),
+                Operation::Delete { partition, key } => (partition, key.as_slice(), None),
+            };
+
+            let partition_name = partition.name();
+            let entry_idx = match partition_cache
+                .iter()
+                .position(|(name, _, _)| *name == partition_name)
+            {
+                Some(idx) => idx,
+                None => {
+                    let cf = self.get_cf(partition)?;
+                    partition_cache.push((
+                        partition_name,
+                        cf,
+                        partition_key_prefix(partition_name),
+                    ));
+                    partition_cache.len() - 1
+                },
+            };
+            let (_, cf, prefix) = &partition_cache[entry_idx];
+            physical_key.clear();
+            physical_key.reserve(prefix.len() + key.len());
+            physical_key.extend_from_slice(prefix);
+            physical_key.extend_from_slice(key);
+
+            match value {
+                Some(value) => batch.put_cf(cf, &physical_key, value),
+                None => batch.delete_cf(cf, &physical_key),
+            }
+        }
+
+        self.db
+            .write_opt(batch, &self.write_opts)
+            .map_err(|e| StorageError::IoError(e.to_string()))?;
+        if sync {
+            self.durable_after_write()?;
+        }
+        Ok(())
+    }
+
     fn tracked_cf_names(&self) -> Vec<String> {
         match self.known_cf_names.read() {
             Ok(names) if names.is_empty() => vec!["default".to_string()],
@@ -474,83 +558,14 @@ impl StorageBackend for RocksDBBackend {
         else {
             return Ok(());
         };
-        let _backend = kalamdb_observability::dml_stage::stage_guard(
-            kalamdb_observability::dml_stage::DmlStage::BackendSubmit,
-        );
-        if kalamdb_observability::dml_stage::tracing_enabled() {
-            let submitted_bytes = operations
-                .iter()
-                .map(|op| match op {
-                    Operation::Put { key, value, .. } => key.len() + value.len(),
-                    Operation::Delete { key, .. } => key.len(),
-                })
-                .sum::<usize>() as u64;
-            kalamdb_observability::dml_stage::add_units(
-                kalamdb_observability::dml_stage::DmlStage::BackendSubmit,
-                operations.len() as u64,
-            );
-            kalamdb_observability::dml_stage::add_count(
-                kalamdb_observability::dml_stage::DmlCount::SubmittedBytes,
-                submitted_bytes,
-            );
-        }
-        let _span = kalamdb_observability::kdb_debug_span_entered!(
-            "rocksdb.batch",
-            op_count = operations.len()
-        );
+        self.write_batch(operations, true)
+    }
 
-        if operations.is_empty() {
-            return Ok(());
-        }
+    fn batch_unsynced(&self, operations: Vec<Operation>) -> Result<()> {
+        self.write_batch(operations, false)
+    }
 
-        let mut batch = WriteBatch::default();
-        // Most write batches touch 1-4 partitions (row, pk index, raft log);
-        // linear lookup over borrowed names avoids per-batch HashMap + String allocations.
-        let mut partition_cache: Vec<(&str, Arc<BoundColumnFamily<'_>>, Vec<u8>)> =
-            Vec::with_capacity(operations.len().min(4));
-        let mut physical_key = Vec::with_capacity(64);
-
-        for op in &operations {
-            let (partition, key, value) = match op {
-                Operation::Put {
-                    partition,
-                    key,
-                    value,
-                } => (partition, key.as_slice(), Some(value.as_slice())),
-                Operation::Delete { partition, key } => (partition, key.as_slice(), None),
-            };
-
-            let partition_name = partition.name();
-            let entry_idx = match partition_cache
-                .iter()
-                .position(|(name, _, _)| *name == partition_name)
-            {
-                Some(idx) => idx,
-                None => {
-                    let cf = self.get_cf(partition)?;
-                    partition_cache.push((
-                        partition_name,
-                        cf,
-                        partition_key_prefix(partition_name),
-                    ));
-                    partition_cache.len() - 1
-                },
-            };
-            let (_, cf, prefix) = &partition_cache[entry_idx];
-            physical_key.clear();
-            physical_key.reserve(prefix.len() + key.len());
-            physical_key.extend_from_slice(prefix);
-            physical_key.extend_from_slice(key);
-
-            match value {
-                Some(value) => batch.put_cf(cf, &physical_key, value),
-                None => batch.delete_cf(cf, &physical_key),
-            }
-        }
-
-        self.db
-            .write_opt(batch, &self.write_opts)
-            .map_err(|e| StorageError::IoError(e.to_string()))?;
+    fn sync_wal(&self) -> Result<()> {
         self.durable_after_write()
     }
 

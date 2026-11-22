@@ -3,12 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-
-# Prefer a locally built release server (schema-first functions + hot-only PK tweaks).
-# shellcheck source=resolve-kalamdb-server.sh
-source "$ROOT/scripts/resolve-kalamdb-server.sh"
-
-"$ROOT/scripts/download-binaries.sh"
+export COMPARISON_WORKLOAD=operations
 
 ORDER="${COMPARISON_ORDER:-kalamdb kalamdb-functions trailbase pocketbase surrealdb spacetimedb convex}"
 for system in $ORDER; do
@@ -17,8 +12,10 @@ for system in $ORDER; do
     kalamdb-functions) "$ROOT/scripts/run-kalamdb-functions.sh" ;;
     trailbase) "$ROOT/scripts/run-trailbase.sh" ;;
     pocketbase) "$ROOT/scripts/run-pocketbase.sh" ;;
-    surrealdb) "$ROOT/scripts/run-surrealdb.sh" ;;
-    spacetimedb) "$ROOT/scripts/run-spacetimedb.sh" ;;
+    surrealdb|spacetimedb)
+      "$ROOT/scripts/download-binaries.sh" "$system"
+      "$ROOT/scripts/run-$system.sh"
+      ;;
     convex) "$ROOT/scripts/run-convex.sh" ;;
     *)
       echo "Unknown comparison system '$system' in COMPARISON_ORDER" >&2

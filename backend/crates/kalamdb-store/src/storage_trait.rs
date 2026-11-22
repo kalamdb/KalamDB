@@ -113,6 +113,20 @@ pub trait StorageBackend: Send + Sync {
     /// Either all operations succeed or none are applied.
     fn batch(&self, operations: Vec<Operation>) -> Result<()>;
 
+    /// Executes multiple operations atomically without waiting for a WAL sync.
+    ///
+    /// Callers must call [`Self::sync_wal`] before acknowledging durability or
+    /// firing post-persist hooks. Backends without deferred sync fall back to
+    /// [`Self::batch`].
+    fn batch_unsynced(&self, operations: Vec<Operation>) -> Result<()> {
+        self.batch(operations)
+    }
+
+    /// Flushes and syncs WAL entries written by prior [`Self::batch_unsynced`] calls.
+    fn sync_wal(&self) -> Result<()> {
+        Ok(())
+    }
+
     /// Identity used to keep a coalesced apply batch on this backend.
     ///
     /// The Raft log store and the table store can be different objects. Apply

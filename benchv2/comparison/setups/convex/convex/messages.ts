@@ -31,3 +31,26 @@ export const getMessage = query({
     return await ctx.db.get(args.id);
   },
 });
+
+export const insertRealtimeMessage = mutation({
+  args: {
+    id: v.number(),
+    owner: v.string(),
+    room: v.string(),
+    data: v.string(),
+  },
+  returns: v.id("realtime_message"),
+  handler: async (ctx, args) => {
+    return await ctx.db.insert("realtime_message", args);
+  },
+});
+
+export const roomMessages = query({
+  args: { room: v.string() },
+  handler: async (ctx, { room }) => {
+    return await ctx.db
+      .query("realtime_message")
+      .withIndex("by_room", (q) => q.eq("room", room))
+      .collect();
+  },
+});

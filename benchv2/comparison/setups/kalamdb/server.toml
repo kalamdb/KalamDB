@@ -3,9 +3,7 @@
 # Learned from benchv2/server.toml:
 # - Keep the same section layout, auth.local.bcrypt_cost=4, high rate limits,
 #   and actix performance ceilings (those are already good for load tests).
-# - Do NOT copy benchv2 RocksDB compact sizes. Product default is compact
-#   (2 MiB block cache, 128 KiB hot memtables). This bake-off uses
-#   memory_mode = "server" so RocksDB scales from host RAM.
+# - Use explicit compact RocksDB budgets and wait for synchronous WAL durability.
 #
 # Hot-only:
 # - flush.check_interval_seconds = 0
@@ -34,7 +32,7 @@ memory_mode = "compact"
 block_cache_size = 33554432           # 32 MiB shared block cache
 max_background_jobs = 8
 max_open_files = 8192
-sync_writes = false
+sync_writes = true
 disable_wal = false
 compact_on_startup = false
 

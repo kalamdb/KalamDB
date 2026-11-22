@@ -1,44 +1,31 @@
 //! KalamDB comparison driver (hot storage + functions REST).
 //!
-//! Protocol mirrors the SQL HTTP driver and TrailBase's Rust harness:
-//! - concurrency [`comparison_common::LIMIT`]
-//! - 100k insert wall time
-//! - 10k insert latency + 1M point-read latency
+//! Uses the shared workload with validated insert acknowledgments and point reads.
 //!
 //! Setup still uses SQL HTTP (`CREATE SCHEMA` / `CREATE TABLE` /
-//! `CREATE PROCEDURE`). Timed insert/read go through
-//! `POST /v1/functions/{namespace}/{procedure}` only.
+//! `CREATE FUNCTION`). Timed insert/read go through
+//! `POST /v1/functions/{namespace}/{function}` only.
 //!
 //! Nested host SQL is ABI v2 `ctx.db.execute` / `ctx.db.query` with `$n`
 //! binds and named `input` so nested statements hit the same plan cache as
 //! SQL HTTP.
 
-use std::{
-    env,
-    sync::Arc,
-    time::{Duration, Instant},
-};
-
+use anyhow::Context;
 use comparison_common::{
-    message_data, print_latencies, KALAMDB_NAMESPACE, KALAMDB_PASSWORD, KALAMDB_USER,
-    LATENCY_INSERTS, LATENCY_READS, LIMIT, N,
+    expect_message, message_data, one, run, KALAMDB_NAMESPACE, KALAMDB_PASSWORD, KALAMDB_USER,
 };
-use crossbeam_queue::SegQueue;
 use kalamdb_serialization::{
-    encode_domain_frame, DomainMessageKind, DomainValue, DOMAIN_EPOCH,
+    decode_domain_frame_for_surface, encode_domain_frame, DomainDecodeBudget, DomainMessageKind,
+    DomainValue, EndpointSurface, DOMAIN_EPOCH,
 };
-use lazy_static::lazy_static;
-use reqwest::{Client, Version};
-use serde_json::json;
-use tokio::sync::Semaphore;
+use reqwest::{Client, RequestBuilder, Version};
+use serde_json::{json, Value};
+use std::{env, time::Duration};
 
 const DOMAIN_CONTENT_TYPE: &str = "application/x-kalam-domain";
 
 fn use_domain_codec() -> bool {
-    match env::var("KALAMDB_FUNCTION_CODEC") {
-        Ok(value) => !value.eq_ignore_ascii_case("json"),
-        Err(_) => true,
-    }
+    env::var("KALAMDB_FUNCTION_CODEC").is_ok_and(|value| !value.eq_ignore_ascii_case("json"))
 }
 
 fn insert_frame(id: i64) -> Vec<u8> {
@@ -90,7 +77,7 @@ AS $$
 return ctx.db.execute(
   "INSERT INTO {ns}.message (id, owner, room, data) VALUES ($1, $2, $3, $4)",
   [input.id, input.owner, input.room, input.data]
-).then(function () {{ return 1; }});
+);
 $$"#,
         ns = KALAMDB_NAMESPACE
     )
@@ -161,151 +148,104 @@ async fn setup_and_login(http: &Client, base: &str, require_h2: bool) -> anyhow:
         .ok_or_else(|| anyhow::anyhow!("login ok but no access_token: {v}"))
 }
 
-async fn sql_ok(
-    http: &Client,
-    base: &str,
-    token: &str,
-    sql: &str,
-    params: Option<Vec<serde_json::Value>>,
-) -> anyhow::Result<serde_json::Value> {
-    let mut body = json!({ "sql": sql });
-    if let Some(params) = params {
-        body["params"] = json!(params);
-    }
+async fn sql_ok(http: &Client, base: &str, token: &str, sql: &str) -> anyhow::Result<()> {
     let resp = http
         .post(format!("{base}/v1/api/sql"))
         .bearer_auth(token)
-        .json(&body)
+        .json(&json!({ "sql": sql }))
         .send()
         .await?;
     let status = resp.status();
-    let resp_body: serde_json::Value = resp.json().await.unwrap_or_else(|_| json!({}));
-    if !status.is_success()
-        || resp_body.get("status").and_then(|v| v.as_str()) == Some("error")
-        || resp_body.get("success") == Some(&json!(false))
-    {
-        anyhow::bail!("sql failed status={status} body={resp_body} sql={sql}");
-    }
-    Ok(resp_body)
-}
-
-async fn create_message(http: &Client, base: &str, token: &str, i: i64) -> anyhow::Result<()> {
-    let request = http.post(insert_url(base)).bearer_auth(token);
-    let request = if use_domain_codec() {
-        request
-            .header("content-type", DOMAIN_CONTENT_TYPE)
-            .header("x-kalam-epoch", DOMAIN_EPOCH.to_string())
-            .body(insert_frame(i))
-    } else {
-        request.json(&json!({
-            "id": i,
-            "owner": "user1",
-            "room": "room0",
-            "data": message_data(i),
-        }))
-    };
-    let resp = request.send().await?;
-    let status = resp.status();
-    let body = resp.bytes().await?;
-    if !status.is_success() {
-        anyhow::bail!(
-            "insert_message failed status={status} body={}",
-            String::from_utf8_lossy(&body)
-        );
-    }
+    let bytes = resp.bytes().await?;
+    anyhow::ensure!(
+        status.is_success(),
+        "sql failed status={status} body={} sql={sql}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let result: Value = serde_json::from_slice(&bytes).context("decode KalamDB SQL response")?;
+    anyhow::ensure!(result["status"] == "success", "sql failed body={result} sql={sql}");
+    one(&result["results"])?;
     Ok(())
 }
 
-async fn read_message(http: &Client, base: &str, token: &str, id: i64) -> anyhow::Result<()> {
-    let request = http.post(get_url(base)).bearer_auth(token);
-    let request = if use_domain_codec() {
+async fn create_message(
+    http: &Client,
+    base: &str,
+    token: &str,
+    id: i64,
+    packed: bool,
+) -> anyhow::Result<i64> {
+    let request = http.post(insert_url(base)).bearer_auth(token);
+    let request = if packed {
         request
             .header("content-type", DOMAIN_CONTENT_TYPE)
+            .header("accept", DOMAIN_CONTENT_TYPE)
+            .header("x-kalam-epoch", DOMAIN_EPOCH.to_string())
+            .body(insert_frame(id))
+    } else {
+        request.json(&json!({
+            "id": id,
+            "owner": "user1",
+            "room": "room0",
+            "data": message_data(id),
+        }))
+    };
+    let result = function_result(request, "insert_message", packed).await?;
+    anyhow::ensure!(result == 1, "expected one inserted row: {result}");
+    Ok(id)
+}
+
+async fn read_message(
+    http: &Client,
+    base: &str,
+    token: &str,
+    id: i64,
+    packed: bool,
+) -> anyhow::Result<()> {
+    let request = http.post(get_url(base)).bearer_auth(token);
+    let request = if packed {
+        request
+            .header("content-type", DOMAIN_CONTENT_TYPE)
+            .header("accept", DOMAIN_CONTENT_TYPE)
             .header("x-kalam-epoch", DOMAIN_EPOCH.to_string())
             .body(read_frame(id))
     } else {
         request.json(&json!({ "id": id }))
     };
+    let result = function_result(request, "get_message", packed).await?;
+    expect_message(one(&result)?, json!(id), "owner", "user1", "room0", id)
+}
+
+async fn function_result(request: RequestBuilder, name: &str, packed: bool) -> anyhow::Result<Value> {
     let resp = request.send().await?;
     let status = resp.status();
     let body = resp.bytes().await?;
-    if !status.is_success() {
-        anyhow::bail!("get_message failed status={status} body={}", String::from_utf8_lossy(&body));
-    }
-    Ok(())
-}
-
-async fn insert_benchmark(http: &Client, base: &str, token: &str) -> anyhow::Result<()> {
-    lazy_static! {
-        static ref THROTTLER: Semaphore = Semaphore::new(LIMIT);
-    }
-    let start = Instant::now();
-    for id in 0..N {
-        let http = http.clone();
-        let base = base.to_string();
-        let token = token.to_string();
-        let handle = THROTTLER.acquire().await?;
-        tokio::spawn(async move {
-            create_message(&http, &base, &token, id).await.expect("insert");
-            drop(handle);
-        });
-    }
-    let _ = THROTTLER.acquire_many(LIMIT as u32).await?;
-    println!("Inserted {N} rows in {:?}", start.elapsed());
-    Ok(())
-}
-
-async fn latency_benchmark(http: &Client, base: &str, token: &str) -> anyhow::Result<()> {
-    {
-        lazy_static! {
-            static ref THROTTLER: Semaphore = Semaphore::new(LIMIT);
-        }
-        let insert_latencies = Arc::new(SegQueue::<Duration>::new());
-        let start = Instant::now();
-        for id in 0..LATENCY_INSERTS {
-            let http = http.clone();
-            let base = base.to_string();
-            let token = token.to_string();
-            let latencies = insert_latencies.clone();
-            let row_id = 1_000_000 + id;
-            let handle = THROTTLER.acquire().await?;
-            tokio::spawn(async move {
-                let t0 = Instant::now();
-                create_message(&http, &base, &token, row_id).await.expect("insert");
-                latencies.push(t0.elapsed());
-                drop(handle);
-            });
-        }
-        let _ = THROTTLER.acquire_many(LIMIT as u32).await?;
-        println!("Inserted {LATENCY_INSERTS} rows in {:?}", start.elapsed());
-        print_latencies(Arc::into_inner(insert_latencies).unwrap().into_iter().collect());
+    anyhow::ensure!(
+        status.is_success(),
+        "{name} failed status={status} body={}",
+        String::from_utf8_lossy(&body)
+    );
+    if !packed {
+        return serde_json::from_slice(&body).with_context(|| format!("decode {name} result"));
     }
 
-    {
-        lazy_static! {
-            static ref THROTTLER: Semaphore = Semaphore::new(LIMIT);
+    let frame = decode_domain_frame_for_surface(
+        &body,
+        EndpointSurface::PublicRpc,
+        DomainDecodeBudget::default(),
+    )
+    .with_context(|| format!("decode {name} result frame"))?;
+    anyhow::ensure!(
+        frame.kind == DomainMessageKind::RpcResult,
+        "expected an RPC result for {name}"
+    );
+    match frame.payload {
+        DomainValue::Int32(count) => Ok(json!(count)),
+        DomainValue::Json(rows) => {
+            serde_json::from_str(&rows).with_context(|| format!("decode {name} JSON payload"))
         }
-        let read_latencies = Arc::new(SegQueue::<Duration>::new());
-        let start = Instant::now();
-        for idx in 0..LATENCY_READS {
-            let http = http.clone();
-            let base = base.to_string();
-            let token = token.to_string();
-            let latencies = read_latencies.clone();
-            let id = 1_000_000 + (idx % LATENCY_INSERTS);
-            let handle = THROTTLER.acquire().await?;
-            tokio::spawn(async move {
-                let t0 = Instant::now();
-                read_message(&http, &base, &token, id).await.expect("read");
-                latencies.push(t0.elapsed());
-                drop(handle);
-            });
-        }
-        let _ = THROTTLER.acquire_many(LIMIT as u32).await?;
-        println!("Read {LATENCY_READS} rows in {:?}", start.elapsed());
-        print_latencies(Arc::into_inner(read_latencies).unwrap().into_iter().collect());
+        other => anyhow::bail!("unexpected {name} result payload: {other:?}"),
     }
-    Ok(())
 }
 
 async fn create_schema(http: &Client, base: &str, token: &str) -> anyhow::Result<()> {
@@ -314,33 +254,29 @@ async fn create_schema(http: &Client, base: &str, token: &str) -> anyhow::Result
         base,
         token,
         &format!("CREATE SCHEMA IF NOT EXISTS {KALAMDB_NAMESPACE}"),
-        None,
     )
     .await?;
-    let _ = sql_ok(
-        http,
-        base,
-        token,
-        &format!("DROP TABLE IF EXISTS {KALAMDB_NAMESPACE}.message"),
-        None,
-    )
-    .await;
-    let _ = sql_ok(
+    sql_ok(
         http,
         base,
         token,
         &format!("DROP FUNCTION IF EXISTS {KALAMDB_NAMESPACE}.insert_message"),
-        None,
     )
-    .await;
-    let _ = sql_ok(
+    .await?;
+    sql_ok(
         http,
         base,
         token,
         &format!("DROP FUNCTION IF EXISTS {KALAMDB_NAMESPACE}.get_message"),
-        None,
     )
-    .await;
+    .await?;
+    sql_ok(
+        http,
+        base,
+        token,
+        &format!("DROP TABLE IF EXISTS {KALAMDB_NAMESPACE}.message"),
+    )
+    .await?;
 
     sql_ok(
         http,
@@ -350,12 +286,11 @@ async fn create_schema(http: &Client, base: &str, token: &str) -> anyhow::Result
             "CREATE TABLE {KALAMDB_NAMESPACE}.message (id INT PRIMARY KEY, owner TEXT, room TEXT, \
              data TEXT)"
         ),
-        None,
     )
     .await?;
 
-    sql_ok(http, base, token, &insert_procedure_sql(), None).await?;
-    sql_ok(http, base, token, &get_procedure_sql(), None).await?;
+    sql_ok(http, base, token, &insert_procedure_sql()).await?;
+    sql_ok(http, base, token, &get_procedure_sql()).await?;
     Ok(())
 }
 
@@ -373,19 +308,22 @@ async fn main() -> anyhow::Result<()> {
     let http = http_builder.build()?;
 
     let token = setup_and_login(&http, &base, use_http2).await?;
+    let packed = use_domain_codec();
     println!("logged in to {base}");
     println!("mode=hot-only (no FLUSH_POLICY, flush scheduler disabled)");
     println!(
         "timed_path=POST /v1/functions/{KALAMDB_NAMESPACE}/{{insert_message,get_message}} codec={}",
-        if use_domain_codec() { "kalam-packed" } else { "json" }
+        if packed { "kalam-packed" } else { "json" }
     );
     println!("nested_sql=ABI v2 ctx.db.execute/query($n, named input) (plan-cache binds)");
-    println!("timed_read_response=bytes (HTTP status validation only; matches TB/PB)");
+    println!("response_validation=affected row count and returned row");
 
     create_schema(&http, &base, &token).await?;
-    insert_benchmark(&http, &base, &token).await?;
-    latency_benchmark(&http, &base, &token).await?;
-    Ok(())
+    run(
+        |id| create_message(&http, &base, &token, id, packed),
+        |id, _| read_message(&http, &base, &token, id, packed),
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -406,11 +344,6 @@ mod tests {
 
     #[test]
     fn domain_insert_frame_is_a_current_epoch_rpc_request() {
-        use kalamdb_serialization::{
-            decode_domain_frame_for_surface, DomainDecodeBudget, DomainMessageKind, DomainValue,
-            EndpointSurface,
-        };
-
         let frame = insert_frame(42);
         let decoded = decode_domain_frame_for_surface(
             &frame,
@@ -456,7 +389,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn timed_read_validates_http_status_without_parsing_envelope() {
+    async fn timed_read_rejects_function_error_with_successful_http_status() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
         let address = listener.local_addr().expect("read test server address");
         let server = thread::spawn(move || {
@@ -476,9 +409,9 @@ mod tests {
         });
 
         let result =
-            read_message(&Client::new(), &format!("http://{address}"), "test-token", 1).await;
+            read_message(&Client::new(), &format!("http://{address}"), "test-token", 1, false).await;
 
         server.join().expect("join test server");
-        assert!(result.is_ok(), "timed reads should consume bytes like peer drivers");
+        assert!(result.is_err());
     }
 }

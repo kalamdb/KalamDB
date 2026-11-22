@@ -10,31 +10,19 @@
 //! Each in-flight call holds one already-open socket from the pool.
 
 mod module_bindings;
+mod realtime;
 
 use std::env;
+use std::future::Future;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::Context;
-use comparison_common::{
-    message_data, print_latencies, LATENCY_INSERTS, LATENCY_READS, LIMIT, N,
-};
-use crossbeam_queue::SegQueue;
+use comparison_common::{message_data, run, LIMIT};
 use module_bindings::{get_message, insert_message, DbConnection};
-use tokio::sync::{oneshot, Semaphore};
+use tokio::sync::oneshot;
 
 const DATABASE: &str = "bench";
-
-fn rows(default: i64, name: &str) -> i64 {
-    env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(default)
-}
-
-fn inflight() -> usize {
-    rows(LIMIT as i64, "COMPARISON_INFLIGHT") as usize
-}
 
 struct Pool {
     slots: Mutex<Vec<DbConnection>>,
@@ -60,6 +48,7 @@ fn connect_one(base: &str) -> anyhow::Result<DbConnection> {
     let conn = DbConnection::builder()
         .with_uri(base)
         .with_database_name(DATABASE)
+        .with_confirmed_reads(true)
         .on_connect(move |_conn, _identity, _token| {
             let _ = tx.send(Ok(()));
         })
@@ -76,7 +65,7 @@ fn connect_one(base: &str) -> anyhow::Result<DbConnection> {
 }
 
 fn connect_pool(base: &str) -> anyhow::Result<Arc<Pool>> {
-    let width = inflight();
+    let width = LIMIT;
     let mut slots = Vec::with_capacity(width);
     for _ in 0..width {
         slots.push(connect_one(base)?);
@@ -86,8 +75,18 @@ fn connect_pool(base: &str) -> anyhow::Result<Arc<Pool>> {
     }))
 }
 
-async fn insert_one(pool: &Pool, id: i64) -> anyhow::Result<()> {
+async fn insert_one(pool: &Pool, id: i64) -> anyhow::Result<i64> {
     let conn = pool.checkout();
+    let result = dispatch_insert(&conn, id)?.await;
+    pool.checkin(conn);
+    result?;
+    Ok(id)
+}
+
+fn dispatch_insert(
+    conn: &DbConnection,
+    id: i64,
+) -> anyhow::Result<impl Future<Output = anyhow::Result<()>>> {
     let (tx, rx) = oneshot::channel();
     conn.reducers
         .insert_message_then(
@@ -100,16 +99,17 @@ async fn insert_one(pool: &Pool, id: i64) -> anyhow::Result<()> {
             },
         )
         .context("send insert_message")?;
-    let result = tokio::time::timeout(Duration::from_secs(60), rx)
-        .await
-        .context("insert timed out")?
-        .context("insert callback dropped")?;
-    pool.checkin(conn);
-    match result {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(message)) => anyhow::bail!("reducer failed: {message}"),
-        Err(err) => anyhow::bail!("reducer transport: {err:?}"),
-    }
+    Ok(async move {
+        let result = tokio::time::timeout(Duration::from_secs(60), rx)
+            .await
+            .context("insert timed out")?
+            .context("insert callback dropped")?;
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(message)) => anyhow::bail!("reducer failed: {message}"),
+            Err(err) => anyhow::bail!("reducer transport: {err:?}"),
+        }
+    })
 }
 
 async fn read_one(pool: &Pool, id: i64) -> anyhow::Result<()> {
@@ -124,83 +124,30 @@ async fn read_one(pool: &Pool, id: i64) -> anyhow::Result<()> {
         .context("read callback dropped")?;
     pool.checkin(conn);
     match result {
-        Ok(Some(_)) => Ok(()),
+        Ok(Some(row)) => {
+            anyhow::ensure!(
+                row.id == id && row.owner == "user1" && row.room == "room0" && row.data == message_data(id),
+                "wrong SpacetimeDB row for {id}: {row:?}"
+            );
+            Ok(())
+        }
         Ok(None) => anyhow::bail!("get_message returned no row for id {id}"),
         Err(err) => anyhow::bail!("procedure transport: {err:?}"),
     }
 }
 
-async fn insert_benchmark(pool: &Arc<Pool>) -> anyhow::Result<()> {
-    let count = rows(N, "COMPARISON_INSERTS");
-    let throttler = Arc::new(Semaphore::new(inflight()));
-    let start = Instant::now();
-    for id in 0..count {
-        let pool = pool.clone();
-        let permit = throttler.clone().acquire_owned().await?;
-        tokio::spawn(async move {
-            insert_one(&pool, id).await.expect("insert");
-            drop(permit);
-        });
-    }
-    let _ = throttler.acquire_many(inflight() as u32).await?;
-    println!("Inserted {count} rows in {:?}", start.elapsed());
-    Ok(())
-}
-
-async fn latency_benchmark(pool: &Arc<Pool>) -> anyhow::Result<()> {
-    let latency_inserts = rows(LATENCY_INSERTS, "COMPARISON_LATENCY_INSERTS");
-    let latency_reads = rows(LATENCY_READS, "COMPARISON_READS");
-    let throttler = Arc::new(Semaphore::new(inflight()));
-    let insert_latencies = Arc::new(SegQueue::<Duration>::new());
-    let start = Instant::now();
-    for id in 0..latency_inserts {
-        let pool = pool.clone();
-        let latencies = insert_latencies.clone();
-        let permit = throttler.clone().acquire_owned().await?;
-        let row_id = 1_000_000 + id;
-        tokio::spawn(async move {
-            let t0 = Instant::now();
-            insert_one(&pool, row_id).await.expect("insert");
-            latencies.push(t0.elapsed());
-            drop(permit);
-        });
-    }
-    let _ = throttler.acquire_many(inflight() as u32).await?;
-    println!("Inserted {latency_inserts} rows in {:?}", start.elapsed());
-    print_latencies(Arc::into_inner(insert_latencies).unwrap().into_iter().collect());
-
-    let throttler = Arc::new(Semaphore::new(inflight()));
-    let read_latencies = Arc::new(SegQueue::<Duration>::new());
-    let start = Instant::now();
-    for idx in 0..latency_reads {
-        let pool = pool.clone();
-        let latencies = read_latencies.clone();
-        let permit = throttler.clone().acquire_owned().await?;
-        let id = 1_000_000 + (idx % latency_inserts);
-        tokio::spawn(async move {
-            let t0 = Instant::now();
-            read_one(&pool, id).await.expect("read");
-            latencies.push(t0.elapsed());
-            drop(permit);
-        });
-    }
-    let _ = throttler.acquire_many(inflight() as u32).await?;
-    println!("Read {latency_reads} rows in {:?}", start.elapsed());
-    print_latencies(Arc::into_inner(read_latencies).unwrap().into_iter().collect());
-    Ok(())
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let base = env::var("SPACETIMEDB_URL").unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
+    if env::var("COMPARISON_WORKLOAD").as_deref() == Ok("realtime") {
+        return realtime::run(&base).await;
+    }
     let pool = connect_pool(&base)?;
     println!("logged in to {base}");
     println!(
         "mode=file-backed; {} persistent websockets; reducer insert_message; procedure get_message primary-key round trip",
-        inflight()
+        LIMIT
     );
     println!("timed_read=server procedure result (not a client subscription cache)");
-    insert_benchmark(&pool).await?;
-    latency_benchmark(&pool).await?;
-    Ok(())
+    run(|id| insert_one(&pool, id), |_, id| read_one(&pool, id)).await
 }

@@ -103,8 +103,8 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn missing_peer_address_is_not_treated_as_loopback() {
+    #[actix_web::test]
+    async fn missing_peer_address_is_not_treated_as_loopback() {
         let request = test::TestRequest::default().to_srv_request();
         assert!(!extract_client_ip(&request).is_loopback());
     }
