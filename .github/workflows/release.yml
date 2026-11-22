@@ -33,8 +33,8 @@ on:
         required: false
         default: true
 
-      pre_release:
-        description: "Mark GitHub release as pre-release"
+      draft:
+        description: "Save GitHub Release as a draft. Leave this checked, then choose pre-release or release when you edit the draft."
         type: boolean
         required: false
         default: true
@@ -1756,7 +1756,8 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     outputs:
-      prerelease: ${{ steps.prerelease_flag.outputs.prerelease }}
+      draft: ${{ steps.release_visibility.outputs.draft }}
+      prerelease: ${{ steps.release_visibility.outputs.prerelease }}
     needs:
       - sync_versions_manifest
       - license_compliance
@@ -1910,8 +1911,8 @@ jobs:
 
           echo "Stamped packages.core_components.cli.build_date=${BUILD_DATE} into versions.json"
 
-      - name: Determine prerelease flag
-        id: prerelease_flag
+      - name: Determine release visibility
+        id: release_visibility
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1919,18 +1920,23 @@ jobs:
           set -euo pipefail
           TAG="${{ needs.read_version.outputs.tag }}"
 
-          # If a release for this tag already exists, preserve its current
-          # prerelease status instead of overwriting it with the workflow input.
-          if EXISTING_PRERELEASE="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq '.isPrerelease' 2>/dev/null)"; then
-            echo "Release $TAG already exists; preserving prerelease=${EXISTING_PRERELEASE}"
-            echo "prerelease=${EXISTING_PRERELEASE}" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ github.event.inputs.pre_release }}" == "true" ]]; then
-            echo "Release $TAG does not exist; creating as prerelease"
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          # A second run keeps the draft and prerelease choices already saved
+          # on GitHub. A new release is a draft, and prerelease is chosen there.
+          if EXISTING="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease --jq '[.isDraft, .isPrerelease] | @tsv' 2>/dev/null)"; then
+            DRAFT="$(printf '%s' "$EXISTING" | cut -f1)"
+            PRERELEASE="$(printf '%s' "$EXISTING" | cut -f2)"
+            echo "Release $TAG already exists; preserving draft=${DRAFT} prerelease=${PRERELEASE}"
+          elif [[ "${{ github.event.inputs.draft }}" == "false" ]]; then
+            DRAFT=false
+            PRERELEASE=false
+            echo "Release $TAG does not exist; publishing immediately"
           else
-            echo "Release $TAG does not exist; creating as full release"
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            DRAFT=true
+            PRERELEASE=false
+            echo "Release $TAG does not exist; saving as a draft"
           fi
+          echo "draft=${DRAFT}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
 
       - name: Prepare release notes
         id: release_notes
@@ -1970,7 +1976,8 @@ jobs:
         with:
           tag_name: ${{ needs.read_version.outputs.tag }}
           target_commitish: ${{ needs.sync_versions_manifest.outputs.commit_sha }}
-          prerelease: ${{ steps.prerelease_flag.outputs.prerelease }}
+          draft: ${{ steps.release_visibility.outputs.draft }}
+          prerelease: ${{ steps.release_visibility.outputs.prerelease }}
           body_path: ${{ steps.release_notes.outputs.body_path }}
           generate_release_notes: ${{ steps.release_notes.outputs.generate }}
           files: |
@@ -1995,11 +2002,15 @@ jobs:
           TAG="${{ needs.read_version.outputs.tag }}"
           VERSION="${{ needs.read_version.outputs.version }}"
           SHA="${{ needs.sync_versions_manifest.outputs.commit_sha }}"
-          PRERELEASE="${{ steps.prerelease_flag.outputs.prerelease }}"
+          DRAFT="${{ steps.release_visibility.outputs.draft }}"
+          PRERELEASE="${{ steps.release_visibility.outputs.prerelease }}"
           NOTES_PATH="${{ steps.release_notes.outputs.body_path }}"
 
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             create_args=(--target "$SHA" --repo "$GITHUB_REPOSITORY")
+            if [[ "$DRAFT" == "true" ]]; then
+              create_args+=(--draft)
+            fi
             if [[ "$PRERELEASE" == "true" ]]; then
               create_args+=(--prerelease)
             fi
@@ -2670,6 +2681,7 @@ jobs:
     if: >-
       ${{
         needs.release.result == 'success' &&
+        needs.release.outputs.draft == 'false' &&
         needs.release.outputs.prerelease == 'false' &&
         needs.docker.result == 'success'
       }}

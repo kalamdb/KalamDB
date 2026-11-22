@@ -2,7 +2,7 @@
 
 Product notes for [GitHub Releases](https://github.com/kalamdb/KalamDB/releases). One file per version. Newest first.
 
-When cutting a release, paste the version file into the Release workflow's `release_description` input. That box is one line, so replace each line break with the two characters `\n` before pasting. The workflow turns those into real lines, then GitHub renders the markdown. Leave the input empty to use auto-generated notes. Mark prereleases as prereleases on GitHub.
+When cutting a release, paste the version file into the Release workflow's `release_description` input. That box is one line, so replace each line break with the two characters `\n` before pasting. The workflow turns those into real lines, then GitHub renders the markdown. Leave the input empty to use auto-generated notes. The workflow saves the GitHub Release as a draft. Edit that draft to mark it a pre-release or a release, then publish it.
 
 ## Unreleased
 
