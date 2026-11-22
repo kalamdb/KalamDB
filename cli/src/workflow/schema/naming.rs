@@ -168,6 +168,58 @@ pub fn contract_hash_line(hash: &str) -> String {
     format!("contract_hash: {hash}")
 }
 
+/// `createdAt` -> `created_at`, `chat.user-profiles` -> `chat_user_profiles`.
+///
+/// Runs of separators collapse, a leading digit gains an underscore, and case
+/// boundaries split so names that arrive in camelCase still read as Python.
+pub fn snake_case(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 4);
+    let mut prev_lower_or_digit = false;
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            if ch.is_ascii_uppercase() {
+                if prev_lower_or_digit {
+                    out.push('_');
+                }
+                out.push(ch.to_ascii_lowercase());
+                prev_lower_or_digit = false;
+            } else {
+                out.push(ch);
+                prev_lower_or_digit = true;
+            }
+        } else {
+            if !out.ends_with('_') {
+                out.push('_');
+            }
+            prev_lower_or_digit = false;
+        }
+    }
+    let trimmed = out.trim_matches('_').to_string();
+    if trimmed.is_empty() {
+        return "field".to_string();
+    }
+    if trimmed.starts_with(|ch: char| ch.is_ascii_digit()) {
+        return format!("_{trimmed}");
+    }
+    trimmed
+}
+
+/// SQL enum label -> PEP 8 enum member. `active` -> `ACTIVE`,
+/// `in-progress` -> `IN_PROGRESS`, `2fa` -> `_2FA`.
+pub fn screaming_snake_case(value: &str) -> String {
+    snake_case(value).to_ascii_uppercase()
+}
+
+/// snake_case counterpart of [`value_ident`], for module-level table names.
+pub fn value_ident_snake(schema: &str, name: &str, unqualified_names: bool) -> String {
+    let local = snake_case(name);
+    if unqualified_names || schema.eq_ignore_ascii_case(DEFAULT_NAMESPACE) {
+        local
+    } else {
+        format!("{}_{}", snake_case(schema), local)
+    }
+}
+
 fn overload_suffix(routine: &ContractRoutine) -> String {
     let mut suffix = String::from("By");
     let mut any = false;
@@ -194,6 +246,32 @@ mod tests {
     use kalamdb_sql::compile_contract_sql;
 
     use super::*;
+
+    #[test]
+    fn snake_case_handles_sql_and_camel_names() {
+        assert_eq!(snake_case("created_at"), "created_at");
+        assert_eq!(snake_case("createdAt"), "created_at");
+        assert_eq!(snake_case("HTTPStatus"), "httpstatus");
+        assert_eq!(snake_case("user-profiles"), "user_profiles");
+        assert_eq!(snake_case("chat.events"), "chat_events");
+        assert_eq!(snake_case("  spaced  name "), "spaced_name");
+        assert_eq!(snake_case("2fa"), "_2fa");
+        assert_eq!(snake_case("!!"), "field");
+    }
+
+    #[test]
+    fn screaming_snake_case_builds_enum_members() {
+        assert_eq!(screaming_snake_case("active"), "ACTIVE");
+        assert_eq!(screaming_snake_case("in-progress"), "IN_PROGRESS");
+        assert_eq!(screaming_snake_case("2fa"), "_2FA");
+    }
+
+    #[test]
+    fn value_ident_snake_drops_the_home_namespace() {
+        assert_eq!(value_ident_snake("chat", "profiles", false), "chat_profiles");
+        assert_eq!(value_ident_snake("chat", "profiles", true), "profiles");
+        assert_eq!(value_ident_snake(DEFAULT_NAMESPACE, "profiles", false), "profiles");
+    }
 
     #[test]
     fn schema_prefixed_names_keep_nested_identity() {

@@ -324,8 +324,13 @@ mod tests {
             .all(|template| template.id != "schema-gen"));
         assert!(find_schema_gen_template("dart").is_ok());
         assert!(find_schema_gen_template("rust").is_ok());
+        assert!(templates_for_language("python")
+            .iter()
+            .all(|template| template.id != "schema-gen"));
+        assert!(find_schema_gen_template("python").is_ok());
         assert!(find_schema_gen_template_file("dart", "lib/generated/kalam.dart").is_ok());
         assert!(find_schema_gen_template_file("rust", "src/generated/kalam.rs").is_ok());
+        assert!(find_schema_gen_template_file("python", "generated/kalam.py").is_ok());
     }
 
     #[test]

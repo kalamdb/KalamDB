@@ -11,6 +11,7 @@ use crate::workflow::{
         dart::generate_dart_source,
         gen::generate_languages,
         naming::{assign_names, NamingOptions},
+        python::generate_python_source,
         rust::generate_rust_source,
         typescript::{
             generate_client_source, generate_contracts_source, generate_runtime_dts,
@@ -56,12 +57,14 @@ fn all_targets_embed_the_same_contract_hash() {
     let contracts = generate_contracts_source(&hash, "../../../src/generated/schema").unwrap();
     let dart = generate_dart_source(&snapshot, &hash, &names).unwrap();
     let rust = generate_rust_source(&snapshot, &hash, &names).unwrap();
+    let python = generate_python_source(&snapshot, &hash, &names).unwrap();
     let marker = format!("contract_hash: {hash}");
     assert!(ts.contains(&marker));
     assert!(schema.contains(&marker));
     assert!(contracts.contains(&marker));
     assert!(dart.contains(&marker));
     assert!(rust.contains(&marker));
+    assert!(python.contains(&marker));
     assert_eq!(hash.len(), 64);
 }
 
@@ -331,7 +334,12 @@ fn generate_does_not_require_a_server_url() {
             mode: SchemaMode::Sql,
             path: Some("schema.sql".into()),
             watch: false,
-            languages: vec!["typescript".into(), "dart".into(), "rust".into()],
+            languages: vec![
+                "typescript".into(),
+                "dart".into(),
+                "rust".into(),
+                "python".into(),
+            ],
             targets: [
                 (
                     "typescript".into(),
@@ -354,6 +362,13 @@ fn generate_does_not_require_a_server_url() {
                         unqualified_names: false,
                     },
                 ),
+                (
+                    "python".into(),
+                    SchemaTarget {
+                        output: "generated/kalam.py".into(),
+                        unqualified_names: false,
+                    },
+                ),
             ]
             .into(),
         },
@@ -366,6 +381,7 @@ fn generate_does_not_require_a_server_url() {
             LanguageTarget::TypeScript,
             LanguageTarget::Dart,
             LanguageTarget::Rust,
+            LanguageTarget::Python,
         ],
         None,
     )
@@ -373,6 +389,7 @@ fn generate_does_not_require_a_server_url() {
     let ts = fs::read_to_string(root.join("src/generated/kalam.ts")).unwrap();
     let dart = fs::read_to_string(root.join("lib/generated/kalam.dart")).unwrap();
     let rust = fs::read_to_string(root.join("src/generated/kalam.rs")).unwrap();
+    let python = fs::read_to_string(root.join("generated/kalam.py")).unwrap();
     let hash_line = ts
         .lines()
         .find(|line| line.contains("contract_hash:"))
@@ -380,9 +397,12 @@ fn generate_does_not_require_a_server_url() {
         .to_string();
     assert!(dart.contains(&hash_line[3..]) || dart.contains(hash_line.trim_start_matches("// ")));
     assert!(rust.contains(hash_line.trim_start_matches("// ")));
+    assert!(python.contains(hash_line.trim_start_matches("// ")));
     let schema = fs::read_to_string(root.join("src/generated/schema.ts")).unwrap();
     assert!(schema.contains("export const users"));
     assert!(dart.contains("KalamTableSpec<Users>"));
+    assert!(python.contains("users: Table[Users, UsersInsert, UsersUpdate] = KTable.table("));
+    assert!(python.contains("from kalamdb.schema import ("));
     assert!(
         !root.join("functions").exists(),
         "table-only schemas should not create a functions/ tree"
