@@ -4,6 +4,109 @@ Official Python SDK for [KalamDB](https://github.com/kalamdb/KalamDB) — a SQL-
 
 Built on top of the Rust `kalam-client` core via PyO3, so the networking, reconnection, and protocol logic is shared with the TypeScript and Dart SDKs.
 
+## Schema-first tables
+
+`schema.sql` is the single source of truth for your tables. `kalam schema gen
+--languages python` reads it and writes the typed bindings; this SDK ships the
+hand-written runtime they call into. Nothing in the SDK creates tables — DDL and
+table options (TTL, compression, eviction) live in `schema.sql` and are enforced
+by the server.
+
+Enable the target in `kalam.toml`, then generate:
+
+```toml
+[schema]
+mode = "sql"
+path = "kalam/schema.sql"
+languages = ["python"]
+
+[schema.targets.python]
+output = "generated/kalam.py"
+```
+
+```bash
+kalam schema gen --languages python
+```
+
+You get a row dataclass, a typed columns class, and a table declaration per
+table:
+
+```python
+from kalamdb import KalamClient, Auth
+from generated.kalam import profiles, Profiles
+
+async def main():
+    async with KalamClient("http://localhost:2900", Auth.basic("admin", "pw")) as client:
+        sql, params = profiles.insert_sql({"email": "a@b.c"})
+        await client.query(sql, params)
+
+        sql, params = profiles.select_sql("email = $1", ["a@b.c"])
+        rows = await client.query_rows(sql, params)
+        profile: Profiles = profiles.decode(rows[0])
+        print(profile.email, profile.created_at)   # typed attributes
+```
+
+Every builder is pure — it returns the SQL string and its parameters, so you can
+log them, adapt them, or drop to `client.query` for anything the builders do not
+cover. The runtime pieces (`Column`, `Table`, `KTable`) live in
+`kalamdb.schema`.
+
+### Typed writes
+
+`insert_sql` and `update_sql` take generated `TypedDict`s (`ProfilesInsert`,
+`ProfilesUpdate`), so a type checker sees the same column types the row class
+carries — not just on the row, but on the write:
+
+```python
+profiles.insert_sql({"email": 42})
+#                    ^ error: Incompatible types (expression has type "int",
+#                      TypedDict item "email" has type "str")
+```
+
+A key is required when the column is `NOT NULL` with no server default, and
+optional otherwise. Values are encoded on the way out, so an enum member, a
+`datetime`, a `date` or a `time` can be passed as declared.
+
+### Server-side routines
+
+Routines declared in `schema.sql` get a typed client, grouped by schema, the
+same way the TypeScript and Dart SDKs expose them:
+
+```python
+from generated.kalam import KalamFunctions, ChatCreateMessageInput
+
+functions = KalamFunctions(client)
+message_id = await functions.chat.create_message(
+    ChatCreateMessageInput(author="manik", body="hi")
+)
+```
+
+Each method runs the `CALL` or `SELECT` statement the contract declares and
+decodes the result through the same codecs the row classes use.
+
+### Limitation: array, object and binary parameters
+
+The SQL API binds scalar parameters only. An array, a mapping or a `bytes`
+value cannot be sent as `$1` yet — the server answers
+`Parameter $N invalid: Array parameters not yet supported`.
+
+The SDK refuses the bind before the statement is sent, so the failure names the
+column rather than a placeholder position:
+
+```python
+from kalamdb.schema import UnsupportedParameterError
+
+try:
+    notes.insert_sql({"author": "manik", "body": "hi", "tags": ["a", "b"]})
+except UnsupportedParameterError as error:
+    print(error)   # app.notes.tags: the server does not accept array ...
+```
+
+Reading these columns works normally: `TEXT[]` decodes to
+`Optional[List[str]]`, `BYTES` to `Optional[bytes]`. Until array binding lands
+on the server, write such a column with a literal in your own SQL, or leave it
+out of the write.
+
 ## Installation
 
 ```bash
@@ -253,6 +356,19 @@ Then run the tests:
 ```bash
 pip install -e ".[dev]"
 pytest
+```
+
+`tests/test_schema.py` and `tests/test_codecs.py` need no server;
+`tests/test_schema_live.py` round-trips the generated-table runtime, including
+the `DATE`/`TIME`/`BYTES`/`TIMESTAMP` wire shapes, against a real one.
+
+The full set of gates CI runs — generated bindings regenerated and typed,
+`schema gen --check` on the checked-in example, `mypy --strict`, and the
+fresh-server smoke test — is one script:
+
+```bash
+cargo build -p kalam-cli --bin kalam
+PYTHON_BIN=.venv/bin/python ../../../scripts/test-python-sdk-release.sh
 ```
 
 Configure the test server via environment variables:

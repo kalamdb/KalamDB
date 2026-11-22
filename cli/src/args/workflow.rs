@@ -227,7 +227,7 @@ pub enum SchemaCommand {
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct SchemaGenerateArgs {
-    /// Limit generation to specific language targets (typescript, dart/flutter)
+    /// Limit generation to specific language targets (typescript, dart/flutter, rust, python)
     #[arg(long = "languages", value_delimiter = ',')]
     pub languages: Option<Vec<String>>,
 

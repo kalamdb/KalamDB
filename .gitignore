@@ -116,6 +116,8 @@ ui/package-lock.json
 /link/sdks/typescript/.wasm-cargo-home-test1
 /link/sdks/typescript/.wasm-cargo-home-test2
 ts-sdk-repro/server.toml
+# Working directory the Python SDK contract gate starts its test server in.
+python-sdk-test-server/
 /benchv2/logs
 /benchv2/pgwire-speed/sql/
 /benchv2/pgwire-speed/results/
