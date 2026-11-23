@@ -2,8 +2,28 @@ import { type ReactNode } from "react";
 import { type LucideIcon, Zap } from "lucide-react";
 import { cn } from "cn";
 
-const logoUrl = `${import.meta.env.BASE_URL}branding/kalamdb_logo.png`;
 const appFlowUrl = `${import.meta.env.BASE_URL}branding/kalamdb-app-flow.webp`;
+const wavesUrl = `${import.meta.env.BASE_URL}branding/kalamdb-auth-waves.webp`;
+const leavesUrl = `${import.meta.env.BASE_URL}branding/kalamdb-auth-leaves.webp`;
+
+function KalamDbMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 32 32" aria-hidden className={className}>
+      <defs>
+        <linearGradient id="kalamdb-mark" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#7ee89a" />
+          <stop offset="50%" stopColor="#2eb86a" />
+          <stop offset="100%" stopColor="#077f4c" />
+        </linearGradient>
+      </defs>
+      <g fill="url(#kalamdb-mark)">
+        <path d="M16 3.2 29 9.1a1 1 0 0 1 0 1.8L16 16.8 3 10.9a1 1 0 0 1 0-1.8z" />
+        <path d="M4.9 14.4 16 19.4l11.1-5 1.9.9a1 1 0 0 1 0 1.8L16 23 3 17.1a1 1 0 0 1 0-1.8z" />
+        <path d="M4.9 20.6 16 25.6l11.1-5 1.9.9a1 1 0 0 1 0 1.8L16 29.2 3 23.3a1 1 0 0 1 0-1.8z" />
+      </g>
+    </svg>
+  );
+}
 
 export interface AuthPanelFeature {
   label: string;
@@ -94,17 +114,26 @@ export default function AuthSplitLayout({
   const formHeading = heading ?? panelTitle;
 
   return (
-    <div className="relative h-full min-h-0 overflow-auto bg-[#f4f8f6] p-4 md:p-8">
+    <div className="relative h-full min-h-0 overflow-auto bg-[#f5f8fb] p-4 md:p-8">
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(90%_60%_at_80%_0%,rgba(209,250,229,0.75),transparent_60%),radial-gradient(70%_50%_at_10%_100%,rgba(167,243,208,0.55),transparent_65%)]"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(70%_55%_at_88%_30%,rgba(205,236,246,0.85),transparent_62%),radial-gradient(55%_45%_at_6%_4%,rgba(245,246,255,0.95),transparent_60%),radial-gradient(65%_40%_at_55%_100%,rgba(222,245,238,0.9),transparent_65%)]"
+      />
+      <img aria-hidden alt="" src={wavesUrl} className="pointer-events-none absolute inset-x-0 bottom-0 w-full" />
+      <img
+        aria-hidden
+        alt=""
+        src={leavesUrl}
+        className="pointer-events-none absolute bottom-0 left-0 hidden w-[9rem] md:block"
       />
 
       <div className="relative mx-auto grid min-h-full max-w-7xl items-center gap-8 lg:grid-cols-[minmax(0,460px)_minmax(0,1fr)] lg:gap-12">
-        <section className="rounded-3xl border border-black/5 bg-white p-6 shadow-[0_24px_60px_-28px_rgba(6,78,59,0.28)] sm:p-9">
+        <section className="rounded-3xl border border-black/5 bg-white/95 p-6 shadow-[0_30px_70px_-30px_rgba(6,78,59,0.3)] backdrop-blur-sm sm:p-10">
           <div className="flex items-center gap-3">
-            <img src={logoUrl} alt="KalamDB" className="h-8 w-auto object-contain" />
-            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-800 ring-1 ring-emerald-600/15">
+            <KalamDbMark className="size-8 shrink-0" />
+            <span className="text-2xl font-bold tracking-tight text-zinc-900">KalamDB</span>
+            <span className="h-6 w-px bg-zinc-200" />
+            <span className="rounded-full bg-emerald-100/80 px-3 py-1.5 text-xs font-semibold text-emerald-800">
               Admin UI
             </span>
           </div>
