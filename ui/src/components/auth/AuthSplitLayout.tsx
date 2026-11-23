@@ -114,20 +114,21 @@ export default function AuthSplitLayout({
   const formHeading = heading ?? panelTitle;
 
   return (
-    <div className="relative h-full min-h-0 overflow-auto bg-[#f5f8fb] p-4 md:p-8">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(70%_55%_at_88%_30%,rgba(205,236,246,0.85),transparent_62%),radial-gradient(55%_45%_at_6%_4%,rgba(245,246,255,0.95),transparent_60%),radial-gradient(65%_40%_at_55%_100%,rgba(222,245,238,0.9),transparent_65%)]"
-      />
-      <img aria-hidden alt="" src={wavesUrl} className="pointer-events-none absolute inset-x-0 bottom-0 w-full" />
-      <img
-        aria-hidden
-        alt=""
-        src={leavesUrl}
-        className="pointer-events-none absolute bottom-0 left-0 hidden w-14 md:block"
-      />
+    <div className="h-full min-h-0 overflow-auto bg-[#f5f8fb]">
+      <div className="relative flex min-h-full flex-col justify-center p-4 md:p-8">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(70%_55%_at_88%_30%,rgba(205,236,246,0.85),transparent_62%),radial-gradient(55%_45%_at_6%_4%,rgba(245,246,255,0.95),transparent_60%),radial-gradient(65%_40%_at_55%_100%,rgba(222,245,238,0.9),transparent_65%)]"
+        />
+        <img aria-hidden alt="" src={wavesUrl} className="pointer-events-none absolute inset-x-0 bottom-0 w-full" />
+        <img
+          aria-hidden
+          alt=""
+          src={leavesUrl}
+          className="pointer-events-none absolute bottom-0 left-0 hidden w-14 md:block"
+        />
 
-      <div className="relative mx-auto grid min-h-full max-w-7xl items-center gap-8 lg:grid-cols-[minmax(0,460px)_minmax(0,1fr)] lg:gap-12">
+        <div className="relative mx-auto grid w-full max-w-7xl items-center gap-8 lg:grid-cols-[minmax(0,460px)_minmax(0,1fr)] lg:gap-12">
         <section className="rounded-3xl border border-black/5 bg-white p-6 shadow-[0_30px_70px_-30px_rgba(6,78,59,0.3)] sm:p-10">
           <div className="flex items-center gap-3">
             <KalamDbMark className="size-8 shrink-0" />
@@ -185,6 +186,7 @@ export default function AuthSplitLayout({
             </ul>
           )}
         </aside>
+        </div>
       </div>
     </div>
   );
