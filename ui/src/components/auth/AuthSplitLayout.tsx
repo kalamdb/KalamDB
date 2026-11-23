@@ -1,9 +1,17 @@
 import { type ReactNode } from "react";
 
 const logoUrl = `${import.meta.env.BASE_URL}branding/kalamdb_logo.png`;
+const appFlowUrl = `${import.meta.env.BASE_URL}branding/kalamdb-app-flow.webp`;
+
+const gridLayerStyle = {
+  backgroundImage:
+    "linear-gradient(to right, rgba(255,255,255,0.6) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.6) 1px, transparent 1px)",
+  backgroundSize: "44px 44px",
+};
 
 interface AuthSplitLayoutProps {
   title?: string;
+  heading?: string;
   description: string;
   children: ReactNode;
   panelTitle?: string;
@@ -13,51 +21,65 @@ interface AuthSplitLayoutProps {
 
 export default function AuthSplitLayout({
   title = "Welcome back",
+  heading,
   description,
   children,
   panelTitle = "KalamDB",
   panelDescription = "Operational control plane for embedded and on-prem deployments.",
   panelFootnote = "Embedded UI v2",
 }: AuthSplitLayoutProps) {
+  const formHeading = heading ?? panelTitle;
+
   return (
     <div className="h-full min-h-0 overflow-auto bg-muted/40 p-4 md:p-8">
-      <div className="mx-auto flex min-h-full max-w-7xl items-center">
-        <div className="grid w-full overflow-hidden rounded-2xl border bg-card shadow-xl lg:grid-cols-2">
-          <section className="relative flex min-h-[680px] items-center justify-center p-6 sm:p-10 lg:p-14">
-            <div className="absolute left-6 top-6 sm:left-8 sm:top-8">
-              <img
-                src={logoUrl}
-                alt="KalamDB"
-                className="h-9 w-auto object-contain"
-              />
-              <p className="mt-2 text-[11px] font-medium text-muted-foreground">Admin UI</p>
+      <div className="mx-auto flex min-h-full max-w-6xl items-center">
+        <div className="grid w-full overflow-hidden rounded-2xl border bg-card shadow-sm lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1fr)]">
+          <section className="flex min-h-[560px] flex-col gap-10 p-6 sm:p-10 lg:p-14">
+            <div className="mx-auto flex w-full max-w-md items-center gap-3 lg:mx-0">
+              <span className="inline-flex items-center rounded-md dark:bg-white dark:px-2.5 dark:py-1.5">
+                <img src={logoUrl} alt="KalamDB" className="h-8 w-auto object-contain" />
+              </span>
+              <span className="border-l pl-3 text-xs font-medium text-muted-foreground">Admin UI</span>
             </div>
 
-            <div className="w-full max-w-md space-y-8">
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{title}</p>
-                <h1 className="text-3xl font-semibold text-foreground">{panelTitle}</h1>
-                <p className="text-sm text-muted-foreground">{description}</p>
+            <div className="flex flex-1 items-center">
+              <div className="mx-auto w-full max-w-md space-y-7 lg:mx-0">
+                <div className="space-y-2">
+                  {title && (
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{title}</p>
+                  )}
+                  <h1 className="text-3xl font-semibold tracking-tight text-foreground">{formHeading}</h1>
+                  <p className="text-sm leading-relaxed text-muted-foreground">{description}</p>
+                </div>
+                {children}
               </div>
-              {children}
             </div>
           </section>
 
-          <aside className="relative hidden min-h-[680px] overflow-hidden border-l bg-[radial-gradient(circle_at_15%_15%,rgba(56,189,248,0.35),transparent_40%),radial-gradient(circle_at_70%_20%,rgba(239,68,68,0.3),transparent_38%),linear-gradient(155deg,#0f172a_0%,#1e293b_45%,#111827_100%)] lg:block">
-            <div className="absolute right-8 top-8 h-14 w-14 rounded-xl border border-white/20 bg-black/55" />
-            <div className="absolute inset-0">
-              <div className="absolute -right-16 top-24 h-72 w-72 rotate-12 rounded-[2rem] bg-gradient-to-tr from-red-500/45 via-rose-400/25 to-transparent blur-2xl" />
-              <div className="absolute right-14 top-10 h-96 w-24 rotate-[16deg] rounded-full bg-red-500/30 blur-xl" />
-              <div className="absolute right-32 top-16 h-[32rem] w-24 rotate-[14deg] rounded-full bg-red-400/35 blur-xl" />
-              <div className="absolute right-48 top-8 h-[34rem] w-24 rotate-[12deg] rounded-full bg-sky-300/30 blur-xl" />
-              <div className="absolute left-0 top-0 h-full w-full bg-[linear-gradient(to_bottom,transparent_35%,rgba(0,0,0,0.75)_95%)]" />
+          <aside className="relative hidden min-h-[560px] overflow-hidden border-l bg-[#00091f] lg:block">
+            <div className="relative flex h-full flex-col gap-10 p-10 lg:p-12">
+              <div className="flex flex-1 items-center">
+                <img
+                  src={appFlowUrl}
+                  alt="Your app writes with SQL to KalamDB, which serves SQL tables, live queries and durable topics to connected clients and background workers."
+                  className="w-full"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-teal-300/90">
+                  {panelFootnote}
+                </p>
+                <h2 className="text-2xl font-semibold text-white">{panelTitle}</h2>
+                <p className="max-w-sm text-sm leading-relaxed text-white/65">{panelDescription}</p>
+              </div>
             </div>
 
-            <div className="absolute bottom-8 left-8 right-8 space-y-2 text-white">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/70">{panelFootnote}</p>
-              <h2 className="text-2xl font-semibold">{panelTitle}</h2>
-              <p className="max-w-sm text-sm text-white/80">{panelDescription}</p>
-            </div>
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_6%,rgba(45,212,191,0.16),transparent_55%),radial-gradient(circle_at_95%_2%,rgba(56,189,248,0.10),transparent_45%)]"
+            />
+            <div aria-hidden className="pointer-events-none absolute inset-0 opacity-[0.05]" style={gridLayerStyle} />
           </aside>
         </div>
       </div>
