@@ -6,6 +6,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
+import { cn } from "cn";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { clearSetupError, submitSetup } from "@/store/setupSlice";
 
@@ -38,6 +39,9 @@ const STEP_DESCRIPTIONS: Record<1 | 2 | 3, string> = {
   2: "Choose a secure password for your DBA account.",
   3: "Set the root password used for system-level administration.",
 };
+
+const setupInputClass =
+  "h-11 rounded-xl border-zinc-200 bg-zinc-50/80 text-sm focus-visible:border-emerald-500 focus-visible:ring-emerald-500/20 md:text-sm dark:border-zinc-200 dark:bg-zinc-50/80 dark:text-zinc-900";
 
 export default function SetupWizard() {
   const dispatch = useAppDispatch();
@@ -174,8 +178,8 @@ export default function SetupWizard() {
         panelFootnote="Initialization"
       >
         <div className="space-y-5">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
-            <Check className="h-7 w-7 text-primary" />
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100">
+            <Check className="h-7 w-7 text-[#077f4c]" />
           </div>
 
           <div className="rounded-lg border bg-muted/50 p-4">
@@ -186,7 +190,7 @@ export default function SetupWizard() {
           </div>
 
           <p className="text-sm text-muted-foreground">Redirecting to login in 3 seconds.</p>
-          <Button onClick={() => navigate("/login", { replace: true })} className="h-11 w-full">
+          <Button onClick={() => navigate("/login", { replace: true })} className="w-full h-11 rounded-xl bg-gradient-to-r from-[#21a344] to-[#055441] text-sm font-semibold text-white shadow-[0_10px_24px_-12px_rgba(5,84,65,0.9)] hover:from-[#1d9440] hover:to-[#04483a]">
             Go to login
           </Button>
         </div>
@@ -212,7 +216,7 @@ export default function SetupWizard() {
             {[1, 2, 3].map((value) => (
               <div
                 key={value}
-                className={`h-1.5 rounded-full ${value <= step ? "bg-primary" : "bg-muted"}`}
+                className={`h-1.5 rounded-full ${value <= step ? "bg-[#077f4c]" : "bg-zinc-200"}`}
               />
             ))}
           </div>
@@ -230,7 +234,7 @@ export default function SetupWizard() {
                 onChange={handleChange("username")}
                 placeholder="admin"
                 autoFocus
-                className={formErrors.username ? "border-destructive" : ""}
+                className={cn(setupInputClass, formErrors.username && "border-destructive")}
               />
               {formErrors.username && <p className="text-xs text-destructive">{formErrors.username}</p>}
             </div>
@@ -245,7 +249,7 @@ export default function SetupWizard() {
                 value={formData.email}
                 onChange={handleChange("email")}
                 placeholder="admin@example.com"
-                className={formErrors.email ? "border-destructive" : ""}
+                className={cn(setupInputClass, formErrors.email && "border-destructive")}
               />
               {formErrors.email && <p className="text-xs text-destructive">{formErrors.email}</p>}
             </div>
@@ -266,7 +270,7 @@ export default function SetupWizard() {
                   onChange={handleChange("password")}
                   placeholder="Enter password"
                   autoFocus
-                  className={`pr-10 ${formErrors.password ? "border-destructive" : ""}`}
+                  className={cn(setupInputClass, "pr-11", formErrors.password && "border-destructive")}
                 />
                 <button
                   type="button"
@@ -290,7 +294,7 @@ export default function SetupWizard() {
                 value={formData.confirmPassword}
                 onChange={handleChange("confirmPassword")}
                 placeholder="Confirm password"
-                className={formErrors.confirmPassword ? "border-destructive" : ""}
+                className={cn(setupInputClass, formErrors.confirmPassword && "border-destructive")}
               />
               {formErrors.confirmPassword && <p className="text-xs text-destructive">{formErrors.confirmPassword}</p>}
             </div>
@@ -319,7 +323,7 @@ export default function SetupWizard() {
                   onChange={handleChange("rootPassword")}
                   placeholder="Enter root password"
                   autoFocus
-                  className={`pr-10 ${formErrors.rootPassword ? "border-destructive" : ""}`}
+                  className={cn(setupInputClass, "pr-11", formErrors.rootPassword && "border-destructive")}
                 />
                 <button
                   type="button"
@@ -343,7 +347,7 @@ export default function SetupWizard() {
                 value={formData.confirmRootPassword}
                 onChange={handleChange("confirmRootPassword")}
                 placeholder="Confirm root password"
-                className={formErrors.confirmRootPassword ? "border-destructive" : ""}
+                className={cn(setupInputClass, formErrors.confirmRootPassword && "border-destructive")}
               />
               {formErrors.confirmRootPassword && (
                 <p className="text-xs text-destructive">{formErrors.confirmRootPassword}</p>
@@ -362,16 +366,16 @@ export default function SetupWizard() {
 
         <div className="flex gap-3">
           {step > 1 && (
-            <Button type="button" variant="outline" className="flex-1" onClick={handleBack}>
+            <Button type="button" variant="outline" className="flex-1 h-11 rounded-xl border-zinc-200 bg-white text-sm text-zinc-800 hover:bg-zinc-50 dark:border-zinc-200 dark:bg-white dark:text-zinc-800 dark:hover:bg-zinc-50" onClick={handleBack}>
               Back
             </Button>
           )}
           {step < 3 ? (
-            <Button type="submit" className="flex-1">
+            <Button type="submit" className="flex-1 h-11 rounded-xl bg-gradient-to-r from-[#21a344] to-[#055441] text-sm font-semibold text-white shadow-[0_10px_24px_-12px_rgba(5,84,65,0.9)] hover:from-[#1d9440] hover:to-[#04483a]">
               Continue
             </Button>
           ) : (
-            <Button type="submit" className="flex-1" disabled={isSubmitting}>
+            <Button type="submit" className="flex-1 h-11 rounded-xl bg-gradient-to-r from-[#21a344] to-[#055441] text-sm font-semibold text-white shadow-[0_10px_24px_-12px_rgba(5,84,65,0.9)] hover:from-[#1d9440] hover:to-[#04483a]" disabled={isSubmitting}>
               {isSubmitting ? (
                 <>
                   <Spinner data-icon="inline-start" />
