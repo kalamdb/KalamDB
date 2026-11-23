@@ -124,11 +124,11 @@ export default function AuthSplitLayout({
         aria-hidden
         alt=""
         src={leavesUrl}
-        className="pointer-events-none absolute bottom-0 left-0 hidden w-[9rem] md:block"
+        className="pointer-events-none absolute bottom-0 left-0 hidden w-14 md:block"
       />
 
       <div className="relative mx-auto grid min-h-full max-w-7xl items-center gap-8 lg:grid-cols-[minmax(0,460px)_minmax(0,1fr)] lg:gap-12">
-        <section className="rounded-3xl border border-black/5 bg-white/95 p-6 shadow-[0_30px_70px_-30px_rgba(6,78,59,0.3)] backdrop-blur-sm sm:p-10">
+        <section className="rounded-3xl border border-black/5 bg-white p-6 shadow-[0_30px_70px_-30px_rgba(6,78,59,0.3)] sm:p-10">
           <div className="flex items-center gap-3">
             <KalamDbMark className="size-8 shrink-0" />
             <span className="text-2xl font-bold tracking-tight text-zinc-900">KalamDB</span>
@@ -174,12 +174,12 @@ export default function AuthSplitLayout({
           />
 
           {panelFeatures.length > 0 && (
-            <ul className="mt-4 grid w-full max-w-3xl grid-cols-2 gap-y-6 xl:grid-cols-4 xl:divide-x xl:divide-black/5">
+            <ul className="mt-5 grid w-full max-w-3xl grid-cols-2 gap-y-6 rounded-2xl border border-white/70 bg-white/75 px-4 py-5 shadow-[0_20px_45px_-26px_rgba(6,78,59,0.4),inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-md xl:grid-cols-4 xl:divide-x xl:divide-emerald-950/10">
               {panelFeatures.map(({ label, description: featureDescription, icon: Icon, iconClassName }) => (
                 <li key={label} className="flex flex-col items-center gap-1.5 px-4 text-center">
                   <Icon className={cn("size-5", iconClassName ?? "text-emerald-600")} />
                   <span className="text-sm font-semibold text-zinc-900">{label}</span>
-                  <span className="text-xs leading-relaxed text-zinc-500">{featureDescription}</span>
+                  <span className="text-xs leading-relaxed text-zinc-600">{featureDescription}</span>
                 </li>
               ))}
             </ul>
