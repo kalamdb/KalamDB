@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertCircle, Eye, EyeOff, ExternalLink, KeyRound, User } from "lucide-react";
+import { AlertCircle, ArrowRight, Eye, EyeOff, ExternalLink, Lock, Terminal, User } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { authApi, type AuthLoginOptions, type OidcLoginOptions } from "@/lib/api";
 import { buildOAuthAuthorizationUrl } from "@/lib/oauth";
@@ -103,7 +103,7 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
           <Button
             type="button"
             variant="outline"
-            className="h-9 w-full text-sm"
+            className="h-11 w-full rounded-xl border-zinc-200 bg-white text-sm text-zinc-800 hover:bg-zinc-50 dark:border-zinc-200 dark:bg-white dark:text-zinc-800 dark:hover:bg-zinc-50"
             disabled={isLoading || isRedirecting}
             onClick={() => void handleOAuthLogin(oidcOption)}
           >
@@ -113,16 +113,19 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
 
           {localLoginEnabled && (
             <div className="flex items-center gap-3">
-              <div className="h-px flex-1 bg-border" />
-              <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">or</span>
-              <div className="h-px flex-1 bg-border" />
+              <div className="h-px flex-1 bg-zinc-200" />
+              <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-zinc-500">or</span>
+              <div className="h-px flex-1 bg-zinc-200" />
             </div>
           )}
         </>
       )}
 
       {displayError && (
-        <Alert variant="destructive">
+        <Alert
+          variant="destructive"
+          className="border-red-200 bg-red-50 text-red-700 dark:border-red-200 dark:bg-red-50 dark:text-red-700 *:data-[slot=alert-description]:text-red-700"
+        >
           <AlertCircle />
           <AlertDescription>{displayError}</AlertDescription>
         </Alert>
@@ -132,9 +135,11 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
         <>
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
-              <Label htmlFor="username">Username</Label>
+              <Label htmlFor="username" className="text-sm text-zinc-700">
+                Username
+              </Label>
               <div className="relative">
-                <User className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <User className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
                 <Input
                   id="username"
                   type="text"
@@ -144,15 +149,17 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
                   disabled={isLoading}
                   autoComplete="username"
                   autoFocus
-                  className="h-9 pl-9 text-sm md:text-sm"
+                  className="h-11 rounded-xl border-zinc-200 bg-zinc-50/80 pl-10 text-sm focus-visible:border-emerald-500 focus-visible:ring-emerald-500/20 md:text-sm dark:border-zinc-200 dark:bg-zinc-50/80 dark:text-zinc-900 dark:placeholder:text-zinc-400"
                 />
               </div>
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password" className="text-sm text-zinc-700">
+                Password
+              </Label>
               <div className="relative">
-                <KeyRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Lock className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
                 <Input
                   id="password"
                   type={showPassword ? "text" : "password"}
@@ -161,7 +168,7 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
                   placeholder="Enter password"
                   disabled={isLoading}
                   autoComplete="current-password"
-                  className="h-9 pl-9 pr-10 text-sm md:text-sm"
+                  className="h-11 rounded-xl border-zinc-200 bg-zinc-50/80 pl-10 pr-11 text-sm focus-visible:border-emerald-500 focus-visible:ring-emerald-500/20 md:text-sm dark:border-zinc-200 dark:bg-zinc-50/80 dark:text-zinc-900 dark:placeholder:text-zinc-400"
                 />
                 <Button
                   type="button"
@@ -171,7 +178,7 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
                   aria-pressed={showPassword}
                   disabled={isLoading}
                   onClick={() => setShowPassword((visible) => !visible)}
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-100 dark:hover:text-zinc-700"
                 >
                   {showPassword ? <EyeOff /> : <Eye />}
                 </Button>
@@ -179,31 +186,50 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
             </div>
           </div>
 
-          <Button type="submit" className="h-9 w-full text-sm" disabled={isLoading}>
+          <Button
+            type="submit"
+            className="group/submit h-11 w-full rounded-xl bg-gradient-to-r from-[#21a344] to-[#055441] text-sm font-semibold text-white shadow-[0_10px_24px_-12px_rgba(5,84,65,0.9)] hover:from-[#1d9440] hover:to-[#04483a]"
+            disabled={isLoading}
+          >
             {isLoading && <Spinner data-icon="inline-start" />}
             {isLoading ? "Signing in..." : "Log in"}
+            {!isLoading && (
+              <ArrowRight
+                data-icon="inline-end"
+                className="transition-transform group-hover/submit:translate-x-0.5"
+              />
+            )}
           </Button>
         </>
       )}
 
       {oidcConfigurationError && !displayError && (
-        <Alert className="border-warning/40 bg-warning/5">
-          <AlertCircle className="text-warning" />
-          <AlertDescription>{oidcConfigurationError}</AlertDescription>
+        <Alert className="border-amber-200 bg-amber-50/80 dark:border-amber-200 dark:bg-amber-50/80">
+          <AlertCircle className="text-amber-600" />
+          <AlertDescription className="text-amber-900/80">{oidcConfigurationError}</AlertDescription>
         </Alert>
       )}
 
-      <div className="space-y-1 border-t pt-4">
-        <p className="text-sm text-muted-foreground">
-          Unconfigured node?{" "}
-          <Link to="/setup" className="font-medium text-primary hover:underline">
+      <div className="space-y-4 border-t border-zinc-100 pt-4">
+        <p className="text-sm text-zinc-500">
+          New here?{" "}
+          <Link to="/setup" className="font-semibold text-[#077f4c] hover:underline">
             Run setup
           </Link>
         </p>
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          Nodes started with scripts/cluster.sh are already configured. Sign in as root with the configured root
-          password.
-        </p>
+
+        <div className="flex gap-3 rounded-xl border border-zinc-200 bg-zinc-50/70 p-3">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[#055441] text-white">
+            <Terminal className="size-4" />
+          </span>
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-zinc-900">Unconfigured node?</p>
+            <p className="text-xs leading-relaxed text-zinc-500">
+              Nodes started with scripts/cluster.sh are already configured. Sign in as root with the configured root
+              password.
+            </p>
+          </div>
+        </div>
       </div>
     </form>
   );
