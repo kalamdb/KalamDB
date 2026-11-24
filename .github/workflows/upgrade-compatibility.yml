@@ -1,0 +1,59 @@
+name: Upgrade Compatibility
+
+on:
+  workflow_dispatch:
+    inputs:
+      previous_tag:
+        description: "Published stable baseline, e.g. v0.8.0 (empty = latest stable)"
+        type: string
+        default: ""
+      candidate_run_id:
+        description: "Successful Release run ID for this exact SHA (empty = auto-detect)"
+        type: string
+        default: ""
+      require_logical_restore:
+        description: "Also require cross-version table export/import and writes"
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      previous_tag:
+        type: string
+        default: ""
+      candidate_run_id:
+        type: string
+        default: ""
+      require_logical_restore:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  upgrade-compatibility:
+    name: Rehearse packaged standalone upgrade (Linux x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Check packaged upgrade and rollback
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS_TAG: ${{ inputs.previous_tag }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          REQUIRE_LOGICAL_RESTORE: ${{ inputs.require_logical_restore }}
+        run: python3 scripts/check-upgrade-compatibility.py
+
+      - name: Upload upgrade evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: upgrade-compatibility-evidence
+          path: upgrade-compatibility-evidence/
+          if-no-files-found: error
+          retention-days: 30
