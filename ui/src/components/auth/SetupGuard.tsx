@@ -1,6 +1,6 @@
 import { useEffect, type ReactNode } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Database } from "lucide-react";
+import { kalamDbLogoUrl } from "@/components/auth/AuthSplitLayout";
 import { Spinner } from "@/components/ui/spinner";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { checkSetupStatus } from "@/store/setupSlice";
@@ -39,10 +39,8 @@ export default function SetupGuard({ children }: SetupGuardProps) {
   if (isCheckingStatus) {
     return (
       <div className="flex h-full min-h-full flex-col items-center justify-center bg-background">
-        <div className="flex items-center gap-3 mb-4">
-          <Database className="h-10 w-10 text-primary" />
-          <span className="text-2xl font-bold">KalamDB</span>
-        </div>
+        {/* The lockup is dark ink, so flip it to solid white on a dark canvas. */}
+        <img src={kalamDbLogoUrl} alt="KalamDB" className="mb-4 h-10 w-auto dark:brightness-0 dark:invert" />
         <div className="flex items-center gap-2 text-muted-foreground">
           <Spinner className="size-5" />
           <span>Checking server status...</span>

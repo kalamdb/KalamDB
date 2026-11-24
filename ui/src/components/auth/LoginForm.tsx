@@ -4,10 +4,13 @@ import { AlertCircle, ArrowRight, Eye, EyeOff, ExternalLink, Lock, Terminal, Use
 import { useAuth } from "@/lib/auth";
 import { authApi, type AuthLoginOptions, type OidcLoginOptions } from "@/lib/api";
 import { buildOAuthAuthorizationUrl } from "@/lib/oauth";
+import { cn } from "cn";
+import { authButtonClass, authInputClass } from "@/components/auth/AuthSplitLayout";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 
 interface LoginFormProps {
@@ -103,7 +106,7 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
           <Button
             type="button"
             variant="outline"
-            className="h-11 w-full rounded-xl border-zinc-200 bg-white text-sm text-zinc-800 hover:bg-zinc-50 dark:border-zinc-200 dark:bg-white dark:text-zinc-800 dark:hover:bg-zinc-50"
+            className={cn(authButtonClass, "w-full")}
             disabled={isLoading || isRedirecting}
             onClick={() => void handleOAuthLogin(oidcOption)}
           >
@@ -113,19 +116,16 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
 
           {localLoginEnabled && (
             <div className="flex items-center gap-3">
-              <div className="h-px flex-1 bg-zinc-200" />
-              <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-zinc-500">or</span>
-              <div className="h-px flex-1 bg-zinc-200" />
+              <Separator className="flex-1" />
+              <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">or</span>
+              <Separator className="flex-1" />
             </div>
           )}
         </>
       )}
 
       {displayError && (
-        <Alert
-          variant="destructive"
-          className="border-red-200 bg-red-50 text-red-700 dark:border-red-200 dark:bg-red-50 dark:text-red-700 *:data-[slot=alert-description]:text-red-700"
-        >
+        <Alert variant="destructive" className="border-destructive/20 bg-destructive/5">
           <AlertCircle />
           <AlertDescription>{displayError}</AlertDescription>
         </Alert>
@@ -133,13 +133,13 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
 
       {localLoginEnabled && (
         <>
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="username" className="text-sm text-zinc-700">
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="username" className="text-sm">
                 Username
-              </Label>
+              </FieldLabel>
               <div className="relative">
-                <User className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
+                <User className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   id="username"
                   type="text"
@@ -149,17 +149,17 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
                   disabled={isLoading}
                   autoComplete="username"
                   autoFocus
-                  className="h-11 rounded-xl border-zinc-200 bg-zinc-50/80 pl-10 text-sm focus-visible:border-emerald-500 focus-visible:ring-emerald-500/20 md:text-sm dark:border-zinc-200 dark:bg-zinc-50/80 dark:text-zinc-900 dark:placeholder:text-zinc-400"
+                  className={cn(authInputClass, "pl-10")}
                 />
               </div>
-            </div>
+            </Field>
 
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="password" className="text-sm text-zinc-700">
+            <Field>
+              <FieldLabel htmlFor="password" className="text-sm">
                 Password
-              </Label>
+              </FieldLabel>
               <div className="relative">
-                <Lock className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
+                <Lock className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   id="password"
                   type={showPassword ? "text" : "password"}
@@ -168,7 +168,7 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
                   placeholder="Enter password"
                   disabled={isLoading}
                   autoComplete="current-password"
-                  className="h-11 rounded-xl border-zinc-200 bg-zinc-50/80 pl-10 pr-11 text-sm focus-visible:border-emerald-500 focus-visible:ring-emerald-500/20 md:text-sm dark:border-zinc-200 dark:bg-zinc-50/80 dark:text-zinc-900 dark:placeholder:text-zinc-400"
+                  className={cn(authInputClass, "pl-10 pr-11")}
                 />
                 <Button
                   type="button"
@@ -178,19 +178,15 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
                   aria-pressed={showPassword}
                   disabled={isLoading}
                   onClick={() => setShowPassword((visible) => !visible)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-100 dark:hover:text-zinc-700"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
                 >
-                  {showPassword ? <EyeOff /> : <Eye />}
+                  {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                 </Button>
               </div>
-            </div>
-          </div>
+            </Field>
+          </FieldGroup>
 
-          <Button
-            type="submit"
-            className="group/submit h-11 w-full rounded-xl bg-gradient-to-r from-[#21a344] to-[#055441] text-sm font-semibold text-white shadow-[0_10px_24px_-12px_rgba(5,84,65,0.9)] hover:from-[#1d9440] hover:to-[#04483a]"
-            disabled={isLoading}
-          >
+          <Button type="submit" variant="brand" className={cn("group/submit w-full", authButtonClass)} disabled={isLoading}>
             {isLoading && <Spinner data-icon="inline-start" />}
             {isLoading ? "Signing in..." : "Log in"}
             {!isLoading && (
@@ -204,27 +200,27 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
       )}
 
       {oidcConfigurationError && !displayError && (
-        <Alert className="border-amber-200 bg-amber-50/80 dark:border-amber-200 dark:bg-amber-50/80">
-          <AlertCircle className="text-amber-600" />
-          <AlertDescription className="text-amber-900/80">{oidcConfigurationError}</AlertDescription>
+        <Alert className="border-warning/40 bg-warning/10">
+          <AlertCircle />
+          <AlertDescription className="text-foreground/80">{oidcConfigurationError}</AlertDescription>
         </Alert>
       )}
 
-      <div className="space-y-4 border-t border-zinc-100 pt-4">
-        <p className="text-sm text-zinc-500">
+      <div className="space-y-4 border-t pt-4">
+        <p className="text-sm text-muted-foreground">
           New here?{" "}
-          <Link to="/setup" className="font-semibold text-[#077f4c] hover:underline">
+          <Link to="/setup" className="font-semibold text-brand hover:underline">
             Run setup
           </Link>
         </p>
 
-        <div className="flex gap-3 rounded-xl border border-zinc-200 bg-zinc-50/70 p-3">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[#055441] text-white">
+        <div className="flex gap-3 rounded-xl border bg-muted/50 p-3">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand-deep text-brand-foreground">
             <Terminal className="size-4" />
           </span>
           <div className="space-y-1">
-            <p className="text-sm font-semibold text-zinc-900">Unconfigured node?</p>
-            <p className="text-xs leading-relaxed text-zinc-500">
+            <p className="text-sm font-semibold text-foreground">Unconfigured node?</p>
+            <p className="text-xs leading-relaxed text-muted-foreground">
               Nodes started with scripts/cluster.sh are already configured. Sign in as root with the configured root
               password.
             </p>
