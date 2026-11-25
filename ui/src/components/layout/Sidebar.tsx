@@ -38,7 +38,7 @@ const navigation = [
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     const stored = localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY);
-    return stored ? stored === "1" : true;
+    return stored ? stored === "1" : false;
   });
   const location = useLocation();
 

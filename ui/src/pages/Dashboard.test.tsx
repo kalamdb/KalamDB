@@ -231,7 +231,7 @@ describe("Dashboard page", () => {
     });
   });
 
-  it("renders metric charts above storage and cluster health", async () => {
+  it("renders storage and cluster health above the detailed metric charts", async () => {
     render(
       <MemoryRouter>
         <Dashboard />
@@ -241,8 +241,8 @@ describe("Dashboard page", () => {
     const metricsChart = await screen.findByText("Metrics chart 1");
     const storageWidget = screen.getByText("Storage usage local");
 
-    const metricsPosition = metricsChart.compareDocumentPosition(storageWidget);
-    expect(metricsPosition & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const storagePosition = storageWidget.compareDocumentPosition(metricsChart);
+    expect(storagePosition & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("refreshes dashboard queries and rechecks storage health", async () => {

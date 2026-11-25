@@ -150,6 +150,25 @@
     --color-ring: oklch(68.5% 0.169 237.323);
   }
   
+  /* Accent tokens scoped to the dashboard surface only. */
+  [data-dashboard] {
+    --kdb-accent: oklch(62% 0.13 157);
+    --kdb-accent-strong: oklch(52% 0.13 157);
+    --kdb-accent-soft: oklch(96.5% 0.025 157);
+    --kdb-accent-line: oklch(89% 0.05 157);
+    --kdb-grid: oklch(93% 0 0);
+    --kdb-track: oklch(93% 0 0);
+  }
+
+  .dark [data-dashboard] {
+    --kdb-accent: oklch(72% 0.13 157);
+    --kdb-accent-strong: oklch(80% 0.12 157);
+    --kdb-accent-soft: oklch(26% 0.03 157);
+    --kdb-accent-line: oklch(34% 0.05 157);
+    --kdb-grid: oklch(28% 0 0);
+    --kdb-track: oklch(28% 0 0);
+  }
+
   * {
     border-color: var(--color-border);
   }
@@ -158,6 +177,16 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-family-sans);
+  }
+}
+
+@keyframes kdb-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
   }
 }
 

@@ -2,18 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Clock3,
-  DatabaseZap,
   Database,
+  DatabaseZap,
   Gauge,
   MessageSquare,
+  Plug,
   RefreshCw,
-  Search,
   Timer,
   Wifi,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Card } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -22,10 +21,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DashboardClusterOverview } from "@/components/dashboard/ClusterOverview";
+import { DashboardHero } from "@/components/dashboard/DashboardHero";
 import { MetricsChart } from "@/components/dashboard/MetricsChart";
+import { QueryActivityChart, totalQueryRate } from "@/components/dashboard/QueryActivityChart";
+import { ResourcePanel } from "@/components/dashboard/ResourcePanel";
 import { SlowQueriesPanel } from "@/components/dashboard/SlowQueriesPanel";
+import { StatGroupPanel, type StatGroupItem } from "@/components/dashboard/StatGroupPanel";
+import { StatTile } from "@/components/dashboard/StatTile";
 import { StorageUsageChart } from "@/components/dashboard/StorageUsageChart";
-import { PageLayout } from "@/components/layout/PageLayout";
+import { ACCENT_CHIP, PANEL_LABEL } from "@/components/dashboard/theme";
 import { useAuth } from "@/lib/auth";
 import {
   getTimeRangeCutoff,
@@ -54,12 +58,6 @@ const DASHBOARD_STATS_SQL = [
   "FROM system.stats",
   "ORDER BY metric_name;",
 ].join("\n");
-
-interface MetricCardItem {
-  label: string;
-  displayValue: string;
-  exactValue?: string;
-}
 
 function parseInteger(value: string | undefined): number {
   if (!value) {
@@ -110,13 +108,13 @@ function formatCompactNumber(value: number, digits = 1): string {
   return value.toLocaleString();
 }
 
-function buildCountMetricItem(label: string, value: string | undefined): MetricCardItem {
+function buildCountMetricItem(label: string, value: string | undefined): StatGroupItem {
   const numeric = parseInteger(value);
   const exactValue = numeric.toLocaleString();
   const displayValue = formatCompactNumber(numeric);
   return {
     label,
-    displayValue,
+    value: displayValue,
     exactValue: displayValue === exactValue ? undefined : exactValue,
   };
 }
@@ -126,36 +124,21 @@ function buildDecimalMetricItem(
   value: string | undefined,
   digits = 2,
   suffix = "",
-): MetricCardItem {
+): StatGroupItem {
   const numeric = parseNumber(value);
   const exactCore = numeric.toLocaleString(undefined, {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   });
   const exactValue = `${exactCore}${suffix}`;
-  const compactCore = Math.abs(numeric) >= 1000 ? formatCompactNumber(numeric, digits > 1 ? 1 : digits) : exactCore;
+  const compactCore =
+    Math.abs(numeric) >= 1000 ? formatCompactNumber(numeric, digits > 1 ? 1 : digits) : exactCore;
   const displayValue = `${compactCore}${suffix}`;
   return {
     label,
-    displayValue,
+    value: displayValue,
     exactValue: displayValue === exactValue ? undefined : exactValue,
   };
-}
-
-function cardItemsClass(itemCount: number): string {
-  if (itemCount === 1) {
-    return "flex justify-center";
-  }
-  if (itemCount === 3) {
-    return "grid grid-cols-3 gap-2";
-  }
-  return "grid grid-cols-2 gap-3";
-}
-
-function cardValueClass(itemCount: number): string {
-  return itemCount > 2
-    ? "max-w-full break-words text-center text-xl font-semibold leading-tight tabular-nums"
-    : "max-w-full break-words text-center text-2xl font-semibold leading-tight tabular-nums";
 }
 
 function compactDashboardSamples(samples: DashboardMetricSample[]): DashboardMetricSample[] {
@@ -258,6 +241,7 @@ export default function Dashboard() {
     useCheckStorageHealthMutation();
 
   const currentStats = stats ?? EMPTY_STATS;
+  const isInitialLoad = isLoading && !stats;
   const visibleMetricSamples = useMemo(
     () => filterSamplesForRange(metricSamples, timeRange),
     [metricSamples, timeRange],
@@ -300,145 +284,161 @@ export default function Dashboard() {
         ? "Failed to fetch cluster information"
         : null;
 
-  const cards = [
-    {
-      title: "Uptime",
-      items: [
-        {
-          label: "Process",
-          displayValue: currentStats.server_uptime_human || formatUptime(currentStats.server_uptime_seconds),
-        },
-      ],
-      icon: Clock3,
-    },
-    {
-      title: "Tables & Schemas",
-      items: [
-        buildCountMetricItem("Tables", currentStats.total_tables),
-        buildCountMetricItem("Schemas", currentStats.total_namespaces),
-      ],
-      icon: Database,
-    },
-    {
-      title: "Connections & Subscriptions",
-      items: [
-        buildCountMetricItem("Connections", currentStats.active_connections),
-        buildCountMetricItem("Peak Connections", currentStats.active_connections_peak),
-        buildCountMetricItem("Subscriptions", currentStats.active_subscriptions),
-        buildCountMetricItem("Peak Subscriptions", currentStats.active_subscriptions_peak),
-        buildDecimalMetricItem("Changes/s", currentStats.subscription_changes_delivered_per_second),
-      ],
-      icon: Wifi,
-    },
-    {
-      title: "Pub/Sub",
-      items: [
-        buildCountMetricItem("Messages", currentStats.pubsub_messages_published_total),
-        buildCountMetricItem("Consumer Groups", currentStats.topic_consumer_group_count),
-        buildCountMetricItem("Active Consumers", currentStats.pubsub_active_consumers),
-        buildCountMetricItem("Topics", currentStats.topic_cache_topic_count),
-      ],
-      icon: MessageSquare,
-    },
-    {
-      title: "Queries Total",
-      items: [buildCountMetricItem("SQL statements", currentStats.queries_total)],
-      icon: Search,
-    },
-    {
-      title: "Queries/s",
-      items: [buildDecimalMetricItem("Throughput", currentStats.queries_per_second)],
-      icon: Gauge,
-    },
-    {
-      title: "Avg Latency",
-      items: [buildDecimalMetricItem("Mean SQL duration", currentStats.avg_query_latency_ms, 2, " ms")],
-      icon: Timer,
-    },
-  ];
+  const throughputSeries = useMemo(
+    () => visibleMetricSamples.map(totalQueryRate),
+    [visibleMetricSamples],
+  );
+  const connectionSeries = useMemo(
+    () => visibleMetricSamples.map((sample) => Number(sample.active_connections)),
+    [visibleMetricSamples],
+  );
+
+  const connections = parseInteger(currentStats.active_connections);
+  const peakConnections = parseInteger(currentStats.active_connections_peak);
+  const connectionPercent = peakConnections > 0 ? Math.min(100, (connections / peakConnections) * 100) : 0;
 
   return (
-    <PageLayout
-      title="Dashboard"
-      description={`Welcome back, ${user?.username ?? "admin"}`}
-      actions={
-        <div className="flex items-center gap-3">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              navigate("/sql", {
-                state: {
-                  prefillTitle: "Dashboard Stats",
-                  prefillSql: DASHBOARD_STATS_SQL,
-                },
-              });
-            }}
-          >
-            <DatabaseZap className="mr-1.5 h-4 w-4" />
-            Open Stats SQL
-          </Button>
-          <Select value={timeRange} onValueChange={setTimeRange}>
-            <SelectTrigger className="h-9 w-[140px]">
-              <SelectValue placeholder="Time range" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="1 HOURS">Last 1 Hour</SelectItem>
-              <SelectItem value="6 HOURS">Last 6 Hours</SelectItem>
-              <SelectItem value="24 HOURS">Last 24 Hours</SelectItem>
-              <SelectItem value="7 DAYS">Last 7 Days</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void handleRefresh()}
-            disabled={isLoading || isStorageHealthLoading}
-          >
-            <RefreshCw className={`mr-1.5 h-4 w-4 ${isLoading || isStorageHealthLoading ? "animate-spin" : ""}`} />
-            Refresh
-          </Button>
-        </div>
-      }
-    >
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
-        {cards.map((card) => (
-          <Card key={card.title} className="min-h-[142px]">
-            <CardContent className="flex flex-1 flex-col justify-center text-center">
-              <div className="relative mb-3 flex min-h-8 items-start justify-center px-5">
-                <p className="text-center text-xs uppercase leading-snug tracking-[0.14em] text-muted-foreground">
-                  {card.title}
-                </p>
-                <card.icon className="absolute right-0 top-0 h-4 w-4 text-muted-foreground" />
-              </div>
-              <div className={cardItemsClass(card.items.length)}>
-                {card.items.map((item) => (
-                  <div key={item.label} className="flex min-w-0 flex-col items-center text-center">
-                    <TooltipProvider delayDuration={200}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <p className={cardValueClass(card.items.length)}>{item.displayValue}</p>
-                        </TooltipTrigger>
-                        {item.exactValue ? <TooltipContent>{item.exactValue}</TooltipContent> : null}
-                      </Tooltip>
-                    </TooltipProvider>
-                    <p className="text-center text-xs leading-snug text-muted-foreground">{item.label}</p>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      <MetricsChart
-        data={visibleMetricSamples}
-        isLoading={isLoading && visibleMetricSamples.length === 0}
-        trailingPanel={<SlowQueriesPanel queries={slowQueries} isLoading={isSlowQueriesLoading && slowQueries.length === 0} />}
+    <section data-dashboard className="flex flex-col gap-5 p-4 lg:p-6">
+      <DashboardHero
+        username={user?.username ?? "admin"}
+        serverVersion={currentStats.server_version}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                navigate("/sql", {
+                  state: {
+                    prefillTitle: "Dashboard Stats",
+                    prefillSql: DASHBOARD_STATS_SQL,
+                  },
+                });
+              }}
+            >
+              <DatabaseZap className="mr-1.5 h-4 w-4" />
+              Open Stats SQL
+            </Button>
+            <Select value={timeRange} onValueChange={setTimeRange}>
+              <SelectTrigger className="h-9 w-[140px]">
+                <SelectValue placeholder="Time range" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1 HOURS">Last 1 Hour</SelectItem>
+                <SelectItem value="6 HOURS">Last 6 Hours</SelectItem>
+                <SelectItem value="24 HOURS">Last 24 Hours</SelectItem>
+                <SelectItem value="7 DAYS">Last 7 Days</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleRefresh()}
+              disabled={isLoading || isStorageHealthLoading}
+            >
+              <RefreshCw className={`mr-1.5 h-4 w-4 ${isLoading || isStorageHealthLoading ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+          </div>
+        }
       />
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,0.95fr)]">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatTile
+          index={0}
+          icon={Clock3}
+          label="Uptime"
+          value={currentStats.server_uptime_human || formatUptime(currentStats.server_uptime_seconds)}
+          caption="Process"
+          isLoading={isInitialLoad}
+        />
+        <StatTile
+          index={1}
+          icon={Timer}
+          label="Avg Latency"
+          value={buildDecimalMetricItem("", currentStats.avg_query_latency_ms, 2, " ms").value}
+          caption="Mean SQL duration"
+          isLoading={isInitialLoad}
+        />
+        <StatTile
+          index={2}
+          icon={Gauge}
+          label="Throughput"
+          value={buildDecimalMetricItem("", currentStats.queries_per_second).value}
+          caption="Queries per second"
+          series={throughputSeries}
+          isLoading={isInitialLoad}
+        />
+        <StatTile
+          index={3}
+          icon={Plug}
+          label="Active Connections"
+          value={`${connections.toLocaleString()} / ${peakConnections.toLocaleString()}`}
+          caption="Current against observed peak"
+          series={connectionSeries}
+          progress={{ percent: connectionPercent, label: `${Math.round(connectionPercent)}%` }}
+          isLoading={isInitialLoad}
+        />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(330px,1fr)]">
+        <QueryActivityChart
+          data={visibleMetricSamples}
+          isLoading={isInitialLoad}
+          className="h-full"
+        />
+
+        <div className="flex flex-col gap-4">
+          <StatGroupPanel
+            index={1}
+            icon={Database}
+            title="Database Overview"
+            isLoading={isInitialLoad}
+            items={[
+              buildCountMetricItem("Tables", currentStats.total_tables),
+              buildCountMetricItem("Schemas", currentStats.total_namespaces),
+              buildCountMetricItem("SQL statements", currentStats.queries_total),
+            ]}
+          />
+          <StatGroupPanel
+            index={2}
+            icon={Wifi}
+            title="Connections & Subscriptions"
+            isLoading={isInitialLoad}
+            action={
+              <span className={ACCENT_CHIP}>
+                <span className="tabular-nums">
+                  {buildDecimalMetricItem("", currentStats.subscription_changes_delivered_per_second).value}
+                </span>
+                changes/s
+              </span>
+            }
+            items={[
+              buildCountMetricItem("Connections", currentStats.active_connections),
+              buildCountMetricItem("Peak Connections", currentStats.active_connections_peak),
+              buildCountMetricItem("Subscriptions", currentStats.active_subscriptions),
+              buildCountMetricItem("Peak Subscriptions", currentStats.active_subscriptions_peak),
+            ]}
+          />
+          <StatGroupPanel
+            index={3}
+            icon={MessageSquare}
+            title="Pub/Sub"
+            isLoading={isInitialLoad}
+            items={[
+              buildCountMetricItem("Messages", currentStats.pubsub_messages_published_total),
+              buildCountMetricItem("Consumer Groups", currentStats.topic_consumer_group_count),
+              buildCountMetricItem("Active Consumers", currentStats.pubsub_active_consumers),
+              buildCountMetricItem("Topics", currentStats.topic_cache_topic_count),
+            ]}
+          />
+        </div>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        <ResourcePanel index={0} samples={visibleMetricSamples} isLoading={isInitialLoad} />
         <StorageUsageChart
+          index={1}
           storages={storages}
           selectedStorageId={selectedStorageId}
           onStorageChange={setSelectedStorageId}
@@ -446,8 +446,8 @@ export default function Dashboard() {
           isLoading={isStorageHealthLoading}
           error={storageHealthError && "error" in storageHealthError ? storageHealthError.error : null}
         />
-
         <DashboardClusterOverview
+          index={2}
           health={clusterSnapshot?.health ?? null}
           nodes={clusterSnapshot?.nodes ?? []}
           isLoading={isClusterLoading}
@@ -456,12 +456,26 @@ export default function Dashboard() {
       </div>
 
       {error && (
-        <Card className="border-destructive/30 bg-destructive/5">
-          <CardContent className="pt-4 text-sm text-destructive">
-            {"error" in error ? error.error : "Failed to fetch dashboard stats"}
-          </CardContent>
+        <Card className="border-destructive/30 bg-destructive/5 px-5 py-4 text-sm text-destructive">
+          {"error" in error ? error.error : "Failed to fetch dashboard stats"}
         </Card>
       )}
-    </PageLayout>
+
+      <div className="mt-2 flex items-center gap-4">
+        <span className={PANEL_LABEL}>Detailed metrics</span>
+        <span className="h-px flex-1 bg-border" />
+      </div>
+
+      <MetricsChart
+        data={visibleMetricSamples}
+        isLoading={isLoading && visibleMetricSamples.length === 0}
+        trailingPanel={
+          <SlowQueriesPanel
+            queries={slowQueries}
+            isLoading={isSlowQueriesLoading && slowQueries.length === 0}
+          />
+        }
+      />
+    </section>
   );
 }

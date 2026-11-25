@@ -1,4 +1,7 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { HardDrive } from "lucide-react";
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -6,15 +9,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 import type { Storage, StorageHealthResult } from "@/services/storageService";
-import {
-  Cell,
-  Legend,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-} from "recharts";
+import { ACCENT, PANEL, chartTooltipStyle, enterAnimation } from "./theme";
 
 interface StorageUsageChartProps {
   storages: Storage[];
@@ -23,6 +20,8 @@ interface StorageUsageChartProps {
   health: StorageHealthResult | null;
   isLoading?: boolean;
   error?: string | null;
+  className?: string;
+  index?: number;
 }
 
 function formatBytes(value: number | null | undefined): string {
@@ -53,8 +52,8 @@ function getUsageSlices(health: StorageHealthResult | null) {
     total,
     free,
     data: [
-      { name: "Used", value: used, color: "#0f766e" },
-      { name: "Free", value: free, color: "#cbd5e1" },
+      { name: "Used", value: used, color: ACCENT },
+      { name: "Free", value: free, color: "var(--kdb-track)" },
     ],
   };
 }
@@ -66,22 +65,33 @@ export function StorageUsageChart({
   health,
   isLoading,
   error,
+  className,
+  index = 0,
 }: StorageUsageChartProps) {
   const selectedStorage = storages.find((storage) => storage.storage_id === selectedStorageId) ?? null;
-  const { used, total, data } = getUsageSlices(health);
+  const { used, free, total, data } = getUsageSlices(health);
   const usagePercent = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : null;
+  const entrance = enterAnimation(index);
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
-        <div>
-          <CardTitle>Storage Usage</CardTitle>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Capacity and usage for the selected storage backend.
-          </p>
+    <Card
+      className={cn(PANEL, "gap-0 px-5 py-4", entrance.className, className)}
+      style={entrance.style}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex size-7 items-center justify-center rounded-lg bg-[var(--kdb-accent-soft)] text-[var(--kdb-accent-strong)]">
+            <HardDrive className="size-4" strokeWidth={2} />
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-medium">Storage Usage</p>
+            <p className="truncate text-xs text-muted-foreground">
+              {selectedStorage?.base_directory ?? "Selected storage backend"}
+            </p>
+          </div>
         </div>
         <Select value={selectedStorageId} onValueChange={onStorageChange} disabled={storages.length === 0}>
-          <SelectTrigger className="w-[220px] h-9">
+          <SelectTrigger className="h-8 w-[150px] shrink-0 text-xs">
             <SelectValue placeholder="Select storage" />
           </SelectTrigger>
           <SelectContent>
@@ -92,73 +102,88 @@ export function StorageUsageChart({
             ))}
           </SelectContent>
         </Select>
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <div className="flex h-72 items-center justify-center text-sm text-muted-foreground">
-            Checking storage health...
+      </div>
+
+      {isLoading ? (
+        <div className="mt-4 flex items-center gap-5">
+          <Skeleton className="size-[132px] rounded-full" />
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-2/3" />
+            <Skeleton className="h-4 w-1/2" />
           </div>
-        ) : error ? (
-          <div className="flex h-72 items-center justify-center text-sm text-destructive">
-            {error}
-          </div>
-        ) : !health || total <= 0 ? (
-          <div className="flex h-72 items-center justify-center text-sm text-muted-foreground">
-            No storage capacity data is available for this backend yet.
-          </div>
-        ) : (
-          <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-            <div className="h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={data}
-                    dataKey="value"
-                    nameKey="name"
-                    innerRadius={78}
-                    outerRadius={112}
-                    paddingAngle={2}
-                    strokeWidth={0}
-                  >
-                    {data.map((entry) => (
-                      <Cell key={entry.name} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(value) => formatBytes(typeof value === "number" ? value : Number(value ?? 0))} />
-                  <Legend verticalAlign="bottom" />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="space-y-4 rounded-lg border border-border/60 bg-muted/20 p-4">
-              <div>
-                <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Storage</p>
-                <p className="mt-1 text-lg font-semibold">
-                  {selectedStorage?.storage_name ?? selectedStorageId}
-                </p>
-                <p className="text-sm text-muted-foreground">{selectedStorage?.base_directory ?? "-"}</p>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Used</p>
-                  <p className="text-2xl font-semibold">{formatBytes(used)}</p>
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Total Capacity</p>
-                  <p className="text-2xl font-semibold">{formatBytes(total)}</p>
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Usage</p>
-                  <p className="text-2xl font-semibold">{usagePercent === null ? "-" : `${usagePercent}%`}</p>
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Status</p>
-                  <p className="text-2xl font-semibold capitalize">{health.status}</p>
-                </div>
-              </div>
+        </div>
+      ) : error ? (
+        <div className="mt-4 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-xs text-destructive">
+          {error}
+        </div>
+      ) : !health || total <= 0 ? (
+        <div className="mt-4 flex h-[150px] flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-center">
+          <p className="text-sm font-medium">No capacity data</p>
+          <p className="max-w-[32ch] text-xs text-muted-foreground">
+            This backend has not reported total or used bytes yet.
+          </p>
+        </div>
+      ) : (
+        <div className="mt-3 flex items-center gap-5">
+          <div className="relative size-[140px] shrink-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={data}
+                  dataKey="value"
+                  nameKey="name"
+                  innerRadius={48}
+                  outerRadius={68}
+                  paddingAngle={2}
+                  strokeWidth={0}
+                  startAngle={90}
+                  endAngle={-270}
+                >
+                  {data.map((entry) => (
+                    <Cell key={entry.name} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={chartTooltipStyle}
+                  formatter={(value) => formatBytes(Number(value ?? 0))}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+              <span className="text-2xl font-semibold leading-none tabular-nums">
+                {usagePercent === null ? "-" : `${usagePercent}%`}
+              </span>
+              <span className="mt-1 text-[11px] text-muted-foreground">Used</span>
             </div>
           </div>
-        )}
-      </CardContent>
+
+          <dl className="min-w-0 flex-1 space-y-2 text-xs">
+            <div className="flex items-center justify-between gap-3">
+              <dt className="flex items-center gap-2 text-muted-foreground">
+                <span className="size-2.5 rounded-[3px] bg-[var(--kdb-accent)]" />
+                Used
+              </dt>
+              <dd className="font-semibold tabular-nums">{formatBytes(used)}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <dt className="flex items-center gap-2 text-muted-foreground">
+                <span className="size-2.5 rounded-[3px] bg-[var(--kdb-track)]" />
+                Free
+              </dt>
+              <dd className="font-semibold tabular-nums">{formatBytes(free)}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-3 border-t pt-2">
+              <dt className="text-muted-foreground">Total</dt>
+              <dd className="font-semibold tabular-nums">{formatBytes(total)}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-muted-foreground">Status</dt>
+              <dd className="font-semibold capitalize">{health.status}</dd>
+            </div>
+          </dl>
+        </div>
+      )}
     </Card>
   );
 }
