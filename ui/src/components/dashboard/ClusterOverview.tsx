@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { ClusterHealth, ClusterNode } from "@/services/clusterService";
-import { PANEL, enterAnimation } from "./theme";
+import { ICON_CHIP, PANEL, enterAnimation } from "./theme";
 
 interface DashboardClusterOverviewProps {
   health: ClusterHealth | null;
@@ -55,10 +55,10 @@ export function DashboardClusterOverview({
     >
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <span className="flex size-7 items-center justify-center rounded-lg bg-[var(--kdb-accent-soft)] text-[var(--kdb-accent-strong)]">
+          <span className={ICON_CHIP}>
             <Network className="size-4" strokeWidth={2} />
           </span>
-          <p className="text-sm font-medium">Cluster Nodes &amp; Health</p>
+          <p className="text-sm font-semibold">Cluster Nodes &amp; Health</p>
         </div>
         {health && (
           <Badge variant="outline" className="shrink-0 text-[11px]">
@@ -78,7 +78,7 @@ export function DashboardClusterOverview({
         </div>
       ) : !health ? (
         <div className="mt-4 flex h-[150px] flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-center">
-          <p className="text-sm font-medium">No cluster data</p>
+          <p className="text-sm font-semibold">No cluster data</p>
           <p className="max-w-[32ch] text-xs text-muted-foreground">
             Node state appears once the server reports a cluster snapshot.
           </p>

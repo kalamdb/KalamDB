@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import type { Storage, StorageHealthResult } from "@/services/storageService";
-import { ACCENT, PANEL, chartTooltipStyle, enterAnimation } from "./theme";
+import { ACCENT, ICON_CHIP, PANEL, chartTooltipStyle, enterAnimation } from "./theme";
 
 interface StorageUsageChartProps {
   storages: Storage[];
@@ -80,11 +80,11 @@ export function StorageUsageChart({
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="flex size-7 items-center justify-center rounded-lg bg-[var(--kdb-accent-soft)] text-[var(--kdb-accent-strong)]">
+          <span className={ICON_CHIP}>
             <HardDrive className="size-4" strokeWidth={2} />
           </span>
           <div className="min-w-0">
-            <p className="text-sm font-medium">Storage Usage</p>
+            <p className="text-sm font-semibold">Storage Usage</p>
             <p className="truncate text-xs text-muted-foreground">
               {selectedStorage?.base_directory ?? "Selected storage backend"}
             </p>
@@ -119,7 +119,7 @@ export function StorageUsageChart({
         </div>
       ) : !health || total <= 0 ? (
         <div className="mt-4 flex h-[150px] flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-center">
-          <p className="text-sm font-medium">No capacity data</p>
+          <p className="text-sm font-semibold">No capacity data</p>
           <p className="max-w-[32ch] text-xs text-muted-foreground">
             This backend has not reported total or used bytes yet.
           </p>

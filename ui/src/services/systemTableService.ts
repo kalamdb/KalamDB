@@ -45,6 +45,8 @@ export async function fetchSystemStats(): Promise<SystemStatsMap> {
 }
 
 export const DASHBOARD_METRIC_KEYS = [
+  "avg_query_latency_ms",
+  "queries_per_second",
   "active_connections",
   "active_connections_peak",
   "active_subscriptions",

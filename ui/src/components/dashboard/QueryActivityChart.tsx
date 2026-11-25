@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { DashboardMetricSample } from "@/services/systemTableService";
-import { ACCENT, CHART_GRID, PANEL, chartTooltipStyle } from "./theme";
+import { ACCENT, CHART_GRID, ICON_CHIP, PANEL, chartTooltipStyle } from "./theme";
 
 interface QueryActivityChartProps {
   data: DashboardMetricSample[];
@@ -47,11 +47,11 @@ export function QueryActivityChart({ data, isLoading, className }: QueryActivity
   return (
     <Card className={cn(PANEL, "gap-0 px-5 py-5", className)}>
       <div className="flex items-center gap-2">
-        <span className="flex size-7 items-center justify-center rounded-lg bg-[var(--kdb-accent-soft)] text-[var(--kdb-accent-strong)]">
+        <span className={ICON_CHIP}>
           <BarChart3 className="size-4" strokeWidth={2} />
         </span>
         <div>
-          <p className="text-sm font-medium">SQL Query Activity</p>
+          <p className="text-sm font-semibold">SQL Query Activity</p>
           <p className="text-xs text-muted-foreground">Statements per second</p>
         </div>
       </div>
@@ -63,7 +63,7 @@ export function QueryActivityChart({ data, isLoading, className }: QueryActivity
           </div>
         ) : points.length < 2 ? (
           <div className="flex h-full flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-center">
-            <p className="text-sm font-medium">Collecting samples</p>
+            <p className="text-sm font-semibold">Collecting samples</p>
             <p className="max-w-[34ch] text-xs text-muted-foreground">
               Query activity appears once the dashboard has polled the server a few times.
             </p>

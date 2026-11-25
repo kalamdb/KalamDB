@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { PANEL, enterAnimation } from "./theme";
+import { ICON_CHIP, PANEL, enterAnimation } from "./theme";
 
 export interface StatGroupItem {
   label: string;
@@ -46,10 +46,10 @@ export function StatGroupPanel({
     >
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <span className="flex size-7 items-center justify-center rounded-lg bg-[var(--kdb-accent-soft)] text-[var(--kdb-accent-strong)]">
+          <span className={ICON_CHIP}>
             <Icon className="size-4" strokeWidth={2} />
           </span>
-          <p className="text-sm font-medium">{title}</p>
+          <p className="text-sm font-semibold">{title}</p>
         </div>
         {action}
       </div>

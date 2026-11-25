@@ -1,10 +1,10 @@
-import type { LucideIcon } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, type LucideIcon } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { Sparkline } from "./Sparkline";
-import { PANEL, enterAnimation } from "./theme";
+import { ICON_CHIP, PANEL, enterAnimation } from "./theme";
 
 interface StatTileProps {
   label: string;
@@ -12,9 +12,33 @@ interface StatTileProps {
   caption: string;
   icon: LucideIcon;
   series?: number[];
+  delta?: number | null;
+  deltaGoodWhen?: "up" | "down";
   progress?: { percent: number; label: string };
+  detail?: string;
   isLoading?: boolean;
   index?: number;
+}
+
+function DeltaBadge({ delta, goodWhen }: { delta: number; goodWhen: "up" | "down" }) {
+  const isUp = delta >= 0;
+  const isGood = goodWhen === "up" ? isUp : !isUp;
+  const Icon = isUp ? ArrowUpRight : ArrowDownRight;
+
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-0.5 rounded-full px-2 py-1 text-[11px] font-semibold tabular-nums",
+        isGood
+          ? "bg-[var(--kdb-accent-soft)] text-[var(--kdb-accent-strong)]"
+          : "bg-destructive/10 text-destructive",
+      )}
+    >
+      <Icon className="size-3" strokeWidth={2.5} />
+      {isUp ? "+" : "−"}
+      {Math.abs(delta).toFixed(Math.abs(delta) >= 10 ? 0 : 1)}%
+    </span>
+  );
 }
 
 export function StatTile({
@@ -23,7 +47,10 @@ export function StatTile({
   caption,
   icon: Icon,
   series,
+  delta,
+  deltaGoodWhen = "up",
   progress,
+  detail,
   isLoading,
   index = 0,
 }: StatTileProps) {
@@ -32,42 +59,49 @@ export function StatTile({
 
   return (
     <Card
-      className={cn(PANEL, "gap-0 px-4 py-4", entrance.className)}
+      className={cn(PANEL, "gap-0 overflow-hidden px-5 py-4", entrance.className)}
       style={entrance.style}
     >
-      <div className="flex items-center gap-2">
-        <span className="flex size-7 items-center justify-center rounded-lg bg-[var(--kdb-accent-soft)] text-[var(--kdb-accent-strong)]">
+      <div className="flex items-center gap-2.5">
+        <span className={ICON_CHIP}>
           <Icon className="size-4" strokeWidth={2} />
         </span>
-        <span className="truncate text-sm font-medium text-foreground">{label}</span>
+        <span className="truncate text-sm font-semibold text-foreground">{label}</span>
       </div>
 
       {isLoading ? (
         <div className="mt-4 space-y-2">
-          <Skeleton className="h-7 w-24" />
+          <Skeleton className="h-8 w-28" />
           <Skeleton className="h-3 w-32" />
+          <Skeleton className="h-9 w-full" />
         </div>
       ) : (
         <>
-          <div className="mt-3 flex items-end justify-between gap-3">
-            <div className="min-w-0">
-              <p className="truncate text-2xl font-semibold leading-none tracking-tight tabular-nums">
-                {value}
-              </p>
-              <p className="mt-1.5 truncate text-xs text-muted-foreground">{caption}</p>
-            </div>
-            {hasSparkline && (
-              <Sparkline values={series ?? []} className="w-24 shrink-0" height={34} />
+          <div className="mt-3 flex items-start justify-between gap-2">
+            <p className="min-w-0 truncate text-[1.75rem] font-semibold leading-none tracking-tight tabular-nums">
+              {value}
+            </p>
+            {delta !== null && delta !== undefined && (
+              <DeltaBadge delta={delta} goodWhen={deltaGoodWhen} />
             )}
           </div>
+          <p className="mt-2 truncate text-xs text-muted-foreground">{caption}</p>
+
+          {hasSparkline && (
+            <Sparkline values={series ?? []} className="mt-3 w-full" height={44} />
+          )}
+
+          {detail && (
+            <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">{detail}</p>
+          )}
 
           {progress && (
-            <div className="mt-3 flex items-center gap-3">
+            <div className="mt-4 flex items-center gap-3">
               <Progress
                 value={progress.percent}
-                className="h-1.5 [&_[data-slot=progress-indicator]]:bg-[var(--kdb-accent)]"
+                className="h-2 [&_[data-slot=progress-indicator]]:bg-[var(--kdb-accent)]"
               />
-              <span className="shrink-0 text-xs font-medium tabular-nums text-muted-foreground">
+              <span className="shrink-0 text-xs font-semibold tabular-nums text-muted-foreground">
                 {progress.label}
               </span>
             </div>

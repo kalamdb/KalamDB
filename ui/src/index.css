@@ -157,7 +157,11 @@
     --kdb-accent-soft: oklch(96.5% 0.025 157);
     --kdb-accent-line: oklch(89% 0.05 157);
     --kdb-grid: oklch(93% 0 0);
-    --kdb-track: oklch(93% 0 0);
+    --kdb-track: oklch(92% 0 0);
+    --kdb-page: oklch(98.4% 0.006 157);
+    --kdb-surface: oklch(100% 0 0);
+    --kdb-series-memory: oklch(62% 0.09 255);
+    --kdb-series-files: oklch(70% 0.1 75);
   }
 
   .dark [data-dashboard] {
@@ -166,7 +170,11 @@
     --kdb-accent-soft: oklch(26% 0.03 157);
     --kdb-accent-line: oklch(34% 0.05 157);
     --kdb-grid: oklch(28% 0 0);
-    --kdb-track: oklch(28% 0 0);
+    --kdb-track: oklch(30% 0 0);
+    --kdb-page: oklch(15.5% 0.008 157);
+    --kdb-surface: oklch(19% 0.004 157);
+    --kdb-series-memory: oklch(70% 0.09 255);
+    --kdb-series-files: oklch(76% 0.1 75);
   }
 
   * {

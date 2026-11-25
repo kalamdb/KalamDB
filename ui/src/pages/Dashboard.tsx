@@ -29,7 +29,7 @@ import { SlowQueriesPanel } from "@/components/dashboard/SlowQueriesPanel";
 import { StatGroupPanel, type StatGroupItem } from "@/components/dashboard/StatGroupPanel";
 import { StatTile } from "@/components/dashboard/StatTile";
 import { StorageUsageChart } from "@/components/dashboard/StorageUsageChart";
-import { ACCENT_CHIP, PANEL_LABEL } from "@/components/dashboard/theme";
+import { ACCENT_CHIP, PANEL_LABEL, percentDelta } from "@/components/dashboard/theme";
 import { useAuth } from "@/lib/auth";
 import {
   getTimeRangeCutoff,
@@ -179,6 +179,16 @@ function filterSamplesForRange(samples: DashboardMetricSample[], timeRange: stri
   return cutoff === 0 ? samples : samples.filter((sample) => sample.sampled_at >= cutoff);
 }
 
+function formatStartTime(uptimeSeconds: string | undefined): string | undefined {
+  const total = parseInteger(uptimeSeconds);
+  if (total <= 0) {
+    return undefined;
+  }
+
+  const started = new Date(Date.now() - total * 1000);
+  return `Running since ${started.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+}
+
 function formatUptime(seconds: string | undefined): string {
   const total = parseInteger(seconds);
   if (total <= 0) {
@@ -293,12 +303,17 @@ export default function Dashboard() {
     [visibleMetricSamples],
   );
 
+  const latencySeries = useMemo(
+    () => visibleMetricSamples.map((sample) => Number(sample.avg_query_latency_ms)),
+    [visibleMetricSamples],
+  );
+
   const connections = parseInteger(currentStats.active_connections);
   const peakConnections = parseInteger(currentStats.active_connections_peak);
   const connectionPercent = peakConnections > 0 ? Math.min(100, (connections / peakConnections) * 100) : 0;
 
   return (
-    <section data-dashboard className="flex flex-col gap-5 p-4 lg:p-6">
+    <section data-dashboard className="flex min-h-full flex-col gap-5 bg-[var(--kdb-page)] p-4 lg:p-6">
       <DashboardHero
         username={user?.username ?? "admin"}
         serverVersion={currentStats.server_version}
@@ -350,6 +365,7 @@ export default function Dashboard() {
           label="Uptime"
           value={currentStats.server_uptime_human || formatUptime(currentStats.server_uptime_seconds)}
           caption="Process"
+          detail={formatStartTime(currentStats.server_uptime_seconds)}
           isLoading={isInitialLoad}
         />
         <StatTile
@@ -358,6 +374,9 @@ export default function Dashboard() {
           label="Avg Latency"
           value={buildDecimalMetricItem("", currentStats.avg_query_latency_ms, 2, " ms").value}
           caption="Mean SQL duration"
+          series={latencySeries}
+          delta={percentDelta(latencySeries)}
+          deltaGoodWhen="down"
           isLoading={isInitialLoad}
         />
         <StatTile
@@ -367,6 +386,7 @@ export default function Dashboard() {
           value={buildDecimalMetricItem("", currentStats.queries_per_second).value}
           caption="Queries per second"
           series={throughputSeries}
+          delta={percentDelta(throughputSeries)}
           isLoading={isInitialLoad}
         />
         <StatTile
