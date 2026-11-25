@@ -4,7 +4,7 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { Sparkline } from "./Sparkline";
-import { ICON_CHIP, PANEL, enterAnimation } from "./theme";
+import { ACCENT, ICON_CHIP, ICON_CHIP_VIOLET, PANEL, VIOLET, enterAnimation } from "./theme";
 
 interface StatTileProps {
   label: string;
@@ -16,6 +16,8 @@ interface StatTileProps {
   deltaGoodWhen?: "up" | "down";
   progress?: { percent: number; label: string };
   detail?: string;
+  tone?: "accent" | "violet";
+  denominator?: string;
   isLoading?: boolean;
   index?: number;
 }
@@ -51,11 +53,14 @@ export function StatTile({
   deltaGoodWhen = "up",
   progress,
   detail,
+  tone = "accent",
+  denominator,
   isLoading,
   index = 0,
 }: StatTileProps) {
   const entrance = enterAnimation(index);
   const hasSparkline = !progress && (series?.length ?? 0) > 1;
+  const isViolet = tone === "violet";
 
   return (
     <Card
@@ -63,7 +68,7 @@ export function StatTile({
       style={entrance.style}
     >
       <div className="flex items-center gap-2.5">
-        <span className={ICON_CHIP}>
+        <span className={isViolet ? ICON_CHIP_VIOLET : ICON_CHIP}>
           <Icon className="size-4" strokeWidth={2} />
         </span>
         <span className="truncate text-sm font-semibold text-foreground">{label}</span>
@@ -80,6 +85,9 @@ export function StatTile({
           <div className="mt-3 flex items-start justify-between gap-2">
             <p className="min-w-0 truncate text-[1.75rem] font-semibold leading-none tracking-tight tabular-nums">
               {value}
+              {denominator && (
+                <span className="ml-1 text-xl font-medium text-muted-foreground">{denominator}</span>
+              )}
             </p>
             {delta !== null && delta !== undefined && (
               <DeltaBadge delta={delta} goodWhen={deltaGoodWhen} />
@@ -88,7 +96,12 @@ export function StatTile({
           <p className="mt-2 truncate text-xs text-muted-foreground">{caption}</p>
 
           {hasSparkline && (
-            <Sparkline values={series ?? []} className="-mb-4 -mx-5 mt-4 w-auto" height={52} />
+            <Sparkline
+              values={series ?? []}
+              stroke={isViolet ? VIOLET : ACCENT}
+              className="-mb-4 -mx-5 mt-4 w-auto"
+              height={52}
+            />
           )}
 
           {detail && (
@@ -96,7 +109,7 @@ export function StatTile({
           )}
 
           {progress && (
-            <div className="mt-4 flex items-center gap-3">
+            <div className="mt-5 flex items-center gap-3">
               <Progress
                 value={progress.percent}
                 className="h-2 [&_[data-slot=progress-indicator]]:bg-[var(--kdb-accent)]"

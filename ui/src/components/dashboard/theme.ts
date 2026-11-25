@@ -3,6 +3,7 @@ export const ACCENT_STRONG = "var(--kdb-accent-strong)";
 export const CHART_GRID = "var(--kdb-grid)";
 export const SERIES_MEMORY = "var(--kdb-series-memory)";
 export const SERIES_FILES = "var(--kdb-series-files)";
+export const VIOLET = "var(--kdb-violet)";
 
 export const PANEL =
   "rounded-2xl bg-[var(--kdb-surface)] shadow-[0_1px_2px_rgb(0_0_0_/_0.03),0_18px_40px_-28px_rgb(0_0_0_/_0.22)]";
@@ -15,6 +16,9 @@ export const ACCENT_CHIP =
 
 export const ICON_CHIP =
   "flex size-8 items-center justify-center rounded-xl bg-[var(--kdb-accent-soft)] text-[var(--kdb-accent-strong)]";
+
+export const ICON_CHIP_VIOLET =
+  "flex size-8 items-center justify-center rounded-xl bg-[var(--kdb-violet-soft)] text-[var(--kdb-violet-strong)]";
 
 export const chartTooltipStyle = {
   border: "1px solid var(--color-border)",

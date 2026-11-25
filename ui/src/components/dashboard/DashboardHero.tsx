@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 import { NavLink } from "react-router-dom";
-import { Braces, CheckCircle2, RadioTower, Terminal, Wifi } from "lucide-react";
+import { Braces, CheckCircle2, Database, Share2, Terminal, Wifi } from "lucide-react";
 import { HeroGraphic } from "./HeroGraphic";
 
 interface DashboardHeroProps {
@@ -19,11 +19,12 @@ interface QuickLink {
 const QUICK_LINKS: QuickLink[] = [
   { name: "SQL", href: "/sql", icon: Terminal, anchor: { left: 0, top: 47 } },
   { name: "Live Queries", href: "/live-queries", icon: Wifi, anchor: { left: 0, top: 185 } },
-  { name: "Streaming", href: "/streaming/topics", icon: RadioTower, anchor: { right: 0, top: 47 } },
-  { name: "Functions", href: "/functions", icon: Braces, anchor: { right: 0, top: 185 } },
+  { name: "Tables", href: "/sql", icon: Database, anchor: { right: 0, top: 30 } },
+  { name: "Pub/Sub", href: "/streaming/topics", icon: Share2, anchor: { right: 0, top: 112 } },
+  { name: "Functions", href: "/functions", icon: Braces, anchor: { right: 0, top: 194 } },
 ];
 
-const CAPABILITIES = ["PostgreSQL wire protocol", "Realtime pub/sub", "Per-tenant USER tables"];
+const CAPABILITIES = ["PostgreSQL Compatible", "Realtime (Pub/Sub)", "Per-tenant USER tables"];
 
 const PILL_CLASS =
   "absolute flex w-[108px] items-center justify-center gap-1.5 rounded-full bg-[var(--kdb-surface)] px-2 py-1.5 text-[11px] font-medium text-foreground shadow-[0_4px_14px_-6px_rgb(0_0_0_/_0.25)] ring-1 ring-foreground/10 transition-transform duration-200 hover:-translate-y-0.5 active:scale-[0.98]";

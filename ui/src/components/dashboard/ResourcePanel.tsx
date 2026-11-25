@@ -129,7 +129,7 @@ export function ResourcePanel({ samples, isLoading, className, index = 0 }: Reso
                   <YAxis
                     yAxisId="pct"
                     domain={[0, 100]}
-                    ticks={[0, 50, 100]}
+                    ticks={[0, 25, 50, 75, 100]}
                     tickFormatter={(value) => `${value}%`}
                     tick={{ fontSize: 10 }}
                     stroke={CHART_GRID}

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import Dashboard from "@/pages/Dashboard";
 
@@ -206,18 +206,30 @@ describe("Dashboard page", () => {
     expect(screen.getByText("1h 10m")).toBeTruthy();
     expect(screen.getByText("42")).toBeTruthy();
     expect(screen.getByText("9")).toBeTruthy();
-    expect(screen.getByText("3")).toBeTruthy();
-    expect(screen.getByText("6")).toBeTruthy();
-    expect(screen.getByText("2")).toBeTruthy();
+    const connectionsPanel = screen
+      .getByText("Connections & Subscriptions")
+      .closest("[data-slot=card]") as HTMLElement;
+    expect(within(connectionsPanel).getByText("3")).toBeTruthy();
+    expect(within(connectionsPanel).getByText("6")).toBeTruthy();
+    expect(within(connectionsPanel).getByText("2")).toBeTruthy();
+    expect(within(connectionsPanel).getByText("7")).toBeTruthy();
     expect(screen.getByText("Peak Subscriptions")).toBeTruthy();
+
+    const connectionsTile = screen
+      .getByText("Active Connections")
+      .closest("[data-slot=card]") as HTMLElement;
+    expect(within(connectionsTile).getByText("/ 6")).toBeTruthy();
     expect(screen.getByText("9.50")).toBeTruthy();
-    expect(screen.getByText("Pub/Sub")).toBeTruthy();
+    const pubSubTitle = screen
+      .getAllByText("Pub/Sub")
+      .find((element) => element.closest("[data-slot=card]"));
+    expect(pubSubTitle).toBeTruthy();
     expect(screen.getByText("1.2k")).toBeTruthy();
     expect(screen.getByText("Consumer Groups")).toBeTruthy();
     expect(screen.getByText("Active Consumers")).toBeTruthy();
     expect(screen.getByText("8")).toBeTruthy();
     expect(screen.getByText("12")).toBeTruthy();
-    expect(screen.getByText("1.25")).toBeTruthy();
+    expect(screen.getByText("1.25 QPS")).toBeTruthy();
     expect(screen.getByText("4.50 ms")).toBeTruthy();
     expect(screen.getByText("Slow query widget 1")).toBeTruthy();
     expect(screen.getByText("Cluster overview 1")).toBeTruthy();

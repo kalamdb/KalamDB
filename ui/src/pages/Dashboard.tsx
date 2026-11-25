@@ -383,7 +383,8 @@ export default function Dashboard() {
           index={2}
           icon={Gauge}
           label="Throughput"
-          value={buildDecimalMetricItem("", currentStats.queries_per_second).value}
+          tone="violet"
+          value={`${buildDecimalMetricItem("", currentStats.queries_per_second).value} QPS`}
           caption="Queries per second"
           series={throughputSeries}
           delta={percentDelta(throughputSeries)}
@@ -393,7 +394,8 @@ export default function Dashboard() {
           index={3}
           icon={Plug}
           label="Active Connections"
-          value={`${connections.toLocaleString()} / ${peakConnections.toLocaleString()}`}
+          value={connections.toLocaleString()}
+          denominator={`/ ${peakConnections.toLocaleString()}`}
           caption="Current against observed peak"
           series={connectionSeries}
           progress={{ percent: connectionPercent, label: `${Math.round(connectionPercent)}%` }}
@@ -417,7 +419,7 @@ export default function Dashboard() {
             items={[
               buildCountMetricItem("Tables", currentStats.total_tables),
               buildCountMetricItem("Schemas", currentStats.total_namespaces),
-              buildCountMetricItem("SQL statements", currentStats.queries_total),
+              buildCountMetricItem("SQL Statements", currentStats.queries_total),
             ]}
           />
           <StatGroupPanel

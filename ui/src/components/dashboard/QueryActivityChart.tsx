@@ -52,7 +52,7 @@ export function QueryActivityChart({ data, isLoading, className }: QueryActivity
         </span>
         <div>
           <p className="text-sm font-semibold">SQL Query Activity</p>
-          <p className="text-xs text-muted-foreground">Statements per second</p>
+          <p className="text-xs text-muted-foreground">SQL statements over time</p>
         </div>
       </div>
 

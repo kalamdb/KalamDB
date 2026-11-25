@@ -111,7 +111,7 @@ export function DashboardClusterOverview({
           <div className="grid grid-cols-3 divide-x divide-border/70">
             <div className="px-2 text-center first:pl-0">
               <p className="text-xl font-semibold leading-none tabular-nums">{health.activeNodes}</p>
-              <p className="mt-1.5 text-[11px] text-muted-foreground">Active</p>
+              <p className="mt-1.5 text-[11px] text-muted-foreground">Active Node</p>
             </div>
             <div className="px-2 text-center">
               <p className="text-xl font-semibold leading-none tabular-nums">{health.leaderNodes}</p>

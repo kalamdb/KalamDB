@@ -1,16 +1,18 @@
 import { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
+  BarChart3,
   Braces,
-  Clock,
-  FileText,
-  LayoutDashboard,
+  Calendar,
+  CodeXml,
+  Database,
+  Home,
   PanelLeftClose,
   PanelLeftOpen,
   RadioTower,
   Settings,
-  Terminal,
-  Users,
+  Share2,
+  User,
   Wifi,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -27,16 +29,38 @@ import { useGetStatsQuery } from "@/store/apiSlice";
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "kalamdb-admin-sidebar-collapsed";
 const logoUrl = `${import.meta.env.BASE_URL}favicon.png`;
 
-const navigation = [
-  { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { name: "SQL Studio", href: "/sql", icon: Terminal },
+interface NavItem {
+  name: string;
+  href: string;
+  icon: typeof Home;
+  activePrefix?: string;
+  matchExact?: boolean;
+}
+
+const navigation: NavItem[] = [
+  { name: "Dashboard", href: "/dashboard", icon: Home },
+  { name: "SQL Studio", href: "/sql", icon: CodeXml },
+  { name: "Tables & Schemas", href: "/sql", icon: Database },
   { name: "Functions", href: "/functions", icon: Braces },
   { name: "Streaming", href: "/streaming/topics", icon: RadioTower, activePrefix: "/streaming" },
+  { name: "Pub/Sub", href: "/streaming/offsets", icon: Share2, matchExact: true },
   { name: "Live Queries", href: "/live-queries", icon: Wifi },
-  { name: "Users", href: "/users", icon: Users },
-  { name: "Schedules", href: "/schedules", icon: Clock },
-  { name: "Logs & Analytics", href: "/logging", icon: FileText },
+  { name: "Users", href: "/users", icon: User },
+  { name: "Schedules", href: "/schedules", icon: Calendar },
+  { name: "Logs & Analytics", href: "/logging", icon: BarChart3 },
 ];
+
+function matches(item: NavItem, pathname: string): boolean {
+  return item.matchExact
+    ? pathname === item.href
+    : pathname.startsWith(item.activePrefix ?? item.href);
+}
+
+/** Only the first matching entry highlights, so routes shared by two items stay unambiguous. */
+function activeIndex(pathname: string): number {
+  const exact = navigation.findIndex((item) => item.matchExact && matches(item, pathname));
+  return exact >= 0 ? exact : navigation.findIndex((item) => matches(item, pathname));
+}
 
 function itemClass(collapsed: boolean, isActive: boolean): string {
   return cn(
@@ -54,6 +78,7 @@ export default function Sidebar() {
     return stored ? stored === "1" : false;
   });
   const location = useLocation();
+  const currentIndex = activeIndex(location.pathname);
   const { state } = useBackendStatus();
   const { data: stats } = useGetStatsQuery();
 
@@ -94,8 +119,8 @@ export default function Sidebar() {
         </NavLink>
 
         <nav className="min-h-0 flex-1 overflow-y-auto px-3 pt-4" aria-label="Primary navigation">
-          {navigation.map((item) => {
-            const isActive = location.pathname.startsWith(item.activePrefix ?? item.href);
+          {navigation.map((item, itemIndex) => {
+            const isActive = itemIndex === currentIndex;
             return (
               <Tooltip key={item.name} disableHoverableContent>
                 <TooltipTrigger asChild>
