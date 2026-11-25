@@ -88,7 +88,7 @@ export function StatTile({
           <p className="mt-2 truncate text-xs text-muted-foreground">{caption}</p>
 
           {hasSparkline && (
-            <Sparkline values={series ?? []} className="mt-3 w-full" height={44} />
+            <Sparkline values={series ?? []} className="-mb-4 -mx-5 mt-4 w-auto" height={52} />
           )}
 
           {detail && (

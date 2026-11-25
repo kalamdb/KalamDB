@@ -114,10 +114,16 @@
 @layer base {
   :root {
     color-scheme: light;
+    --kdb-nav-bg: oklch(99.1% 0.004 157);
+    --kdb-nav-active: oklch(95.5% 0.03 157);
+    --kdb-nav-active-fg: oklch(48% 0.13 157);
   }
   
   .dark {
     color-scheme: dark;
+    --kdb-nav-bg: oklch(16.5% 0.004 157);
+    --kdb-nav-active: oklch(27% 0.035 157);
+    --kdb-nav-active-fg: oklch(84% 0.12 157);
     --color-background: oklch(14% 0 0);
     --color-foreground: oklch(98% 0 0);
     

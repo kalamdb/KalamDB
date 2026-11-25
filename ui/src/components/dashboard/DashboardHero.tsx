@@ -39,11 +39,11 @@ export function DashboardHero({ username, serverVersion, actions }: DashboardHer
       >
         <defs>
           <linearGradient id="kdb-hero-wash" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="var(--kdb-accent)" stopOpacity={0.14} />
+            <stop offset="0%" stopColor="var(--kdb-accent)" stopOpacity={0.2} />
             <stop offset="100%" stopColor="var(--kdb-accent)" stopOpacity={0.02} />
           </linearGradient>
           <radialGradient id="kdb-hero-blob">
-            <stop offset="0%" stopColor="var(--kdb-accent)" stopOpacity={0.16} />
+            <stop offset="0%" stopColor="var(--kdb-accent)" stopOpacity={0.2} />
             <stop offset="100%" stopColor="var(--kdb-accent)" stopOpacity={0} />
           </radialGradient>
         </defs>

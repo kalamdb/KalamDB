@@ -67,13 +67,13 @@ export function StatGroupPanel({
               <div key={item.label} className="min-w-0 px-3 text-center first:pl-0 last:pr-0">
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <p className="truncate text-xl font-semibold leading-none tabular-nums">
+                    <p className="truncate text-2xl font-semibold leading-none tabular-nums">
                       {item.value}
                     </p>
                   </TooltipTrigger>
                   {item.exactValue ? <TooltipContent>{item.exactValue}</TooltipContent> : null}
                 </Tooltip>
-                <p className="mt-1.5 truncate text-[11px] text-muted-foreground">{item.label}</p>
+                <p className="mt-2 truncate text-[11px] text-muted-foreground">{item.label}</p>
               </div>
             ))}
           </div>
