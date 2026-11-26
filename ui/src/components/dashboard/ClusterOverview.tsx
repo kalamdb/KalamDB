@@ -1,23 +1,21 @@
+import { Activity, CheckCircle2, Crown, Network, TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Spinner } from "@/components/ui/spinner";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 import type { ClusterHealth, ClusterNode } from "@/services/clusterService";
-import {
-  Activity,
-  CheckCircle2,
-  Crown,
-  Server,
-  TriangleAlert,
-} from "lucide-react";
+import { ICON_CHIP, NUMERIC, PANEL, enterAnimation } from "./theme";
 
 interface DashboardClusterOverviewProps {
   health: ClusterHealth | null;
   nodes: ClusterNode[];
   isLoading?: boolean;
   error?: string | null;
+  className?: string;
+  index?: number;
 }
 
-const MAX_VISIBLE_NODES = 6;
+const MAX_VISIBLE_NODES = 4;
 
 function formatLabel(value: string): string {
   return value
@@ -27,53 +25,14 @@ function formatLabel(value: string): string {
     .join(" ");
 }
 
-function formatMemory(memoryMb: string | number | null): string {
-  const val = memoryMb !== null ? Number(memoryMb) : null;
-  if (val === null || !Number.isFinite(val)) {
-    return "Memory n/a";
-  }
-
-  const precision = val >= 100 ? 0 : 1;
-  return `${val.toFixed(precision)} MB memory`;
-}
-
-function formatCpu(cpuUsagePercent: string | number | null): string {
-  if (cpuUsagePercent === null || !Number.isFinite(Number(cpuUsagePercent))) {
-    return "CPU n/a";
-  }
-
-  return `${Number(cpuUsagePercent).toFixed(1)}% CPU`;
-}
-
-function formatUptime(uptimeHuman: string | null): string {
-  return uptimeHuman ?? "Uptime n/a";
-}
-
-function getStatusBadgeClass(status: string): string {
+function statusToneClass(status: string): string {
   switch (status.toLowerCase()) {
     case "active":
-      return "bg-green-100 text-green-800 hover:bg-green-100";
+      return "bg-[var(--kdb-accent-soft)] text-[var(--kdb-accent-strong)]";
     case "offline":
-      return "bg-red-100 text-red-800 hover:bg-red-100";
-    case "joining":
-      return "bg-amber-100 text-amber-800 hover:bg-amber-100";
-    case "catching_up":
-      return "bg-orange-100 text-orange-800 hover:bg-orange-100";
+      return "bg-destructive/10 text-destructive";
     default:
-      return "bg-slate-100 text-slate-700 hover:bg-slate-100";
-  }
-}
-
-function getRoleBadgeClass(role: string): string {
-  switch (role.toLowerCase()) {
-    case "leader":
-      return "bg-blue-100 text-blue-800 hover:bg-blue-100";
-    case "follower":
-      return "bg-slate-100 text-slate-700 hover:bg-slate-100";
-    case "learner":
-      return "bg-violet-100 text-violet-800 hover:bg-violet-100";
-    default:
-      return "bg-slate-100 text-slate-700 hover:bg-slate-100";
+      return "bg-muted text-muted-foreground";
   }
 }
 
@@ -82,146 +41,128 @@ export function DashboardClusterOverview({
   nodes,
   isLoading,
   error,
+  className,
+  index = 0,
 }: DashboardClusterOverviewProps) {
   const visibleNodes = nodes.slice(0, MAX_VISIBLE_NODES);
+  const entrance = enterAnimation(index);
+  const isHealthy = health?.healthy ?? false;
 
   return (
-    <Card className="h-full">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Server className="h-4 w-4" />
-          Cluster Nodes & Health
+    <Card
+      className={cn(PANEL, "gap-0 py-4", entrance.className, className)}
+      style={entrance.style}
+    >
+      <CardHeader className="px-5">
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+          <span className={ICON_CHIP}>
+            <Network className="size-4" strokeWidth={2} />
+          </span>
+          Cluster Nodes &amp; Health
         </CardTitle>
-        <p className="text-sm text-muted-foreground">
-          Live node health, leadership, and cluster availability.
-        </p>
-      </CardHeader>
-      <CardContent>
-        {error ? (
-          <div className="rounded-lg border border-destructive/25 bg-destructive/5 p-4 text-sm text-destructive">
-            {error}
-          </div>
-        ) : isLoading && nodes.length === 0 ? (
-          <div className="flex h-72 items-center justify-center gap-2 text-sm text-muted-foreground">
-            <Spinner />
-            Loading cluster state...
-          </div>
-        ) : !health ? (
-          <div className="flex h-72 items-center justify-center text-sm text-muted-foreground">
-            No cluster data available yet.
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
-              <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
-                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                  <Activity className="h-3.5 w-3.5" />
-                  Health
-                </div>
-                <p className="mt-2 text-2xl font-semibold">
-                  {health.healthy ? "Healthy" : "Degraded"}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {health.offlineNodes > 0
-                    ? `${health.offlineNodes} offline`
-                    : "All known nodes responding"}
-                </p>
-              </div>
-              <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
-                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                  <Server className="h-3.5 w-3.5" />
-                  Nodes
-                </div>
-                <p className="mt-2 text-2xl font-semibold">{health.totalNodes}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {health.activeNodes} active, {health.joiningNodes} joining
-                </p>
-              </div>
-              <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
-                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                  Followers
-                </div>
-                <p className="mt-2 text-2xl font-semibold">{health.followerNodes}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {health.catchingUpNodes} catching up
-                </p>
-              </div>
-              <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
-                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                  <Crown className="h-3.5 w-3.5" />
-                  Leaders
-                </div>
-                <p className="mt-2 text-2xl font-semibold">{health.leaderNodes}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Expected leader nodes across the cluster
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              {visibleNodes.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
-                  No cluster nodes reported yet.
-                </div>
-              ) : (
-                visibleNodes.map((node) => (
-                  <div
-                    key={node.node_id}
-                    className="rounded-lg border border-border/60 bg-background p-3"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="font-semibold">Node {node.node_id}</p>
-                          {node.is_self && <Badge variant="outline">This node</Badge>}
-                          {node.is_leader && (
-                            <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100">
-                              <Crown className="mr-1 h-3 w-3" />
-                              Leader
-                            </Badge>
-                          )}
-                        </div>
-                        <p className="mt-1 truncate text-sm text-muted-foreground">
-                          {node.api_addr || node.rpc_addr}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        <Badge className={getStatusBadgeClass(node.status)}>
-                          {formatLabel(node.status)}
-                        </Badge>
-                        <Badge className={getRoleBadgeClass(node.role)}>
-                          {formatLabel(node.role)}
-                        </Badge>
-                      </div>
-                    </div>
-                    <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-4">
-                      <span>{formatMemory(node.memory_usage_mb ?? node.memory_mb)}</span>
-                      <span>{formatCpu(node.cpu_usage_percent)}</span>
-                      <span>{formatUptime(node.uptime_human)}</span>
-                      <span>
-                        {node.replication_lag === null
-                          ? "Replication lag n/a"
-                          : `Lag ${node.replication_lag.toLocaleString()}`}
-                      </span>
-                      <span className="truncate">
-                        {node.hostname ?? node.rpc_addr ?? "Host unavailable"}
-                      </span>
-                    </div>
-                  </div>
-                ))
-              )}
-
-              {nodes.length > MAX_VISIBLE_NODES && (
-                <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground">
-                  <TriangleAlert className="h-3.5 w-3.5" />
-                  Showing {MAX_VISIBLE_NODES} of {nodes.length} nodes. Open the Cluster page for
-                  the full list.
-                </div>
-              )}
-            </div>
-          </div>
+        {health && (
+          <CardAction>
+            <Badge variant="outline" className="shrink-0 text-[11px]">
+              {health.totalNodes} {health.totalNodes === 1 ? "node" : "nodes"}
+            </Badge>
+          </CardAction>
         )}
+      </CardHeader>
+
+      <CardContent className="px-5 pt-4">
+
+      {error ? (
+        <div className="rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-xs text-destructive">
+          {error}
+        </div>
+      ) : isLoading && nodes.length === 0 ? (
+        <div className="space-y-3">
+          <Skeleton className="h-14" />
+          <Skeleton className="h-12" />
+        </div>
+      ) : !health ? (
+        <div className="flex h-[150px] flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-center">
+          <p className="text-sm font-semibold">No cluster data</p>
+          <p className="max-w-[32ch] text-xs text-muted-foreground">
+            Node state appears once the server reports a cluster snapshot.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div
+            className={cn(
+              "flex items-center gap-3 rounded-lg px-3 py-2.5",
+              isHealthy
+                ? "bg-[var(--kdb-accent-soft)] text-[var(--kdb-accent-strong)]"
+                : "bg-destructive/10 text-destructive",
+            )}
+          >
+            {isHealthy ? (
+              <CheckCircle2 className="size-5 shrink-0" strokeWidth={2} />
+            ) : (
+              <TriangleAlert className="size-5 shrink-0" strokeWidth={2} />
+            )}
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">{isHealthy ? "Healthy" : "Degraded"}</p>
+              <p className="truncate text-xs opacity-80">
+                {health.offlineNodes > 0
+                  ? `${health.offlineNodes} offline`
+                  : "All nodes responding"}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 divide-x divide-border/70">
+            <div className="px-2 text-center first:pl-0">
+              <p className={cn("text-xl font-semibold leading-none", NUMERIC)}>{health.activeNodes}</p>
+              <p className="mt-1.5 text-[11px] text-muted-foreground">Active Node</p>
+            </div>
+            <div className="px-2 text-center">
+              <p className={cn("text-xl font-semibold leading-none", NUMERIC)}>{health.leaderNodes}</p>
+              <p className="mt-1.5 text-[11px] text-muted-foreground">Leader</p>
+            </div>
+            <div className="px-2 text-center last:pr-0">
+              <p className={cn("text-xl font-semibold leading-none", NUMERIC)}>{health.followerNodes}</p>
+              <p className="mt-1.5 text-[11px] text-muted-foreground">Followers</p>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            {visibleNodes.map((node) => (
+              <div
+                key={node.node_id}
+                className="flex items-center justify-between gap-3 rounded-lg px-2.5 py-2 ring-1 ring-foreground/5"
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  {node.is_leader ? (
+                    <Crown className="size-3.5 shrink-0 text-[var(--kdb-accent-strong)]" strokeWidth={2} />
+                  ) : (
+                    <Activity className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={2} />
+                  )}
+                  <span className="text-xs font-medium">Node {node.node_id}</span>
+                  <span className="truncate text-[11px] text-muted-foreground">
+                    {node.api_addr || node.rpc_addr}
+                  </span>
+                </div>
+                <span
+                  className={cn(
+                    "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium",
+                    statusToneClass(node.status),
+                  )}
+                >
+                  {formatLabel(node.status)}
+                </span>
+              </div>
+            ))}
+
+            {nodes.length > MAX_VISIBLE_NODES && (
+              <p className="px-2.5 pt-1 text-[11px] text-muted-foreground">
+                Showing {MAX_VISIBLE_NODES} of {nodes.length} nodes.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
       </CardContent>
     </Card>
   );

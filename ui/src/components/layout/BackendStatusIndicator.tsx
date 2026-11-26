@@ -21,7 +21,7 @@ export default function BackendStatusIndicator() {
 
   return (
     <div
-      className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-1 text-xs text-foreground"
+      className="flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1.5 text-xs text-foreground"
       title={`${transportLabel} ${statusLabel} · ${targetLabel} · ${message}`}
       aria-label={`${transportLabel} ${statusLabel}`}
     >

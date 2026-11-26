@@ -7,10 +7,10 @@ export default function Layout() {
   const isSqlWorkspace = location.pathname.startsWith("/sql");
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      <Header />
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <Sidebar />
+    <div className="flex h-full min-h-0 bg-background">
+      <Sidebar />
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <Header />
         <main className={isSqlWorkspace ? "min-h-0 flex-1 overflow-hidden p-0" : "flex-1 overflow-auto p-0"}>
           <Outlet />
         </main>
