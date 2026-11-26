@@ -52,6 +52,27 @@ fn parse_dart_query_params(params_json: Option<String>) -> anyhow::Result<Option
     Ok(Some(params_from_json_values(values)))
 }
 
+/// Plan durable outbox claims without platform-dependent SQLite logic.
+///
+/// This computes decisions only. Callers MUST atomically claim actions in
+/// their own storage and fence other workers before running them.
+#[frb(sync)]
+pub fn dart_sync_plan_outbox(request_json: String) -> anyhow::Result<String> {
+    kalam_client::offline_sync::plan_outbox_json(&request_json)
+        .map_err(|error| anyhow::anyhow!(error))
+}
+
+/// Plan a replay/snapshot state transition before a durable local commit.
+///
+/// The returned decision must be applied atomically with cached rows and
+/// checkpoint state. A full snapshot requires explicit server confirmation;
+/// replay batches must never clear an existing table.
+#[frb(sync)]
+pub fn dart_sync_plan_replay(request_json: String) -> anyhow::Result<String> {
+    kalam_client::offline_sync::plan_replay_json(&request_json)
+        .map_err(|error| anyhow::anyhow!(error))
+}
+
 /// Encode a function call with the shared Rust domain codec.
 #[frb(sync)]
 pub fn dart_encode_routine_request(
