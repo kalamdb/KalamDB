@@ -6,7 +6,10 @@ export const SERIES_FILES = "var(--kdb-series-files)";
 export const VIOLET = "var(--kdb-violet)";
 
 export const PANEL =
-  "rounded-2xl bg-[var(--kdb-surface)] shadow-[0_1px_2px_rgb(0_0_0_/_0.03),0_18px_40px_-28px_rgb(0_0_0_/_0.22)]";
+  "kdb-panel bg-[var(--kdb-surface)] ring-1 ring-foreground/[0.06] shadow-[0_1px_2px_rgb(0_0_0_/_0.03),0_26px_52px_-34px_rgb(0_0_0_/_0.3)]";
+
+/** Metric figures read as data, not prose: mono face, aligned columns. */
+export const NUMERIC = "font-mono tabular-nums tracking-tight";
 
 export const PANEL_LABEL =
   "text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground";

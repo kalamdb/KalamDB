@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { BarChart3 } from "lucide-react";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { DashboardMetricSample } from "@/services/systemTableService";
@@ -46,18 +46,18 @@ export function QueryActivityChart({ data, isLoading, className }: QueryActivity
   );
 
   return (
-    <Card className={cn(PANEL, "gap-0 px-5 py-5", className)}>
-      <div className="flex items-center gap-2">
-        <span className={ICON_CHIP}>
-          <BarChart3 className="size-4" strokeWidth={2} />
-        </span>
-        <div>
-          <p className="text-sm font-semibold">SQL Query Activity</p>
-          <p className="text-xs text-muted-foreground">SQL statements over time</p>
-        </div>
-      </div>
+    <Card className={cn(PANEL, "gap-0 py-5", className)}>
+      <CardHeader className="px-5">
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+          <span className={ICON_CHIP}>
+            <BarChart3 className="size-4" strokeWidth={2} />
+          </span>
+          SQL Query Activity
+        </CardTitle>
+        <CardDescription className="pl-10 text-xs">SQL statements over time</CardDescription>
+      </CardHeader>
 
-      <div className="mt-4 min-h-[240px] flex-1">
+      <CardContent className="mt-4 min-h-[240px] flex-1 px-5">
         {isLoading && points.length === 0 ? (
           <div className="flex h-full flex-col justify-end gap-2">
             <Skeleton className="h-full w-full rounded-lg" />
@@ -84,13 +84,13 @@ export function QueryActivityChart({ data, isLoading, className }: QueryActivity
                 type="number"
                 domain={["dataMin", "dataMax"]}
                 tickFormatter={timeLabels.axis}
-                tick={{ fontSize: 11 }}
+                tick={{ fontSize: 11, fontFamily: "var(--font-mono)" }}
                 tickMargin={8}
                 minTickGap={40}
                 stroke={CHART_GRID}
               />
               <YAxis
-                tick={{ fontSize: 11 }}
+                tick={{ fontSize: 11, fontFamily: "var(--font-mono)" }}
                 tickFormatter={(value) => formatRate(Number(value))}
                 stroke={CHART_GRID}
                 width={52}
@@ -112,7 +112,7 @@ export function QueryActivityChart({ data, isLoading, className }: QueryActivity
             </AreaChart>
           </ResponsiveContainer>
         )}
-      </div>
+      </CardContent>
     </Card>
   );
 }

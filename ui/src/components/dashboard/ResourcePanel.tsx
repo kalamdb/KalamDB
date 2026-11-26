@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Cpu } from "lucide-react";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { DashboardMetricSample } from "@/services/systemTableService";
@@ -9,6 +9,7 @@ import {
   ACCENT,
   CHART_GRID,
   ICON_CHIP,
+  NUMERIC,
   PANEL,
   SERIES_FILES,
   SERIES_MEMORY,
@@ -58,26 +59,28 @@ export function ResourcePanel({ samples, isLoading, className, index = 0 }: Reso
 
   return (
     <Card
-      className={cn(PANEL, "gap-0 overflow-hidden px-5 py-4", entrance.className, className)}
+      className={cn(PANEL, "gap-0 overflow-hidden py-4", entrance.className, className)}
       style={entrance.style}
     >
-      <div className="flex items-center gap-2.5">
-        <span className={ICON_CHIP}>
-          <Cpu className="size-4" strokeWidth={2} />
-        </span>
-        <div>
-          <p className="text-sm font-semibold">Resource Usage</p>
-          <p className="text-xs text-muted-foreground">CPU, memory and file handles</p>
-        </div>
-      </div>
+      <CardHeader className="px-5">
+        <CardTitle className="flex items-center gap-2.5 text-sm font-semibold">
+          <span className={ICON_CHIP}>
+            <Cpu className="size-4" strokeWidth={2} />
+          </span>
+          Resource Usage
+        </CardTitle>
+        <CardDescription className="pl-[42px] text-xs">CPU, memory and file handles</CardDescription>
+      </CardHeader>
+
+      <CardContent className="px-5 pt-4">
 
       {isLoading && points.length === 0 ? (
-        <div className="mt-4 space-y-3">
+        <div className="space-y-3">
           <Skeleton className="h-16 w-32" />
           <Skeleton className="h-28 w-full" />
         </div>
       ) : (
-        <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,auto)_minmax(0,1fr)]">
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,auto)_minmax(0,1fr)]">
           <dl className="space-y-2.5">
             {SERIES.map((series) => {
               const value = latest?.[series.key];
@@ -88,7 +91,7 @@ export function ResourcePanel({ samples, isLoading, className, index = 0 }: Reso
                     style={{ backgroundColor: series.color }}
                   />
                   <dt className="w-[72px] text-muted-foreground">{series.label}</dt>
-                  <dd className="font-semibold tabular-nums">
+                  <dd className={cn("font-semibold", NUMERIC)}>
                     {value === undefined
                       ? "—"
                       : `${value.toLocaleString(undefined, {
@@ -123,7 +126,7 @@ export function ResourcePanel({ samples, isLoading, className, index = 0 }: Reso
                     type="number"
                     domain={["dataMin", "dataMax"]}
                     tickFormatter={timeLabels.axis}
-                    tick={{ fontSize: 10 }}
+                    tick={{ fontSize: 10, fontFamily: "var(--font-mono)" }}
                     minTickGap={44}
                     stroke={CHART_GRID}
                   />
@@ -132,7 +135,7 @@ export function ResourcePanel({ samples, isLoading, className, index = 0 }: Reso
                     domain={[0, 100]}
                     ticks={[0, 25, 50, 75, 100]}
                     tickFormatter={(value) => `${value}%`}
-                    tick={{ fontSize: 10 }}
+                    tick={{ fontSize: 10, fontFamily: "var(--font-mono)" }}
                     stroke={CHART_GRID}
                     width={52}
                   />
@@ -161,6 +164,7 @@ export function ResourcePanel({ samples, isLoading, className, index = 0 }: Reso
           </div>
         </div>
       )}
+      </CardContent>
     </Card>
   );
 }

@@ -1,10 +1,10 @@
 import { Activity, CheckCircle2, Crown, Network, TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { ClusterHealth, ClusterNode } from "@/services/clusterService";
-import { ICON_CHIP, PANEL, enterAnimation } from "./theme";
+import { ICON_CHIP, NUMERIC, PANEL, enterAnimation } from "./theme";
 
 interface DashboardClusterOverviewProps {
   health: ClusterHealth | null;
@@ -50,41 +50,45 @@ export function DashboardClusterOverview({
 
   return (
     <Card
-      className={cn(PANEL, "gap-0 px-5 py-4", entrance.className, className)}
+      className={cn(PANEL, "gap-0 py-4", entrance.className, className)}
       style={entrance.style}
     >
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
+      <CardHeader className="px-5">
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
           <span className={ICON_CHIP}>
             <Network className="size-4" strokeWidth={2} />
           </span>
-          <p className="text-sm font-semibold">Cluster Nodes &amp; Health</p>
-        </div>
+          Cluster Nodes &amp; Health
+        </CardTitle>
         {health && (
-          <Badge variant="outline" className="shrink-0 text-[11px]">
-            {health.totalNodes} {health.totalNodes === 1 ? "node" : "nodes"}
-          </Badge>
+          <CardAction>
+            <Badge variant="outline" className="shrink-0 text-[11px]">
+              {health.totalNodes} {health.totalNodes === 1 ? "node" : "nodes"}
+            </Badge>
+          </CardAction>
         )}
-      </div>
+      </CardHeader>
+
+      <CardContent className="px-5 pt-4">
 
       {error ? (
-        <div className="mt-4 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-xs text-destructive">
+        <div className="rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-xs text-destructive">
           {error}
         </div>
       ) : isLoading && nodes.length === 0 ? (
-        <div className="mt-4 space-y-3">
+        <div className="space-y-3">
           <Skeleton className="h-14" />
           <Skeleton className="h-12" />
         </div>
       ) : !health ? (
-        <div className="mt-4 flex h-[150px] flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-center">
+        <div className="flex h-[150px] flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-center">
           <p className="text-sm font-semibold">No cluster data</p>
           <p className="max-w-[32ch] text-xs text-muted-foreground">
             Node state appears once the server reports a cluster snapshot.
           </p>
         </div>
       ) : (
-        <div className="mt-4 space-y-4">
+        <div className="space-y-4">
           <div
             className={cn(
               "flex items-center gap-3 rounded-lg px-3 py-2.5",
@@ -110,15 +114,15 @@ export function DashboardClusterOverview({
 
           <div className="grid grid-cols-3 divide-x divide-border/70">
             <div className="px-2 text-center first:pl-0">
-              <p className="text-xl font-semibold leading-none tabular-nums">{health.activeNodes}</p>
+              <p className={cn("text-xl font-semibold leading-none", NUMERIC)}>{health.activeNodes}</p>
               <p className="mt-1.5 text-[11px] text-muted-foreground">Active Node</p>
             </div>
             <div className="px-2 text-center">
-              <p className="text-xl font-semibold leading-none tabular-nums">{health.leaderNodes}</p>
+              <p className={cn("text-xl font-semibold leading-none", NUMERIC)}>{health.leaderNodes}</p>
               <p className="mt-1.5 text-[11px] text-muted-foreground">Leader</p>
             </div>
             <div className="px-2 text-center last:pr-0">
-              <p className="text-xl font-semibold leading-none tabular-nums">{health.followerNodes}</p>
+              <p className={cn("text-xl font-semibold leading-none", NUMERIC)}>{health.followerNodes}</p>
               <p className="mt-1.5 text-[11px] text-muted-foreground">Followers</p>
             </div>
           </div>
@@ -159,6 +163,7 @@ export function DashboardClusterOverview({
           </div>
         </div>
       )}
+      </CardContent>
     </Card>
   );
 }

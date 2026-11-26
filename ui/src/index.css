@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&family=JetBrains+Mono:wght@400..700&display=swap');
 
 @import "tailwindcss";
 @import "tw-animate-css";
@@ -67,6 +67,7 @@
 @theme {
   /* Font Family */
   --font-family-sans: 'Outfit', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
 
   /* Colors - Light Mode */
   --color-background: oklch(100% 0 0);
@@ -162,10 +163,12 @@
     --kdb-accent-strong: oklch(52% 0.13 157);
     --kdb-accent-soft: oklch(96.5% 0.025 157);
     --kdb-accent-line: oklch(89% 0.05 157);
+    --kdb-accent-deep: oklch(38% 0.09 183);
     --kdb-grid: oklch(93% 0 0);
     --kdb-track: oklch(92% 0 0);
     --kdb-page: oklch(98.4% 0.006 157);
     --kdb-surface: oklch(100% 0 0);
+    --kdb-strip: oklch(98.8% 0.004 157);
     --kdb-series-memory: oklch(60% 0.16 300);
     --kdb-series-files: oklch(62% 0.13 255);
     --kdb-violet: oklch(58% 0.17 300);
@@ -178,10 +181,12 @@
     --kdb-accent-strong: oklch(80% 0.12 157);
     --kdb-accent-soft: oklch(26% 0.03 157);
     --kdb-accent-line: oklch(34% 0.05 157);
+    --kdb-accent-deep: oklch(32% 0.08 183);
     --kdb-grid: oklch(28% 0 0);
     --kdb-track: oklch(30% 0 0);
     --kdb-page: oklch(15.5% 0.008 157);
     --kdb-surface: oklch(19% 0.004 157);
+    --kdb-strip: oklch(17% 0.006 157);
     --kdb-series-memory: oklch(72% 0.15 300);
     --kdb-series-files: oklch(70% 0.12 255);
     --kdb-violet: oklch(72% 0.15 300);
@@ -226,4 +231,30 @@
   to {
     height: 0;
   }
+}
+
+/*
+ * Dashboard panel treatment. Unlayered so the radius wins over the shared Card
+ * utilities. The bloom rides on background-image rather than a pseudo-element so
+ * it never interferes with the positioning of a panel's own children.
+ */
+.kdb-panel {
+  position: relative;
+  border-radius: 20px;
+  background-image: linear-gradient(135deg, var(--kdb-accent-soft) 0%, transparent 42%);
+}
+
+/* Hero backdrop: two soft accent blooms plus a dot grid that fades out diagonally. */
+.kdb-hero-wash {
+  background-image:
+    radial-gradient(68% 86% at 84% 14%, var(--kdb-accent-soft) 0%, transparent 62%),
+    radial-gradient(52% 72% at 8% 108%, var(--kdb-accent-soft) 0%, transparent 60%);
+}
+
+.kdb-hero-grid {
+  background-image: radial-gradient(circle at 1px 1px, var(--kdb-accent-line) 1px, transparent 0);
+  background-size: 22px 22px;
+  -webkit-mask-image: linear-gradient(135deg, black 0%, transparent 62%);
+  mask-image: linear-gradient(135deg, black 0%, transparent 62%);
+  opacity: 0.55;
 }

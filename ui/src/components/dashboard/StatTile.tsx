@@ -4,7 +4,7 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { Sparkline } from "./Sparkline";
-import { ACCENT, ICON_CHIP, ICON_CHIP_VIOLET, PANEL, VIOLET, enterAnimation } from "./theme";
+import { ACCENT, ICON_CHIP, ICON_CHIP_VIOLET, NUMERIC, PANEL, VIOLET, enterAnimation } from "./theme";
 
 interface StatTileProps {
   label: string;
@@ -83,7 +83,7 @@ export function StatTile({
       ) : (
         <>
           <div className="mt-3 flex items-start justify-between gap-2">
-            <p className="min-w-0 truncate text-[1.75rem] font-semibold leading-none tracking-tight tabular-nums">
+            <p className={cn("min-w-0 truncate text-[2rem] font-semibold leading-none", NUMERIC)}>
               {value}
               {denominator && (
                 <span className="ml-1 text-xl font-medium text-muted-foreground">{denominator}</span>
@@ -114,7 +114,7 @@ export function StatTile({
                 value={progress.percent}
                 className="h-2 [&_[data-slot=progress-indicator]]:bg-[var(--kdb-accent)]"
               />
-              <span className="shrink-0 text-xs font-semibold tabular-nums text-muted-foreground">
+              <span className={cn("shrink-0 text-xs font-semibold text-muted-foreground", NUMERIC)}>
                 {progress.label}
               </span>
             </div>

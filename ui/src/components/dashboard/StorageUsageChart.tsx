@@ -1,6 +1,6 @@
 import { HardDrive } from "lucide-react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
-import { Card } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import type { Storage, StorageHealthResult } from "@/services/storageService";
-import { ACCENT, ICON_CHIP, PANEL, chartTooltipStyle, enterAnimation } from "./theme";
+import { ACCENT, ICON_CHIP, NUMERIC, PANEL, chartTooltipStyle, enterAnimation } from "./theme";
 
 interface StorageUsageChartProps {
   storages: Storage[];
@@ -75,21 +75,20 @@ export function StorageUsageChart({
 
   return (
     <Card
-      className={cn(PANEL, "gap-0 px-5 py-4", entrance.className, className)}
+      className={cn(PANEL, "gap-0 py-4", entrance.className, className)}
       style={entrance.style}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2">
+      <CardHeader className="px-5">
+        <CardTitle className="flex min-w-0 items-center gap-2 text-sm font-semibold">
           <span className={ICON_CHIP}>
             <HardDrive className="size-4" strokeWidth={2} />
           </span>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold">Storage Usage</p>
-            <p className="truncate text-xs text-muted-foreground">
-              {selectedStorage?.base_directory ?? "Selected storage backend"}
-            </p>
-          </div>
-        </div>
+          Storage Usage
+        </CardTitle>
+        <CardDescription className="truncate pl-10 text-xs">
+          {selectedStorage?.base_directory ?? "Selected storage backend"}
+        </CardDescription>
+        <CardAction>
         <Select value={selectedStorageId} onValueChange={onStorageChange} disabled={storages.length === 0}>
           <SelectTrigger className="h-8 w-[150px] shrink-0 text-xs">
             <SelectValue placeholder="Select storage" />
@@ -102,10 +101,13 @@ export function StorageUsageChart({
             ))}
           </SelectContent>
         </Select>
-      </div>
+        </CardAction>
+      </CardHeader>
+
+      <CardContent className="px-5 pt-4">
 
       {isLoading ? (
-        <div className="mt-4 flex items-center gap-5">
+        <div className="flex items-center gap-5">
           <Skeleton className="size-[132px] rounded-full" />
           <div className="flex-1 space-y-2">
             <Skeleton className="h-4 w-full" />
@@ -114,18 +116,18 @@ export function StorageUsageChart({
           </div>
         </div>
       ) : error ? (
-        <div className="mt-4 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-xs text-destructive">
+        <div className="rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-xs text-destructive">
           {error}
         </div>
       ) : !health || total <= 0 ? (
-        <div className="mt-4 flex h-[150px] flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-center">
+        <div className="flex h-[150px] flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-center">
           <p className="text-sm font-semibold">No capacity data</p>
           <p className="max-w-[32ch] text-xs text-muted-foreground">
             This backend has not reported total or used bytes yet.
           </p>
         </div>
       ) : (
-        <div className="mt-3 flex items-center gap-5">
+        <div className="flex items-center gap-5">
           <div className="relative size-[140px] shrink-0">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -151,7 +153,7 @@ export function StorageUsageChart({
               </PieChart>
             </ResponsiveContainer>
             <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-              <span className="text-2xl font-semibold leading-none tabular-nums">
+              <span className={cn("text-2xl font-semibold leading-none", NUMERIC)}>
                 {usagePercent === null ? "-" : `${usagePercent}%`}
               </span>
               <span className="mt-1 text-[11px] text-muted-foreground">Used</span>
@@ -164,18 +166,18 @@ export function StorageUsageChart({
                 <span className="size-2.5 rounded-[3px] bg-[var(--kdb-accent)]" />
                 Used
               </dt>
-              <dd className="font-semibold tabular-nums">{formatBytes(used)}</dd>
+              <dd className={cn("font-semibold", NUMERIC)}>{formatBytes(used)}</dd>
             </div>
             <div className="flex items-center justify-between gap-3">
               <dt className="flex items-center gap-2 text-muted-foreground">
                 <span className="size-2.5 rounded-[3px] bg-[var(--kdb-track)]" />
                 Free
               </dt>
-              <dd className="font-semibold tabular-nums">{formatBytes(free)}</dd>
+              <dd className={cn("font-semibold", NUMERIC)}>{formatBytes(free)}</dd>
             </div>
             <div className="flex items-center justify-between gap-3 border-t pt-2">
               <dt className="text-muted-foreground">Total</dt>
-              <dd className="font-semibold tabular-nums">{formatBytes(total)}</dd>
+              <dd className={cn("font-semibold", NUMERIC)}>{formatBytes(total)}</dd>
             </div>
             <div className="flex items-center justify-between gap-3">
               <dt className="text-muted-foreground">Status</dt>
@@ -184,6 +186,7 @@ export function StorageUsageChart({
           </dl>
         </div>
       )}
+      </CardContent>
     </Card>
   );
 }
