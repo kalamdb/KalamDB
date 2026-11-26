@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertCircle, Check, Eye, EyeOff } from "lucide-react";
-import AuthSplitLayout from "@/components/auth/AuthSplitLayout";
+import AuthSplitLayout, { authButtonClass, authInputClass } from "@/components/auth/AuthSplitLayout";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
+import { cn } from "cn";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { clearSetupError, submitSetup } from "@/store/setupSlice";
 
@@ -193,11 +195,11 @@ export default function SetupWizard() {
         panelFootnote="Initialization"
       >
         <div className="space-y-5">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
-            <Check className="h-7 w-7 text-primary" />
+          <div className="mx-auto flex size-14 items-center justify-center rounded-full bg-brand-subtle">
+            <Check className="size-7 text-brand" />
           </div>
 
-          <div className="rounded-lg border bg-muted/50 p-4">
+          <div className="rounded-xl border bg-muted/50 p-4">
             <p className="text-sm text-muted-foreground">
               DBA account <span className="font-semibold text-foreground">{createdUsername}</span> created successfully.
             </p>
@@ -205,7 +207,11 @@ export default function SetupWizard() {
           </div>
 
           <p className="text-sm text-muted-foreground">Redirecting to login in 3 seconds.</p>
-          <Button onClick={() => navigate("/login", { replace: true })} className="h-11 w-full">
+          <Button
+            variant="brand"
+            className={cn(authButtonClass, "w-full")}
+            onClick={() => navigate("/login", { replace: true })}
+          >
             Go to login
           </Button>
         </div>
@@ -221,7 +227,17 @@ export default function SetupWizard() {
       panelDescription="Create your initial DBA account and secure root access before opening the admin interface."
       panelFootnote="Setup wizard"
     >
-      <form onSubmit={step === 3 ? handleSubmit : (event) => { event.preventDefault(); handleNext(); }} className="space-y-6">
+      <form
+        onSubmit={
+          step === 3
+            ? handleSubmit
+            : (event) => {
+                event.preventDefault();
+                handleNext();
+              }
+        }
+        className="space-y-6"
+      >
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>Step {step} of 3</span>
@@ -229,54 +245,53 @@ export default function SetupWizard() {
           </div>
           <div className="grid grid-cols-3 gap-2">
             {[1, 2, 3].map((value) => (
-              <div
-                key={value}
-                className={`h-1.5 rounded-full ${value <= step ? "bg-primary" : "bg-muted"}`}
-              />
+              <div key={value} className={cn("h-1.5 rounded-full", value <= step ? "bg-brand" : "bg-muted")} />
             ))}
           </div>
         </div>
 
         {step === 1 && (
           <div className="space-y-4">
-            <div className="space-y-2">
-              <label htmlFor="username" className="text-sm font-medium">
+            <Field data-invalid={Boolean(formErrors.username)}>
+              <FieldLabel htmlFor="username" className="gap-1 text-sm">
                 Username <span className="text-destructive">*</span>
-              </label>
+              </FieldLabel>
               <Input
                 id="username"
                 value={formData.username}
                 onChange={handleChange("username")}
                 placeholder="admin"
                 autoFocus
-                className={formErrors.username ? "border-destructive" : ""}
+                aria-invalid={Boolean(formErrors.username)}
+                className={authInputClass}
               />
-              {formErrors.username && <p className="text-xs text-destructive">{formErrors.username}</p>}
-            </div>
+              <FieldError>{formErrors.username}</FieldError>
+            </Field>
 
-            <div className="space-y-2">
-              <label htmlFor="email" className="text-sm font-medium">
+            <Field data-invalid={Boolean(formErrors.email)}>
+              <FieldLabel htmlFor="email" className="gap-1 text-sm">
                 Email <span className="text-muted-foreground">(optional)</span>
-              </label>
+              </FieldLabel>
               <Input
                 id="email"
                 type="email"
                 value={formData.email}
                 onChange={handleChange("email")}
                 placeholder="admin@example.com"
-                className={formErrors.email ? "border-destructive" : ""}
+                aria-invalid={Boolean(formErrors.email)}
+                className={authInputClass}
               />
-              {formErrors.email && <p className="text-xs text-destructive">{formErrors.email}</p>}
-            </div>
+              <FieldError>{formErrors.email}</FieldError>
+            </Field>
           </div>
         )}
 
         {step === 2 && (
           <div className="space-y-4">
-            <div className="space-y-2">
-              <label htmlFor="password" className="text-sm font-medium">
+            <Field data-invalid={Boolean(formErrors.password)}>
+              <FieldLabel htmlFor="password" className="gap-1 text-sm">
                 Password <span className="text-destructive">*</span>
-              </label>
+              </FieldLabel>
               <div className="relative">
                 <Input
                   id="password"
@@ -285,51 +300,56 @@ export default function SetupWizard() {
                   onChange={handleChange("password")}
                   placeholder="Enter password"
                   autoFocus
-                  className={`pr-10 ${formErrors.password ? "border-destructive" : ""}`}
+                  aria-invalid={Boolean(formErrors.password)}
+                  className={cn(authInputClass, "pr-11")}
                 />
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon-sm"
                   onClick={() => setShowPassword((previous) => !previous)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
                   aria-label={showPassword ? "Hide password" : "Show password"}
+                  aria-pressed={showPassword}
                 >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
+                  {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </Button>
               </div>
-              {formErrors.password && <p className="text-xs text-destructive">{formErrors.password}</p>}
-            </div>
+              <FieldError>{formErrors.password}</FieldError>
+            </Field>
 
-            <div className="space-y-2">
-              <label htmlFor="confirmPassword" className="text-sm font-medium">
+            <Field data-invalid={Boolean(formErrors.confirmPassword)}>
+              <FieldLabel htmlFor="confirmPassword" className="gap-1 text-sm">
                 Confirm Password <span className="text-destructive">*</span>
-              </label>
+              </FieldLabel>
               <Input
                 id="confirmPassword"
                 type={showPassword ? "text" : "password"}
                 value={formData.confirmPassword}
                 onChange={handleChange("confirmPassword")}
                 placeholder="Confirm password"
-                className={formErrors.confirmPassword ? "border-destructive" : ""}
+                aria-invalid={Boolean(formErrors.confirmPassword)}
+                className={authInputClass}
               />
-              {formErrors.confirmPassword && <p className="text-xs text-destructive">{formErrors.confirmPassword}</p>}
-            </div>
+              <FieldError>{formErrors.confirmPassword}</FieldError>
+            </Field>
           </div>
         )}
 
         {step === 3 && (
           <div className="space-y-4">
-            <Alert>
-              <AlertCircle className="h-4 w-4" />
+            <Alert className="bg-muted/50">
+              <AlertCircle />
               <AlertTitle>Security notice</AlertTitle>
               <AlertDescription>
                 The root password is used for system administration. Store it securely.
               </AlertDescription>
             </Alert>
 
-            <div className="space-y-2">
-              <label htmlFor="rootPassword" className="text-sm font-medium">
+            <Field data-invalid={Boolean(formErrors.rootPassword)}>
+              <FieldLabel htmlFor="rootPassword" className="gap-1 text-sm">
                 Root Password <span className="text-destructive">*</span>
-              </label>
+              </FieldLabel>
               <div className="relative">
                 <Input
                   id="rootPassword"
@@ -338,42 +358,45 @@ export default function SetupWizard() {
                   onChange={handleChange("rootPassword")}
                   placeholder="Enter root password"
                   autoFocus
-                  className={`pr-10 ${formErrors.rootPassword ? "border-destructive" : ""}`}
+                  aria-invalid={Boolean(formErrors.rootPassword)}
+                  className={cn(authInputClass, "pr-11")}
                 />
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon-sm"
                   onClick={() => setShowRootPassword((previous) => !previous)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
                   aria-label={showRootPassword ? "Hide root password" : "Show root password"}
+                  aria-pressed={showRootPassword}
                 >
-                  {showRootPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
+                  {showRootPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </Button>
               </div>
-              {formErrors.rootPassword && <p className="text-xs text-destructive">{formErrors.rootPassword}</p>}
-            </div>
+              <FieldError>{formErrors.rootPassword}</FieldError>
+            </Field>
 
-            <div className="space-y-2">
-              <label htmlFor="confirmRootPassword" className="text-sm font-medium">
+            <Field data-invalid={Boolean(formErrors.confirmRootPassword)}>
+              <FieldLabel htmlFor="confirmRootPassword" className="gap-1 text-sm">
                 Confirm Root Password <span className="text-destructive">*</span>
-              </label>
+              </FieldLabel>
               <Input
                 id="confirmRootPassword"
                 type={showRootPassword ? "text" : "password"}
                 value={formData.confirmRootPassword}
                 onChange={handleChange("confirmRootPassword")}
                 placeholder="Confirm root password"
-                className={formErrors.confirmRootPassword ? "border-destructive" : ""}
+                aria-invalid={Boolean(formErrors.confirmRootPassword)}
+                className={authInputClass}
               />
-              {formErrors.confirmRootPassword && (
-                <p className="text-xs text-destructive">{formErrors.confirmRootPassword}</p>
-              )}
-            </div>
+              <FieldError>{formErrors.confirmRootPassword}</FieldError>
+            </Field>
           </div>
         )}
 
         {error && (
-          <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
+          <Alert variant="destructive" className="border-destructive/20 bg-destructive/5">
+            <AlertCircle />
             <AlertTitle>Setup failed</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
           </Alert>
@@ -381,16 +404,21 @@ export default function SetupWizard() {
 
         <div className="flex gap-3">
           {step > 1 && (
-            <Button type="button" variant="outline" className="flex-1" onClick={handleBack}>
+            <Button type="button" variant="outline" className={cn(authButtonClass, "flex-1")} onClick={handleBack}>
               Back
             </Button>
           )}
           {step < 3 ? (
-            <Button type="submit" className="flex-1">
+            <Button type="submit" variant="brand" className={cn(authButtonClass, "flex-1")}>
               Continue
             </Button>
           ) : (
-            <Button type="submit" className="flex-1" disabled={isSubmitting}>
+            <Button
+              type="submit"
+              variant="brand"
+              className={cn(authButtonClass, "flex-1")}
+              disabled={isSubmitting}
+            >
               {isSubmitting ? (
                 <>
                   <Spinner data-icon="inline-start" />

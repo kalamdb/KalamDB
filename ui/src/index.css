@@ -2,7 +2,9 @@
 
 @import "tailwindcss";
 @import "tw-animate-css";
-@custom-variant dark (&:where(.dark, .dark *));
+/* `.theme-light` opts a subtree back into the light palette, so dark overrides
+   must not apply inside it (see the `.theme-light` rule below). */
+@custom-variant dark (&:where(.dark, .dark *):not(:where(.theme-light, .theme-light *)));
 
 @custom-variant data-open {
   &:where([data-state="open"]),
@@ -99,7 +101,15 @@
   --color-border: oklch(90% 0 0);
   --color-input: oklch(90% 0 0);
   --color-ring: oklch(68.5% 0.169 237.323);
-  
+
+  /* Brand - sampled from the KalamDB logo, identical in every theme */
+  --color-brand: oklch(53% 0.124 157);
+  --color-brand-foreground: oklch(100% 0 0);
+  --color-brand-accent: oklch(63% 0.173 147);
+  --color-brand-deep: oklch(40% 0.076 170);
+  --color-brand-subtle: oklch(95% 0.051 163);
+  --color-brand-subtle-foreground: oklch(43% 0.086 167);
+
   /* Border Radius */
   --radius: 0.3rem;
   --radius-lg: var(--radius);
@@ -149,7 +159,46 @@
     --color-input: oklch(24% 0 0);
     --color-ring: oklch(68.5% 0.169 237.323);
   }
-  
+
+  /* Pins the light palette on a subtree even when the root is dark. The auth
+     screens use it because their artwork is drawn for a light canvas; keeping
+     the whole token set in scope means the components inside stay readable
+     instead of inheriting near-white text onto a light surface.
+     Must stay after `.dark` so it wins on equal specificity. */
+  .theme-light {
+    color-scheme: light;
+    --color-background: oklch(100% 0 0);
+    --color-foreground: oklch(9% 0 0);
+
+    --color-card: oklch(100% 0 0);
+    --color-card-foreground: oklch(9% 0 0);
+
+    --color-popover: oklch(100% 0 0);
+    --color-popover-foreground: oklch(9% 0 0);
+
+    --color-primary: oklch(68.5% 0.169 237.323);
+    --color-primary-foreground: oklch(100% 0 0);
+
+    --color-secondary: oklch(96% 0 0);
+    --color-secondary-foreground: oklch(24% 0 0);
+
+    --color-muted: oklch(96% 0 0);
+    --color-muted-foreground: oklch(55% 0 0);
+
+    --color-accent: oklch(96% 0 0);
+    --color-accent-foreground: oklch(24% 0 0);
+
+    --color-destructive: oklch(62% 0.21 29);
+    --color-destructive-foreground: oklch(98% 0 0);
+
+    --color-warning: oklch(75% 0.15 85);
+    --color-warning-foreground: oklch(20% 0 0);
+
+    --color-border: oklch(90% 0 0);
+    --color-input: oklch(90% 0 0);
+    --color-ring: oklch(68.5% 0.169 237.323);
+  }
+
   * {
     border-color: var(--color-border);
   }

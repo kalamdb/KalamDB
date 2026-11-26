@@ -54,7 +54,7 @@ describe("LoginForm", () => {
     fireEvent.change(screen.getByLabelText(/username/i), {
       target: { value: "root" },
     });
-    fireEvent.change(screen.getByLabelText(/password/i), {
+    fireEvent.change(screen.getByLabelText("Password"), {
       target: { value: "kalamdb123" },
     });
 
@@ -148,7 +148,7 @@ describe("LoginForm", () => {
     expect(await screen.findByText(/dex login is enabled on the server/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /continue with dex/i })).toBeNull();
     expect(screen.getByLabelText(/username/i)).toBeTruthy();
-    expect(screen.getByLabelText(/password/i)).toBeTruthy();
+    expect(screen.getByLabelText("Password")).toBeTruthy();
   });
 
   it("shows both OIDC and local login when both methods are enabled", async () => {
@@ -173,7 +173,7 @@ describe("LoginForm", () => {
 
     expect(await screen.findByRole("button", { name: /continue with company sso/i })).toBeTruthy();
     expect(screen.getByLabelText(/username/i)).toBeTruthy();
-    expect(screen.getByLabelText(/password/i)).toBeTruthy();
+    expect(screen.getByLabelText("Password")).toBeTruthy();
     expect(screen.getByRole("button", { name: /^log in$/i })).toBeTruthy();
   });
 

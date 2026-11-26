@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertCircle, ExternalLink, KeyRound, User } from "lucide-react";
+import { AlertCircle, ArrowRight, Eye, EyeOff, ExternalLink, Lock, Terminal, User } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { authApi, type AuthLoginOptions, type OidcLoginOptions } from "@/lib/api";
 import { buildOAuthAuthorizationUrl } from "@/lib/oauth";
+import { cn } from "cn";
+import { authButtonClass, authInputClass } from "@/components/auth/AuthSplitLayout";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
 
 interface LoginFormProps {
   onSuccess?: () => void;
@@ -17,6 +22,7 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
   const { login, error, isLoading } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [loginOptions, setLoginOptions] = useState<AuthLoginOptions>({
@@ -94,99 +100,132 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
   };
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+    <form onSubmit={handleSubmit} className="flex flex-col gap-5">
       {oidcOption && (
         <>
           <Button
             type="button"
-            variant="secondary"
-            className="h-11 w-full"
+            variant="outline"
+            className={cn(authButtonClass, "w-full")}
             disabled={isLoading || isRedirecting}
             onClick={() => void handleOAuthLogin(oidcOption)}
           >
-            <ExternalLink data-icon="inline-start" />
+            {isRedirecting ? <Spinner data-icon="inline-start" /> : <ExternalLink data-icon="inline-start" />}
             Continue with {oidcOption.display_name}
           </Button>
 
-          {localLoginEnabled && <div className="flex items-center gap-3 py-2">
-            <div className="h-px flex-1 bg-border" />
-            <span className="text-xs font-medium text-muted-foreground">OR</span>
-            <div className="h-px flex-1 bg-border" />
-          </div>}
+          {localLoginEnabled && (
+            <div className="flex items-center gap-3">
+              <Separator className="flex-1" />
+              <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">or</span>
+              <Separator className="flex-1" />
+            </div>
+          )}
         </>
       )}
 
       {displayError && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
+        <Alert variant="destructive" className="border-destructive/20 bg-destructive/5">
+          <AlertCircle />
           <AlertDescription>{displayError}</AlertDescription>
         </Alert>
       )}
 
+      {localLoginEnabled && (
+        <>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="username" className="text-sm">
+                Username
+              </FieldLabel>
+              <div className="relative">
+                <User className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="username"
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="root"
+                  disabled={isLoading}
+                  autoComplete="username"
+                  autoFocus
+                  className={cn(authInputClass, "pl-10")}
+                />
+              </div>
+            </Field>
+
+            <Field>
+              <FieldLabel htmlFor="password" className="text-sm">
+                Password
+              </FieldLabel>
+              <div className="relative">
+                <Lock className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter password"
+                  disabled={isLoading}
+                  autoComplete="current-password"
+                  className={cn(authInputClass, "pl-10 pr-11")}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  aria-pressed={showPassword}
+                  disabled={isLoading}
+                  onClick={() => setShowPassword((visible) => !visible)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+                >
+                  {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </Button>
+              </div>
+            </Field>
+          </FieldGroup>
+
+          <Button type="submit" variant="brand" className={cn("group/submit w-full", authButtonClass)} disabled={isLoading}>
+            {isLoading && <Spinner data-icon="inline-start" />}
+            {isLoading ? "Signing in..." : "Log in"}
+            {!isLoading && (
+              <ArrowRight
+                data-icon="inline-end"
+                className="transition-transform group-hover/submit:translate-x-0.5"
+              />
+            )}
+          </Button>
+        </>
+      )}
+
       {oidcConfigurationError && !displayError && (
-        <Alert>
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{oidcConfigurationError}</AlertDescription>
+        <Alert className="border-warning/40 bg-warning/10">
+          <AlertCircle />
+          <AlertDescription className="text-foreground/80">{oidcConfigurationError}</AlertDescription>
         </Alert>
       )}
 
-      {localLoginEnabled && <>
-      <div className="flex flex-col gap-3">
-        <div className="flex flex-col gap-2">
-          <label htmlFor="username" className="text-sm font-medium">
-            Username
-          </label>
-          <div className="relative">
-            <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              id="username"
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="Enter username"
-              disabled={isLoading}
-              autoComplete="username"
-              autoFocus
-              className="h-11 pl-10"
-            />
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <label htmlFor="password" className="text-sm font-medium">
-            Password
-          </label>
-          <div className="relative">
-            <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter password"
-              disabled={isLoading}
-              autoComplete="current-password"
-              className="h-11 pl-10"
-            />
-          </div>
-        </div>
-      </div>
-
-      <Button type="submit" className="h-11 w-full" disabled={isLoading}>
-        {isLoading ? "Signing in..." : "Log in"}
-      </Button>
-      </>}
-
-      <div className="flex flex-col gap-1 text-center text-sm text-muted-foreground">
-        <p>
-          Need setup on an unconfigured node?{" "}
-          <Link to="/setup" className="font-medium text-primary hover:underline">
+      <div className="space-y-4 border-t pt-4">
+        <p className="text-sm text-muted-foreground">
+          New here?{" "}
+          <Link to="/setup" className="font-semibold text-brand hover:underline">
             Run setup
           </Link>
         </p>
-        <p className="text-xs">
-          Nodes started with scripts/cluster.sh are already configured. Sign in as root with the configured root password.
-        </p>
+
+        <div className="flex gap-3 rounded-xl border bg-muted/50 p-3">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand-deep text-brand-foreground">
+            <Terminal className="size-4" />
+          </span>
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-foreground">Unconfigured node?</p>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Nodes started with scripts/cluster.sh are already configured. Sign in as root with the configured root
+              password.
+            </p>
+          </div>
+        </div>
       </div>
     </form>
   );
