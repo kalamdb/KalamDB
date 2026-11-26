@@ -78,6 +78,7 @@ function itemClass(collapsed: boolean, isActive: boolean): string {
   return cn(
     "mb-1.5 flex items-center rounded-xl text-[15px] transition-colors",
     collapsed ? "h-11 w-11 justify-center" : "h-11 w-full justify-start gap-3 px-3.5",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--kdb-nav-active-fg)]/50 active:scale-[0.99]",
     isActive
       ? "bg-[var(--kdb-nav-active)] font-semibold text-[var(--kdb-nav-active-fg)]"
       : "font-medium text-muted-foreground hover:bg-accent/70 hover:text-foreground",

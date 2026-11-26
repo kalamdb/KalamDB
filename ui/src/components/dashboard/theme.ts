@@ -30,7 +30,8 @@ export const chartTooltipStyle = {
 
 export function enterAnimation(index: number) {
   return {
-    className: "animate-in fade-in-0 slide-in-from-bottom-2 fill-mode-both duration-500",
+    className:
+      "motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2 motion-safe:fill-mode-both motion-safe:duration-500",
     style: { animationDelay: `${index * 60}ms` },
   };
 }

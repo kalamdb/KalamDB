@@ -27,7 +27,7 @@ const QUICK_LINKS: QuickLink[] = [
 const CAPABILITIES = ["PostgreSQL Compatible", "Realtime (Pub/Sub)", "Per-tenant USER tables"];
 
 const PILL_CLASS =
-  "absolute flex w-[108px] items-center justify-center gap-1.5 rounded-full bg-[var(--kdb-surface)] px-2 py-1.5 text-[11px] font-medium text-foreground shadow-[0_4px_14px_-6px_rgb(0_0_0_/_0.25)] ring-1 ring-foreground/10 transition-transform duration-200 hover:-translate-y-0.5 active:scale-[0.98]";
+  "absolute flex w-[108px] items-center justify-center gap-1.5 rounded-full bg-[var(--kdb-surface)] px-2 py-1.5 text-[11px] font-medium text-foreground shadow-[0_4px_14px_-6px_rgb(0_0_0_/_0.25)] ring-1 ring-foreground/10 transition-transform duration-200 hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--kdb-accent)] active:scale-[0.98]";
 
 export function DashboardHero({ username, serverVersion, actions }: DashboardHeroProps) {
   return (
@@ -96,7 +96,7 @@ export function DashboardHero({ username, serverVersion, actions }: DashboardHer
                 <NavLink
                   key={link.name}
                   to={link.href}
-                  className="inline-flex items-center gap-1.5 rounded-full bg-[var(--kdb-surface)] px-3 py-1.5 text-[11px] font-medium ring-1 ring-foreground/10"
+                  className="inline-flex items-center gap-1.5 rounded-full bg-[var(--kdb-surface)] px-3 py-1.5 text-[11px] font-medium ring-1 ring-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--kdb-accent)]"
                 >
                   <link.icon className="size-3.5 text-[var(--kdb-accent-strong)]" strokeWidth={2} />
                   {link.name}
