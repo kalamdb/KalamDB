@@ -1,0 +1,15 @@
+[package]
+name = "kalamdb-live-sql-414-poc"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone PoC: use the exact same DataFusion major/minor as PR #412.
+[dependencies]
+datafusion = { version = "=55.2.0", default-features = false, features = ["sql"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
+
+# Standalone workspace prevents accidental full KalamDB workspace builds.
+[workspace]
