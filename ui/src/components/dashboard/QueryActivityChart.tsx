@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { DashboardMetricSample } from "@/services/systemTableService";
 import { ACCENT, CHART_GRID, ICON_CHIP, PANEL, chartTooltipStyle } from "./theme";
+import { timeLabelFormatters } from "./timeLabels";
 
 interface QueryActivityChartProps {
   data: DashboardMetricSample[];
@@ -19,10 +20,6 @@ const RATE_KEYS = [
   "update_queries_per_second",
   "delete_queries_per_second",
 ];
-
-function formatTimeLabel(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
 
 function formatRate(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -42,6 +39,10 @@ export function QueryActivityChart({ data, isLoading, className }: QueryActivity
         .sort((a, b) => a.sampled_at - b.sampled_at)
         .map((sample) => ({ timestamp: sample.sampled_at, rate: totalQueryRate(sample) })),
     [data],
+  );
+  const timeLabels = useMemo(
+    () => timeLabelFormatters(points.map((point) => point.timestamp)),
+    [points],
   );
 
   return (
@@ -82,7 +83,7 @@ export function QueryActivityChart({ data, isLoading, className }: QueryActivity
                 dataKey="timestamp"
                 type="number"
                 domain={["dataMin", "dataMax"]}
-                tickFormatter={formatTimeLabel}
+                tickFormatter={timeLabels.axis}
                 tick={{ fontSize: 11 }}
                 tickMargin={8}
                 minTickGap={40}
@@ -97,7 +98,7 @@ export function QueryActivityChart({ data, isLoading, className }: QueryActivity
               <Tooltip
                 contentStyle={chartTooltipStyle}
                 formatter={(value) => [`${formatRate(Number(value))}/s`, "Statements"]}
-                labelFormatter={(value) => formatTimeLabel(Number(value))}
+                labelFormatter={(value) => timeLabels.tooltip(Number(value))}
               />
               <Area
                 type="monotone"

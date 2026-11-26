@@ -23,7 +23,7 @@ import {
 import { DashboardClusterOverview } from "@/components/dashboard/ClusterOverview";
 import { DashboardHero } from "@/components/dashboard/DashboardHero";
 import { MetricsChart } from "@/components/dashboard/MetricsChart";
-import { QueryActivityChart, totalQueryRate } from "@/components/dashboard/QueryActivityChart";
+import { QueryActivityChart } from "@/components/dashboard/QueryActivityChart";
 import { ResourcePanel } from "@/components/dashboard/ResourcePanel";
 import { SlowQueriesPanel } from "@/components/dashboard/SlowQueriesPanel";
 import { StatGroupPanel, type StatGroupItem } from "@/components/dashboard/StatGroupPanel";
@@ -186,7 +186,13 @@ function formatStartTime(uptimeSeconds: string | undefined): string | undefined 
   }
 
   const started = new Date(Date.now() - total * 1000);
-  return `Running since ${started.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  const clock = started.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (started.toDateString() === new Date().toDateString()) {
+    return `Running since ${clock}`;
+  }
+
+  const day = started.toLocaleDateString([], { month: "short", day: "numeric" });
+  return `Running since ${day}, ${clock}`;
 }
 
 function formatUptime(seconds: string | undefined): string {
@@ -295,7 +301,7 @@ export default function Dashboard() {
         : null;
 
   const throughputSeries = useMemo(
-    () => visibleMetricSamples.map(totalQueryRate),
+    () => visibleMetricSamples.map((sample) => Number(sample.queries_per_second)),
     [visibleMetricSamples],
   );
   const connectionSeries = useMemo(
@@ -306,6 +312,15 @@ export default function Dashboard() {
   const latencySeries = useMemo(
     () => visibleMetricSamples.map((sample) => Number(sample.avg_query_latency_ms)),
     [visibleMetricSamples],
+  );
+
+  /**
+   * Pinned to the snapshot that reported the uptime. Recomputing per render would walk the
+   * start time forward whenever an unrelated poll rerendered the page.
+   */
+  const startedLabel = useMemo(
+    () => formatStartTime(stats?.server_uptime_seconds),
+    [stats],
   );
 
   const connections = parseInteger(currentStats.active_connections);
@@ -365,7 +380,7 @@ export default function Dashboard() {
           label="Uptime"
           value={currentStats.server_uptime_human || formatUptime(currentStats.server_uptime_seconds)}
           caption="Process"
-          detail={formatStartTime(currentStats.server_uptime_seconds)}
+          detail={startedLabel}
           isLoading={isInitialLoad}
         />
         <StatTile

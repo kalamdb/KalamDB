@@ -15,6 +15,7 @@ import {
   chartTooltipStyle,
   enterAnimation,
 } from "./theme";
+import { timeLabelFormatters } from "./timeLabels";
 
 interface ResourcePanelProps {
   samples: DashboardMetricSample[];
@@ -28,10 +29,6 @@ const SERIES = [
   { key: "memory_usage_mb", label: "Memory", color: SERIES_MEMORY, unit: " MB", digits: 0, axis: "abs" },
   { key: "open_files_total", label: "Open files", color: SERIES_FILES, unit: "", digits: 0, axis: "abs" },
 ];
-
-function formatTimeLabel(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
 
 export function ResourcePanel({ samples, isLoading, className, index = 0 }: ResourcePanelProps) {
   const entrance = enterAnimation(index);
@@ -51,6 +48,10 @@ export function ResourcePanel({ samples, isLoading, className, index = 0 }: Reso
           return point;
         }),
     [samples],
+  );
+  const timeLabels = useMemo(
+    () => timeLabelFormatters(points.map((point) => point.timestamp)),
+    [points],
   );
 
   const latest = points.length > 0 ? points[points.length - 1] : undefined;
@@ -121,7 +122,7 @@ export function ResourcePanel({ samples, isLoading, className, index = 0 }: Reso
                     dataKey="timestamp"
                     type="number"
                     domain={["dataMin", "dataMax"]}
-                    tickFormatter={formatTimeLabel}
+                    tickFormatter={timeLabels.axis}
                     tick={{ fontSize: 10 }}
                     minTickGap={44}
                     stroke={CHART_GRID}
@@ -138,7 +139,7 @@ export function ResourcePanel({ samples, isLoading, className, index = 0 }: Reso
                   <YAxis yAxisId="abs" orientation="right" hide />
                   <Tooltip
                     contentStyle={chartTooltipStyle}
-                    labelFormatter={(value) => formatTimeLabel(Number(value))}
+                    labelFormatter={(value) => timeLabels.tooltip(Number(value))}
                   />
                   {SERIES.map((series) => (
                     <Area

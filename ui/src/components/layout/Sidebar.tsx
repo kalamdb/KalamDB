@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   BarChart3,
@@ -27,6 +27,8 @@ import { useBackendStatus } from "@/lib/backend-status";
 import { useGetStatsQuery } from "@/store/apiSlice";
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "kalamdb-admin-sidebar-collapsed";
+/** Below this width the expanded rail leaves too little room for the header controls. */
+const COMPACT_VIEWPORT_QUERY = "(max-width: 1023px)";
 const logoUrl = `${import.meta.env.BASE_URL}favicon.png`;
 
 interface NavItem {
@@ -62,6 +64,16 @@ function activeIndex(pathname: string): number {
   return exact >= 0 ? exact : navigation.findIndex((item) => matches(item, pathname));
 }
 
+/** A saved preference wins everywhere; a fresh session starts compact only on narrow viewports. */
+function initialCollapsed(): boolean {
+  const stored = localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY);
+  if (stored) {
+    return stored === "1";
+  }
+
+  return window.matchMedia?.(COMPACT_VIEWPORT_QUERY).matches ?? false;
+}
+
 function itemClass(collapsed: boolean, isActive: boolean): string {
   return cn(
     "mb-1.5 flex items-center rounded-xl text-[15px] transition-colors",
@@ -73,10 +85,7 @@ function itemClass(collapsed: boolean, isActive: boolean): string {
 }
 
 export default function Sidebar() {
-  const [collapsed, setCollapsed] = useState<boolean>(() => {
-    const stored = localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY);
-    return stored ? stored === "1" : false;
-  });
+  const [collapsed, setCollapsed] = useState<boolean>(initialCollapsed);
   const location = useLocation();
   const currentIndex = activeIndex(location.pathname);
   const { state } = useBackendStatus();
@@ -87,9 +96,12 @@ export default function Sidebar() {
   const statusLabel = isOnline ? "System Healthy" : isChecking ? "Connecting" : "System Offline";
   const version = stats?.server_version;
 
-  useEffect(() => {
-    localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, collapsed ? "1" : "0");
-  }, [collapsed]);
+  /** Only an explicit toggle is persisted, so the viewport default never hardens into a preference. */
+  function toggleCollapsed(): void {
+    const next = !collapsed;
+    setCollapsed(next);
+    localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, next ? "1" : "0");
+  }
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -200,7 +212,7 @@ export default function Sidebar() {
                   collapsed ? "justify-center" : "justify-start",
                 )}
                 aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-                onClick={() => setCollapsed((prev) => !prev)}
+                onClick={toggleCollapsed}
               >
                 {collapsed ? <PanelLeftOpen /> : <PanelLeftClose data-icon="inline-start" />}
                 {!collapsed && <span>Collapse</span>}
