@@ -27,7 +27,7 @@ import { QueryActivityChart } from "@/components/dashboard/QueryActivityChart";
 import { ResourcePanel } from "@/components/dashboard/ResourcePanel";
 import { SlowQueriesPanel } from "@/components/dashboard/SlowQueriesPanel";
 import { StatGroupPanel, type StatGroupItem } from "@/components/dashboard/StatGroupPanel";
-import { StatTile } from "@/components/dashboard/StatTile";
+import type { HeroMetric } from "@/components/dashboard/HeroMetricStrip";
 import { StorageUsageChart } from "@/components/dashboard/StorageUsageChart";
 import { ACCENT_CHIP, PANEL_LABEL, percentDelta } from "@/components/dashboard/theme";
 import { useAuth } from "@/lib/auth";
@@ -304,11 +304,6 @@ export default function Dashboard() {
     () => visibleMetricSamples.map((sample) => Number(sample.queries_per_second)),
     [visibleMetricSamples],
   );
-  const connectionSeries = useMemo(
-    () => visibleMetricSamples.map((sample) => Number(sample.active_connections)),
-    [visibleMetricSamples],
-  );
-
   const latencySeries = useMemo(
     () => visibleMetricSamples.map((sample) => Number(sample.avg_query_latency_ms)),
     [visibleMetricSamples],
@@ -327,11 +322,44 @@ export default function Dashboard() {
   const peakConnections = parseInteger(currentStats.active_connections_peak);
   const connectionPercent = peakConnections > 0 ? Math.min(100, (connections / peakConnections) * 100) : 0;
 
+  const heroMetrics: HeroMetric[] = [
+    {
+      label: "Uptime",
+      icon: Clock3,
+      value: currentStats.server_uptime_human || formatUptime(currentStats.server_uptime_seconds),
+      detail: startedLabel,
+    },
+    {
+      label: "Avg Latency",
+      icon: Timer,
+      value: buildDecimalMetricItem("", currentStats.avg_query_latency_ms, 2, " ms").value,
+      detail: "Mean SQL duration",
+      delta: percentDelta(latencySeries),
+      deltaGoodWhen: "down",
+    },
+    {
+      label: "Throughput",
+      icon: Gauge,
+      value: `${buildDecimalMetricItem("", currentStats.queries_per_second).value} QPS`,
+      detail: "Queries per second",
+      delta: percentDelta(throughputSeries),
+    },
+    {
+      label: "Active Connections",
+      icon: Plug,
+      value: connections.toLocaleString(),
+      denominator: `/ ${peakConnections.toLocaleString()}`,
+      progress: { percent: connectionPercent, label: `${Math.round(connectionPercent)}%` },
+    },
+  ];
+
   return (
     <section data-dashboard className="flex min-h-full flex-col gap-5 bg-[var(--kdb-page)] p-4 lg:p-6">
       <DashboardHero
         username={user?.username ?? "admin"}
         serverVersion={currentStats.server_version}
+        metrics={heroMetrics}
+        isMetricsLoading={isInitialLoad}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -372,51 +400,6 @@ export default function Dashboard() {
           </div>
         }
       />
-
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile
-          index={0}
-          icon={Clock3}
-          label="Uptime"
-          value={currentStats.server_uptime_human || formatUptime(currentStats.server_uptime_seconds)}
-          caption="Process"
-          detail={startedLabel}
-          isLoading={isInitialLoad}
-        />
-        <StatTile
-          index={1}
-          icon={Timer}
-          label="Avg Latency"
-          value={buildDecimalMetricItem("", currentStats.avg_query_latency_ms, 2, " ms").value}
-          caption="Mean SQL duration"
-          series={latencySeries}
-          delta={percentDelta(latencySeries)}
-          deltaGoodWhen="down"
-          isLoading={isInitialLoad}
-        />
-        <StatTile
-          index={2}
-          icon={Gauge}
-          label="Throughput"
-          tone="violet"
-          value={`${buildDecimalMetricItem("", currentStats.queries_per_second).value} QPS`}
-          caption="Queries per second"
-          series={throughputSeries}
-          delta={percentDelta(throughputSeries)}
-          isLoading={isInitialLoad}
-        />
-        <StatTile
-          index={3}
-          icon={Plug}
-          label="Active Connections"
-          value={connections.toLocaleString()}
-          denominator={`/ ${peakConnections.toLocaleString()}`}
-          caption="Current against observed peak"
-          series={connectionSeries}
-          progress={{ percent: connectionPercent, label: `${Math.round(connectionPercent)}%` }}
-          isLoading={isInitialLoad}
-        />
-      </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(330px,1fr)]">
         <QueryActivityChart
