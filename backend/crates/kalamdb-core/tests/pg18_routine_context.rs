@@ -37,15 +37,17 @@ fn user_ctx(app: &Arc<AppContext>, id: &str) -> ExecutionContext {
 }
 
 async fn exec_as(executor: &SqlExecutor, ctx: &ExecutionContext, sql: &str) -> ExecutionResult {
-    executor.execute(sql, ctx, vec![]).await.expect(sql)
+    support::materialize_result(executor.execute(sql, ctx, vec![]).await.expect(sql)).await
 }
 
 async fn exec_err_as(executor: &SqlExecutor, ctx: &ExecutionContext, sql: &str) -> String {
-    executor
-        .execute(sql, ctx, vec![])
-        .await
-        .expect_err(&format!("expected error for `{sql}`"))
-        .to_string()
+    match executor.execute(sql, ctx, vec![]).await {
+        Ok(result) => match result.into_materialized_rows().await {
+            Ok(_) => panic!("expected error for `{sql}`"),
+            Err(error) => error,
+        },
+        Err(error) => error.to_string(),
+    }
 }
 
 fn scalar_string(result: &ExecutionResult) -> String {

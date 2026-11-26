@@ -24,6 +24,7 @@ use pgwire::{
 use crate::{
     connection::WireConnectionState,
     pg_types::{pg_type_for_arrow, pg_type_for_field},
+    row_encoder::{build_cached_result_layout, CachedWireResultLayout},
     sql_exec::{execution_context_for_wire, pg_error},
 };
 
@@ -34,6 +35,8 @@ pub struct WireCachedStatement {
     pub parameter_types: Vec<Type>,
     /// Result columns resolved at Parse/Describe time (empty = NoData).
     pub result_columns: Vec<WireResultColumn>,
+    /// Pre-built wire field layout reused across repeated executes.
+    pub(crate) cached_result_layout: Option<CachedWireResultLayout>,
 }
 
 /// Name + PostgreSQL type for one result column.
@@ -82,13 +85,14 @@ impl QueryParser for KalamQueryParser {
             .sql_executor
             .prepare_statement_metadata(sql, &exec_ctx)
             .map_err(classification_error_to_pg)?;
-        let (parameter_types, result_columns) =
+        let (parameter_types, result_columns, cached_result_layout) =
             self.prepared_metadata(&metadata, &exec_ctx, _types).await;
 
         Ok(Some(WireCachedStatement {
             metadata,
             parameter_types,
             result_columns,
+            cached_result_layout,
         }))
     }
 
@@ -121,7 +125,7 @@ impl KalamQueryParser {
         metadata: &PreparedExecutionStatement,
         exec_ctx: &ExecutionContext,
         hinted_types: &[Option<Type>],
-    ) -> (Vec<Type>, Vec<WireResultColumn>) {
+    ) -> (Vec<Type>, Vec<WireResultColumn>, Option<CachedWireResultLayout>) {
         let sql = metadata.sql.as_str();
         let shown = classify_postgres_show(sql);
         let count = max_placeholder_index(sql);
@@ -133,15 +137,18 @@ impl KalamQueryParser {
                         name,
                         datatype: Type::TEXT,
                     }],
+                    None,
                 );
             }
         }
 
-        if let Some(describe_sql) =
-            metadata.parsed_dml.as_deref().and_then(kalamdb_sql::returning_describe_sql)
+        if let Some(describe) = metadata
+            .parsed_dml
+            .as_deref()
+            .and_then(kalamdb_sql::returning_describe_statement)
         {
             if let Ok(plan) =
-                self.sql_executor.logical_plan_for_session(&describe_sql, exec_ctx).await
+                self.sql_executor.logical_plan_for_statement(&describe, exec_ctx).await
             {
                 let parameter_types = (0..count)
                     .map(|index| {
@@ -157,7 +164,8 @@ impl KalamQueryParser {
                         datatype: pg_type_for_field(field).unwrap_or(Type::TEXT),
                     })
                     .collect();
-                return (parameter_types, columns);
+                let layout = build_cached_result_layout(Arc::clone(plan.schema().inner()));
+                return (parameter_types, columns, layout);
             }
         }
 
@@ -174,7 +182,7 @@ impl KalamQueryParser {
                     hinted_types.get(index).and_then(|ty| ty.clone()).unwrap_or(Type::TEXT)
                 })
                 .collect();
-            return (parameter_types, columns);
+            return (parameter_types, columns, None);
         };
 
         let parameter_types = if count == 0 {
@@ -200,22 +208,28 @@ impl KalamQueryParser {
             types
         };
 
-        let columns = if let Some(name) = shown {
-            vec![WireResultColumn {
-                name,
-                datatype: Type::TEXT,
-            }]
+        let (columns, layout) = if let Some(name) = shown {
+            (
+                vec![WireResultColumn {
+                    name,
+                    datatype: Type::TEXT,
+                }],
+                None,
+            )
         } else {
-            plan.schema()
+            let columns = plan
+                .schema()
                 .fields()
                 .iter()
                 .map(|field| WireResultColumn {
                     name: field.name().to_string(),
                     datatype: pg_type_for_field(field).unwrap_or(Type::TEXT),
                 })
-                .collect()
+                .collect();
+            let layout = build_cached_result_layout(Arc::clone(plan.schema().inner()));
+            (columns, layout)
         };
-        (parameter_types, columns)
+        (parameter_types, columns, layout)
     }
 }
 

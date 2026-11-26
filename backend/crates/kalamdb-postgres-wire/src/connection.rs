@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 
 use kalamdb_backend::session::BackendAuth;
 use kalamdb_commons::models::SchemaId;
@@ -70,6 +73,7 @@ impl std::error::Error for WireConnectionStateError {}
 #[derive(Debug)]
 pub struct WireConnectionState {
     session_id: String,
+    wire_request_id: String,
     auth: BackendAuth,
     current_schema: Mutex<SchemaId>,
     config_values: SessionConfigValues,
@@ -79,6 +83,8 @@ pub struct WireConnectionState {
     prepared_statement_total_bytes_limit: usize,
     prepared_statements: Mutex<HashMap<String, WirePreparedStatement>>,
     portals: Mutex<HashMap<String, WirePortal>>,
+    named_portal_count: AtomicUsize,
+    unnamed_portal_active: AtomicBool,
 }
 
 impl WireConnectionState {
@@ -119,8 +125,11 @@ impl WireConnectionState {
         statement_sql_bytes_limit: usize,
         prepared_statement_total_bytes_limit: usize,
     ) -> Self {
+        let session_id = session_id.into();
+        let wire_request_id = format!("wire:{session_id}");
         Self {
-            session_id: session_id.into(),
+            session_id,
+            wire_request_id,
             auth,
             current_schema: Mutex::new(current_schema),
             config_values: SessionConfigValues::new(),
@@ -130,11 +139,17 @@ impl WireConnectionState {
             prepared_statement_total_bytes_limit,
             prepared_statements: Mutex::new(HashMap::new()),
             portals: Mutex::new(HashMap::new()),
+            named_portal_count: AtomicUsize::new(0),
+            unnamed_portal_active: AtomicBool::new(false),
         }
     }
 
     pub fn session_id(&self) -> &str {
         self.session_id.as_str()
+    }
+
+    pub fn wire_request_id(&self) -> &str {
+        self.wire_request_id.as_str()
     }
 
     pub fn auth(&self) -> &BackendAuth {
@@ -182,7 +197,8 @@ impl WireConnectionState {
     }
 
     pub fn portal_count(&self) -> usize {
-        self.portals.lock().len()
+        self.named_portal_count.load(Ordering::Relaxed)
+            + usize::from(self.unnamed_portal_active.load(Ordering::Relaxed))
     }
 
     pub fn ensure_statement_sql_bytes(&self, sql: &str) -> Result<(), WireConnectionStateError> {
@@ -201,9 +217,8 @@ impl WireConnectionState {
         &self,
         sql: &str,
     ) -> Result<(), WireConnectionStateError> {
-        let limit = self
-            .statement_sql_bytes_limit
-            .saturating_mul(SIMPLE_QUERY_MESSAGE_LIMIT_FACTOR);
+        let limit =
+            self.statement_sql_bytes_limit.saturating_mul(SIMPLE_QUERY_MESSAGE_LIMIT_FACTOR);
         if sql.len() > limit {
             return Err(WireConnectionStateError::SimpleQueryMessageBytesExceeded {
                 limit,
@@ -230,8 +245,20 @@ impl WireConnectionState {
     }
 
     pub fn ensure_portal_capacity(&self, name: &str) -> Result<(), WireConnectionStateError> {
+        if name.is_empty() {
+            if self.unnamed_portal_active.load(Ordering::Relaxed)
+                || self.named_portal_count.load(Ordering::Relaxed) < self.portal_limit
+            {
+                return Ok(());
+            }
+            return Err(WireConnectionStateError::PortalLimitExceeded {
+                limit: self.portal_limit,
+            });
+        }
+
         let portals = self.portals.lock();
-        if !portals.contains_key(name) && portals.len() >= self.portal_limit {
+        let total = portals.len() + usize::from(self.unnamed_portal_active.load(Ordering::Relaxed));
+        if !portals.contains_key(name) && total >= self.portal_limit {
             return Err(WireConnectionStateError::PortalLimitExceeded {
                 limit: self.portal_limit,
             });
@@ -272,15 +299,36 @@ impl WireConnectionState {
         Ok(())
     }
 
+    pub fn put_unnamed_portal(&self) -> Result<(), WireConnectionStateError> {
+        if !self.unnamed_portal_active.load(Ordering::Relaxed)
+            && self.named_portal_count.load(Ordering::Relaxed) >= self.portal_limit
+        {
+            return Err(WireConnectionStateError::PortalLimitExceeded {
+                limit: self.portal_limit,
+            });
+        }
+        self.unnamed_portal_active.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    pub fn clear_unnamed_portal(&self) {
+        self.unnamed_portal_active.store(false, Ordering::Relaxed);
+    }
+
     pub fn put_portal(&self, portal: WirePortal) -> Result<(), WireConnectionStateError> {
+        if portal.name.is_empty() {
+            return self.put_unnamed_portal();
+        }
         let mut portals = self.portals.lock();
-        if !portals.contains_key(portal.name.as_str()) && portals.len() >= self.portal_limit {
+        let total = portals.len() + usize::from(self.unnamed_portal_active.load(Ordering::Relaxed));
+        if !portals.contains_key(portal.name.as_str()) && total >= self.portal_limit {
             return Err(WireConnectionStateError::PortalLimitExceeded {
                 limit: self.portal_limit,
             });
         }
 
         portals.insert(portal.name.clone(), portal);
+        self.named_portal_count.store(portals.len(), Ordering::Relaxed);
         Ok(())
     }
 
@@ -289,7 +337,14 @@ impl WireConnectionState {
     }
 
     pub fn remove_portal(&self, name: &str) -> Option<WirePortal> {
-        self.portals.lock().remove(name)
+        if name.is_empty() {
+            self.clear_unnamed_portal();
+            return None;
+        }
+        let mut portals = self.portals.lock();
+        let removed = portals.remove(name);
+        self.named_portal_count.store(portals.len(), Ordering::Relaxed);
+        removed
     }
 }
 
@@ -343,7 +398,10 @@ mod tests {
             .expect_err("the ninth chunk exceeds the message cap");
         assert_eq!(
             error,
-            WireConnectionStateError::SimpleQueryMessageBytesExceeded { limit: 80, actual: 90 }
+            WireConnectionStateError::SimpleQueryMessageBytesExceeded {
+                limit: 80,
+                actual: 90
+            }
         );
         assert!(state.ensure_statement_sql_bytes(statement).is_ok());
         assert!(state.ensure_statement_sql_bytes(&statement.repeat(2)).is_err());

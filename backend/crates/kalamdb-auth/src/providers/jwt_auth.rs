@@ -51,7 +51,8 @@ pub(crate) fn extract_header_claims_unverified(
 /// Generate a new JWT token.
 pub fn generate_jwt_token(claims: &JwtClaims, secret: &str) -> AuthResult<String> {
     let header = Header::new(Algorithm::HS256);
-    let encoding_key = EncodingKey::from_secret(secret.as_bytes());
+    let encoding_key = EncodingKey::from_secret(secret.as_bytes())
+        .map_err(|error| AuthError::HashingError(format!("JWT encoding error: {error}")))?;
 
     encode(&header, claims, &encoding_key)
         .map_err(|e| AuthError::HashingError(format!("JWT encoding error: {}", e)))
@@ -164,7 +165,8 @@ pub fn validate_jwt_token(
     validation.validate_aud = false;
     validation.leeway = 60;
 
-    let decoding_key = DecodingKey::from_secret(secret.as_bytes());
+    let decoding_key = DecodingKey::from_secret(secret.as_bytes())
+        .map_err(|error| AuthError::MalformedAuthorization(format!("JWT decode error: {error}")))?;
     let token_data =
         decode::<JwtClaims>(token, &decoding_key, &validation).map_err(|e| match e.kind() {
             ErrorKind::ExpiredSignature => AuthError::TokenExpired,
@@ -243,7 +245,7 @@ mod tests {
         };
 
         let header = Header::new(Algorithm::HS256);
-        let encoding_key = EncodingKey::from_secret(secret.as_bytes());
+        let encoding_key = EncodingKey::from_secret(secret.as_bytes()).unwrap();
         encode(&header, &claims, &encoding_key).unwrap()
     }
 

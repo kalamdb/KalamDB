@@ -2,6 +2,53 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:kalam_sync/kalam_sync.dart';
 
 void main() {
+  test('preserves the final empty snapshot boundary', () {
+    KalamRemoteBatch batch(ChangeEvent event) =>
+        KalamLinkTransport.decodeDelivery(
+          LiveEventDelivery(
+            event: event,
+            checkpoint: null,
+            acknowledge: () async {},
+          ),
+        );
+    expect(
+      batch(
+        const AckEvent(
+          subscriptionId: 'messages',
+          totalRows: 0,
+          schema: [],
+          batchNum: 0,
+          hasMore: false,
+          status: 'ready',
+        ),
+      ).snapshotComplete,
+      isFalse,
+    );
+    expect(
+      batch(
+        InitialDataBatch(
+          subscriptionId: 'messages',
+          rowsJson: const [],
+          batchNum: 0,
+          hasMore: true,
+          status: 'loading',
+        ),
+      ).snapshotComplete,
+      isFalse,
+    );
+    expect(
+      batch(
+        InitialDataBatch(
+          subscriptionId: 'messages',
+          rowsJson: const [],
+          batchNum: 1,
+          hasMore: false,
+          status: 'ready',
+        ),
+      ).snapshotComplete,
+      isTrue,
+    );
+  });
   test('decodes initial rows and removes the internal sequence column', () {
     final changes = KalamLinkTransport.decodeEvent(
       InitialDataBatch(

@@ -19,12 +19,12 @@ use kalamdb_commons::{
 use kalamdb_sharding::ShardRouter;
 use kalamdb_store::{raft_storage::RAFT_PARTITION_NAME, Partition, StorageBackend};
 use kalamdb_transactions::StagedMutation;
-use openraft::RaftMetrics;
+use openraft::{Instant as _, RaftMetrics};
 use parking_lot::RwLock;
 use tonic::transport::{Certificate, ClientTlsConfig, Identity};
 
 use crate::{
-    manager::{config::RaftManagerConfig, RaftGroup},
+    manager::{config::RaftManagerConfig, raft_group::GroupServer, RaftGroup},
     network::{
         cluster_service::{cluster_client::ClusterServiceClient, PingRequest},
         RaftNetworkFactory,
@@ -32,7 +32,7 @@ use crate::{
     state_machine::{
         KalamStateMachine, MetaStateMachine, SharedDataStateMachine, UserDataStateMachine,
     },
-    storage::KalamNode,
+    storage::{KalamNode, KalamTypeConfig},
     GroupId, RaftError,
 };
 
@@ -129,6 +129,95 @@ pub struct RaftManager {
 
     /// Handle to the background cluster initialization task
     cluster_init_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
+
+    /// One progress watch set per group, created when the group starts.
+    /// A SQL query reads the cached snapshot and does not call `watch_*`.
+    progress: RwLock<HashMap<GroupId, GroupProgressSource>>,
+}
+
+/// Commit, flush, and apply indexes for one Raft group.
+///
+/// Every index in a snapshot comes from that group. Lag is the cluster commit
+/// index minus the applied index of the same group.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupProgressSnapshot {
+    /// Quorum commit index (`watch_commit_progress`, else metrics cluster commit).
+    pub committed: Option<u64>,
+    /// This node's local commit index.
+    pub local_committed: Option<u64>,
+    /// Last log index flushed by `watch_log_progress`.
+    pub flushed: Option<u64>,
+    /// Last applied index from `watch_apply_progress`.
+    pub applied: Option<u64>,
+    /// Last persisted snapshot index from `watch_snapshot_progress`.
+    pub snapshot: Option<u64>,
+    /// `committed - applied` for this group. Unknown when commit is unknown.
+    pub lag: Option<u64>,
+}
+
+struct WatchedIndexes {
+    committed: Option<u64>,
+    flushed: Option<u64>,
+    applied: Option<u64>,
+    snapshot: Option<u64>,
+}
+
+/// The five OpenRaft progress watches for one group.
+struct GroupProgressSource {
+    read: Box<dyn Fn() -> WatchedIndexes + Send + Sync>,
+}
+
+impl GroupProgressSource {
+    fn from_raft<SM>(raft: &crate::manager::raft_group::RaftInstance<SM>) -> Self
+    where
+        SM: KalamStateMachine + Send + Sync + 'static,
+    {
+        let log = parking_lot::Mutex::new(raft.watch_log_progress());
+        let vote = parking_lot::Mutex::new(raft.watch_vote_progress());
+        let commit = parking_lot::Mutex::new(raft.watch_commit_progress());
+        let apply = parking_lot::Mutex::new(raft.watch_apply_progress());
+        let snapshot = parking_lot::Mutex::new(raft.watch_snapshot_progress());
+        Self {
+            read: Box::new(move || {
+                let _vote = vote.lock().get();
+                WatchedIndexes {
+                    committed: commit.lock().get().as_ref().map(|id| id.index),
+                    flushed: log
+                        .lock()
+                        .get()
+                        .and_then(|point| point.last_log_id.as_ref().map(|id| id.index)),
+                    applied: apply.lock().get().as_ref().map(|id| id.index),
+                    snapshot: snapshot.lock().get().as_ref().map(|id| id.index),
+                }
+            }),
+        }
+    }
+}
+
+impl GroupProgressSnapshot {
+    fn from_metrics_and_watch(
+        metrics: &RaftMetrics<KalamTypeConfig>,
+        watched: Option<&WatchedIndexes>,
+    ) -> Self {
+        let committed = watched
+            .and_then(|watched| watched.committed)
+            .or_else(|| metrics.cluster_committed.as_ref().map(|id| id.index));
+        let local_committed = metrics.local_committed.as_ref().map(|id| id.index);
+        let flushed = watched.and_then(|watched| watched.flushed);
+        let applied = watched
+            .and_then(|watched| watched.applied)
+            .or_else(|| metrics.last_applied.as_ref().map(|id| id.index));
+        let snapshot = watched.and_then(|watched| watched.snapshot);
+        let lag = committed.map(|commit| commit.saturating_sub(applied.unwrap_or(0)));
+        Self {
+            committed,
+            local_committed,
+            flushed,
+            applied,
+            snapshot,
+            lag,
+        }
+    }
 }
 
 impl std::fmt::Debug for RaftManager {
@@ -231,6 +320,7 @@ impl RaftManager {
             user_shards_count,
             shared_shards_count,
             cluster_init_handle: RwLock::new(None),
+            progress: RwLock::new(HashMap::new()),
         }
     }
 
@@ -278,6 +368,8 @@ impl RaftManager {
             })?
         }
 
+        const MAX_RECOVERY_THREADS: usize = 4;
+
         let (meta, user_data_shards, shared_data_shards) =
             std::thread::scope(|scope| -> Result<PersistentGroupSet, RaftError> {
                 let meta_handle = scope.spawn({
@@ -295,61 +387,75 @@ impl RaftManager {
                     }
                 });
 
-                let user_handles: Vec<_> = (0..user_shards_count)
-                    .map(|shard_id| {
-                        scope.spawn({
-                            let backend = backend.clone();
-                            let snapshots_dir = snapshots_dir.clone();
-                            let channel_pool = Arc::clone(&channel_pool);
-                            move || {
-                                RaftGroup::new_persistent_with_channel_pool(
-                                    GroupId::DataUserShard(shard_id),
-                                    UserDataStateMachine::new(shard_id),
-                                    backend,
-                                    snapshots_dir,
-                                    channel_pool,
-                                )
-                                .map(Arc::new)
-                            }
+                let shard_workers = (user_shards_count as usize + shared_shards_count as usize)
+                    .clamp(1, MAX_RECOVERY_THREADS.saturating_sub(1).max(1));
+                let user_ids: Vec<u32> = (0..user_shards_count).collect();
+                let user_chunk_size = user_ids.len().div_ceil(shard_workers).max(1);
+                let user_handles: Vec<_> = user_ids
+                    .chunks(user_chunk_size)
+                    .map(|chunk| {
+                        let chunk = chunk.to_vec();
+                        let backend = backend.clone();
+                        let snapshots_dir = snapshots_dir.clone();
+                        let channel_pool = Arc::clone(&channel_pool);
+                        scope.spawn(move || -> Result<Vec<UserDataGroup>, RaftError> {
+                            chunk
+                                .into_iter()
+                                .map(|shard_id| {
+                                    RaftGroup::new_persistent_with_channel_pool(
+                                        GroupId::DataUserShard(shard_id),
+                                        UserDataStateMachine::new(shard_id),
+                                        backend.clone(),
+                                        snapshots_dir.clone(),
+                                        Arc::clone(&channel_pool),
+                                    )
+                                    .map(Arc::new)
+                                })
+                                .collect()
                         })
                     })
                     .collect();
 
-                let shared_handles: Vec<_> = (0..shared_shards_count)
-                    .map(|shard_id| {
-                        scope.spawn({
-                            let backend = backend.clone();
-                            let snapshots_dir = snapshots_dir.clone();
-                            let channel_pool = Arc::clone(&channel_pool);
-                            move || {
-                                RaftGroup::new_persistent_with_channel_pool(
-                                    GroupId::DataSharedShard(shard_id),
-                                    SharedDataStateMachine::new(shard_id),
-                                    backend,
-                                    snapshots_dir,
-                                    channel_pool,
-                                )
-                                .map(Arc::new)
-                            }
+                let shared_ids: Vec<u32> = (0..shared_shards_count).collect();
+                let shared_chunk_size = shared_ids.len().div_ceil(shard_workers).max(1);
+                let shared_handles: Vec<_> = shared_ids
+                    .chunks(shared_chunk_size)
+                    .map(|chunk| {
+                        let chunk = chunk.to_vec();
+                        let backend = backend.clone();
+                        let snapshots_dir = snapshots_dir.clone();
+                        let channel_pool = Arc::clone(&channel_pool);
+                        scope.spawn(move || -> Result<Vec<SharedDataGroup>, RaftError> {
+                            chunk
+                                .into_iter()
+                                .map(|shard_id| {
+                                    RaftGroup::new_persistent_with_channel_pool(
+                                        GroupId::DataSharedShard(shard_id),
+                                        SharedDataStateMachine::new(shard_id),
+                                        backend.clone(),
+                                        snapshots_dir.clone(),
+                                        Arc::clone(&channel_pool),
+                                    )
+                                    .map(Arc::new)
+                                })
+                                .collect()
                         })
                     })
                     .collect();
 
                 let meta = Arc::new(join_recovery(meta_handle.join(), "meta")?);
-                let user_data_shards: Vec<UserDataGroup> = user_handles
-                    .into_iter()
-                    .enumerate()
-                    .map(|(shard_id, handle)| {
-                        join_recovery(handle.join(), &format!("user shard {shard_id}"))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let shared_data_shards: Vec<SharedDataGroup> = shared_handles
-                    .into_iter()
-                    .enumerate()
-                    .map(|(shard_id, handle)| {
-                        join_recovery(handle.join(), &format!("shared shard {shard_id}"))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                let mut user_data_shards = Vec::with_capacity(user_shards_count as usize);
+                for (batch_idx, handle) in user_handles.into_iter().enumerate() {
+                    let batch =
+                        join_recovery(handle.join(), &format!("user shard batch {batch_idx}"))?;
+                    user_data_shards.extend(batch);
+                }
+                let mut shared_data_shards = Vec::with_capacity(shared_shards_count as usize);
+                for (batch_idx, handle) in shared_handles.into_iter().enumerate() {
+                    let batch =
+                        join_recovery(handle.join(), &format!("shared shard batch {batch_idx}"))?;
+                    shared_data_shards.extend(batch);
+                }
 
                 Ok((meta, user_data_shards, shared_data_shards))
             })?;
@@ -374,6 +480,7 @@ impl RaftManager {
             user_shards_count,
             shared_shards_count,
             cluster_init_handle: RwLock::new(None),
+            progress: RwLock::new(HashMap::new()),
         })
     }
 
@@ -383,12 +490,24 @@ impl RaftManager {
     }
 
     /// Get OpenRaft metrics for the Meta group
-    pub fn meta_metrics(&self) -> Option<RaftMetrics<u64, KalamNode>> {
+    pub fn meta_metrics(&self) -> Option<RaftMetrics<KalamTypeConfig>> {
         self.meta.metrics()
     }
 
+    /// Milliseconds since this group's last quorum ack.
+    ///
+    /// Absent when the group has no metrics or the leader has not recorded an ack.
+    pub fn quorum_ack_age_ms(&self, group_id: crate::GroupId) -> Option<u64> {
+        self.group_metrics(group_id).and_then(|metrics| {
+            metrics
+                .last_quorum_acked
+                .as_ref()
+                .map(|acked| acked.elapsed().as_millis() as u64)
+        })
+    }
+
     /// Get OpenRaft metrics for a specific Raft group (if started)
-    pub fn group_metrics(&self, group_id: crate::GroupId) -> Option<RaftMetrics<u64, KalamNode>> {
+    pub fn group_metrics(&self, group_id: crate::GroupId) -> Option<RaftMetrics<KalamTypeConfig>> {
         match group_id {
             crate::GroupId::Meta => self.meta.metrics(),
             crate::GroupId::DataUserShard(shard) if shard < self.user_shards_count => {
@@ -399,6 +518,27 @@ impl RaftManager {
             },
             _ => None,
         }
+    }
+
+    fn cache_group_progress<SM>(&self, group_id: GroupId, group: &RaftGroup<SM>)
+    where
+        SM: KalamStateMachine + Send + Sync + 'static,
+    {
+        let Some(raft) = group.raft() else {
+            return;
+        };
+        self.progress.write().insert(group_id, GroupProgressSource::from_raft(&raft));
+    }
+
+    /// Cached commit, flush, and apply indexes for one group.
+    ///
+    /// The OpenRaft progress watches are created once in [`Self::start`]. This
+    /// read does not call `watch_*`.
+    pub fn group_progress(&self, group_id: GroupId) -> Option<GroupProgressSnapshot> {
+        let metrics = self.group_metrics(group_id)?;
+        let progress = self.progress.read();
+        let watched = progress.get(&group_id).map(|source| (source.read)());
+        Some(GroupProgressSnapshot::from_metrics_and_watch(&metrics, watched.as_ref()))
     }
 
     /// Wait until the local replica has applied every log entry already known
@@ -470,23 +610,43 @@ impl RaftManager {
             self.register_peer(peer.node_id, peer.rpc_addr.clone(), peer.api_addr.clone());
         }
 
-        // Start unified meta group
-        log::debug!("Starting unified meta group...");
-        self.meta.start(self.node_id, &self.config).await?;
-        log::debug!("  ✓ Meta group started");
-
-        // Start all user data shards
-        log::debug!("Starting {} user data shards...", self.user_data_shards.len());
-        for (i, shard) in self.user_data_shards.iter().enumerate() {
-            shard.start(self.node_id, &self.config).await?;
-            log::debug!("  ✓ UserDataShard[{}] started", i);
+        // Start Meta, User, and Shared Raft groups concurrently to avoid linear
+        // O(num_shards) startup/recovery latency.
+        log::debug!(
+            "Starting {} Raft group(s) concurrently (1 meta, {} user, {} shared)...",
+            self.group_count(),
+            self.user_data_shards.len(),
+            self.shared_data_shards.len()
+        );
+        let mut start_tasks = tokio::task::JoinSet::new();
+        {
+            let meta = Arc::clone(&self.meta);
+            let node_id = self.node_id;
+            let config = self.config.clone();
+            start_tasks.spawn(async move { meta.start(node_id, &config).await });
+        }
+        for shard in &self.user_data_shards {
+            let shard = Arc::clone(shard);
+            let node_id = self.node_id;
+            let config = self.config.clone();
+            start_tasks.spawn(async move { shard.start(node_id, &config).await });
+        }
+        for shard in &self.shared_data_shards {
+            let shard = Arc::clone(shard);
+            let node_id = self.node_id;
+            let config = self.config.clone();
+            start_tasks.spawn(async move { shard.start(node_id, &config).await });
+        }
+        while let Some(joined) = start_tasks.join_next().await {
+            joined.map_err(|e| RaftError::Internal(format!("Raft group start task failed: {e}")))??;
         }
 
-        // Start all shared data shards
-        log::debug!("Starting {} shared data shards...", self.shared_data_shards.len());
+        self.cache_group_progress(GroupId::Meta, &self.meta);
+        for (i, shard) in self.user_data_shards.iter().enumerate() {
+            self.cache_group_progress(GroupId::DataUserShard(i as u32), shard);
+        }
         for (i, shard) in self.shared_data_shards.iter().enumerate() {
-            shard.start(self.node_id, &self.config).await?;
-            log::debug!("  ✓ SharedDataShard[{}] started", i);
+            self.cache_group_progress(GroupId::DataSharedShard(i as u32), shard);
         }
 
         // Mark as started
@@ -546,21 +706,30 @@ impl RaftManager {
                 self.config.api_addr.clone(),
             );
 
-            // Initialize unified meta group
-            log::debug!("Initializing unified meta group...");
-            self.meta.initialize(self.node_id, self_node.clone()).await?;
-            log::debug!("  ✓ Meta initialized");
-
-            log::debug!("Initializing user data shards...");
-            for (i, shard) in self.user_data_shards.iter().enumerate() {
-                shard.initialize(self.node_id, self_node.clone()).await?;
-                log::debug!("  ✓ UserDataShard[{}] initialized", i);
+            // Initialize all Raft groups concurrently on fresh boot.
+            let mut init_tasks = tokio::task::JoinSet::new();
+            {
+                let meta = Arc::clone(&self.meta);
+                let node_id = self.node_id;
+                let self_node = self_node.clone();
+                init_tasks.spawn(async move { meta.initialize(node_id, self_node).await });
             }
-
-            log::debug!("Initializing shared data shards...");
-            for (i, shard) in self.shared_data_shards.iter().enumerate() {
-                shard.initialize(self.node_id, self_node.clone()).await?;
-                log::debug!("  ✓ SharedDataShard[{}] initialized", i);
+            for shard in &self.user_data_shards {
+                let shard = Arc::clone(shard);
+                let node_id = self.node_id;
+                let self_node = self_node.clone();
+                init_tasks.spawn(async move { shard.initialize(node_id, self_node).await });
+            }
+            for shard in &self.shared_data_shards {
+                let shard = Arc::clone(shard);
+                let node_id = self.node_id;
+                let self_node = self_node.clone();
+                init_tasks.spawn(async move { shard.initialize(node_id, self_node).await });
+            }
+            while let Some(joined) = init_tasks.join_next().await {
+                joined.map_err(|e| {
+                    RaftError::Internal(format!("Raft group init task failed: {e}"))
+                })??;
             }
 
             log::info!(
@@ -1178,9 +1347,9 @@ impl RaftManager {
         leader
     }
 
-    /// Get the current Meta group's last applied index
+    /// Meta→Data materialization watermark.
     ///
-    /// This is the watermark used for Meta→Data ordering:
+    /// This is the meta coordinator cursor, not a data group's Raft applied id.
     /// - Leaders stamp data commands with this index at proposal time
     /// - Followers buffer data commands until their local meta catches up
     pub fn current_meta_index(&self) -> u64 {
@@ -1503,9 +1672,21 @@ impl RaftManager {
         1 + self.user_shards_count as usize + self.shared_shards_count as usize
     }
 
+    /// Outgoing Raft channels on this node. Groups share one pool.
+    pub fn outgoing_connection_count(&self) -> usize {
+        self.meta.outgoing_connection_count()
+    }
+
     /// Get the number of user data shards
     pub fn user_shards(&self) -> u32 {
         self.user_shards_count
+    }
+
+    /// User-data state machine for one shard, used to replay an applied index.
+    pub fn user_data_state_machine(&self, shard: u32) -> Option<Arc<UserDataStateMachine>> {
+        self.user_data_shards
+            .get(shard as usize)
+            .map(|group| Arc::clone(group.storage().state_machine()))
     }
 
     /// Get the number of shared data shards
@@ -1607,38 +1788,52 @@ impl RaftManager {
     /// entries would be re-applied even if they were already applied before the restart.
     pub async fn restore_state_machines_from_snapshots(&self) -> Result<(), RaftError> {
         let start = std::time::Instant::now();
-        let mut restored_count = 0;
-        let mut reconciled_count = 0;
+        let mut restored_count = 0usize;
+        let mut reconciled_count = 0usize;
+        let mut restore_tasks = tokio::task::JoinSet::new();
 
-        // Restore meta state machine
-        if self.meta.has_snapshot() {
-            self.meta.restore_state_machine_from_snapshot().await?;
-            restored_count += 1;
+        {
+            let meta = Arc::clone(&self.meta);
+            restore_tasks.spawn(async move {
+                let mut restored = 0usize;
+                if meta.has_snapshot() {
+                    meta.restore_state_machine_from_snapshot().await?;
+                    restored = 1;
+                }
+                let reconciled = usize::from(meta.reconcile_state_machine_progress().is_some());
+                Ok::<(usize, usize), RaftError>((restored, reconciled))
+            });
         }
-        if self.meta.reconcile_state_machine_progress().is_some() {
-            reconciled_count += 1;
-        }
-
-        // Restore user data state machines
         for shard in &self.user_data_shards {
-            if shard.has_snapshot() {
-                shard.restore_state_machine_from_snapshot().await?;
-                restored_count += 1;
-            }
-            if shard.reconcile_state_machine_progress().is_some() {
-                reconciled_count += 1;
-            }
+            let shard = Arc::clone(shard);
+            restore_tasks.spawn(async move {
+                let mut restored = 0usize;
+                if shard.has_snapshot() {
+                    shard.restore_state_machine_from_snapshot().await?;
+                    restored = 1;
+                }
+                let reconciled = usize::from(shard.reconcile_state_machine_progress().is_some());
+                Ok::<(usize, usize), RaftError>((restored, reconciled))
+            });
         }
-
-        // Restore shared data state machines
         for shard in &self.shared_data_shards {
-            if shard.has_snapshot() {
-                shard.restore_state_machine_from_snapshot().await?;
-                restored_count += 1;
-            }
-            if shard.reconcile_state_machine_progress().is_some() {
-                reconciled_count += 1;
-            }
+            let shard = Arc::clone(shard);
+            restore_tasks.spawn(async move {
+                let mut restored = 0usize;
+                if shard.has_snapshot() {
+                    shard.restore_state_machine_from_snapshot().await?;
+                    restored = 1;
+                }
+                let reconciled = usize::from(shard.reconcile_state_machine_progress().is_some());
+                Ok::<(usize, usize), RaftError>((restored, reconciled))
+            });
+        }
+        while let Some(joined) = restore_tasks.join_next().await {
+            let (restored, reconciled) = joined.map_err(|e| {
+                RaftError::Internal(format!("Raft snapshot restore task failed: {e}"))
+            })??;
+            restored_count += restored;
+            reconciled_count += reconciled;
         }
 
         if restored_count > 0 || reconciled_count > 0 {
@@ -1656,33 +1851,19 @@ impl RaftManager {
 
     // === Raft RPC Handlers (for receiving RPCs from other nodes) ===
 
-    /// Get the Raft instance for a specific group
-    fn get_raft_instance(
-        &self,
-        group_id: GroupId,
-    ) -> Result<crate::manager::raft_group::RaftInstance, RaftError> {
+    fn group_server(&self, group_id: GroupId) -> Result<&dyn GroupServer, RaftError> {
         match group_id {
-            GroupId::Meta => self
-                .meta
-                .raft()
-                .ok_or_else(|| RaftError::NotStarted(format!("Group {:?} not started", group_id))),
-            GroupId::DataUserShard(shard) => {
-                let group = self
-                    .user_data_shards
-                    .get(shard as usize)
-                    .ok_or_else(|| RaftError::Internal(format!("Invalid user shard: {}", shard)))?;
-                group.raft().ok_or_else(|| {
-                    RaftError::NotStarted(format!("Group {:?} not started", group_id))
-                })
-            },
-            GroupId::DataSharedShard(shard) => {
-                let group = self.shared_data_shards.get(shard as usize).ok_or_else(|| {
-                    RaftError::Internal(format!("Invalid shared shard: {}", shard))
-                })?;
-                group.raft().ok_or_else(|| {
-                    RaftError::NotStarted(format!("Group {:?} not started", group_id))
-                })
-            },
+            GroupId::Meta => Ok(self.meta.as_ref()),
+            GroupId::DataUserShard(shard) => self
+                .user_data_shards
+                .get(shard as usize)
+                .map(|group| group.as_ref() as &dyn GroupServer)
+                .ok_or_else(|| RaftError::Internal(format!("Invalid user shard: {}", shard))),
+            GroupId::DataSharedShard(shard) => self
+                .shared_data_shards
+                .get(shard as usize)
+                .map(|group| group.as_ref() as &dyn GroupServer)
+                .ok_or_else(|| RaftError::Internal(format!("Invalid shared shard: {}", shard))),
         }
     }
 
@@ -1692,19 +1873,25 @@ impl RaftManager {
         group_id: GroupId,
         payload: &[u8],
     ) -> Result<Vec<u8>, RaftError> {
-        use openraft::raft::VoteRequest;
+        self.group_server(group_id)?.vote_rpc(payload).await
+    }
 
-        use crate::state_machine::{decode, encode};
+    /// Handle an incoming pre-vote. It does not persist a vote.
+    pub async fn handle_pre_vote(
+        &self,
+        group_id: GroupId,
+        payload: &[u8],
+    ) -> Result<Vec<u8>, RaftError> {
+        self.group_server(group_id)?.pre_vote_rpc(payload).await
+    }
 
-        let raft = self.get_raft_instance(group_id)?;
-        let request: VoteRequest<u64> = decode(payload)?;
-
-        let response = raft
-            .vote(request)
-            .await
-            .map_err(|e| RaftError::Internal(format!("Vote RPC failed: {:?}", e)))?;
-
-        encode(&response)
+    /// Handle a leadership-transfer request for one group.
+    pub async fn handle_transfer_leader(
+        &self,
+        group_id: GroupId,
+        payload: &[u8],
+    ) -> Result<Vec<u8>, RaftError> {
+        self.group_server(group_id)?.transfer_leader_rpc(payload).await
     }
 
     /// Handle incoming append entries request
@@ -1713,46 +1900,40 @@ impl RaftManager {
         group_id: GroupId,
         payload: &[u8],
     ) -> Result<Vec<u8>, RaftError> {
-        use openraft::raft::AppendEntriesRequest;
-
-        use crate::{
-            state_machine::{decode, encode},
-            storage::KalamTypeConfig,
-        };
-
-        let raft = self.get_raft_instance(group_id)?;
-        let request: AppendEntriesRequest<KalamTypeConfig> = decode(payload)?;
-
-        let response = raft
-            .append_entries(request)
-            .await
-            .map_err(|e| RaftError::Internal(format!("AppendEntries RPC failed: {:?}", e)))?;
-
-        encode(&response)
+        self.group_server(group_id)?.append_entries_rpc(payload).await
     }
 
-    /// Handle incoming install snapshot request
+    /// Handle a full snapshot sent as one RPC.
     pub async fn handle_install_snapshot(
         &self,
         group_id: GroupId,
         payload: &[u8],
     ) -> Result<Vec<u8>, RaftError> {
-        use openraft::raft::InstallSnapshotRequest;
+        use std::io::Cursor;
 
         use crate::{
+            network::{assemble_snapshot_chunk, SnapshotChunk},
             state_machine::{decode, encode},
-            storage::KalamTypeConfig,
+            storage::{KalamSnapshot, KalamSnapshotMeta},
         };
 
-        let raft = self.get_raft_instance(group_id)?;
-        let request: InstallSnapshotRequest<KalamTypeConfig> = decode(payload)?;
-
-        let response = raft
-            .install_snapshot(request)
-            .await
-            .map_err(|e| RaftError::Internal(format!("InstallSnapshot RPC failed: {:?}", e)))?;
-
-        encode(&response)
+        let chunk: SnapshotChunk = decode(payload)?;
+        let ack_vote = chunk.vote.clone();
+        let Some(message) = assemble_snapshot_chunk(&group_id.to_string(), chunk)
+            .map_err(RaftError::Serialization)?
+        else {
+            use openraft::raft::SnapshotResponse;
+            return encode(&SnapshotResponse::<crate::storage::KalamTypeConfig>::new(ack_vote));
+        };
+        let vote = message.vote;
+        let snapshot = KalamSnapshot {
+            meta: KalamSnapshotMeta {
+                last_log_id: message.last_log_id,
+                last_membership: message.last_membership,
+            },
+            snapshot: Cursor::new(std::sync::Arc::<[u8]>::from(message.data)),
+        };
+        self.group_server(group_id)?.install_snapshot_rpc(vote, snapshot).await
     }
 
     /// Trigger snapshots for all Raft groups
@@ -1958,8 +2139,7 @@ impl RaftManager {
 
     /// Best-effort data leader rebalance.
     ///
-    /// OpenRaft 0.9 does not expose a targeted leadership-transfer API here, so this asks local
-    /// leaders for user/shared data groups to step down and lets Raft elect replacements.
+    /// Each local data-group leader transfers to the voter with the greatest matching log.
     pub async fn rebalance_data_leaders(&self) -> Result<Vec<ClusterActionResult>, RaftError> {
         Ok(self.run_action_for_data_groups(ClusterAction::StepDown).await)
     }
@@ -1993,69 +2173,19 @@ impl RaftManager {
 
         if groups_leading > 0 {
             log::debug!(
-                "[CLUSTER] This node is LEADER of {} groups, attempting leadership transfer...",
+                "[CLUSTER] This node is LEADER of {} groups, transferring each to its most caught-up voter...",
                 groups_leading
             );
-
-            // Attempt leadership transfer for each group where we're leader
-            // Find the first available peer to transfer leadership to
-            if let Some(target_node) = self.config.peers.first() {
-                let target_node_id = target_node.node_id;
-                log::debug!("[CLUSTER] Transferring leadership to node {}...", target_node.node_id);
-
-                // Transfer leadership for Meta group
-                if self.meta.is_leader() {
-                    match self.meta.transfer_leadership(target_node_id).await {
-                        Ok(_) => log::info!(
-                            "[CLUSTER] ✓ Meta leadership transferred to node {}",
-                            target_node.node_id
-                        ),
-                        Err(e) => {
-                            log::warn!("[CLUSTER] ⚠ Failed to transfer Meta leadership: {}", e)
-                        },
-                    }
+            for result in self.step_down_all().await? {
+                if result.success {
+                    log::info!("[CLUSTER] leadership transfer finished for {}", result.group_id);
+                } else {
+                    log::warn!(
+                        "[CLUSTER] leadership transfer failed for {}: {}",
+                        result.group_id,
+                        result.error.unwrap_or_default()
+                    );
                 }
-
-                // Transfer leadership for user data shards
-                for (i, shard) in self.user_data_shards.iter().enumerate() {
-                    if shard.is_leader() {
-                        match shard.transfer_leadership(target_node_id).await {
-                            Ok(_) => log::debug!(
-                                "[CLUSTER] ✓ UserDataShard[{}] leadership transferred",
-                                i
-                            ),
-                            Err(e) => log::warn!(
-                                "[CLUSTER] ⚠ Failed to transfer UserDataShard[{}] leadership: {}",
-                                i,
-                                e
-                            ),
-                        }
-                    }
-                }
-
-                // Transfer leadership for shared data shards
-                for (i, shard) in self.shared_data_shards.iter().enumerate() {
-                    if shard.is_leader() {
-                        match shard.transfer_leadership(target_node_id).await {
-                            Ok(_) => log::debug!(
-                                "[CLUSTER] ✓ SharedDataShard[{}] leadership transferred",
-                                i
-                            ),
-                            Err(e) => log::warn!(
-                                "[CLUSTER] ⚠ Failed to transfer SharedDataShard[{}] leadership: {}",
-                                i,
-                                e
-                            ),
-                        }
-                    }
-                }
-
-                // Give time for any leadership-transition side effects to settle.
-                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                log::info!(
-                    "[CLUSTER] Leadership transfer attempts completed (explicit transfer may be \
-                     unsupported by current OpenRaft version)"
-                );
             }
         }
 
@@ -2087,6 +2217,7 @@ impl RaftManager {
             }
         }
 
+        self.progress.write().clear();
         log::info!("[CLUSTER] All Raft groups shutdown complete");
 
         // Mark as stopped

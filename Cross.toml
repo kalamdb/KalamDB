@@ -7,6 +7,8 @@ passthrough = [
     "RUST_BACKTRACE",
     "RUST_LOG",
     "SKIP_UI_BUILD",
+    "CARGO_PROFILE_DOCKER_LTO",
+    "CARGO_PROFILE_DOCKER_CODEGEN_UNITS",
 ]
 
 # Use custom Dockerfile for x86_64 Linux with proper LLVM for RocksDB

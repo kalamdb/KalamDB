@@ -33,14 +33,14 @@ impl Benchmark for ConcurrentSubscriberBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
+                .sql_ok(&format!("CREATE SCHEMA IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
-                .sql(&format!("DROP USER TABLE IF EXISTS {}.sub_bench", config.namespace))
+                .sql(&format!("DROP TABLE IF EXISTS {}.sub_bench", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
-                    "CREATE USER TABLE {}.sub_bench (id INT PRIMARY KEY, payload TEXT)",
+                    "CREATE TABLE {}.sub_bench (id INT PRIMARY KEY, payload TEXT) WITH (TYPE = 'USER')",
                     config.namespace
                 ))
                 .await?;
@@ -138,7 +138,7 @@ impl Benchmark for ConcurrentSubscriberBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             let _ = client
-                .sql(&format!("DROP USER TABLE IF EXISTS {}.sub_bench", config.namespace))
+                .sql(&format!("DROP TABLE IF EXISTS {}.sub_bench", config.namespace))
                 .await;
             Ok(())
         })

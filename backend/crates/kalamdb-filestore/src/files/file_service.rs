@@ -526,16 +526,6 @@ impl FileStorageService {
         Ok(result.data)
     }
 
-    /// Cleanup a staging directory.
-    pub fn cleanup_staging(&self, request_dir: &std::path::Path) -> Result<()> {
-        self.staging.cleanup_request_dir(request_dir)
-    }
-
-    /// Cleanup stale staging directories.
-    pub fn cleanup_stale_staging(&self, max_age_secs: u64) -> Result<usize> {
-        self.staging.cleanup_stale_directories(max_age_secs)
-    }
-
     /// Delete multiple files (for row deletion).
     pub async fn delete_files(
         &self,

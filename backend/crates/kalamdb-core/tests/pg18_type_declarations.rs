@@ -30,6 +30,11 @@ async fn exec(app: &Arc<AppContext>, executor: &SqlExecutor, sql: &str) {
     executor.execute(sql, &ctx, vec![]).await.expect(sql);
 }
 
+async fn query(app: &Arc<AppContext>, executor: &SqlExecutor, sql: &str) -> ExecutionResult {
+    let ctx = root_ctx(app);
+    support::materialize_result(executor.execute(sql, &ctx, vec![]).await.expect(sql)).await
+}
+
 #[tokio::test]
 #[ntest::timeout(45000)]
 async fn test_pg18_zero_attribute_composite_and_implicit_table_row_types() {
@@ -47,11 +52,7 @@ async fn test_pg18_zero_attribute_composite_and_implicit_table_row_types() {
     exec(&app, &executor, "INSERT INTO app.empty_holders VALUES (1, NULL)").await;
 
     let ctx = root_ctx(&app);
-    match executor
-        .execute("SELECT id, e FROM app.empty_holders", &ctx, vec![])
-        .await
-        .expect("select empty_holders")
-    {
+    match query(&app, &executor, "SELECT id, e FROM app.empty_holders").await {
         ExecutionResult::Rows { batches, .. } => {
             assert_eq!(batches[0].num_rows(), 1);
             let e_col = batches[0]
@@ -165,11 +166,7 @@ async fn test_pg18_quoted_type_case_collisions_and_enum_rename_value_on_rows() {
     )
     .await;
 
-    match executor
-        .execute("SELECT status FROM app.tickets WHERE id = 1", &ctx, vec![])
-        .await
-        .expect("select ticket status after RENAME VALUE")
-    {
+    match query(&app, &executor, "SELECT status FROM app.tickets WHERE id = 1").await {
         ExecutionResult::Rows { batches, .. } => {
             let col = batches[0]
                 .column(0)

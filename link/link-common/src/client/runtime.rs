@@ -4,12 +4,12 @@ use super::{KalamLinkClient, KalamLinkClientBuilder};
 #[cfg(feature = "consumer")]
 use crate::consumer::ConsumerBuilder;
 use crate::{
-    auth::{AuthProvider, ResolvedAuth},
+    auth::{exchange_login_credentials, ArcDynAuthProvider, AuthProvider, ResolvedAuth},
     connection::SharedResumeCache,
     error::{KalamLinkError, Result},
     event_handlers::EventHandlers,
     models::{
-        file_upload::uploads_to_owned, ConnectionOptions, FileUpload, LoginResponse, QueryResponse,
+        file_upload::uploads_to_owned, ConnectionOptions, FileUpload, QueryResponse,
         SubscriptionConfig, SubscriptionInfo,
     },
     query::{
@@ -46,6 +46,7 @@ impl KalamLinkClient {
             event_handlers: self.event_handlers.clone(),
             shared_resolved_auth: Arc::clone(&self.shared_resolved_auth),
             connection: Arc::new(tokio::sync::Mutex::new(None)),
+            connection_gate: Arc::new(tokio::sync::Mutex::new(())),
             resume_cache: Arc::new(SharedResumeCache::default()),
         }
     }
@@ -155,17 +156,10 @@ impl KalamLinkClient {
         &self,
         config: SubscriptionConfig,
     ) -> Result<SubscriptionManager> {
-        if self.connection_options.ws_lazy_connect {
-            let conn_guard = self.connection.lock().await;
-            if conn_guard.is_none() {
-                drop(conn_guard);
-                self.connect().await?;
-            }
-        }
-
-        let conn = {
-            let conn_guard = self.connection.lock().await;
-            conn_guard.clone()
+        let conn = if self.connection_options.ws_lazy_connect {
+            Some(self.ensure_connection().await?)
+        } else {
+            self.connection.lock().await.clone()
         };
 
         if let Some(conn) = conn {
@@ -234,25 +228,22 @@ impl KalamLinkClient {
     /// After calling this, all subsequent [`live_events()`](Self::live_events)
     /// and [`live()`](Self::live) calls will multiplex over the single connection.
     pub async fn connect(&self) -> Result<()> {
-        {
-            let conn_guard = self.connection.lock().await;
-            if conn_guard.is_some() {
-                return Ok(());
-            }
-        }
+        self.ensure_connection()
+            .await?
+            .wait_until_ready(self.timeouts.connection_timeout)
+            .await
+    }
 
-        let resolved_auth = match self.fresh_auth().await? {
-            AuthProvider::BasicAuth(user, password) => {
-                let login_response = self.exchange_login_credentials(&user, &password).await?;
-                AuthProvider::jwt_token(login_response.access_token)
-            },
-            auth => auth,
-        };
-        self.update_shared_auth(resolved_auth);
+    async fn ensure_connection(&self) -> Result<Arc<crate::connection::SharedConnection>> {
+        let _gate = self.connection_gate.lock().await;
+        if let Some(conn) = self.connection.lock().await.as_ref().filter(|conn| conn.is_active()) {
+            return Ok(Arc::clone(conn));
+        }
 
         let conn = Arc::new(
             crate::connection::SharedConnection::connect(
                 self.base_url.clone(),
+                self.http_client.clone(),
                 self.shared_resolved_auth.clone(),
                 self.timeouts.clone(),
                 self.connection_options.clone(),
@@ -261,19 +252,13 @@ impl KalamLinkClient {
             )
             .await?,
         );
-
-        let mut conn_guard = self.connection.lock().await;
-        if conn_guard.is_none() {
-            *conn_guard = Some(conn);
-        } else {
-            drop(conn_guard);
-            conn.disconnect().await;
-        }
-        Ok(())
+        *self.connection.lock().await = Some(Arc::clone(&conn));
+        Ok(conn)
     }
 
     /// Disconnect the shared WebSocket connection.
     pub async fn disconnect(&self) {
+        let _gate = self.connection_gate.lock().await;
         let conn = {
             let mut guard = self.connection.lock().await;
             guard.take()
@@ -356,7 +341,15 @@ impl KalamLinkClient {
     pub fn update_shared_auth(&self, auth: AuthProvider) {
         self.query_executor.set_auth(auth.clone());
         let resolved = ResolvedAuth::Static(auth);
-        *self.shared_resolved_auth.write().unwrap() = resolved;
+        let mut shared = self.shared_resolved_auth.write().unwrap();
+        if matches!(*shared, ResolvedAuth::Static(_)) {
+            *shared = resolved;
+        }
+    }
+
+    /// Set the credential callback used for every WebSocket connection attempt.
+    pub fn set_websocket_auth_provider(&self, provider: ArcDynAuthProvider) {
+        *self.shared_resolved_auth.write().unwrap() = ResolvedAuth::Dynamic(provider);
     }
 
     /// Resolve fresh credentials from the auth source.
@@ -375,34 +368,12 @@ impl KalamLinkClient {
     pub(crate) async fn jwt_for_http_request(&self) -> Result<AuthProvider> {
         match self.fresh_auth().await? {
             AuthProvider::BasicAuth(user, password) => {
-                let login = self.exchange_login_credentials(&user, &password).await?;
+                let login =
+                    exchange_login_credentials(&self.http_client, &self.base_url, &user, &password)
+                        .await?;
                 Ok(AuthProvider::jwt_token(login.access_token))
             },
             auth @ (AuthProvider::JwtToken(_) | AuthProvider::None) => Ok(auth),
         }
-    }
-
-    async fn exchange_login_credentials(
-        &self,
-        user: &str,
-        password: &str,
-    ) -> Result<LoginResponse> {
-        let url = format!("{}/v1/api/auth/login", self.base_url);
-        let body = serde_json::json!({
-            "user": user,
-            "password": password,
-        });
-
-        let response = self.http_client.post(&url).json(&body).send().await?;
-        let status = response.status();
-        if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(KalamLinkError::AuthenticationError(format!(
-                "Login failed during auth exchange ({}): {}",
-                status, error_text
-            )));
-        }
-
-        Ok(response.json::<LoginResponse>().await?)
     }
 }

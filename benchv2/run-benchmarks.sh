@@ -220,7 +220,7 @@ fi
 echo ""
 
 # Build and run
-CMD=(cargo run --release --
+CMD=(cargo run --release --bin kalamdb-bench --
     --urls "$URLS"
     --user "$USER"
     --password "$PASSWORD")

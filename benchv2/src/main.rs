@@ -109,7 +109,7 @@ async fn main() {
     // Create fresh namespace for this run
     let _ = run_sql_ok_on_all_urls(
         &client,
-        &format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace),
+        &format!("CREATE SCHEMA IF NOT EXISTS {}", config.namespace),
     )
     .await;
 

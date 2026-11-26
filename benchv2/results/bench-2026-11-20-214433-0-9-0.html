@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KalamDB Benchmark Report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1017;
+    --surface: #151922;
+    --surface2: #1c2130;
+    --surface3: #232839;
+    --border: #2a3044;
+    --border-light: #353b52;
+    --text: #e6e9f0;
+    --text2: #8891a8;
+    --text3: #5c6580;
+    --accent: #6366f1;
+    --accent2: #818cf8;
+    --accent-glow: rgba(99,102,241,0.12);
+    --green: #22c55e;
+    --green-bg: rgba(34,197,94,0.08);
+    --red: #ef4444;
+    --red-bg: rgba(239,68,68,0.08);
+    --orange: #f59e0b;
+    --blue: #3b82f6;
+    --purple: #a855f7;
+    --cyan: #06b6d4;
+    --radius: 10px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.65;
+    font-size: 15px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { width: 100%; padding: 2rem 2.5rem; }
+
+  /* ── Header ── */
+  header {
+    text-align: center;
+    padding: 2.5rem 0 2rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 2rem;
+  }
+  header h1 {
+    font-size: 2.2rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    background: linear-gradient(135deg, var(--accent), var(--purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 0.4rem;
+  }
+  header .subtitle { color: var(--text2); font-size: 0.92rem; }
+  .meta {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+    margin-top: 1rem;
+    flex-wrap: wrap;
+  }
+  .meta span {
+    background: var(--surface);
+    padding: 0.35rem 0.9rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    border: 1px solid var(--border);
+    color: var(--text2);
+  }
+
+  /* ── Summary cards ── */
+  .summary-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.4rem;
+    text-align: center;
+    transition: border-color .2s;
+  }
+  .card:hover { border-color: var(--border-light); }
+  .card .value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--accent2);
+    letter-spacing: -0.02em;
+  }
+  .card .label { color: var(--text2); font-size: 0.82rem; margin-top: 0.3rem; }
+  .card.pass .value { color: var(--green); }
+  .card.fail .value { color: var(--red); }
+  .breakdown-card {
+    text-align: left;
+    padding: 1.15rem 1.2rem;
+  }
+  .card-heading {
+    color: var(--text);
+    font-size: 0.82rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .summary-breakdown {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.55rem;
+    margin-top: 0.8rem;
+  }
+  .summary-breakdown-item {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.55rem 0.65rem;
+  }
+  .summary-breakdown-value {
+    display: block;
+    color: var(--text);
+    font-size: 1.3rem;
+    font-weight: 700;
+    line-height: 1.1;
+  }
+  .summary-breakdown-label {
+    display: block;
+    color: var(--text3);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-top: 0.24rem;
+  }
+  .summary-breakdown-item.tone-good .summary-breakdown-value { color: var(--green); }
+  .summary-breakdown-item.tone-warn .summary-breakdown-value { color: var(--orange); }
+  .summary-breakdown-item.tone-bad .summary-breakdown-value { color: var(--red); }
+  .summary-breakdown-item.tone-muted .summary-breakdown-value { color: var(--text2); }
+  .card-note {
+    color: var(--text3);
+    font-size: 0.74rem;
+    margin-top: 0.65rem;
+  }
+
+  .sys-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.2rem;
+    margin-bottom: 1.5rem;
+  }
+  .sys-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.8rem 1.1rem;
+  }
+  .sys-item {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.55rem 0.75rem;
+  }
+  .sys-item .k {
+    color: var(--text3);
+    font-size: 0.73rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.2rem;
+  }
+  .sys-item .v {
+    color: var(--text);
+    font-size: 0.88rem;
+    font-weight: 500;
+    word-break: break-word;
+  }
+
+  /* ── Charts ── */
+  .charts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
+    margin-bottom: 2rem;
+  }
+  .chart-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.4rem;
+  }
+  .chart-box h3 {
+    margin-bottom: 1rem;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .chart-box.wide { grid-column: 1 / -1; }
+
+  /* ── Table ── */
+  .section-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    margin-bottom: 1rem;
+    color: var(--text);
+  }
+  .table-wrap {
+    overflow-x: auto;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    margin-bottom: 2rem;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--surface);
+    font-size: 0.88rem;
+  }
+  th {
+    background: var(--surface2);
+    padding: 0.75rem 0.9rem;
+    text-align: left;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text3);
+    font-weight: 600;
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    border-bottom: 2px solid var(--border);
+    border-right: 1px solid var(--border);
+  }
+  th:last-child { border-right: none; }
+  td {
+    padding: 0.65rem 0.9rem;
+    border-top: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  td:last-child { border-right: none; }
+  td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-size: 0.84rem;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  td.num[title] { cursor: help; }
+  td.ops { color: var(--cyan); font-weight: 600; }
+  td.desc-col {
+    color: var(--text2);
+    max-width: 420px;
+    min-width: 320px;
+    white-space: normal;
+  }
+  .desc-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+  .desc-summary {
+    color: var(--text2);
+    line-height: 1.45;
+    cursor: help;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    overflow: hidden;
+    text-decoration: underline dotted transparent;
+    text-underline-offset: 0.18rem;
+  }
+  .desc-summary:hover { text-decoration-color: var(--text3); }
+  .desc-summary:focus-visible {
+    outline: 1px solid rgba(129,140,248,0.5);
+    outline-offset: 3px;
+    text-decoration-color: var(--text3);
+  }
+  .detail-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  .detail-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.18rem 0.5rem;
+    border-radius: 999px;
+    background: rgba(129,140,248,0.08);
+    border: 1px solid rgba(129,140,248,0.16);
+    color: var(--text2);
+    font-size: 0.72rem;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+  .detail-label { color: var(--text3); }
+  .detail-value { color: var(--text); }
+  .hover-tooltip {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 9999;
+    max-width: min(34rem, calc(100vw - 2rem));
+    padding: 0.75rem 0.9rem;
+    border-radius: 10px;
+    background: rgba(28,33,48,0.98);
+    border: 1px solid var(--border-light);
+    color: var(--text);
+    box-shadow: 0 18px 38px rgba(0,0,0,0.4);
+    font-size: 0.82rem;
+    line-height: 1.45;
+    white-space: normal;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity .14s ease, transform .14s ease;
+  }
+  .hover-tooltip.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  tr:hover td { background: var(--surface2); }
+  tbody tr:nth-child(even) td { background: rgba(255,255,255,0.012); }
+  tbody tr:nth-child(even):hover td { background: var(--surface2); }
+
+  /* ── Badges ── */
+  .badge {
+    display: inline-block;
+    padding: 0.2rem 0.65rem;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+  .badge-pass { background: var(--green-bg); color: var(--green); border: 1px solid rgba(34,197,94,0.2); }
+  .badge-fail { background: var(--red-bg); color: var(--red); border: 1px solid rgba(239,68,68,0.2); }
+  .cat-badge {
+    display: inline-block;
+    padding: 0.15rem 0.55rem;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 500;
+    background: var(--accent-glow);
+    color: var(--accent2);
+  }
+  .error-msg { color: var(--red); font-size: 0.78rem; }
+
+  /* ── Verdict badges ── */
+  .verdict {
+    display: inline-block;
+    padding: 0.2rem 0.65rem;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .verdict-excellent { background: var(--green-bg); color: var(--green); border: 1px solid rgba(34,197,94,0.25); }
+  .verdict-acceptable { background: rgba(245,158,11,0.08); color: var(--orange); border: 1px solid rgba(245,158,11,0.25); }
+  .verdict-slow { background: var(--red-bg); color: var(--red); border: 1px solid rgba(239,68,68,0.25); }
+  .verdict-failed { background: var(--red-bg); color: var(--red); border: 1px solid rgba(239,68,68,0.25); }
+
+  /* ── Comparison delta ── */
+  .delta {
+    display: inline-block;
+    padding: 0.15rem 0.55rem;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .delta-faster { background: var(--green-bg); color: var(--green); }
+  .delta-slower { background: var(--red-bg); color: var(--red); }
+  .delta-same { color: var(--text3); }
+  .delta-none { color: var(--text3); }
+  tfoot td {
+    background: var(--surface2);
+    border-top: 2px solid var(--border-light);
+    font-weight: 600;
+  }
+  .suite-total-label {
+    color: var(--text);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.76rem;
+  }
+  .suite-total-value {
+    color: var(--accent2);
+    font-size: 0.92rem;
+  }
+  .suite-total-meta {
+    color: var(--text2);
+    font-size: 0.8rem;
+    white-space: nowrap;
+  }
+
+  footer {
+    text-align: center;
+    padding: 1.5rem 0;
+    color: var(--text3);
+    font-size: 0.78rem;
+    border-top: 1px solid var(--border);
+    margin-top: 1rem;
+  }
+
+  @media (max-width: 1000px) {
+    .page { padding: 1rem; }
+    .charts { grid-template-columns: 1fr; }
+    .chart-box.wide { grid-column: 1; }
+    .summary-breakdown { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <h1>KalamDB Benchmark Report</h1>
+  <div class="subtitle">Performance analysis &mdash; v0.9.0</div>
+  <div class="meta">
+    <span>http://127.0.0.1:2900</span>
+    <span>2026-11-20T21:44:33.300574+00:00</span>
+    <span>100 iters</span>
+    <span>5 warmup</span>
+    <span>10 concurrency</span>
+    <span>100.0K max subs</span>
+  </div>
+</header>
+
+<div class="summary-cards">
+  <div class="card">
+    <div class="value">38</div>
+    <div class="label">Total Benchmarks</div>
+  </div>
+  <div class="card pass">
+    <div class="value">38</div>
+    <div class="label">Passed</div>
+  </div>
+  <div class="card fail">
+    <div class="value">0</div>
+    <div class="label">Failed</div>
+  </div>
+  <div class="card breakdown-card"><div class="card-heading">Verdict Mix</div><div class="summary-breakdown"><div class="summary-breakdown-item tone-good"><span class="summary-breakdown-value">36</span><span class="summary-breakdown-label">Excellent</span></div><div class="summary-breakdown-item tone-warn"><span class="summary-breakdown-value">2</span><span class="summary-breakdown-label">Acceptable</span></div><div class="summary-breakdown-item tone-bad"><span class="summary-breakdown-value">0</span><span class="summary-breakdown-label">Slow</span></div></div><div class="card-note">successful benchmarks only</div></div>
+  <div class="card breakdown-card"><div class="card-heading">Compared To Previous</div><div class="summary-breakdown"><div class="summary-breakdown-item tone-good"><span class="summary-breakdown-value">26</span><span class="summary-breakdown-label">Faster</span></div><div class="summary-breakdown-item tone-muted"><span class="summary-breakdown-value">7</span><span class="summary-breakdown-label">Same</span></div><div class="summary-breakdown-item tone-bad"><span class="summary-breakdown-value">5</span><span class="summary-breakdown-label">Slower</span></div></div><div class="card-note">against 2026-11-20T19:30:25.966979+00:00</div></div>
+  <div class="card">
+    <div class="value">179.694s</div>
+    <div class="label">Measured Benchmark Time</div>
+  </div>
+  <div class="card">
+    <div class="value">199.076s</div>
+    <div class="label">Wall Clock Duration</div>
+  </div>
+</div>
+
+<div class="sys-panel">
+  <div class="section-title">System Information</div>
+  <div class="sys-grid">
+    <div class="sys-item"><div class="k">Hostname</div><div class="v">MacBook-Pro.local</div></div>
+    <div class="sys-item"><div class="k">Machine Model</div><div class="v">Mac17,9</div></div>
+    <div class="sys-item"><div class="k">CPU Model</div><div class="v">Apple M5 Pro</div></div>
+    <div class="sys-item"><div class="k">CPU Cores</div><div class="v">15 logical / 15 physical</div></div>
+    <div class="sys-item"><div class="k">Total Memory</div><div class="v">24.00 GiB</div></div>
+    <div class="sys-item"><div class="k">Available Memory</div><div class="v">16.61 GiB</div></div>
+    <div class="sys-item"><div class="k">Used Memory</div><div class="v">7.39 GiB</div></div>
+    <div class="sys-item"><div class="k">Memory Usage</div><div class="v">30.8%</div></div>
+    <div class="sys-item"><div class="k">OS</div><div class="v">Darwin macOS 27.2.1</div></div>
+    <div class="sys-item"><div class="k">Kernel</div><div class="v">27.2.0</div></div>
+    <div class="sys-item"><div class="k">Architecture</div><div class="v">aarch64</div></div>
+  </div>
+</div>
+
+<div class="charts">
+  <div class="chart-box wide">
+    <h3>Latency by Operation (µs)</h3>
+    <canvas id="latencyChart" height="70"></canvas>
+  </div>
+  <div class="chart-box">
+    <h3>Throughput (ops/sec)</h3>
+    <canvas id="throughputChart" height="120"></canvas>
+  </div>
+  <div class="chart-box">
+    <h3>Avg Latency by Category (µs)</h3>
+    <canvas id="categoryChart" height="120"></canvas>
+  </div>
+</div>
+
+<div class="section-title">Detailed Results</div>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>Status</th>
+      <th>Benchmark</th>
+      <th>Category</th>
+      <th>Description</th>
+      <th style="text-align:right">Iters</th>
+      <th style="text-align:right">Mean</th>
+      <th style="text-align:right">P50</th>
+      <th style="text-align:right">P95</th>
+      <th style="text-align:right">P99</th>
+      <th style="text-align:right">Min</th>
+      <th style="text-align:right">Max</th>
+      <th style="text-align:right">Ops/sec</th>
+      <th style="text-align:right">Total</th>
+      <th>Verdict</th>
+      <th>vs Prev</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><span class="badge badge-pass">PASS</span></td><td><strong>create_table</strong></td><td><span class="cat-badge">DDL</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="CREATE TABLE with 3 columns" data-full-description="CREATE TABLE with 3 columns" tabindex="0">CREATE TABLE with 3 columns</div></div></td><td class="num">100</td><td class="num" title="27830µs exact">27.8ms</td><td class="num" title="28866µs exact">28.9ms</td><td class="num" title="45948µs exact">45.9ms</td><td class="num" title="48194µs exact">48.2ms</td><td class="num" title="5873µs exact">5.87ms</td><td class="num" title="48720µs exact">48.7ms</td><td class="num ops">36</td><td class="num" title="2783043µs exact">2.783s</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-same" title="previous mean: 27220µs">~ 27220µs prior</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>drop_table</strong></td><td><span class="cat-badge">DDL</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="DROP TABLE on a previously created table" data-full-description="DROP TABLE on a previously created table" tabindex="0">DROP TABLE on a previously created table</div></div></td><td class="num">100</td><td class="num" title="27507µs exact">27.5ms</td><td class="num" title="27260µs exact">27.3ms</td><td class="num" title="47617µs exact">47.6ms</td><td class="num" title="48685µs exact">48.7ms</td><td class="num" title="5580µs exact">5.58ms</td><td class="num" title="49130µs exact">49.1ms</td><td class="num ops">36</td><td class="num" title="2750669µs exact">2.751s</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-same" title="previous mean: 27721µs">~ 27721µs prior</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>single_insert</strong></td><td><span class="cat-badge">Insert</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="INSERT a single row into a table" data-full-description="INSERT a single row into a table" tabindex="0">INSERT a single row into a table</div></div></td><td class="num">100</td><td class="num" title="115µs exact">115µs</td><td class="num" title="115µs exact">115µs</td><td class="num" title="136µs exact">136µs</td><td class="num" title="152µs exact">152µs</td><td class="num" title="89µs exact">89µs</td><td class="num" title="159µs exact">159µs</td><td class="num ops">8.7K</td><td class="num" title="11541µs exact">11.5ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 135µs">↑15% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>bulk_insert</strong></td><td><span class="cat-badge">Insert</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="One INSERT statement with 50 rows (statement-scoped transaction)" data-full-description="One INSERT statement with 50 rows (statement-scoped transaction)" tabindex="0">One INSERT statement with 50 rows (statement-scoped transaction)</div></div></td><td class="num">100</td><td class="num" title="342µs exact">342µs</td><td class="num" title="334µs exact">334µs</td><td class="num" title="398µs exact">398µs</td><td class="num" title="464µs exact">464µs</td><td class="num" title="300µs exact">300µs</td><td class="num" title="644µs exact">644µs</td><td class="num ops">2.9K</td><td class="num" title="34170µs exact">34.2ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 384µs">↑11% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>transaction_multi_insert</strong></td><td><span class="cat-badge">Insert</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="Explicit BEGIN/COMMIT with 50 single-row INSERT statements" data-full-description="Explicit BEGIN/COMMIT with 50 single-row INSERT statements" tabindex="0">Explicit BEGIN/COMMIT with 50 single-row INSERT statements</div></div></td><td class="num">100</td><td class="num" title="846µs exact">846µs</td><td class="num" title="672µs exact">672µs</td><td class="num" title="1431µs exact">1.43ms</td><td class="num" title="1569µs exact">1.57ms</td><td class="num" title="518µs exact">518µs</td><td class="num" title="1577µs exact">1.58ms</td><td class="num ops">1.2K</td><td class="num" title="84593µs exact">84.6ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-slower" title="previous mean: 651µs">↓30% slower</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>select_all</strong></td><td><span class="cat-badge">Select</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="SELECT * from a 200-row table" data-full-description="SELECT * from a 200-row table" tabindex="0">SELECT * from a 200-row table</div></div></td><td class="num">100</td><td class="num" title="303µs exact">303µs</td><td class="num" title="293µs exact">293µs</td><td class="num" title="412µs exact">412µs</td><td class="num" title="545µs exact">545µs</td><td class="num" title="251µs exact">251µs</td><td class="num" title="651µs exact">651µs</td><td class="num ops">3.3K</td><td class="num" title="30300µs exact">30.3ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 339µs">↑11% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>select_by_filter</strong></td><td><span class="cat-badge">Select</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="SELECT with WHERE clause on a 200-row table" data-full-description="SELECT with WHERE clause on a 200-row table" tabindex="0">SELECT with WHERE clause on a 200-row table</div></div></td><td class="num">100</td><td class="num" title="91µs exact">91µs</td><td class="num" title="87µs exact">87µs</td><td class="num" title="106µs exact">106µs</td><td class="num" title="126µs exact">126µs</td><td class="num" title="70µs exact">70µs</td><td class="num" title="280µs exact">280µs</td><td class="num ops">11.0K</td><td class="num" title="9115µs exact">9.12ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 105µs">↑13% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>select_count</strong></td><td><span class="cat-badge">Select</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="SELECT COUNT(*) on a 200-row table" data-full-description="SELECT COUNT(*) on a 200-row table" tabindex="0">SELECT COUNT(*) on a 200-row table</div></div></td><td class="num">100</td><td class="num" title="235µs exact">235µs</td><td class="num" title="234µs exact">234µs</td><td class="num" title="273µs exact">273µs</td><td class="num" title="307µs exact">307µs</td><td class="num" title="200µs exact">200µs</td><td class="num" title="325µs exact">325µs</td><td class="num ops">4.2K</td><td class="num" title="23548µs exact">23.5ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 313µs">↑25% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>select_order_by_limit</strong></td><td><span class="cat-badge">Select</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="SELECT with ORDER BY + LIMIT 10 on a 200-row table" data-full-description="SELECT with ORDER BY + LIMIT 10 on a 200-row table" tabindex="0">SELECT with ORDER BY + LIMIT 10 on a 200-row table</div></div></td><td class="num">100</td><td class="num" title="262µs exact">262µs</td><td class="num" title="256µs exact">256µs</td><td class="num" title="304µs exact">304µs</td><td class="num" title="482µs exact">482µs</td><td class="num" title="221µs exact">221µs</td><td class="num" title="555µs exact">555µs</td><td class="num ops">3.8K</td><td class="num" title="26239µs exact">26.2ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 328µs">↑20% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>single_update</strong></td><td><span class="cat-badge">Update</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="UPDATE a single row by filter condition" data-full-description="UPDATE a single row by filter condition" tabindex="0">UPDATE a single row by filter condition</div></div></td><td class="num">100</td><td class="num" title="261µs exact">261µs</td><td class="num" title="251µs exact">251µs</td><td class="num" title="345µs exact">345µs</td><td class="num" title="398µs exact">398µs</td><td class="num" title="218µs exact">218µs</td><td class="num" title="403µs exact">403µs</td><td class="num ops">3.8K</td><td class="num" title="26099µs exact">26.1ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 352µs">↑26% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>single_delete</strong></td><td><span class="cat-badge">Delete</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="DELETE a single row by filter condition" data-full-description="DELETE a single row by filter condition" tabindex="0">DELETE a single row by filter condition</div></div></td><td class="num">100</td><td class="num" title="194µs exact">194µs</td><td class="num" title="186µs exact">186µs</td><td class="num" title="249µs exact">249µs</td><td class="num" title="295µs exact">295µs</td><td class="num" title="158µs exact">158µs</td><td class="num" title="427µs exact">427µs</td><td class="num ops">5.2K</td><td class="num" title="19404µs exact">19.4ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 207µs">↑6% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>concurrent_insert</strong></td><td><span class="cat-badge">Concurrent</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="N concurrent INSERT operations in parallel (N = concurrency setting)" data-full-description="N concurrent INSERT operations in parallel (N = concurrency setting)" tabindex="0">N concurrent INSERT operations in parallel (N = concurrency setting)</div></div></td><td class="num">100</td><td class="num" title="317µs exact">317µs</td><td class="num" title="297µs exact">297µs</td><td class="num" title="429µs exact">429µs</td><td class="num" title="499µs exact">499µs</td><td class="num" title="256µs exact">256µs</td><td class="num" title="676µs exact">676µs</td><td class="num ops">3.2K</td><td class="num" title="31673µs exact">31.7ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 442µs">↑28% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>concurrent_select</strong></td><td><span class="cat-badge">Concurrent</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="N concurrent SELECT operations in parallel (N = concurrency setting)" data-full-description="N concurrent SELECT operations in parallel (N = concurrency setting)" tabindex="0">N concurrent SELECT operations in parallel (N = concurrency setting)</div></div></td><td class="num">100</td><td class="num" title="207µs exact">207µs</td><td class="num" title="202µs exact">202µs</td><td class="num" title="253µs exact">253µs</td><td class="num" title="312µs exact">312µs</td><td class="num" title="163µs exact">163µs</td><td class="num" title="330µs exact">330µs</td><td class="num ops">4.8K</td><td class="num" title="20711µs exact">20.7ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 228µs">↑9% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>point_lookup</strong></td><td><span class="cat-badge">Select</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="SELECT by primary key from a 10K-row table (single row lookup)" data-full-description="SELECT by primary key from a 10K-row table (single row lookup)" tabindex="0">SELECT by primary key from a 10K-row table (single row lookup)</div><div class="detail-list"><span class="detail-pill" title="Baseline: phase-0 performance"><span class="detail-label">Baseline</span><span class="detail-value">phase-0 performance</span></span><span class="detail-pill" title="Query Class: primary-key lookup"><span class="detail-label">Query Class</span><span class="detail-value">primary-key lookup</span></span><span class="detail-pill" title="Dataset: 10000 seeded rows"><span class="detail-label">Dataset</span><span class="detail-value">10000 seeded rows</span></span><span class="detail-pill" title="Query Shape: SELECT * FROM &lt;ns&gt;.point_lookup WHERE id = ?"><span class="detail-label">Query Shape</span><span class="detail-value">SELECT * FROM &lt;ns&gt;.point_lookup WHERE id = ?</span></span></div></div></td><td class="num">100</td><td class="num" title="66µs exact">66µs</td><td class="num" title="64µs exact">64µs</td><td class="num" title="79µs exact">79µs</td><td class="num" title="121µs exact">121µs</td><td class="num" title="48µs exact">48µs</td><td class="num" title="142µs exact">142µs</td><td class="num ops">15.1K</td><td class="num" title="6608µs exact">6.61ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 75µs">↑12% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>aggregate_query</strong></td><td><span class="cat-badge">Select</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="GROUP BY + SUM/AVG/COUNT on a 10K-row table (analytical query performance)" data-full-description="GROUP BY + SUM/AVG/COUNT on a 10K-row table (analytical query performance)" tabindex="0">GROUP BY + SUM/AVG/COUNT on a 10K-row table (analytical query performance)</div></div></td><td class="num">100</td><td class="num" title="2836µs exact">2.84ms</td><td class="num" title="2835µs exact">2.83ms</td><td class="num" title="3702µs exact">3.70ms</td><td class="num" title="3839µs exact">3.84ms</td><td class="num" title="2089µs exact">2.09ms</td><td class="num" title="4330µs exact">4.33ms</td><td class="num ops">353</td><td class="num" title="283647µs exact">283.6ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 3168µs">↑10% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>multi_table_join</strong></td><td><span class="cat-badge">Select</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="SELECT with subquery across two tables (200 customers, 1000 orders)" data-full-description="SELECT with subquery across two tables (200 customers, 1000 orders)" tabindex="0">SELECT with subquery across two tables (200 customers, 1000 orders)</div></div></td><td class="num">100</td><td class="num" title="660µs exact">660µs</td><td class="num" title="673µs exact">673µs</td><td class="num" title="750µs exact">750µs</td><td class="num" title="785µs exact">785µs</td><td class="num" title="531µs exact">531µs</td><td class="num" title="794µs exact">794µs</td><td class="num ops">1.5K</td><td class="num" title="66026µs exact">66.0ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 817µs">↑19% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>large_payload_insert</strong></td><td><span class="cat-badge">Insert</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="INSERT rows with ~4KB TEXT payloads (serialization + storage throughput)" data-full-description="INSERT rows with ~4KB TEXT payloads (serialization + storage throughput)" tabindex="0">INSERT rows with ~4KB TEXT payloads (serialization + storage throughput)</div></div></td><td class="num">100</td><td class="num" title="472µs exact">472µs</td><td class="num" title="448µs exact">448µs</td><td class="num" title="563µs exact">563µs</td><td class="num" title="734µs exact">734µs</td><td class="num" title="411µs exact">411µs</td><td class="num" title="1354µs exact">1.35ms</td><td class="num ops">2.1K</td><td class="num" title="47201µs exact">47.2ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-same" title="previous mean: 476µs">~ 476µs prior</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>wide_column_insert</strong></td><td><span class="cat-badge">Insert</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="INSERT into a 20-column table (wide schema overhead)" data-full-description="INSERT into a 20-column table (wide schema overhead)" tabindex="0">INSERT into a 20-column table (wide schema overhead)</div></div></td><td class="num">100</td><td class="num" title="333µs exact">333µs</td><td class="num" title="317µs exact">317µs</td><td class="num" title="420µs exact">420µs</td><td class="num" title="473µs exact">473µs</td><td class="num" title="287µs exact">287µs</td><td class="num" title="801µs exact">801µs</td><td class="num ops">3.0K</td><td class="num" title="33271µs exact">33.3ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 350µs">↑5% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>bulk_delete</strong></td><td><span class="cat-badge">Delete</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="DELETE 100 rows at once with a range filter (bulk deletion)" data-full-description="DELETE 100 rows at once with a range filter (bulk deletion)" tabindex="0">DELETE 100 rows at once with a range filter (bulk deletion)</div></div></td><td class="num">100</td><td class="num" title="4686µs exact">4.69ms</td><td class="num" title="4656µs exact">4.66ms</td><td class="num" title="5032µs exact">5.03ms</td><td class="num" title="6599µs exact">6.60ms</td><td class="num" title="4223µs exact">4.22ms</td><td class="num" title="6718µs exact">6.72ms</td><td class="num ops">213</td><td class="num" title="468600µs exact">468.6ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 5350µs">↑12% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>sequential_crud</strong></td><td><span class="cat-badge">DML</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="INSERT → UPDATE → SELECT → DELETE full DML lifecycle per iteration" data-full-description="INSERT → UPDATE → SELECT → DELETE full DML lifecycle per iteration" tabindex="0">INSERT → UPDATE → SELECT → DELETE full DML lifecycle per iteration</div></div></td><td class="num">100</td><td class="num" title="1043µs exact">1.04ms</td><td class="num" title="765µs exact">765µs</td><td class="num" title="1910µs exact">1.91ms</td><td class="num" title="2079µs exact">2.08ms</td><td class="num" title="611µs exact">611µs</td><td class="num" title="2162µs exact">2.16ms</td><td class="num ops">959</td><td class="num" title="104297µs exact">104.3ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-slower" title="previous mean: 856µs">↓22% slower</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>alter_table</strong></td><td><span class="cat-badge">DDL</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="ALTER TABLE ADD COLUMN + DROP COLUMN (schema evolution latency)" data-full-description="ALTER TABLE ADD COLUMN + DROP COLUMN (schema evolution latency)" tabindex="0">ALTER TABLE ADD COLUMN + DROP COLUMN (schema evolution latency)</div></div></td><td class="num">100</td><td class="num" title="1479µs exact">1.48ms</td><td class="num" title="1456µs exact">1.46ms</td><td class="num" title="1987µs exact">1.99ms</td><td class="num" title="2129µs exact">2.13ms</td><td class="num" title="1031µs exact">1.03ms</td><td class="num" title="2222µs exact">2.22ms</td><td class="num ops">676</td><td class="num" title="147931µs exact">147.9ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 1641µs">↑10% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>concurrent_update</strong></td><td><span class="cat-badge">Concurrent</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="N concurrent UPDATE operations on the same table (write contention test)" data-full-description="N concurrent UPDATE operations on the same table (write contention test)" tabindex="0">N concurrent UPDATE operations on the same table (write contention test)</div></div></td><td class="num">100</td><td class="num" title="1208µs exact">1.21ms</td><td class="num" title="1168µs exact">1.17ms</td><td class="num" title="1501µs exact">1.50ms</td><td class="num" title="1654µs exact">1.65ms</td><td class="num" title="945µs exact">945µs</td><td class="num" title="2057µs exact">2.06ms</td><td class="num ops">828</td><td class="num" title="120825µs exact">120.8ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 1860µs">↑35% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>concurrent_mixed_dml</strong></td><td><span class="cat-badge">Concurrent</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="Concurrent INSERT + UPDATE + DELETE on the same table (multi-op contention)" data-full-description="Concurrent INSERT + UPDATE + DELETE on the same table (multi-op contention)" tabindex="0">Concurrent INSERT + UPDATE + DELETE on the same table (multi-op contention)</div></div></td><td class="num">100</td><td class="num" title="745µs exact">745µs</td><td class="num" title="742µs exact">742µs</td><td class="num" title="868µs exact">868µs</td><td class="num" title="906µs exact">906µs</td><td class="num" title="566µs exact">566µs</td><td class="num" title="935µs exact">935µs</td><td class="num ops">1.3K</td><td class="num" title="74536µs exact">74.5ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 1129µs">↑34% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>namespace_isolation</strong></td><td><span class="cat-badge">Concurrent</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="Concurrent queries across 5 different namespaces (isolation test)" data-full-description="Concurrent queries across 5 different namespaces (isolation test)" tabindex="0">Concurrent queries across 5 different namespaces (isolation test)</div></div></td><td class="num">100</td><td class="num" title="592µs exact">592µs</td><td class="num" title="582µs exact">582µs</td><td class="num" title="677µs exact">677µs</td><td class="num" title="700µs exact">700µs</td><td class="num" title="531µs exact">531µs</td><td class="num" title="816µs exact">816µs</td><td class="num ops">1.7K</td><td class="num" title="59212µs exact">59.2ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 1053µs">↑44% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>subscribe_initial_load</strong></td><td><span class="cat-badge">Subscribe</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="Subscribe to a 1000-row user table and receive the full initial data batch" data-full-description="Subscribe to a 1000-row user table and receive the full initial data batch" tabindex="0">Subscribe to a 1000-row user table and receive the full initial data batch</div></div></td><td class="num">100</td><td class="num" title="2474µs exact">2.47ms</td><td class="num" title="2181µs exact">2.18ms</td><td class="num" title="3679µs exact">3.68ms</td><td class="num" title="4456µs exact">4.46ms</td><td class="num" title="1934µs exact">1.93ms</td><td class="num" title="5031µs exact">5.03ms</td><td class="num ops">404</td><td class="num" title="247429µs exact">247.4ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-slower" title="previous mean: 2298µs">↓8% slower</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>subscribe_change_latency</strong></td><td><span class="cat-badge">Subscribe</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="Latency from INSERT to subscriber receiving the change notification" data-full-description="Latency from INSERT to subscriber receiving the change notification" tabindex="0">Latency from INSERT to subscriber receiving the change notification</div></div></td><td class="num">100</td><td class="num" title="41192µs exact">41.2ms</td><td class="num" title="41190µs exact">41.2ms</td><td class="num" title="42145µs exact">42.1ms</td><td class="num" title="44363µs exact">44.4ms</td><td class="num" title="39814µs exact">39.8ms</td><td class="num" title="45711µs exact">45.7ms</td><td class="num ops">24</td><td class="num" title="4119171µs exact">4.119s</td><td><span class="verdict verdict-acceptable">🟡 Acceptable</span></td><td><span class="delta delta-same" title="previous mean: 41328µs">~ 41328µs prior</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>reconnect_subscribe</strong></td><td><span class="cat-badge">Subscribe</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="WebSocket disconnect + reconnect + authenticate + initial subscription results" data-full-description="WebSocket disconnect + reconnect + authenticate + initial subscription results" tabindex="0">WebSocket disconnect + reconnect + authenticate + initial subscription results</div></div></td><td class="num">100</td><td class="num" title="890µs exact">890µs</td><td class="num" title="855µs exact">855µs</td><td class="num" title="1237µs exact">1.24ms</td><td class="num" title="1368µs exact">1.37ms</td><td class="num" title="669µs exact">669µs</td><td class="num" title="1444µs exact">1.44ms</td><td class="num ops">1.1K</td><td class="num" title="89042µs exact">89.0ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-slower" title="previous mean: 826µs">↓8% slower</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>flushed_parquet_query</strong></td><td><span class="cat-badge">Storage</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="SELECT from a shared table with 20 flushed Parquet files (200K rows)" data-full-description="SELECT from a shared table with 20 flushed Parquet files (200K rows)" tabindex="0">SELECT from a shared table with 20 flushed Parquet files (200K rows)</div></div></td><td class="num">100</td><td class="num" title="98679µs exact">98.7ms</td><td class="num" title="120402µs exact">120.4ms</td><td class="num" title="179230µs exact">179.2ms</td><td class="num" title="185985µs exact">186.0ms</td><td class="num" title="3898µs exact">3.90ms</td><td class="num" title="193136µs exact">193.1ms</td><td class="num ops">10</td><td class="num" title="9867851µs exact">9.868s</td><td><span class="verdict verdict-acceptable">🟡 Acceptable</span></td><td><span class="delta delta-faster" title="previous mean: 111046µs">↑11% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>concurrent_subscribers</strong></td><td><span class="cat-badge">Load</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="N WebSocket live-query subscribers receiving changes from concurrent writes" data-full-description="N WebSocket live-query subscribers receiving changes from concurrent writes" tabindex="0">N WebSocket live-query subscribers receiving changes from concurrent writes</div></div></td><td class="num">100</td><td class="num" title="1513603µs exact">1.514s</td><td class="num" title="1513122µs exact">1.513s</td><td class="num" title="1520092µs exact">1.520s</td><td class="num" title="1520853µs exact">1.521s</td><td class="num" title="1506029µs exact">1.506s</td><td class="num" title="1526097µs exact">1.526s</td><td class="num ops">1</td><td class="num" title="151360349µs exact">2.52m</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-same" title="previous mean: 1518014µs">~ 1518014µs prior</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>concurrent_publishers</strong></td><td><span class="cat-badge">Load</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="N concurrent INSERTs into a topic-sourced table (measures publish overhead)" data-full-description="N concurrent INSERTs into a topic-sourced table (measures publish overhead)" tabindex="0">N concurrent INSERTs into a topic-sourced table (measures publish overhead)</div></div></td><td class="num">100</td><td class="num" title="727µs exact">727µs</td><td class="num" title="556µs exact">556µs</td><td class="num" title="1329µs exact">1.33ms</td><td class="num" title="3052µs exact">3.05ms</td><td class="num" title="474µs exact">474µs</td><td class="num" title="3700µs exact">3.70ms</td><td class="num ops">1.4K</td><td class="num" title="72745µs exact">72.7ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 845µs">↑14% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>concurrent_consumers</strong></td><td><span class="cat-badge">Load</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="N concurrent topic CONSUME calls pulling messages in parallel" data-full-description="N concurrent topic CONSUME calls pulling messages in parallel" tabindex="0">N concurrent topic CONSUME calls pulling messages in parallel</div></div></td><td class="num">100</td><td class="num" title="376µs exact">376µs</td><td class="num" title="357µs exact">357µs</td><td class="num" title="503µs exact">503µs</td><td class="num" title="641µs exact">641µs</td><td class="num" title="295µs exact">295µs</td><td class="num" title="858µs exact">858µs</td><td class="num ops">2.7K</td><td class="num" title="37620µs exact">37.6ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 445µs">↑16% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>sql_1k_concurrent</strong></td><td><span class="cat-badge">Load</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="1000 concurrent SQL SELECT queries at once (RPS degradation test)" data-full-description="1000 concurrent SQL SELECT queries at once (RPS degradation test)" tabindex="0">1000 concurrent SQL SELECT queries at once (RPS degradation test)</div><div class="detail-list"><span class="detail-pill" title="Baseline: phase-0 performance"><span class="detail-label">Baseline</span><span class="detail-value">phase-0 performance</span></span><span class="detail-pill" title="Query Class: concurrent read burst"><span class="detail-label">Query Class</span><span class="detail-value">concurrent read burst</span></span><span class="detail-pill" title="Dataset: 500 seeded rows"><span class="detail-label">Dataset</span><span class="detail-value">500 seeded rows</span></span><span class="detail-pill" title="Burst: 1000 concurrent SQL queries"><span class="detail-label">Burst</span><span class="detail-value">1000 concurrent SQL queries</span></span><span class="detail-pill" title="Query Mix: pk lookup, count, selective order-by limit, narrow projection"><span class="detail-label">Query Mix</span><span class="detail-value">pk lookup, count, selective order-by limit, narrow projection</span></span></div></div></td><td class="num">100</td><td class="num" title="31568µs exact">31.6ms</td><td class="num" title="31106µs exact">31.1ms</td><td class="num" title="34187µs exact">34.2ms</td><td class="num" title="46821µs exact">46.8ms</td><td class="num" title="29022µs exact">29.0ms</td><td class="num" title="49467µs exact">49.5ms</td><td class="num ops">32</td><td class="num" title="3156848µs exact">3.157s</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 74000µs">↑57% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>create_user</strong></td><td><span class="cat-badge">Load</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="CREATE USER (auth subsystem stress test)" data-full-description="CREATE USER (auth subsystem stress test)" tabindex="0">CREATE USER (auth subsystem stress test)</div></div></td><td class="num">100</td><td class="num" title="890µs exact">890µs</td><td class="num" title="868µs exact">868µs</td><td class="num" title="1063µs exact">1.06ms</td><td class="num" title="1123µs exact">1.12ms</td><td class="num" title="797µs exact">797µs</td><td class="num" title="1125µs exact">1.12ms</td><td class="num ops">1.1K</td><td class="num" title="89016µs exact">89.0ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-same" title="previous mean: 882µs">~ 882µs prior</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>drop_user</strong></td><td><span class="cat-badge">Load</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="DROP USER (auth subsystem teardown stress test)" data-full-description="DROP USER (auth subsystem teardown stress test)" tabindex="0">DROP USER (auth subsystem teardown stress test)</div></div></td><td class="num">100</td><td class="num" title="172µs exact">172µs</td><td class="num" title="160µs exact">160µs</td><td class="num" title="312µs exact">312µs</td><td class="num" title="345µs exact">345µs</td><td class="num" title="129µs exact">129µs</td><td class="num" title="351µs exact">351µs</td><td class="num ops">5.8K</td><td class="num" title="17230µs exact">17.2ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-slower" title="previous mean: 151µs">↓14% slower</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>connection_storm</strong></td><td><span class="cat-badge">Load</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="N simultaneous login + SQL + cycles (connection setup overhead)" data-full-description="N simultaneous login + SQL + cycles (connection setup overhead)" tabindex="0">N simultaneous login + SQL + cycles (connection setup overhead)</div></div></td><td class="num">100</td><td class="num" title="1919µs exact">1.92ms</td><td class="num" title="1884µs exact">1.88ms</td><td class="num" title="2161µs exact">2.16ms</td><td class="num" title="2213µs exact">2.21ms</td><td class="num" title="1710µs exact">1.71ms</td><td class="num" title="3878µs exact">3.88ms</td><td class="num ops">521</td><td class="num" title="191932µs exact">191.9ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 2156µs">↑11% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>mixed_read_write</strong></td><td><span class="cat-badge">Load</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="50/50 concurrent reads + writes on same table (contention test)" data-full-description="50/50 concurrent reads + writes on same table (contention test)" tabindex="0">50/50 concurrent reads + writes on same table (contention test)</div><div class="detail-list"><span class="detail-pill" title="Baseline: phase-0 performance"><span class="detail-label">Baseline</span><span class="detail-value">phase-0 performance</span></span><span class="detail-pill" title="Query Class: mixed concurrent read/write"><span class="detail-label">Query Class</span><span class="detail-value">mixed concurrent read/write</span></span><span class="detail-pill" title="Dataset: 200 seeded rows"><span class="detail-label">Dataset</span><span class="detail-value">200 seeded rows</span></span><span class="detail-pill" title="Mix: 5 reads / 5 writes"><span class="detail-label">Mix</span><span class="detail-value">5 reads / 5 writes</span></span><span class="detail-pill" title="Read Shapes: range filter, count-star, order-by desc limit"><span class="detail-label">Read Shapes</span><span class="detail-value">range filter, count-star, order-by desc limit</span></span></div></div></td><td class="num">100</td><td class="num" title="723µs exact">723µs</td><td class="num" title="699µs exact">699µs</td><td class="num" title="979µs exact">979µs</td><td class="num" title="1057µs exact">1.06ms</td><td class="num" title="548µs exact">548µs</td><td class="num" title="1162µs exact">1.16ms</td><td class="num ops">1.4K</td><td class="num" title="72278µs exact">72.3ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 1252µs">↑42% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>wide_fanout_query</strong></td><td><span class="cat-badge">Load</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="N concurrent large-result-set SELECTs (serialization + memory pressure)" data-full-description="N concurrent large-result-set SELECTs (serialization + memory pressure)" tabindex="0">N concurrent large-result-set SELECTs (serialization + memory pressure)</div></div></td><td class="num">100</td><td class="num" title="1333µs exact">1.33ms</td><td class="num" title="1328µs exact">1.33ms</td><td class="num" title="1526µs exact">1.53ms</td><td class="num" title="1591µs exact">1.59ms</td><td class="num" title="1074µs exact">1.07ms</td><td class="num" title="2699µs exact">2.70ms</td><td class="num ops">750</td><td class="num" title="133337µs exact">133.3ms</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-faster" title="previous mean: 2135µs">↑38% faster</span></td></tr><tr><td><span class="badge badge-pass">PASS</span></td><td><strong>subscriber_scale</strong></td><td><span class="cat-badge">Scale</span></td><td class="desc-col"><div class="desc-wrap"><div class="desc-summary" title="Progressively ramps cumulative live-query subscribers across tiers 10 -&gt; 100 -&gt; 500 -&gt; 1.0K -&gt; 2.0K -&gt; 5.0K -&gt; 10.0K -&gt; 25.0K -&gt; 50.0K -&gt; 100.0K to verify connection establishment, subscription completion, and INSERT fanout delivery. Delivery probes run at 10 -&gt; 100 -&gt; 500 -&gt; 1.0K -&gt; 2.0K -&gt; 5.0K -&gt; 10.0K -&gt; 25.0K -&gt; 50.0K -&gt; 100.0K. This run is configured with connect_batch=1.0K, wave_size=500, wave_pause=0ms, connect_timeout=30.0s, 1 shared WebSocket target, 100 subscriptions per shared WebSocket connection, and a pooled shared-connection budget of 1.0K." data-full-description="Progressively ramps cumulative live-query subscribers across tiers 10 -&gt; 100 -&gt; 500 -&gt; 1.0K -&gt; 2.0K -&gt; 5.0K -&gt; 10.0K -&gt; 25.0K -&gt; 50.0K -&gt; 100.0K to verify connection establishment, subscription completion, and INSERT fanout delivery. Delivery probes run at 10 -&gt; 100 -&gt; 500 -&gt; 1.0K -&gt; 2.0K -&gt; 5.0K -&gt; 10.0K -&gt; 25.0K -&gt; 50.0K -&gt; 100.0K. This run is configured with connect_batch=1.0K, wave_size=500, wave_pause=0ms, connect_timeout=30.0s, 1 shared WebSocket target, 100 subscriptions per shared WebSocket connection, and a pooled shared-connection budget of 1.0K." tabindex="0">Progressive live-query subscriber scale and insert fanout verification up to 100.0K</div><div class="detail-list"><span class="detail-pill" title="Max: 100.0K"><span class="detail-label">Max</span><span class="detail-value">100.0K</span></span><span class="detail-pill" title="Tiers: 10 checkpoints to 100.0K"><span class="detail-label">Tiers</span><span class="detail-value">10 checkpoints to 100.0K</span></span><span class="detail-pill" title="Batch/Wave: 1.0K / 500"><span class="detail-label">Batch/Wave</span><span class="detail-value">1.0K / 500</span></span><span class="detail-pill" title="Pause/Timeout: 0ms / 30.0s"><span class="detail-label">Pause/Timeout</span><span class="detail-value">0ms / 30.0s</span></span><span class="detail-pill" title="Shared WS: 1.0K conns @ 100 subs/ws across 1 target"><span class="detail-label">Shared WS</span><span class="detail-value">1.0K conns @ 100 subs/ws across 1 target</span></span><span class="detail-pill" title="Delivery Checks: all tiers to 10.0K + 25.0K/50.0K/100.0K"><span class="detail-label">Delivery Checks</span><span class="detail-value">all tiers to 10.0K + 25.0K/50.0K/100.0K</span></span></div></div></td><td class="num">1</td><td class="num" title="2975828µs exact">2.976s</td><td class="num" title="2975828µs exact">2.976s</td><td class="num" title="2975828µs exact">2.976s</td><td class="num" title="2975828µs exact">2.976s</td><td class="num" title="2975828µs exact">2.976s</td><td class="num" title="2975828µs exact">2.976s</td><td class="num ops">0</td><td class="num" title="2975828µs exact">2.976s</td><td><span class="verdict verdict-excellent">🟢 Excellent</span></td><td><span class="delta delta-same" title="previous mean: 3015400µs">~ 3015400µs prior</span></td></tr>
+  </tbody>
+  <tfoot><tr class="suite-total-row"><td colspan="12" class="suite-total-label">Whole Bench Totals</td><td class="num suite-total-value" title="179693935µs exact">179.694s</td><td colspan="2" class="suite-total-meta" title="199076216µs exact">Wall clock 199.076s</td></tr></tfoot>
+</table>
+</div>
+
+<div id="descriptionTooltip" class="hover-tooltip" hidden></div>
+
+<footer>
+  KalamDB v0.9.0 &mdash; Generated 2026-11-20T21:44:33.300574+00:00
+</footer>
+
+</div>
+
+<script>
+Chart.defaults.color = '#8891a8';
+Chart.defaults.borderColor = '#2a3044';
+Chart.defaults.font.family = "'Inter', -apple-system, sans-serif";
+const COLORS = ['#6366f1','#22c55e','#f59e0b','#3b82f6','#ef4444','#a855f7','#ec4899','#06b6d4','#f97316','#84cc16','#64748b'];
+
+// Latency chart
+new Chart(document.getElementById('latencyChart'), {
+  type: 'bar',
+  data: {
+    labels: ["create_table","drop_table","single_insert","bulk_insert","transaction_multi_insert","select_all","select_by_filter","select_count","select_order_by_limit","single_update","single_delete","concurrent_insert","concurrent_select","point_lookup","aggregate_query","multi_table_join","large_payload_insert","wide_column_insert","bulk_delete","sequential_crud","alter_table","concurrent_update","concurrent_mixed_dml","namespace_isolation","subscribe_initial_load","subscribe_change_latency","reconnect_subscribe","flushed_parquet_query","concurrent_subscribers","concurrent_publishers","concurrent_consumers","sql_1k_concurrent","create_user","drop_user","connection_storm","mixed_read_write","wide_fanout_query","subscriber_scale"],
+    datasets: [
+      { label: 'Mean', data: [27830.4,27506.7,115.4,341.7,845.9,303.0,91.2,235.5,262.4,261.0,194.0,316.7,207.1,66.1,2836.5,660.3,472.0,332.7,4686.0,1043.0,1479.3,1208.2,745.4,592.1,2474.3,41191.7,890.4,98678.5,1513603.5,727.5,376.2,31568.5,890.2,172.3,1919.3,722.8,1333.4,2975828.0], backgroundColor: '#6366f1cc', borderRadius: 3 },
+      { label: 'P95',  data: [45948.1,47616.8,136.1,398.1,1431.2,412.2,106.0,273.1,304.1,345.4,248.5,429.3,253.4,79.1,3702.2,750.2,563.2,419.6,5032.0,1910.1,1987.1,1501.2,868.2,677.1,3678.7,42144.6,1237.5,179230.4,1520092.1,1329.0,503.3,34187.4,1063.1,312.5,2161.4,979.1,1526.2,2975828.0],  backgroundColor: '#f59e0bcc', borderRadius: 3 },
+      { label: 'P99',  data: [48194.3,48685.5,152.1,463.8,1569.1,545.1,125.6,307.2,481.7,398.1,295.3,498.8,312.2,121.2,3839.0,785.1,734.3,473.3,6599.2,2078.8,2128.9,1654.1,906.3,700.2,4455.8,44362.6,1367.8,185985.2,1520853.0,3051.6,641.2,46820.7,1123.0,345.1,2212.8,1057.1,1591.2,2975828.0],  backgroundColor: '#ef4444cc', borderRadius: 3 },
+    ]
+  },
+  options: {
+    responsive: true,
+    plugins: { legend: { position: 'top' } },
+    scales: {
+      y: { beginAtZero: true, title: { display: true, text: 'Latency (µs)' }, grid: { color: '#1c2130' } },
+      x: { ticks: { maxRotation: 45 }, grid: { color: '#1c2130' } }
+    }
+  }
+});
+
+// Throughput chart
+new Chart(document.getElementById('throughputChart'), {
+  type: 'bar',
+  data: {
+    labels: ["create_table","drop_table","single_insert","bulk_insert","transaction_multi_insert","select_all","select_by_filter","select_count","select_order_by_limit","single_update","single_delete","concurrent_insert","concurrent_select","point_lookup","aggregate_query","multi_table_join","large_payload_insert","wide_column_insert","bulk_delete","sequential_crud","alter_table","concurrent_update","concurrent_mixed_dml","namespace_isolation","subscribe_initial_load","subscribe_change_latency","reconnect_subscribe","flushed_parquet_query","concurrent_subscribers","concurrent_publishers","concurrent_consumers","sql_1k_concurrent","create_user","drop_user","connection_storm","mixed_read_write","wide_fanout_query","subscriber_scale"],
+    datasets: [{ label: 'Ops/sec', data: [35.9,36.4,8664.8,2926.5,1182.1,3300.3,10970.9,4246.6,3811.1,3831.6,5153.6,3157.3,4828.4,15133.2,352.6,1514.6,2118.6,3005.6,213.4,958.8,676.0,827.6,1341.6,1688.8,404.2,24.3,1123.1,10.1,0.7,1374.7,2658.2,31.7,1123.4,5803.8,521.0,1383.5,750.0,0.3], backgroundColor: COLORS, borderRadius: 3 }]
+  },
+  options: {
+    indexAxis: 'y',
+    responsive: true,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { beginAtZero: true, title: { display: true, text: 'Operations / second' }, grid: { color: '#1c2130' } },
+      y: { grid: { display: false } }
+    }
+  }
+});
+
+// Category chart
+new Chart(document.getElementById('categoryChart'), {
+  type: 'doughnut',
+  data: {
+    labels: ["DDL","Insert","Select","Update","Delete","Concurrent","DML","Subscribe","Storage","Load","Scale"],
+    datasets: [{ data: [18938.8,421.6,636.4,261.0,2440.0,613.9,1043.0,14852.1,98678.5,172368.2,2975828.0], backgroundColor: COLORS, borderWidth: 0 }]
+  },
+  options: {
+    responsive: true,
+    cutout: '55%',
+    plugins: {
+      legend: { position: 'right' },
+      tooltip: { callbacks: { label: (ctx) => ctx.label + ': ' + ctx.parsed.toFixed(0) + ' µs avg' } }
+    }
+  }
+});
+
+const descriptionTooltip = document.getElementById('descriptionTooltip');
+const descriptionTriggers = document.querySelectorAll('.desc-summary[data-full-description]');
+
+function positionDescriptionTooltip(left, top) {
+  if (!descriptionTooltip || descriptionTooltip.hidden) {
+    return;
+  }
+
+  const margin = 16;
+  const tooltipWidth = descriptionTooltip.offsetWidth;
+  const tooltipHeight = descriptionTooltip.offsetHeight;
+  let nextLeft = left;
+  let nextTop = top;
+
+  if (nextLeft + tooltipWidth > window.innerWidth - margin) {
+    nextLeft = window.innerWidth - tooltipWidth - margin;
+  }
+
+  if (nextTop + tooltipHeight > window.innerHeight - margin) {
+    nextTop = top - tooltipHeight - 18;
+  }
+
+  if (nextLeft < margin) {
+    nextLeft = margin;
+  }
+
+  if (nextTop < margin) {
+    nextTop = margin;
+  }
+
+  descriptionTooltip.style.left = `${nextLeft}px`;
+  descriptionTooltip.style.top = `${nextTop}px`;
+}
+
+function showDescriptionTooltip(trigger, left, top) {
+  if (!descriptionTooltip) {
+    return;
+  }
+
+  const text = trigger.dataset.fullDescription;
+  if (!text) {
+    return;
+  }
+
+  descriptionTooltip.textContent = text;
+  descriptionTooltip.hidden = false;
+  descriptionTooltip.classList.add('is-visible');
+  positionDescriptionTooltip(left, top);
+}
+
+function hideDescriptionTooltip() {
+  if (!descriptionTooltip) {
+    return;
+  }
+
+  descriptionTooltip.classList.remove('is-visible');
+  descriptionTooltip.hidden = true;
+}
+
+descriptionTriggers.forEach((trigger) => {
+  trigger.addEventListener('mouseenter', (event) => {
+    showDescriptionTooltip(trigger, event.clientX + 14, event.clientY + 18);
+  });
+
+  trigger.addEventListener('mousemove', (event) => {
+    positionDescriptionTooltip(event.clientX + 14, event.clientY + 18);
+  });
+
+  trigger.addEventListener('mouseleave', hideDescriptionTooltip);
+
+  trigger.addEventListener('focus', () => {
+    const rect = trigger.getBoundingClientRect();
+    showDescriptionTooltip(trigger, rect.left, rect.bottom + 12);
+  });
+
+  trigger.addEventListener('blur', hideDescriptionTooltip);
+});
+
+window.addEventListener('scroll', hideDescriptionTooltip, true);
+window.addEventListener('resize', hideDescriptionTooltip);
+</script>
+</body>
+</html>

@@ -168,6 +168,12 @@ impl ServerConfig {
     }
 
     fn apply_server_env_overrides(&mut self) -> Result<()> {
+        if let Some(profile) = parse_env("KALAMDB_SERVER_PROFILE")? {
+            self.server.profile = profile;
+        }
+        if let Some(memory_mode) = parse_env("KALAMDB_ROCKSDB_MEMORY_MODE")? {
+            self.storage.rocksdb.memory_mode = memory_mode;
+        }
         if let Some(workers) = parse_env("KALAMDB_SERVER_WORKERS")? {
             self.server.workers = workers;
         }
@@ -370,7 +376,7 @@ impl ServerConfig {
             shared_shards: 4,
             heartbeat_interval_ms: 250,
             election_timeout_ms: (500, 1000),
-            snapshot_policy: "LogsSinceLast(1000)".to_string(),
+            snapshot_policy: "LogsSinceLast(50000)".to_string(),
             max_snapshots_to_keep: 3,
             replication_timeout_ms: 5000,
             reconnect_interval_ms: 3000,

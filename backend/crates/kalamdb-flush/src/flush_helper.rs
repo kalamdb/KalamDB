@@ -310,11 +310,10 @@ impl FlushManifestHelper {
             schema_version,
         );
         segment.mark_tombstone();
-        if let Err(error) = self.manifest_service.persist_flushed_segment_in_locked_scope(
-            table_id,
-            user_id,
-            segment,
-        ) {
+        if let Err(error) = self
+            .manifest_service
+            .persist_flushed_segment_in_locked_scope(table_id, user_id, segment)
+        {
             log::warn!(
                 "failed to tombstone reserved flush segment {batch_filename} for {table_id}: {error}"
             );

@@ -26,8 +26,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use kalamdb_commons::models::TopicId;
 use kalamdb_core::{app_context::AppContext, error::KalamDbError};
+use kalamdb_publisher::TopicMessageStore;
 use kalamdb_system::JobType;
-use kalamdb_tables::TopicMessageStore;
 use serde::{Deserialize, Serialize};
 
 use crate::executors::{JobContext, JobDecision, JobExecutor, JobParams};

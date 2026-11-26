@@ -9,6 +9,18 @@ scalar representations.
 the shared identifier types. `SystemTable` is also exported by commons. System
 providers retain their existing public re-exports so callers use the same types.
 
+Table-provider ownership stays on the crate that owns the data.
+`kalamdb-tables` exposes `KalamTableProvider` for user, shared, and stream
+tables. `kalamdb-system` exposes `KeyedTableProvider` for persisted system
+stores. `kalamdb-views` exposes `ComputedCatalogProvider` for virtual
+`system.*`, `pg_catalog`, and Kalam `information_schema` projections.
+`kalamdb-transfer` does not depend on `kalamdb-core`. `kalamdb-publisher` does
+not depend on `kalamdb-tables`. `kalamdb-jobs` owns job executors and installs
+them into `AppContext`; `kalamdb-core` does not depend on `kalamdb-jobs`.
+Short dashboard reads of `system.*` use the HTTP SQL fast path in
+`backend/crates/kalamdb-api/src/http/sql/execute.rs` (`is_system_catalog_read`).
+A join out of `system`, or any write, does not take that path.
+
 Schedule validation and next-run calculations live in
 `kalamdb-commons::helpers::schedule_timing`, behind the `scheduling` feature.
 Both the dialect and system catalog enable that feature. The system catalog

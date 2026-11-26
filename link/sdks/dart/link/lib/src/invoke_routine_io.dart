@@ -57,7 +57,8 @@ Future<Object?> postFunctionEnvelope({
   }
   request.add(binary
       ? dartEncodeRoutineRequest(
-          argumentsJson: arguments == null ? 'null' : jsonEncode(_hostJson(arguments)),
+          argumentsJson:
+              arguments == null ? 'null' : jsonEncode(_hostJson(arguments)),
           paramsJson: '[]',
         )
       : utf8.encode(jsonEncode({
@@ -70,7 +71,8 @@ Future<Object?> postFunctionEnvelope({
     throw routineExceptionFromPayload(response.statusCode, _tryJson(bytes));
   }
   final contentType = response.headers.contentType?.mimeType;
-  if (contentType == 'application/x-kalam-domain' || contentType == 'application/octet-stream') {
+  if (contentType == 'application/x-kalam-domain' ||
+      contentType == 'application/octet-stream') {
     return jsonDecode(dartDecodeRoutineResult(frame: bytes));
   }
   return bytes.isEmpty ? null : jsonDecode(utf8.decode(bytes));

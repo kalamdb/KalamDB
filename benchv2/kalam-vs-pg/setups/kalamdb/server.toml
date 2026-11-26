@@ -103,7 +103,9 @@ client_request_timeout = 10
 client_disconnect_timeout = 5
 
 [rate_limit]
-max_queries_per_sec = 100000
+# The previous 100_000 ceiling returned HTTP 429 during the 1,000,000-read
+# phase. This suite measures the SQL path, not the query limiter.
+max_queries_per_sec = 2000000
 max_messages_per_sec = 10000
 max_subscriptions_per_user = 500000
 max_auth_requests_per_ip_per_sec = 200000

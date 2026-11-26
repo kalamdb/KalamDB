@@ -102,16 +102,31 @@ use std::sync::Arc;
 use datafusion::logical_expr::{Expr, Operator};
 #[cfg(feature = "datafusion")]
 use datafusion::scalar::ScalarValue;
-#[cfg(feature = "datafusion")]
-use kalamdb_commons::models::UserId;
-use kalamdb_commons::{KSerializable, StorageKey};
+use kalamdb_commons::{ids::VersionId, models::UserId, KSerializable, StorageKey};
 
 use crate::{
     async_utils::run_blocking_result,
     entity_store::{EntityIterator, EntityStore},
+    index::IndexRole,
     persist::{object_entity_codec, EntityCodec},
     storage_trait::{Operation, Partition, Result, StorageBackend, StorageError},
 };
+
+/// Snapshot window for a hot replace. The previous row stays while a reader
+/// can still see it: `old_version <= snapshot < new_version`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PinnedHotVersion {
+    pub old_version: VersionId,
+    pub new_version: VersionId,
+    pub snapshot: VersionId,
+}
+
+impl PinnedHotVersion {
+    /// Keep the previous hot row when a pinned snapshot still includes it.
+    pub fn retains_previous(self) -> bool {
+        self.old_version <= self.snapshot && self.snapshot < self.new_version
+    }
+}
 
 // ============================================================================
 // IndexDefinition Trait
@@ -153,6 +168,11 @@ where
     /// Used by DataFusion to determine if a filter can use this index.
     /// Should match the order of fields in the index key.
     fn indexed_columns(&self) -> Vec<&str>;
+
+    /// Primary-key indexes keep tombstones. Secondary indexes default to live rows only.
+    fn role(&self) -> IndexRole {
+        IndexRole::SecondaryScalar
+    }
 
     /// Extracts the index key from the entity.
     ///
@@ -301,31 +321,51 @@ where
         partition: impl Into<String>,
         indexes: Vec<Arc<dyn IndexDefinition<K, V>>>,
     ) -> Self {
-        Self::with_codec(backend, partition, indexes, object_entity_codec())
+        Self::try_new(backend, partition, indexes)
+            .expect("failed to initialize main or index storage partition")
+    }
+
+    /// Fallible construction for server startup and table creation paths.
+    /// Partition creation is idempotent: an actual storage failure must never
+    /// leave an apparently usable IndexedEntityStore.
+    pub fn try_new(
+        backend: Arc<dyn StorageBackend>,
+        partition: impl Into<String>,
+        indexes: Vec<Arc<dyn IndexDefinition<K, V>>>,
+    ) -> Result<Self> {
+        Self::try_with_codec(backend, partition, indexes, object_entity_codec())
     }
 
     /// Create a store with a custom entity codec (used by ordinal row stores).
+    /// Existing infallible call sites fail loudly instead of ignoring I/O errors.
     pub fn with_codec(
         backend: Arc<dyn StorageBackend>,
         partition: impl Into<String>,
         indexes: Vec<Arc<dyn IndexDefinition<K, V>>>,
         codec: Arc<dyn EntityCodec<K, V>>,
     ) -> Self {
+        Self::try_with_codec(backend, partition, indexes, codec)
+            .expect("failed to initialize main or index storage partition")
+    }
+
+    pub fn try_with_codec(
+        backend: Arc<dyn StorageBackend>,
+        partition: impl Into<String>,
+        indexes: Vec<Arc<dyn IndexDefinition<K, V>>>,
+        codec: Arc<dyn EntityCodec<K, V>>,
+    ) -> Result<Self> {
         let partition_str = partition.into();
-
-        // Ensure main partition exists
         let main_partition = Partition::new(&partition_str);
-        let _ = backend.create_partition(&main_partition); // Ignore error if already exists
+        backend.create_partition(&main_partition)?;
 
-        // Ensure all index partitions exist
         let mut index_partitions = Vec::with_capacity(indexes.len());
         for index in &indexes {
             let index_partition = index.partition();
-            let _ = backend.create_partition(&index_partition); // Ignore error if already exists
+            backend.create_partition(&index_partition)?;
             index_partitions.push(index_partition);
         }
 
-        Self {
+        Ok(Self {
             backend,
             partition: partition_str,
             main_partition,
@@ -333,7 +373,7 @@ where
             index_partitions,
             codec,
             _marker: std::marker::PhantomData,
-        }
+        })
     }
 
     /// Returns the index definitions.
@@ -379,8 +419,8 @@ where
     /// Rebuild one index CF from every row currently in the main partition.
     ///
     /// Used by `CREATE INDEX` backfill. Empty tables succeed with zero writes.
-    /// Keys include MVCC `seq`, so this indexes all versions the same way live
-    /// inserts do.
+    /// Keys include MVCC `seq`. A secondary scalar index omits tombstone keys;
+    /// a primary-key index keeps them, matching live inserts.
     pub fn backfill_index(&self, index_idx: usize) -> Result<usize> {
         let index = self.indexes.get(index_idx).ok_or_else(|| {
             StorageError::Other(format!("index {} does not exist on this store", index_idx))
@@ -388,9 +428,11 @@ where
         let index_partition = self.index_partitions.get(index_idx).cloned().ok_or_else(|| {
             StorageError::Other(format!("index partition {} does not exist", index_idx))
         })?;
-        let _ = self.backend.create_partition(&index_partition);
+        self.backend.create_partition(&index_partition)?;
 
-        const BATCH_SIZE: usize = 512;
+        // Larger bounded batches amortize RocksDB WriteBatch submission during
+        // CREATE INDEX without retaining an unbounded backfill in memory.
+        const BATCH_SIZE: usize = 2048;
         let mut operations = Vec::with_capacity(BATCH_SIZE);
         let mut count = 0usize;
         for item in self.scan_iterator(None, None)? {
@@ -453,7 +495,7 @@ where
                 continue;
             };
             plan.index_idx = idx;
-            let score = plan.score(idx == 0);
+            let score = plan.score(index.role() == IndexRole::PrimaryKey);
             if score > best_score {
                 best_score = score;
                 best = Some(plan);
@@ -581,22 +623,30 @@ where
             return Ok(());
         }
 
-        // Pre-allocate: each entry = 1 entity write + N index writes
+        let mut operations = Vec::new();
+        self.append_insert_ops(entries, &mut operations)?;
+        self.commit_operations(operations)
+    }
+
+    /// Append main-row and index puts for `entries` without writing.
+    pub fn append_insert_ops(
+        &self,
+        entries: &[(K, V)],
+        operations: &mut Vec<Operation>,
+    ) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
         let ops_per_entry = 1 + self.indexes.len();
-        let mut operations = Vec::with_capacity(entries.len() * ops_per_entry);
-
+        operations.reserve(entries.len() * ops_per_entry);
         let partition = self.main_partition.clone();
-
         for (key, entity) in entries {
-            // 1. Main entity write
             let value = self.codec.encode(key, entity)?;
             operations.push(Operation::Put {
                 partition: partition.clone(),
                 key: key.storage_key(),
                 value,
             });
-
-            // 2. Index writes for this entity
             for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
                 if let Some(index_key) = index.extract_key(key, entity) {
                     let index_value = index.index_value(key, entity);
@@ -608,8 +658,26 @@ where
                 }
             }
         }
+        Ok(())
+    }
 
-        // Single atomic batch write for ALL entities
+    /// Append one hot replacement without writing.
+    pub fn append_replace_ops(
+        &self,
+        operations: &mut Vec<Operation>,
+        previous: Option<(&K, &V)>,
+        new_key: &K,
+        new_entity: &V,
+        retention: Option<PinnedHotVersion>,
+    ) -> Result<()> {
+        self.push_replace(operations, previous, new_key, new_entity, retention)
+    }
+
+    /// Submit `operations` in one backend batch. An empty list does not call the backend.
+    pub fn commit_operations(&self, operations: Vec<Operation>) -> Result<()> {
+        if operations.is_empty() {
+            return Ok(());
+        }
         self.backend.batch(operations)
     }
 
@@ -796,21 +864,38 @@ where
             return Ok(());
         }
 
-        let has_indexes = !self.indexes.is_empty();
-        // Estimate: 1 main delete + N index deletes per key
-        let ops_per_key = 1 + self.indexes.len();
-        let mut operations = Vec::with_capacity(keys.len() * ops_per_key);
+        let mut operations = Vec::with_capacity(keys.len() * (1 + self.indexes.len()));
 
-        for key in keys {
-            // Main entity delete is always needed
-            operations.push(Operation::Delete {
-                partition: self.main_partition.clone(),
-                key: key.storage_key(),
-            });
+        // Plain keyed system tables need no old-row reads for deletion.
+        if self.indexes.is_empty() {
+            for key in keys {
+                operations.push(Operation::Delete {
+                    partition: self.main_partition.clone(),
+                    key: key.storage_key(),
+                });
+            }
+            return self.backend.batch(operations);
+        }
 
-            // Index cleanup requires fetching the entity to extract index keys
-            if has_indexes {
-                if let Some(entity) = self.get(key)? {
+        // Batch old-row reads instead of performing N individual RocksDB gets.
+        // Build one atomic WriteBatch for the entire delete operation.
+        const READ_BATCH_SIZE: usize = 128;
+        for chunk in keys.chunks(READ_BATCH_SIZE) {
+            let storage_keys: Vec<Vec<u8>> = chunk.iter().map(K::storage_key).collect();
+            let old_rows = self.backend.get_many(&self.main_partition, &storage_keys)?;
+            if old_rows.len() != chunk.len() {
+                return Err(StorageError::Other(
+                    "batch delete received an incomplete get_many response".into(),
+                ));
+            }
+
+            for ((key, storage_key), old_bytes) in chunk.iter().zip(storage_keys).zip(old_rows) {
+                operations.push(Operation::Delete {
+                    partition: self.main_partition.clone(),
+                    key: storage_key,
+                });
+                if let Some(bytes) = old_bytes {
+                    let entity = self.codec.decode(key, &bytes)?;
                     for (index, index_partition) in
                         self.indexes.iter().zip(self.index_partitions.iter())
                     {
@@ -836,7 +921,21 @@ where
     /// index entries are dropped and the entity is overwritten.
     pub fn replace(&self, previous: Option<(&K, &V)>, new_key: &K, new_entity: &V) -> Result<()> {
         let mut operations = Vec::with_capacity(2 + self.indexes.len() * 2);
-        self.push_replace(&mut operations, previous, new_key, new_entity)?;
+        self.push_replace(&mut operations, previous, new_key, new_entity, None)?;
+        self.backend.batch(operations)
+    }
+
+    /// Replace one hot key, keeping the previous row when `retention` says a
+    /// pinned snapshot can still read it.
+    pub fn replace_pinned(
+        &self,
+        previous: Option<(&K, &V)>,
+        new_key: &K,
+        new_entity: &V,
+        retention: PinnedHotVersion,
+    ) -> Result<()> {
+        let mut operations = Vec::with_capacity(2 + self.indexes.len() * 2);
+        self.push_replace(&mut operations, previous, new_key, new_entity, Some(retention))?;
         self.backend.batch(operations)
     }
 
@@ -865,6 +964,7 @@ where
                 previous.as_ref().map(|(key, entity)| (key, entity)),
                 new_key,
                 new_entity,
+                None,
             )?;
         }
         self.backend.batch(operations)
@@ -876,12 +976,14 @@ where
         previous: Option<(&K, &V)>,
         new_key: &K,
         new_entity: &V,
+        retention: Option<PinnedHotVersion>,
     ) -> Result<()> {
         let new_storage = new_key.storage_key();
+        let retain_previous = retention.is_some_and(PinnedHotVersion::retains_previous);
         if let Some((old_key, old_entity)) = previous {
             let old_storage = old_key.storage_key();
             let same_key = old_storage == new_storage;
-            if !same_key {
+            if !same_key && !retain_previous {
                 operations.push(Operation::Delete {
                     partition: self.main_partition.clone(),
                     key: old_storage,
@@ -889,18 +991,42 @@ where
             }
             for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
                 let old_index_key = index.extract_key(old_key, old_entity);
+                let new_index_key = index.extract_key(new_key, new_entity);
+                let unchanged = match (&old_index_key, &new_index_key) {
+                    (Some(old_key_bytes), Some(new_key_bytes)) => {
+                        same_key
+                            && old_key_bytes == new_key_bytes
+                            && index.index_value(old_key, old_entity)
+                                == index.index_value(new_key, new_entity)
+                    },
+                    (None, None) => same_key,
+                    _ => false,
+                };
+                if unchanged {
+                    continue;
+                }
                 let drop_old = if same_key {
-                    old_index_key != index.extract_key(new_key, new_entity)
+                    old_index_key != new_index_key
                 } else {
                     true
                 };
-                if drop_old {
+                // A pinned snapshot keeps the previous key for every role.
+                // PrimaryKey still writes the new tombstone; SecondaryScalar
+                // omits that put because `extract_key` returns None.
+                if drop_old && !retain_previous {
                     if let Some(index_key) = old_index_key {
                         operations.push(Operation::Delete {
                             partition: index_partition.clone(),
                             key: index_key,
                         });
                     }
+                }
+                if let Some(index_key) = new_index_key {
+                    operations.push(Operation::Put {
+                        partition: index_partition.clone(),
+                        key: index_key,
+                        value: index.index_value(new_key, new_entity),
+                    });
                 }
             }
         }
@@ -911,14 +1037,15 @@ where
             key: new_storage,
             value,
         });
-        for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
-            if let Some(index_key) = index.extract_key(new_key, new_entity) {
-                let index_value = index.index_value(new_key, new_entity);
-                operations.push(Operation::Put {
-                    partition: index_partition.clone(),
-                    key: index_key,
-                    value: index_value,
-                });
+        if previous.is_none() {
+            for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
+                if let Some(index_key) = index.extract_key(new_key, new_entity) {
+                    operations.push(Operation::Put {
+                        partition: index_partition.clone(),
+                        key: index_key,
+                        value: index.index_value(new_key, new_entity),
+                    });
+                }
             }
         }
         Ok(())
@@ -952,26 +1079,9 @@ where
         prefix: Option<&[u8]>,
         limit: Option<usize>,
     ) -> Result<Vec<(K, V)>> {
-        let index_partition = self
-            .index_partitions
-            .get(index_idx)
-            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?
-            .clone();
-        let iter = self.backend.scan(&index_partition, prefix, None, limit)?;
-
-        let mut results = Vec::with_capacity(limit.unwrap_or(0));
-        for (_index_key, primary_key_bytes) in iter {
-            // Deserialize primary key from index value
-            let primary_key = K::from_storage_key(&primary_key_bytes)
-                .map_err(StorageError::SerializationError)?;
-
-            // Fetch actual entity
-            if let Some(entity) = self.get(&primary_key)? {
-                results.push((primary_key, entity));
-            }
-        }
-
-        Ok(results)
+        // Reuse the iterator's bounded MultiGet batches instead of fetching
+        // every index hit with an independent RocksDB point lookup.
+        self.scan_by_index_iter(index_idx, prefix, limit)?.collect()
     }
 
     /// Scans an index by prefix and returns matching entities as an iterator.
@@ -1012,7 +1122,10 @@ where
             }
             let mut keys = Vec::new();
             while keys.len() < 32 && remaining > keys.len() {
-                let Some((_index_key, primary_key_bytes)) = iter.next() else {
+                let Some((_index_key, primary_key_bytes)) = (match iter.next().transpose() {
+                    Ok(pair) => pair,
+                    Err(error) => return Some(Err(error)),
+                }) else {
                     break;
                 };
                 match K::from_storage_key(&primary_key_bytes) {
@@ -1086,7 +1199,7 @@ where
                 Err(StorageError::PartitionNotFound(_)) => return Ok(None),
                 Err(error) => return Err(error),
             };
-        let Some((_index_key, primary_key_bytes)) = iter.next() else {
+        let Some((_index_key, primary_key_bytes)) = iter.next().transpose()? else {
             return Ok(None);
         };
         let primary_key =
@@ -1154,7 +1267,10 @@ where
             }
             let mut keys = Vec::new();
             while keys.len() < 32 && remaining > keys.len() {
-                let Some((index_key, primary_key_bytes)) = iter.next() else {
+                let Some((index_key, primary_key_bytes)) = (match iter.next().transpose() {
+                    Ok(pair) => pair,
+                    Err(error) => return Some(Err(error)),
+                }) else {
                     break;
                 };
                 if plan.is_past_end(&index_key) {
@@ -1224,7 +1340,7 @@ where
         let mut sum = 0i128;
         let mut keys = Vec::new();
         let mut values = Vec::new();
-        while let Some((index_key, primary_key_bytes)) = iter.next() {
+        while let Some((index_key, primary_key_bytes)) = iter.next().transpose()? {
             if plan.is_past_end(&index_key) {
                 break;
             }
@@ -1239,14 +1355,17 @@ where
             keys.push(key);
             values.push(value);
             if keys.len() == INDEX_SUM_BATCH {
-                if self.accumulate_visible_integers(&mut keys, &mut values, &mut count, &mut sum)?
+                if self
+                    .accumulate_visible_integers(&mut keys, &mut values, &mut count, &mut sum)?
                     .is_none()
                 {
                     return Ok(None);
                 }
             }
         }
-        if self.accumulate_visible_integers(&mut keys, &mut values, &mut count, &mut sum)?.is_none()
+        if self
+            .accumulate_visible_integers(&mut keys, &mut values, &mut count, &mut sum)?
+            .is_none()
         {
             return Ok(None);
         }
@@ -1312,7 +1431,7 @@ where
                 Err(error) => return Err(error),
             };
 
-        while let Some((_index_key, primary_key_bytes)) = iter.next() {
+        while let Some((_index_key, primary_key_bytes)) = iter.next().transpose()? {
             let primary_key = K::from_storage_key(&primary_key_bytes)
                 .map_err(StorageError::SerializationError)?;
 
@@ -1325,6 +1444,126 @@ where
         }
 
         Ok(None)
+    }
+
+    /// Newest index hit's raw payload for each prefix, in `prefixes` order.
+    ///
+    /// Prefix seeks stay inside this call. The row bodies are one `get_many`.
+    /// A missing index partition, or a hit whose body is gone, is `None`.
+    pub fn get_latest_payloads_by_index_prefixes(
+        &self,
+        index_idx: usize,
+        prefixes: &[&[u8]],
+    ) -> Result<Vec<Option<(K, Vec<u8>)>>> {
+        if prefixes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let index_partition = self
+            .index_partitions
+            .get(index_idx)
+            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?
+            .clone();
+        let mut row_keys = Vec::with_capacity(prefixes.len());
+        for prefix in prefixes {
+            let mut iter =
+                match self.backend.scan_reverse(&index_partition, Some(prefix), None, Some(1)) {
+                    Ok(iter) => iter,
+                    Err(StorageError::PartitionNotFound(_)) => {
+                        row_keys.push(None);
+                        continue;
+                    },
+                    Err(error) => return Err(error),
+                };
+            let key = match iter.next().transpose()? {
+                Some((_index_key, primary_key_bytes)) => Some(
+                    K::from_storage_key(&primary_key_bytes)
+                        .map_err(StorageError::SerializationError)?,
+                ),
+                None => None,
+            };
+            row_keys.push(key);
+        }
+        let encoded: Vec<Vec<u8>> =
+            row_keys.iter().filter_map(|key| key.as_ref().map(K::storage_key)).collect();
+        let fetched = if encoded.is_empty() {
+            Vec::new()
+        } else {
+            match self.backend.get_many(&self.main_partition, &encoded) {
+                Ok(fetched) => fetched,
+                Err(StorageError::PartitionNotFound(_)) => {
+                    return Ok((0..prefixes.len()).map(|_| None).collect());
+                },
+                Err(error) => return Err(error),
+            }
+        };
+        let mut fetched = fetched.into_iter();
+        let mut rows = Vec::with_capacity(prefixes.len());
+        for key in row_keys {
+            let Some(key) = key else {
+                rows.push(None);
+                continue;
+            };
+            match fetched.next() {
+                Some(Some(bytes)) => rows.push(Some((key, bytes))),
+                _ => rows.push(None),
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Tombstone bit from bytes this store already loaded.
+    pub fn row_deleted_flag(&self, bytes: &[u8]) -> Result<Option<bool>> {
+        self.codec.row_deleted_flag(bytes)
+    }
+
+    /// Decode a payload already returned by [`Self::get_latest_payloads_by_index_prefixes`].
+    pub fn decode_entity(&self, key: &K, bytes: &[u8]) -> Result<V> {
+        self.codec.decode(key, bytes)
+    }
+
+    /// Newest row for each index prefix.
+    ///
+    /// Prefix seeks stay inside this call. The row bodies are one `get_many`.
+    /// A missing index partition is a miss for that prefix, not a failed batch.
+    pub fn get_latest_many_by_index_prefixes(
+        &self,
+        index_idx: usize,
+        prefixes: &[Vec<u8>],
+    ) -> Result<Vec<Option<(K, V)>>> {
+        let refs: Vec<&[u8]> = prefixes.iter().map(Vec::as_slice).collect();
+        self.get_latest_payloads_by_index_prefixes(index_idx, &refs)?
+            .into_iter()
+            .map(|payload| {
+                let Some((key, bytes)) = payload else {
+                    return Ok(None);
+                };
+                let entity = self.codec.decode(&key, &bytes)?;
+                Ok(Some((key, entity)))
+            })
+            .collect()
+    }
+
+    /// Load `keys` with one multi-get. Missing keys are `None` in order.
+    pub fn get_many_entities(&self, keys: &[K]) -> Result<Vec<Option<V>>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let encoded: Vec<Vec<u8>> = keys.iter().map(K::storage_key).collect();
+        let fetched = match self.backend.get_many(&self.main_partition, &encoded) {
+            Ok(fetched) => fetched,
+            Err(StorageError::PartitionNotFound(_)) => {
+                return Ok((0..keys.len()).map(|_| None).collect());
+            },
+            Err(error) => return Err(error),
+        };
+        fetched
+            .into_iter()
+            .zip(keys)
+            .map(|(bytes, key)| match bytes {
+                Some(bytes) => self.codec.decode(key, &bytes).map(Some),
+                None => Ok(None),
+            })
+            .collect()
     }
 
     /// Like [`Self::get_latest_by_index_prefix`], decoding only `ordinals`.
@@ -1347,7 +1586,7 @@ where
                 Err(error) => return Err(error),
             };
 
-        while let Some((_index_key, primary_key_bytes)) = iter.next() {
+        while let Some((_index_key, primary_key_bytes)) = iter.next().transpose()? {
             let primary_key = K::from_storage_key(&primary_key_bytes)
                 .map_err(StorageError::SerializationError)?;
 
@@ -1385,7 +1624,7 @@ where
         let mut iter = self.backend.scan(&index_partition, Some(prefix), None, Some(1))?;
 
         // If we got any result, the prefix exists
-        Ok(iter.next().is_some())
+        Ok(iter.next().transpose()?.is_some())
     }
 
     /// Scans an index returning (index_key, primary_key) pairs with typed primary key.
@@ -1403,7 +1642,15 @@ where
             .clone();
         let iter = self.backend.scan(&index_partition, prefix, start_key, limit)?;
 
-        let mapped = iter.map(|(index_key, primary_key_bytes)| {
+        let trace_index = kalamdb_observability::dml_stage::tracing_enabled();
+        let mapped = iter.map(move |item| {
+            let (index_key, primary_key_bytes) = item?;
+            if trace_index {
+                kalamdb_observability::dml_stage::add_count(
+                    kalamdb_observability::dml_stage::DmlCount::IndexEntries,
+                    1,
+                );
+            }
             let primary_key = K::from_storage_key(&primary_key_bytes)
                 .map_err(StorageError::SerializationError)?;
             Ok((index_key, primary_key))
@@ -1428,7 +1675,15 @@ where
             .clone();
         let iter = self.backend.scan(&index_partition, prefix, None, limit)?;
 
-        let mapped = iter.map(|(_index_key, primary_key_bytes)| {
+        let trace_index = kalamdb_observability::dml_stage::tracing_enabled();
+        let mapped = iter.map(move |item| {
+            let (_index_key, primary_key_bytes) = item?;
+            if trace_index {
+                kalamdb_observability::dml_stage::add_count(
+                    kalamdb_observability::dml_stage::DmlCount::IndexEntries,
+                    1,
+                );
+            }
             K::from_storage_key(&primary_key_bytes).map_err(StorageError::SerializationError)
         });
 
@@ -1461,14 +1716,11 @@ where
         self.codec.decode(key, bytes)
     }
 
-    fn deserialize_selected(
-        &self,
-        key: &K,
-        bytes: &[u8],
-        ordinals: Option<&[usize]>,
-    ) -> Result<V> {
+    fn deserialize_selected(&self, key: &K, bytes: &[u8], ordinals: Option<&[usize]>) -> Result<V> {
         match ordinals {
-            Some(ordinals) if !ordinals.is_empty() => self.codec.decode_selected(key, bytes, ordinals),
+            Some(ordinals) if !ordinals.is_empty() => {
+                self.codec.decode_selected(key, bytes, ordinals)
+            },
             _ => self.codec.decode(key, bytes),
         }
     }
@@ -1490,7 +1742,8 @@ where
         )?;
 
         let codec = Arc::clone(&self.codec);
-        let mapped = iter.map(move |(key_bytes, value_bytes)| {
+        let mapped = iter.map(move |item| {
+            let (key_bytes, value_bytes) = item?;
             let key = K::from_storage_key(&key_bytes).map_err(StorageError::SerializationError)?;
             let value = codec.decode(&key, &value_bytes)?;
             Ok((key, value))
@@ -1712,11 +1965,15 @@ pub fn extract_i64_equality(filter: &Expr) -> Option<(&str, i64)> {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::{JobId, NodeId};
+    use kalamdb_commons::{ids::VersionId, JobId, KSerializable, NodeId};
     use kalamdb_system::{providers::jobs::models::Job, JobStatus, JobType};
 
     use super::*;
-    use crate::test_utils::InMemoryBackend;
+    use crate::{
+        index::{IndexRole, PrefixIndex, PrefixIndexedValue},
+        test_utils::InMemoryBackend,
+        StorageBackend,
+    };
 
     // Test index: Jobs by status
     struct TestStatusIndex;
@@ -1785,6 +2042,159 @@ mod tests {
             queue: None,
             priority: None,
         }
+    }
+
+    #[derive(Clone, serde::Serialize, serde::Deserialize)]
+    struct TombstoneRow {
+        id: String,
+        color: String,
+        deleted: bool,
+    }
+
+    impl KSerializable for TombstoneRow {}
+
+    impl PrefixIndexedValue for TombstoneRow {
+        fn prefix_index_field_bytes(&self, column: &str) -> Option<Vec<u8>> {
+            match column {
+                "id" => Some(self.id.as_bytes().to_vec()),
+                "color" => Some(self.color.as_bytes().to_vec()),
+                _ => None,
+            }
+        }
+
+        fn prefix_index_is_tombstone(&self) -> bool {
+            self.deleted
+        }
+    }
+
+    fn tombstone_row(id: &str, color: &str, deleted: bool) -> TombstoneRow {
+        TombstoneRow {
+            id: id.to_string(),
+            color: color.to_string(),
+            deleted,
+        }
+    }
+
+    fn version_key(seq: i64) -> VersionId {
+        VersionId::try_from_i64(seq).expect("version")
+    }
+
+    #[test]
+    fn primary_key_keeps_latest_tombstone_and_secondary_omits_it() {
+        let backend = Arc::new(InMemoryBackend::new());
+        let pk = PrefixIndex::<VersionId, TombstoneRow>::with_role(
+            "rows_pk",
+            vec!["id".to_string()],
+            false,
+            IndexRole::PrimaryKey,
+        );
+        let color = PrefixIndex::<VersionId, TombstoneRow>::with_role(
+            "rows_color",
+            vec!["color".to_string()],
+            false,
+            IndexRole::SecondaryScalar,
+        );
+        let store = IndexedEntityStore::new(
+            backend.clone(),
+            "rows",
+            vec![Arc::new(pk.clone()), Arc::new(color.clone())],
+        );
+        let live_key = version_key(1);
+        let tombstone_key = version_key(2);
+        let live = tombstone_row("row-1", "red", false);
+        let tombstone = tombstone_row("row-1", "red", true);
+        store.insert(&live_key, &live).unwrap();
+
+        let old_pk = pk.extract_key(&live_key, &live).expect("live pk key");
+        let new_pk = pk.extract_key(&tombstone_key, &tombstone).expect("tombstone pk key");
+        let old_color = color.extract_key(&live_key, &live).expect("live color key");
+        assert!(color.extract_key(&tombstone_key, &tombstone).is_none());
+
+        store.replace(Some((&live_key, &live)), &tombstone_key, &tombstone).unwrap();
+
+        assert!(backend.get(&pk.partition(), &new_pk).unwrap().is_some());
+        assert!(backend.get(&pk.partition(), &old_pk).unwrap().is_none());
+        assert!(backend.get(&color.partition(), &old_color).unwrap().is_none());
+        assert!(store.scan_by_index(1, None, None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn pinned_snapshot_keeps_previous_secondary_key_without_a_tombstone_put() {
+        let backend = Arc::new(InMemoryBackend::new());
+        let pk = PrefixIndex::<VersionId, TombstoneRow>::with_role(
+            "rows_pk",
+            vec!["id".to_string()],
+            false,
+            IndexRole::PrimaryKey,
+        );
+        let color = PrefixIndex::<VersionId, TombstoneRow>::with_role(
+            "rows_color",
+            vec!["color".to_string()],
+            false,
+            IndexRole::SecondaryScalar,
+        );
+        let store = IndexedEntityStore::new(
+            backend.clone(),
+            "rows",
+            vec![Arc::new(pk.clone()), Arc::new(color.clone())],
+        );
+        let live_key = version_key(1);
+        let tombstone_key = version_key(5);
+        let live = tombstone_row("row-1", "red", false);
+        let tombstone = tombstone_row("row-1", "red", true);
+        store.insert(&live_key, &live).unwrap();
+        let old_color = color.extract_key(&live_key, &live).expect("live color key");
+        let new_pk = pk.extract_key(&tombstone_key, &tombstone).expect("tombstone pk key");
+
+        let retention = PinnedHotVersion {
+            old_version: version_key(1),
+            new_version: version_key(5),
+            snapshot: version_key(3),
+        };
+        store
+            .replace_pinned(Some((&live_key, &live)), &tombstone_key, &tombstone, retention)
+            .unwrap();
+
+        assert!(color.extract_key(&tombstone_key, &tombstone).is_none());
+        assert!(backend.get(&color.partition(), &old_color).unwrap().is_some());
+        assert!(backend.get(&pk.partition(), &new_pk).unwrap().is_some());
+        assert_eq!(store.scan_by_index(1, None, None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn pinned_snapshot_keeps_the_previous_hot_row_and_primary_index() {
+        let backend = Arc::new(InMemoryBackend::new());
+        let store =
+            IndexedEntityStore::new(backend.clone(), "test_jobs", vec![Arc::new(TestStatusIndex)]);
+        let old = create_test_job("job-old", JobStatus::Running);
+        let new_job = create_test_job("job-new", JobStatus::Running);
+        store.insert(&old.job_id, &old).unwrap();
+        let old_index_key = TestStatusIndex.extract_key(&old.job_id, &old).unwrap();
+
+        let retention = PinnedHotVersion {
+            old_version: VersionId::try_from_i64(1).unwrap(),
+            new_version: VersionId::try_from_i64(5).unwrap(),
+            snapshot: VersionId::try_from_i64(3).unwrap(),
+        };
+        store
+            .replace_pinned(Some((&old.job_id, &old)), &new_job.job_id, &new_job, retention)
+            .unwrap();
+
+        assert!(store.get(&old.job_id).unwrap().is_some());
+        assert!(store.get(&new_job.job_id).unwrap().is_some());
+        assert!(backend.get(&TestStatusIndex.partition(), &old_index_key).unwrap().is_some());
+    }
+
+    #[test]
+    fn replace_without_a_pin_drops_the_previous_hot_row() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+        let store = IndexedEntityStore::new(backend, "test_jobs", vec![Arc::new(TestStatusIndex)]);
+        let old = create_test_job("job-old", JobStatus::Running);
+        let new_job = create_test_job("job-new", JobStatus::Running);
+        store.insert(&old.job_id, &old).unwrap();
+        store.replace(Some((&old.job_id, &old)), &new_job.job_id, &new_job).unwrap();
+        assert!(store.get(&old.job_id).unwrap().is_none());
+        assert!(store.get(&new_job.job_id).unwrap().is_some());
     }
 
     #[test]

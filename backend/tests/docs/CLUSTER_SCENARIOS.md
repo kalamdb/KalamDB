@@ -5,7 +5,7 @@ This document covers distributed consensus (Raft) and multi-node coordination.
 ## 1. Cluster Status & Views
 **Goal**: Verify visibility of cluster health.
 - **Steps**:
-  1. Query `system.cluster_nodes`.
+  1. Query `system.cluster`.
   2. Verify all nodes are listed with correct status (Leader/Follower).
   3. Verify Raft term and index consistency.
 - **Agent Friendly**: Check `backend/tests/testserver/cluster/test_cluster_views_http.rs`.

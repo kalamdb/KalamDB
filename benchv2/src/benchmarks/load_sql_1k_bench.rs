@@ -50,7 +50,7 @@ impl Benchmark for Sql1kUsersBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
+                .sql_ok(&format!("CREATE SCHEMA IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client.sql(&format!("DROP TABLE IF EXISTS {}.load_1k", config.namespace)).await;
             client

@@ -1,8 +1,8 @@
 //! Package versions from the repo `versions.json` manifest.
 //!
-//! `version` is the in-repo package version. `published` is the last version
-//! that was actually shipped. Released `kalam init` pins SDK deps to
-//! `published` so an older CLI keeps the SDK set it shipped with.
+//! Scaffold dependencies prefer a published stable SDK from the configured
+//! major/minor line. A new release line or prerelease uses the configured SDK
+//! version, so an older publication cannot leak into that release's projects.
 
 use std::{collections::HashMap, sync::OnceLock};
 
@@ -40,12 +40,17 @@ fn manifest() -> &'static VersionsManifest {
     })
 }
 
-fn package_published(package: &PackageRecord) -> &str {
+fn scaffold_package_version(package: &PackageRecord) -> &str {
+    let version = package.version.as_str();
     package
         .published
         .as_deref()
-        .filter(|value| !value.is_empty())
-        .unwrap_or(&package.version)
+        .filter(|published| {
+            !version.contains('-')
+                && !published.contains('-')
+                && version.split('.').take(2).eq(published.split('.').take(2))
+        })
+        .unwrap_or(version)
 }
 
 pub fn typescript_package_version(package_name: &str) -> Option<&'static str> {
@@ -64,21 +69,21 @@ pub fn dart_package_version(package_name: &str) -> Option<&'static str> {
         .map(|package| package.version.as_str())
 }
 
-pub fn published_typescript_package_version(package_name: &str) -> &'static str {
+pub fn scaffold_typescript_package_version(package_name: &str) -> &'static str {
     manifest()
         .packages
         .typescript
         .get(package_name)
-        .map(package_published)
+        .map(scaffold_package_version)
         .unwrap_or(CLI_VERSION)
 }
 
-pub fn published_dart_package_version(package_name: &str) -> &'static str {
+pub fn scaffold_dart_package_version(package_name: &str) -> &'static str {
     manifest()
         .packages
         .dart
         .get(package_name)
-        .map(package_published)
+        .map(scaffold_package_version)
         .unwrap_or(CLI_VERSION)
 }
 
@@ -95,17 +100,36 @@ mod tests {
         assert!(typescript_package_version("@kalamdb/orm").is_some());
         assert!(dart_package_version("kalam_sync").is_some());
         assert!(typescript_package_version("@kalamdb/missing").is_none());
-        assert_eq!(published_typescript_package_version("@kalamdb/missing"), CLI_VERSION);
+        assert_eq!(scaffold_typescript_package_version("@kalamdb/missing"), CLI_VERSION);
     }
 
     #[test]
-    fn published_helpers_prefer_published_field() {
+    fn scaffold_versions_stay_on_the_configured_release_line() {
+        let cases = [
+            ("0.8.1", Some("0.8.0"), "0.8.0"),
+            ("0.9.0", Some("0.8.0"), "0.9.0"),
+            ("0.9.0", Some("0.9.0-rc.1"), "0.9.0"),
+            ("0.9.0-rc.2", Some("0.9.0-rc.1"), "0.9.0-rc.2"),
+            ("0.9.0", None, "0.9.0"),
+        ];
+
+        for (version, published, expected) in cases {
+            let record = PackageRecord {
+                version: version.to_string(),
+                published: published.map(str::to_string),
+            };
+            assert_eq!(scaffold_package_version(&record), expected);
+        }
+    }
+
+    #[test]
+    fn scaffold_helpers_use_the_manifest() {
         let client = &manifest().packages.typescript["@kalamdb/client"];
         assert_eq!(
-            published_typescript_package_version("@kalamdb/client"),
-            package_published(client)
+            scaffold_typescript_package_version("@kalamdb/client"),
+            scaffold_package_version(client)
         );
         let sync = &manifest().packages.dart["kalam_sync"];
-        assert_eq!(published_dart_package_version("kalam_sync"), package_published(sync));
+        assert_eq!(scaffold_dart_package_version("kalam_sync"), scaffold_package_version(sync));
     }
 }

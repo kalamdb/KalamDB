@@ -30,6 +30,14 @@ fn create_executor(app_context: Arc<AppContext>) -> SqlExecutor {
     SqlExecutor::new(app_context, registry)
 }
 
+async fn materialize_ok(result: Result<ExecutionResult, impl std::fmt::Debug>) -> ExecutionResult {
+    result
+        .expect("CTE query should succeed")
+        .into_materialized_rows()
+        .await
+        .expect("materialize CTE query rows")
+}
+
 /// Helper to create AppContext with temporary RocksDB for testing
 async fn create_test_app_context() -> (Arc<AppContext>, TestDb) {
     let test_db = TestDb::with_system_tables().expect("Failed to create test database");
@@ -165,8 +173,7 @@ async fn test_simple_cte() {
         )
         .await;
 
-    assert!(result.is_ok(), "CTE query should succeed: {:?}", result.err());
-    let exec_result = result.unwrap();
+    let exec_result = materialize_ok(result).await;
 
     // Verify result has rows
     match exec_result {
@@ -207,8 +214,7 @@ async fn test_cte_with_aggregation() {
         )
         .await;
 
-    assert!(result.is_ok(), "CTE with aggregation should succeed: {:?}", result.err());
-    let exec_result = result.unwrap();
+    let exec_result = materialize_ok(result).await;
 
     // Verify result has rows
     match exec_result {
@@ -259,8 +265,7 @@ async fn test_multiple_ctes() {
         )
         .await;
 
-    assert!(result.is_ok(), "Multiple CTEs should succeed: {:?}", result.err());
-    let exec_result = result.unwrap();
+    let exec_result = materialize_ok(result).await;
 
     // Verify result has rows
     match exec_result {
@@ -302,8 +307,7 @@ async fn test_chained_ctes() {
         )
         .await;
 
-    assert!(result.is_ok(), "Chained CTEs should succeed: {:?}", result.err());
-    let exec_result = result.unwrap();
+    let exec_result = materialize_ok(result).await;
 
     // Verify result has rows
     match exec_result {
@@ -347,8 +351,7 @@ async fn test_cte_with_where_clause() {
         )
         .await;
 
-    assert!(result.is_ok(), "CTE with WHERE should succeed: {:?}", result.err());
-    let exec_result = result.unwrap();
+    let exec_result = materialize_ok(result).await;
 
     // Verify result has rows
     match exec_result {
@@ -386,8 +389,7 @@ async fn test_cte_with_limit() {
         )
         .await;
 
-    assert!(result.is_ok(), "CTE with LIMIT should succeed: {:?}", result.err());
-    let exec_result = result.unwrap();
+    let exec_result = materialize_ok(result).await;
 
     // Verify result has rows
     match exec_result {

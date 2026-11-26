@@ -336,6 +336,24 @@ pub async fn compact_small_segments(
             ))
         })?;
 
+    match resolve_index_generation(&selection.segments, replacement_segment.as_ref(), swap_result) {
+        IndexGeneration::Previous(previous) => {
+            debug!(
+                "Small-segment index generation kept {} previous segment(s) for {} after a failed \
+                 publish",
+                previous.len(),
+                table_id
+            );
+        },
+        IndexGeneration::Published(published) => {
+            debug!(
+                "Small-segment index generation published {} for {}",
+                published.map(|segment| segment.id.as_str()).unwrap_or("empty"),
+                table_id
+            );
+        },
+    }
+
     if !swap_result {
         if let Some(write) = &write_result {
             let delete_result =
@@ -725,13 +743,7 @@ async fn write_compacted_winners(
         .map_err(|error| FlushError::Other(format!("compacted parquet metadata: {error}")))?
         .len();
     storage_cached
-        .upload_file(
-            table_type,
-            table_id,
-            user_id,
-            &compact_temp_filename,
-            temp_file.as_file(),
-        )
+        .upload_file(table_type, table_id, user_id, &compact_temp_filename, temp_file.as_file())
         .await
         .into_flush_error("Failed to write compacted Parquet temp file")?;
 
@@ -769,7 +781,7 @@ fn filter_latest_live_rows(
         }
 
         let deleted = deleted_at(&batch, deleted_idx, row_idx)?;
-        if deleted && !preserve_deleted_keys.contains(&pk_value) {
+        if !keep_compacted_row(deleted, preserve_deleted_keys.contains(&pk_value)) {
             emitted_keys.insert(pk_value);
             continue;
         }
@@ -931,6 +943,34 @@ fn merge_column_stat(existing: &mut ColumnStats, next: &ColumnStats) {
     };
 }
 
+/// Index generation chosen by one compaction publish.
+///
+/// A failed swap keeps the previous segments, including snapshot-masking
+/// tombstones already stored there. A committed swap publishes only the
+/// rebuilt segment.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum IndexGeneration<'a> {
+    Previous(&'a [SegmentMetadata]),
+    Published(Option<&'a SegmentMetadata>),
+}
+
+pub(crate) fn resolve_index_generation<'a>(
+    previous: &'a [SegmentMetadata],
+    rebuilt: Option<&'a SegmentMetadata>,
+    committed: bool,
+) -> IndexGeneration<'a> {
+    if committed {
+        IndexGeneration::Published(rebuilt)
+    } else {
+        IndexGeneration::Previous(previous)
+    }
+}
+
+/// Keep a live winner, and a tombstone only when a snapshot still needs it.
+fn keep_compacted_row(deleted: bool, snapshot_retained: bool) -> bool {
+    !deleted || snapshot_retained
+}
+
 fn is_missing_parquet_file_error_msg(message: &str) -> bool {
     let msg = message.to_ascii_lowercase();
     msg.contains("not found")
@@ -1001,6 +1041,62 @@ mod tests {
         let manifest = manifest_with_segments(&[10_000, 2_000, 2_000, 2_000]);
 
         assert!(select_trailing_small_segments(&manifest, 10_000, 4, 8).is_none());
+    }
+
+    #[test]
+    fn failed_rebuild_recovers_the_previous_index_generation() {
+        let manifest = manifest_with_segments(&[1_000, 1_000, 1_000, 1_000]);
+        let rebuilt = SegmentMetadata::with_schema_version(
+            "compact-new".to_string(),
+            "compact-new.parquet".to_string(),
+            HashMap::new(),
+            SeqId::from(1),
+            SeqId::from(40),
+            4_000,
+            4096,
+            1,
+        );
+
+        match resolve_index_generation(&manifest.segments, Some(&rebuilt), false) {
+            IndexGeneration::Previous(previous) => {
+                assert_eq!(previous.len(), manifest.segments.len());
+                assert_eq!(previous[0].id, manifest.segments[0].id);
+                assert_eq!(previous[0].path, manifest.segments[0].path);
+            },
+            IndexGeneration::Published(_) => {
+                panic!("failed rebuild must keep the previous generation");
+            },
+        }
+    }
+
+    #[test]
+    fn committed_rebuild_publishes_the_new_generation() {
+        let manifest = manifest_with_segments(&[1_000, 1_000, 1_000, 1_000]);
+        let rebuilt = SegmentMetadata::with_schema_version(
+            "compact-new".to_string(),
+            "compact-new.parquet".to_string(),
+            HashMap::new(),
+            SeqId::from(1),
+            SeqId::from(40),
+            4_000,
+            4096,
+            1,
+        );
+
+        match resolve_index_generation(&manifest.segments, Some(&rebuilt), true) {
+            IndexGeneration::Published(Some(published)) => {
+                assert_eq!(published.id, "compact-new");
+                assert_eq!(published.path, "compact-new.parquet");
+            },
+            other => panic!("committed rebuild must publish the new generation: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn snapshot_retention_keeps_masking_tombstones() {
+        assert!(keep_compacted_row(true, true));
+        assert!(!keep_compacted_row(true, false));
+        assert!(keep_compacted_row(false, false));
     }
 
     #[test]

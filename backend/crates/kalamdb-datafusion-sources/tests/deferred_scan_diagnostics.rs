@@ -18,7 +18,8 @@ use datafusion::{
     prelude::SessionContext,
 };
 use kalamdb_datafusion_sources::exec::{
-    DeferredBatchExec, DeferredBatchOutput, DeferredBatchSource, DeferredScanDiagnostics,
+    flatten_deferred_output, DeferredBatchExec, DeferredBatchOutput, DeferredBatchSource,
+    DeferredScanDiagnostics, ScanAccess,
 };
 use kalamdb_session_datafusion::ScanDiagnosticsContext;
 
@@ -75,6 +76,7 @@ impl DeferredBatchSource for DiagnosticSource {
                 "batch-0001.parquet".to_string(),
                 "batch-0002.parquet".to_string(),
             ],
+            access_path: Some(ScanAccess::Sequential),
         };
         Ok(DeferredBatchOutput::new(self.produce_batch().await?).with_diagnostics(diagnostics))
     }
@@ -145,6 +147,70 @@ async fn deferred_batch_exec_can_produce_its_single_batch_directly() {
 
     assert_eq!(batch.num_rows(), 2);
     assert_eq!(diagnostic_calls.load(Ordering::Relaxed), 0);
+}
+
+#[tokio::test]
+async fn deferred_batch_exec_streams_follow_batches() {
+    let ctx = SessionContext::new();
+    let exec = Arc::new(DeferredBatchExec::new(Arc::new(FollowSource::new())));
+    let plan: Arc<dyn ExecutionPlan> = exec;
+
+    let batches = collect(plan, ctx.task_ctx()).await.expect("collect follow batches");
+
+    assert_eq!(batches.len(), 2);
+    let first = batches[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .expect("int64")
+        .values();
+    let second = batches[1]
+        .column(0)
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .expect("int64")
+        .values();
+    assert_eq!(first, &[1]);
+    assert_eq!(second, &[2]);
+}
+
+struct FollowSource {
+    schema: SchemaRef,
+}
+
+impl FollowSource {
+    fn new() -> Self {
+        Self {
+            schema: Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)])),
+        }
+    }
+}
+
+#[async_trait]
+impl DeferredBatchSource for FollowSource {
+    fn source_name(&self) -> &'static str {
+        "follow_scan"
+    }
+
+    fn schema(&self) -> SchemaRef {
+        Arc::clone(&self.schema)
+    }
+
+    async fn produce_batch(&self) -> DataFusionResult<RecordBatch> {
+        flatten_deferred_output(self.load_batch_output().await?)
+    }
+
+    async fn load_batch_output(&self) -> DataFusionResult<DeferredBatchOutput> {
+        let first = RecordBatch::try_new(
+            Arc::clone(&self.schema),
+            vec![Arc::new(Int64Array::from(vec![1]))],
+        )?;
+        let second = RecordBatch::try_new(
+            Arc::clone(&self.schema),
+            vec![Arc::new(Int64Array::from(vec![2]))],
+        )?;
+        Ok(DeferredBatchOutput::new(first).with_follow(vec![second]))
+    }
 }
 
 use std::fmt;

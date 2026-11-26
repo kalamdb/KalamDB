@@ -23,7 +23,7 @@ use crate::{
             parameter_binding::{replace_placeholders_in_plan, validate_params},
             PreparedExecutionStatement, SqlExecutor,
         },
-        plan_cache::PlanCacheKey,
+        plan_cache::{PlanCacheKey, PlanCoordination, PlanLead},
         ExecutionContext, ExecutionResult,
     },
 };
@@ -266,10 +266,11 @@ impl SqlExecutor {
         sql: &'a str,
         exec_ctx: &'a ExecutionContext,
         params: &'a [ScalarValue],
+        lead: Option<PlanLead>,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<DataFrame, KalamDbError>> + Send + 'a>,
     > {
-        Box::pin(self.execute_replanned_dml(cache_key, pre_parsed, sql, exec_ctx, params))
+        Box::pin(self.execute_replanned_dml(cache_key, pre_parsed, sql, exec_ctx, params, lead))
     }
 
     async fn execute_replanned_dml(
@@ -279,13 +280,15 @@ impl SqlExecutor {
         sql: &str,
         exec_ctx: &ExecutionContext,
         params: &[ScalarValue],
+        lead: Option<PlanLead>,
     ) -> Result<DataFrame, KalamDbError> {
         let (plan_session, planned_df, had_catalog_func) =
             self.plan_dml_with_provider_reload(pre_parsed, sql, exec_ctx, params).await?;
         let bound_plan = if had_catalog_func {
+            drop(lead);
             replace_placeholders_in_plan(planned_df.logical_plan().clone(), params)?
         } else {
-            self.cache_and_bind_dml_plan(cache_key, planned_df, params)?
+            self.cache_and_bind_dml_plan(cache_key, planned_df, params, lead)?
         };
         plan_session
             .execute_logical_plan(bound_plan)
@@ -303,7 +306,13 @@ impl SqlExecutor {
         let cache_key = self.logical_plan_cache_key(exec_ctx, cache_sql);
         let session = self.create_session_with_transaction_context(exec_ctx)?;
 
-        if let Some(template_plan) = self.sql_cache_registry.plan_cache().get(&cache_key) {
+        let cache = self.sql_cache_registry.plan_cache_arc();
+        let (template_plan, lead) = match cache.coordinate(&cache_key).await {
+            PlanCoordination::Shared(plan) => (Some(plan), None),
+            PlanCoordination::Lead => (None, Some(cache.lead_guard(cache_key.clone()))),
+            PlanCoordination::Uncoordinated => (None, None),
+        };
+        if let Some(template_plan) = template_plan {
             let bound_plan = replace_placeholders_in_plan((*template_plan).clone(), params)?;
             match session.execute_logical_plan(bound_plan).await {
                 Ok(df) => Ok(df),
@@ -322,13 +331,17 @@ impl SqlExecutor {
                         error
                     );
 
-                    self.execute_replanned_dml_erased(cache_key, pre_parsed, cache_sql, exec_ctx, params)
-                        .await
+                    self.execute_replanned_dml_erased(
+                        cache_key, pre_parsed, cache_sql, exec_ctx, params, None,
+                    )
+                    .await
                 },
             }
         } else {
-            self.execute_replanned_dml_erased(cache_key, pre_parsed, cache_sql, exec_ctx, params)
-                .await
+            self.execute_replanned_dml_erased(
+                cache_key, pre_parsed, cache_sql, exec_ctx, params, lead,
+            )
+            .await
         }
     }
 
@@ -337,10 +350,15 @@ impl SqlExecutor {
         cache_key: PlanCacheKey,
         planned_df: DataFrame,
         params: &[ScalarValue],
+        lead: Option<PlanLead>,
     ) -> Result<LogicalPlan, KalamDbError> {
         let template_plan = planned_df.logical_plan().clone();
         let bound_plan = replace_placeholders_in_plan(template_plan.clone(), params)?;
-        self.sql_cache_registry.plan_cache().insert(cache_key, template_plan);
+        if let Some(lead) = lead {
+            lead.finish(template_plan);
+        } else {
+            self.sql_cache_registry.plan_cache().insert(cache_key, template_plan);
+        }
         Ok(bound_plan)
     }
 

@@ -1,10 +1,27 @@
-# kalam_link
+# kalam_link — Realtime SQL database client for Flutter
 
-Official Dart and Flutter client for [KalamDB](https://kalamdb.org): SQL over HTTP, live rows over WebSocket, and JWT/OIDC auth.
+The official [KalamDB](https://kalamdb.org) **Flutter database SDK**. Execute SQL queries over HTTP, subscribe to live database rows over WebSocket, and sign in with JWT or OIDC authentication. Generate typed table queries and procedure clients from your schema.
 
-For a local-first Flutter app (offline cache, optimistic writes), use [`kalam_sync`](https://pub.dev/packages/kalam_sync) instead.
+**Need an offline-first Flutter app?** Choose [`kalam_sync`](https://pub.dev/packages/kalam_sync) instead. It includes `kalam_link` and adds a local SQLite/Drift database cache, reactive offline reads, optimistic writes, and a durable action outbox.
+
+| Your use case | Package |
+| --- | --- |
+| Connected SQL queries, auth and live subscriptions | **`kalam_link`** |
+| Offline-first storage, realtime synchronization and queued writes | **[`kalam_sync`](https://pub.dev/packages/kalam_sync)** |
+
+**Platforms:** the current package declares Android and iOS support. Other platforms should not be assumed supported without checking published native artifacts. A running KalamDB server is required for remote operations.
 
 → **[Docs](https://kalamdb.org/docs/dart-sdk)** · [Setup](https://kalamdb.org/docs/dart-sdk/setup) · [Kalam Sync](https://kalamdb.org/docs/dart-sdk/sync) · [GitHub](https://github.com/kalamdb/KalamDB)
+
+## Key features
+
+- SQL queries with bound parameters.
+- Realtime subscriptions and live row events over WebSocket.
+- JWT and OIDC authentication.
+- Generated typed table and procedure clients.
+- Self-hosted KalamDB server support.
+
+[Documentation](https://kalamdb.org/docs/dart-sdk/setup) · [Source](https://github.com/kalamdb/KalamDB/tree/main/link/sdks/dart/link) · [Report an issue](https://github.com/kalamdb/KalamDB/issues)
 
 ## Install
 
@@ -117,7 +134,22 @@ New Flutter apps: `kalam init --languages dart`. See [`example/README.md`](examp
 
 ## License
 
-Apache-2.0. See [LICENSE.txt](LICENSE.txt).
+Apache-2.0. See [LICENSE](LICENSE).
+
+## SDK checks and release troubleshooting
+
+Run `bash test-offline.sh` for all offline regression and packaging checks.
+`test.sh` runs these checks plus server integration tests; `publish.sh` blocks
+publication if an offline check fails. Packaging checks cover declared platform
+folders, Android arm64-v8a/x86_64 libraries (including their ELF architecture),
+and the iOS archive size.
+
+Android and iOS are the supported Flutter plugin platforms. Do not infer desktop
+or web support from the presence of bridge build artifacts.
+
+If a just-published version is missing from your local hosted cache, try
+`flutter pub cache add kalam_link --version <published-version>`, then
+`flutter pub get`. Confirm the release exists and your version constraint allows it.
 
 ## Generated typed remote queries
 

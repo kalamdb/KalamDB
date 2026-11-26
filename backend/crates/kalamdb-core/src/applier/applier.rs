@@ -267,11 +267,19 @@ impl RaftApplier {
     ) -> Result<DataResponse, ApplierError> {
         let app_ctx = self.executor().app_context();
 
-        kalamdb_observability::kdb_await_in_info_span!(
+        let table_id = cmd.table_id().clone();
+        let command = cmd.name();
+        let slots = cmd.row_slot_count();
+        let response = kalamdb_observability::kdb_await_in_info_span!(
             app_ctx.executor().execute_shared_data(cmd),
-            "raft.shared_data"
+            "raft.shared_data",
+            table_id = %table_id,
+            command,
+            slots
         )
-        .map_err(|e| ApplierError::Raft(e.to_string()))
+        .map_err(|e| ApplierError::Raft(e.to_string()))?;
+        let _ = (table_id, command, slots);
+        Ok(response)
     }
 
     fn transaction_group_id(

@@ -207,11 +207,49 @@ pub fn collect_runtime_metrics(start_time: Instant) -> RuntimeMetrics {
     };
 
     let mut guard = SHARED_SYSTEM.lock().unwrap_or_else(|e| e.into_inner());
-    let sys = guard.get_or_insert_with(|| {
-        System::new_with_specifics(
+    if guard.is_none() {
+        *guard = System::new_with_specifics(
             RefreshKind::nothing().with_memory(MemoryRefreshKind::everything()),
         )
-    });
+        .ok();
+    }
+    let Some(sys) = guard.as_mut() else {
+        return RuntimeMetrics {
+            uptime_seconds,
+            uptime_human,
+            memory_bytes: None,
+            memory_mb: None,
+            memory_usage_source: "rss",
+            memory_rss_bytes: None,
+            memory_rss_mb: None,
+            memory_virtual_bytes: None,
+            memory_virtual_mb: None,
+            memory_rss_gap_bytes: None,
+            memory_rss_gap_mb: None,
+            memory_physical_footprint_bytes: None,
+            memory_physical_footprint_mb: None,
+            memory_linux_rollup_rss_bytes: None,
+            memory_linux_rollup_rss_mb: None,
+            memory_linux_pss_bytes: None,
+            memory_linux_pss_mb: None,
+            memory_linux_anonymous_bytes: None,
+            memory_linux_anonymous_mb: None,
+            memory_linux_private_clean_bytes: None,
+            memory_linux_private_clean_mb: None,
+            memory_linux_private_dirty_bytes: None,
+            memory_linux_private_dirty_mb: None,
+            memory_linux_shared_clean_bytes: None,
+            memory_linux_shared_clean_mb: None,
+            memory_linux_shared_dirty_bytes: None,
+            memory_linux_shared_dirty_mb: None,
+            cpu_usage_percent: None,
+            system_total_memory_mb: 0,
+            system_used_memory_mb: 0,
+            thread_count: None,
+            pid: None,
+            allocator_metrics: collect_allocator_metrics(),
+        };
+    };
 
     // Only refresh what we need: current process memory/cpu + system memory
     let process_refresh = ProcessRefreshKind::nothing().with_memory().with_cpu();

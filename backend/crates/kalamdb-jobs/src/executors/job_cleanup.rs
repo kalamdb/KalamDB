@@ -209,7 +209,7 @@ mod tests {
         );
         let decision = JobCleanupExecutor::new().execute(&ctx).await.unwrap();
         assert!(matches!(decision, JobDecision::Completed { .. }));
-        assert!(jobs.get_job_by_id(&JobId::new("old_flush")).unwrap().is_none());
-        assert!(jobs.get_job_by_id(&JobId::new("recent_flush")).unwrap().is_some());
+        assert!(jobs.get_job(&JobId::new("old_flush")).unwrap().is_none());
+        assert!(jobs.get_job(&JobId::new("recent_flush")).unwrap().is_some());
     }
 }

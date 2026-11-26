@@ -3,7 +3,9 @@ use kalamdb_sharding::GroupId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransactionRaftBinding {
-    LocalSingleNode,
+    LocalSingleNode {
+        group_id: Option<GroupId>,
+    },
     UnboundCluster,
     BoundCluster {
         group_id: GroupId,

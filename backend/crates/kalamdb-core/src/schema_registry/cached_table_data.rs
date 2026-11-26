@@ -13,6 +13,7 @@ use kalamdb_commons::{
     schemas::TableType,
 };
 use kalamdb_filestore::StorageCached;
+use kalamdb_tables::KalamTableProvider;
 use parking_lot::RwLock;
 
 use crate::{app_context::AppContext, error::KalamDbError, error_extensions::KalamDbResultExt};
@@ -25,6 +26,8 @@ struct ProviderSlot {
     state: AtomicU8,
     initial: OnceLock<Arc<dyn TableProvider + Send + Sync>>,
     override_provider: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
+    initial_kalam: OnceLock<Arc<KalamTableProvider>>,
+    override_kalam: RwLock<Option<Arc<KalamTableProvider>>>,
 }
 
 impl ProviderSlot {
@@ -33,6 +36,8 @@ impl ProviderSlot {
             state: AtomicU8::new(PROVIDER_EMPTY),
             initial: OnceLock::new(),
             override_provider: RwLock::new(None),
+            initial_kalam: OnceLock::new(),
+            override_kalam: RwLock::new(None),
         }
     }
 
@@ -45,16 +50,44 @@ impl ProviderSlot {
         }
     }
 
+    fn get_kalam(&self) -> Option<Arc<KalamTableProvider>> {
+        match self.state.load(Ordering::Acquire) {
+            PROVIDER_INITIALIZED => self.initial_kalam.get().map(Arc::clone),
+            PROVIDER_OVERRIDDEN => self.override_kalam.read().clone(),
+            PROVIDER_EMPTY => None,
+            _ => None,
+        }
+    }
+
     fn set(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
+        self.set_pair(provider, None);
+    }
+
+    fn set_kalam(&self, provider: Arc<KalamTableProvider>) {
+        let table_provider = Arc::clone(&provider) as Arc<dyn TableProvider + Send + Sync>;
+        self.set_pair(table_provider, Some(provider));
+    }
+
+    fn set_pair(
+        &self,
+        provider: Arc<dyn TableProvider + Send + Sync>,
+        kalam: Option<Arc<KalamTableProvider>>,
+    ) {
         let mut override_provider = self.override_provider.write();
+        let mut override_kalam = self.override_kalam.write();
 
         if self.initial.set(Arc::clone(&provider)).is_ok() {
+            if let Some(kalam) = kalam {
+                let _ = self.initial_kalam.set(kalam);
+            }
             *override_provider = None;
+            *override_kalam = None;
             self.state.store(PROVIDER_INITIALIZED, Ordering::Release);
             return;
         }
 
         *override_provider = Some(provider);
+        *override_kalam = kalam;
         self.state.store(PROVIDER_OVERRIDDEN, Ordering::Release);
     }
 }
@@ -380,9 +413,19 @@ impl CachedTableData {
         self.provider.get()
     }
 
+    /// User, shared, and stream provider stored without a downcast.
+    pub fn get_kalam_provider(&self) -> Option<Arc<KalamTableProvider>> {
+        self.provider.get_kalam()
+    }
+
     /// Set the cached `TableProvider` for this table.
     pub fn set_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
         self.provider.set(provider);
+    }
+
+    /// Store a user, shared, or stream provider and its DataFusion view together.
+    pub fn set_kalam_provider(&self, provider: Arc<KalamTableProvider>) {
+        self.provider.set_kalam(provider);
     }
 }
 

@@ -1,11 +1,12 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, BooleanBuilder, Int64Builder, ListBuilder},
-    datatypes::{DataType, Field, Schema, SchemaRef},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use kalamdb_commons::Role;
+use kalamdb_macros::table;
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
@@ -59,33 +60,48 @@ fn push_index_row(
     indkeys.append(true);
 }
 
-fn int64_list_type() -> DataType {
-    DataType::List(Arc::new(Field::new("item", DataType::Int64, true)))
+#[table(
+    name = "pg_index",
+    namespace = SchemaId::pg_catalog(),
+    view = true,
+    comment = "Indexes"
+)]
+#[derive(Debug)]
+struct PgIndexRow {
+    /// Index relation oid
+    indexrelid: i64,
+    /// Indexed relation oid
+    indrelid: i64,
+    /// Number of index columns
+    indnatts: i64,
+    /// Number of key columns
+    indnkeyatts: i64,
+    /// Unique index
+    indisunique: bool,
+    /// Primary key index
+    indisprimary: bool,
+    /// Exclusion index
+    indisexclusion: bool,
+    /// Immediate uniqueness check
+    indimmediate: bool,
+    /// Clustered index
+    indisclustered: bool,
+    /// Index is valid
+    indisvalid: bool,
+    /// Check xmin
+    indcheckxmin: bool,
+    /// Index is ready
+    indisready: bool,
+    /// Index is live
+    indislive: bool,
+    /// Replica identity index
+    indisreplident: bool,
+    /// Indexed column numbers
+    indkey: Vec<i64>,
 }
 
 fn schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("indexrelid", DataType::Int64, false),
-                Field::new("indrelid", DataType::Int64, false),
-                Field::new("indnatts", DataType::Int64, false),
-                Field::new("indnkeyatts", DataType::Int64, false),
-                Field::new("indisunique", DataType::Boolean, false),
-                Field::new("indisprimary", DataType::Boolean, false),
-                Field::new("indisexclusion", DataType::Boolean, false),
-                Field::new("indimmediate", DataType::Boolean, false),
-                Field::new("indisclustered", DataType::Boolean, false),
-                Field::new("indisvalid", DataType::Boolean, false),
-                Field::new("indcheckxmin", DataType::Boolean, false),
-                Field::new("indisready", DataType::Boolean, false),
-                Field::new("indislive", DataType::Boolean, false),
-                Field::new("indisreplident", DataType::Boolean, false),
-                Field::new("indkey", int64_list_type(), false),
-            ]))
-        })
-        .clone()
+    PgIndexRow::arrow_schema()
 }
 
 #[derive(Debug)]

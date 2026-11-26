@@ -265,7 +265,8 @@ mod tests {
         let diff = diff_schema_files(Path::new("/tmp/does-not-exist-schema.sql"), after.path())
             .expect("diff files");
 
-        assert!(diff.up.contains("CREATE USER TABLE users"));
+        assert!(diff.up.contains("CREATE TABLE users"));
+        assert!(diff.up.contains("TYPE = 'USER'"));
     }
 
     #[test]

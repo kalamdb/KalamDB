@@ -16,10 +16,11 @@ use kalamdb_commons::{
     models::{SchemaId, TableId, TableVersionId},
     schemas::TableDefinition,
     storage::Partition,
+    StorageKey,
 };
 use kalamdb_store::{
     entity_store::{CrossUserTableStore, EntityStore},
-    StorageBackend,
+    Operation, StorageBackend,
 };
 
 use crate::SystemTable;
@@ -110,24 +111,21 @@ impl SchemasStore {
         table_id: &TableId,
         table_def: &TableDefinition,
     ) -> Result<(), kalamdb_store::StorageError> {
-        let version = table_def.schema_version;
-
-        // Store the versioned entry
-        let version_key = TableVersionId::versioned(table_id.clone(), version);
-        log::debug!(
-            "[SchemasStore::put_version] table_id={}, version={}, version_key={}",
-            table_id,
-            version,
-            version_key
-        );
-        self.put(&version_key, table_def)?;
-
-        // Update the latest pointer
-        let latest_key = TableVersionId::latest(table_id.clone());
-        log::debug!("[SchemasStore::put_version] table_id={}, latest_key={}", table_id, latest_key);
-        self.put(&latest_key, table_def)?;
-
-        Ok(())
+        // Publish the historical version and latest pointer atomically.
+        let versioned = TableVersionId::versioned(table_id.clone(), table_def.schema_version);
+        let latest = TableVersionId::latest(table_id.clone());
+        self.backend.batch(vec![
+            Operation::Put {
+                partition: self.partition.clone(),
+                key: versioned.storage_key(),
+                value: self.serialize(&versioned, table_def)?,
+            },
+            Operation::Put {
+                partition: self.partition.clone(),
+                key: latest.storage_key(),
+                value: self.serialize(&latest, table_def)?,
+            },
+        ])
     }
 
     /// Delete all versions of a table (for DROP TABLE)
@@ -138,14 +136,22 @@ impl SchemasStore {
         &self,
         table_id: &TableId,
     ) -> Result<usize, kalamdb_store::StorageError> {
+        // No 10k-row cap; remove the latest pointer and all versions as one batch.
         let prefix = TableVersionId::table_scan_prefix(table_id);
-        let entries = self.scan_with_raw_prefix(&prefix, None, 10_000)?;
-        let mut deleted_count = 0;
-        for (version_key, _) in entries {
-            self.delete(&version_key)?;
-            deleted_count += 1;
+        let iter = self.backend.scan(&self.partition, Some(&prefix), None, None)?;
+        let mut operations = Vec::new();
+        for item in iter {
+            let (key, _) = item?;
+            operations.push(Operation::Delete {
+                partition: self.partition.clone(),
+                key,
+            });
         }
-        Ok(deleted_count)
+        let count = operations.len();
+        if count != 0 {
+            self.backend.batch(operations)?;
+        }
+        Ok(count)
     }
 
     /// List all versions of a table (for schema history queries)
@@ -157,7 +163,7 @@ impl SchemasStore {
         table_id: &TableId,
     ) -> Result<Vec<(u32, TableDefinition)>, kalamdb_store::StorageError> {
         let prefix = TableVersionId::version_scan_prefix(table_id);
-        let entries = self.scan_with_raw_prefix(&prefix, None, 10_000)?;
+        let entries = self.scan_with_raw_prefix(&prefix, None, usize::MAX)?;
 
         let mut versions: Vec<(u32, TableDefinition)> = entries
             .into_iter()
@@ -187,7 +193,7 @@ impl SchemasStore {
     ) -> Result<Vec<(TableId, TableDefinition)>, kalamdb_store::StorageError> {
         let prefix = TableVersionId::namespace_scan_prefix(namespace_id);
         let entries: Vec<(TableVersionId, TableDefinition)> =
-            self.scan_with_raw_prefix(&prefix, None, 10_000)?;
+            self.scan_with_raw_prefix(&prefix, None, usize::MAX)?;
 
         let result: Vec<(TableId, TableDefinition)> = entries
             .into_iter()
@@ -211,7 +217,7 @@ impl SchemasStore {
     ) -> Result<Vec<(TableId, TableDefinition)>, kalamdb_store::StorageError> {
         let prefix = TableVersionId::namespace_scan_prefix(namespace_id);
         let entries: Vec<(TableVersionId, TableDefinition)> =
-            self.scan_with_raw_prefix(&prefix, None, 10_000)?;
+            self.scan_with_raw_prefix(&prefix, None, usize::MAX)?;
 
         let mut result: Vec<(TableId, TableDefinition)> = entries
             .into_iter()
@@ -242,7 +248,8 @@ impl SchemasStore {
     pub fn scan_all_with_versions(
         &self,
     ) -> Result<Vec<(TableVersionId, TableDefinition, bool)>, kalamdb_store::StorageError> {
-        let entries = self.scan_all_typed(None, None, None)?;
+        let entries: Vec<(TableVersionId, TableDefinition)> =
+            self.scan_iterator(None, None)?.collect::<Result<Vec<_>, _>>()?;
 
         let result: Vec<(TableVersionId, TableDefinition, bool)> = entries
             .into_iter()

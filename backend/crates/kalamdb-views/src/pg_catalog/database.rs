@@ -1,31 +1,40 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, BooleanBuilder, Int64Builder, StringBuilder},
-    datatypes::{DataType, Field, Schema, SchemaRef},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use kalamdb_commons::Role;
+use kalamdb_macros::table;
 
 use crate::{
     error::RegistryError,
     pg_catalog::{stable_oid, PgCatalogView},
 };
 
+#[table(
+    name = "pg_database",
+    namespace = SchemaId::pg_catalog(),
+    view = true,
+    comment = "Databases"
+)]
+#[derive(Debug)]
+struct PgDatabaseRow {
+    /// Database oid
+    oid: i64,
+    /// Database name
+    datname: String,
+    /// Owner oid
+    datdba: i64,
+    /// Whether this database is a template
+    datistemplate: bool,
+    /// Whether connections are allowed
+    datallowconn: bool,
+}
+
 fn schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("oid", DataType::Int64, false),
-                Field::new("datname", DataType::Utf8, false),
-                Field::new("datdba", DataType::Int64, false),
-                Field::new("datistemplate", DataType::Boolean, false),
-                // Clients (Tabularis, DBeaver, etc.) filter connectable DBs with this.
-                Field::new("datallowconn", DataType::Boolean, false),
-            ]))
-        })
-        .clone()
+    PgDatabaseRow::arrow_schema()
 }
 
 #[derive(Debug)]

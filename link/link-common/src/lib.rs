@@ -21,6 +21,9 @@ pub mod event_handlers;
 pub mod models;
 #[cfg(feature = "client-core")]
 pub mod query;
+#[cfg(feature = "client-core")]
+#[doc(hidden)]
+pub mod realtime;
 pub mod routine_frame;
 #[cfg(feature = "client-core")]
 pub mod seq_tracking;

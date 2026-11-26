@@ -85,7 +85,10 @@ fn test_project_workflow_link_and_status_report_environment() {
     );
 
     let stderr = String::from_utf8_lossy(&status_output.stderr);
-    assert!(stderr.contains(&prod_url), "expected url in status\n{stderr}");
+    assert!(
+        stderr.contains(&browser_server_url(&prod_url)),
+        "expected url in status\n{stderr}"
+    );
     assert!(stderr.contains("prod_app"), "expected namespace in status\n{stderr}");
     assert!(stderr.contains("project: status-app"), "expected project name\n{stderr}");
 }

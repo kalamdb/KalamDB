@@ -10,3 +10,12 @@ use kalamdb_commons::JobId;
 pub trait JobWaker: Send + Sync {
     fn awake_job(&self, job_id: JobId);
 }
+
+/// Typed job capability installed by `kalamdb-jobs`.
+///
+/// Ordinary callers use this trait, or the jobs crate's typed accessor, instead
+/// of downcasting `Any`.
+pub trait JobCapability: JobWaker {
+    /// Executor names registered for this process.
+    fn registered_executor_names(&self) -> Vec<&'static str>;
+}

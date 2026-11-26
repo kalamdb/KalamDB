@@ -61,8 +61,12 @@
 
 use std::{any::Any, fmt};
 
-/// Type alias for a boxed key-value iterator to simplify function signatures
-pub type KvIterator<'a> = Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + Send + 'a>;
+/// Type alias for a boxed key-value iterator to simplify function signatures.
+///
+/// Each item is `Ok` for a row or `Err` for a storage failure. `None` is the
+/// only end of scan. An iterator error must not look like a short result.
+pub type KvIterator<'a> =
+    Box<dyn Iterator<Item = std::result::Result<(Vec<u8>, Vec<u8>), StorageError>> + Send + 'a>;
 
 /// Result type for storage operations.
 pub type Result<T> = std::result::Result<T, StorageError>;
@@ -210,7 +214,8 @@ pub trait StorageBackend: Send + Sync {
     /// Scans keys in a partition, optionally filtered by prefix and limit.
     ///
     /// Returns an iterator of (key, value) pairs. The iterator should be
-    /// memory-efficient (not loading all data at once).
+    /// memory-efficient (not loading all data at once). A storage error is an
+    /// `Err` item, not the end of the scan.
     ///
     /// ## Parameters
     /// - `prefix`: If Some, only return keys starting with this prefix

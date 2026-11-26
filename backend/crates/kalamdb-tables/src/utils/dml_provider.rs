@@ -1,6 +1,6 @@
 //! Unified KalamDB table provider trait.
 //!
-//! `KalamTableProvider` extends DataFusion's `TableProvider` with KalamDB-specific
+//! `TableRowDml` extends DataFusion's `TableProvider` with KalamDB-specific
 //! DML operations (INSERT, and future methods). All table types — User, Shared,
 //! Stream, and System — implement this trait, giving a single provider abstraction
 //! for the entire caching and execution layer.
@@ -27,7 +27,7 @@ use crate::error::KalamDbError;
 /// - **User/Shared/Stream**: Override `insert_rows()` with batch-insert logic.
 /// - **System**: Use the default (returns error — system tables are read-only).
 #[async_trait]
-pub trait KalamTableProvider: TableProvider + Send + Sync {
+pub trait TableRowDml: TableProvider + Send + Sync {
     /// Insert rows directly, returning the number of rows inserted.
     ///
     /// Default implementation returns an error for read-only tables (system tables).

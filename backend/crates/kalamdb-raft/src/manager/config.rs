@@ -54,7 +54,7 @@ pub struct RaftManagerConfig {
     /// Raft election timeout range (min, max) in milliseconds
     pub election_timeout_ms: (u64, u64),
 
-    /// Snapshot policy (default: "LogsSinceLast(1000)")
+    /// Snapshot policy (default: "LogsSinceLast(50000)")
     pub snapshot_policy: String,
 
     /// Maximum number of snapshots to keep
@@ -77,6 +77,9 @@ pub struct RaftManagerConfig {
 
     /// Maximum delay in milliseconds between peer availability checks (exponential backoff cap)
     pub peer_wait_max_delay_ms: u64,
+
+    /// OpenRaft API channel depth. `None` keeps the upstream default of 65536.
+    pub api_channel_size: Option<u64>,
 }
 
 impl Default for RaftManagerConfig {
@@ -92,7 +95,7 @@ impl Default for RaftManagerConfig {
             shared_shards: DEFAULT_SHARED_DATA_SHARDS,
             heartbeat_interval_ms: 250,
             election_timeout_ms: (500, 1000),
-            snapshot_policy: "LogsSinceLast(1000)".to_string(),
+            snapshot_policy: "LogsSinceLast(50000)".to_string(),
             max_snapshots_to_keep: 3,
             replication_timeout_ms: 5000,
             replication_timeout: Duration::from_secs(5),
@@ -100,6 +103,7 @@ impl Default for RaftManagerConfig {
             peer_wait_max_retries: 60,
             peer_wait_initial_delay_ms: 500,
             peer_wait_max_delay_ms: 2000,
+            api_channel_size: None,
         }
     }
 }
@@ -128,7 +132,7 @@ impl RaftManagerConfig {
             shared_shards: 1, // Single shard - no distribution needed
             heartbeat_interval_ms: 250,
             election_timeout_ms: (500, 1000),
-            snapshot_policy: "LogsSinceLast(1000)".to_string(),
+            snapshot_policy: "LogsSinceLast(50000)".to_string(),
             max_snapshots_to_keep: 1, // Keep only most recent snapshot for single-node
             replication_timeout_ms: 5000,
             replication_timeout: Duration::from_secs(5),
@@ -136,6 +140,7 @@ impl RaftManagerConfig {
             peer_wait_max_retries: 60,
             peer_wait_initial_delay_ms: 500,
             peer_wait_max_delay_ms: 2000,
+            api_channel_size: None,
         }
     }
 }
@@ -162,6 +167,7 @@ impl From<kalamdb_configs::ClusterConfig> for RaftManagerConfig {
             peer_wait_max_retries: config.peer_wait_max_retries.unwrap_or(60),
             peer_wait_initial_delay_ms: config.peer_wait_initial_delay_ms.unwrap_or(500),
             peer_wait_max_delay_ms: config.peer_wait_max_delay_ms.unwrap_or(2000),
+            api_channel_size: None,
         }
     }
 }

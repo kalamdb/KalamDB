@@ -5,8 +5,8 @@ globs: cli/**/*.rs, cli/templates/**, specs/035-cli-everyday-lifecycle/**
 
 # Everyday CLI workflow
 
-Read `specs/035-cli-everyday-lifecycle/spec.md` before changing CLI lifecycle
-behavior.
+Open `specs/035-cli-everyday-lifecycle/spec.md` only when this task changes
+lifecycle behavior. Leave it unread for other CLI edits.
 
 ## Source files
 

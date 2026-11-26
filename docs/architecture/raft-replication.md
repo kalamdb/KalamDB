@@ -2,13 +2,13 @@
 
 ## Overview
 
-KalamDB uses a multi-Raft topology (OpenRaft 0.9) to replicate metadata, jobs, user data, and shared data across nodes. The Raft layer lives in [backend/crates/kalamdb-raft](../../backend/crates/kalamdb-raft/src/lib.rs) and is accessed through the `CommandExecutor` abstraction so handlers do not branch on cluster vs standalone mode.
+KalamDB uses a multi-Raft topology (OpenRaft 0.10) to replicate metadata, jobs, user data, and shared data across nodes. The Raft layer lives in [backend/crates/kalamdb-raft](../../backend/crates/kalamdb-raft/src/lib.rs) and is accessed through the `CommandExecutor` abstraction so handlers do not branch on cluster vs standalone mode.
 
 - **Multi-group layout**: 1 unified metadata group, 32 user-data shards, and 4 shared-data shards by default in clustered mode. Standalone uses one shared group. Group identity and sharding helpers live in [backend/crates/kalamdb-sharding/src](../../backend/crates/kalamdb-sharding/src/lib.rs), and group ID decoding accepts the configured user/shared shard ranges.
 - **Command path**: Handler → `CommandExecutor` (`DirectExecutor` in standalone or `RaftExecutor` in cluster) → `RaftManager` → `RaftGroup` → OpenRaft log → State machine → Applier → storage/provider.
 - **Replication modes**: `Quorum` (fast, default) or `All` (wait for every member to apply) configured via `ReplicationMode` in [backend/crates/kalamdb-raft/src/manager/config.rs](../../backend/crates/kalamdb-raft/src/manager/config.rs).
-- **Transport**: gRPC service in [backend/crates/kalamdb-raft/src/network/service.rs](../../backend/crates/kalamdb-raft/src/network/service.rs) handles Raft RPCs and follower→leader proposal forwarding.
-- **Storage**: Combined log + state machine storage in [backend/crates/kalamdb-raft/src/storage/raft_store.rs](../../backend/crates/kalamdb-raft/src/storage/raft_store.rs). Production managers use the `RaftPartitionStore` in `kalamdb-store` for durable log/vote/commit/purge metadata, with a bounded in-memory log cache; memory-only storage is reserved for tests and ephemeral standalone use. Snapshots are used for compaction. Real table writes are persisted by appliers after Raft apply.
+- **Transport**: `RaftNetworkV2` over the gRPC service in [backend/crates/kalamdb-raft/src/network/service.rs](../../backend/crates/kalamdb-raft/src/network/service.rs) handles Raft RPCs and follower→leader proposal forwarding. Append, vote, and snapshot transfer are unary. The envelope carries `protocol_version`; a different version is rejected before the payload is decoded.
+- **Storage**: Combined log + state machine storage in [backend/crates/kalamdb-raft/src/storage/raft_store.rs](../../backend/crates/kalamdb-raft/src/storage/raft_store.rs). Production managers use the `RaftPartitionStore` in `kalamdb-store` (RocksDB) for durable log, vote, membership, and snapshot metadata, with a bounded in-memory log cache. `InMemoryBackend` is the test backend behind the same store API. Snapshots are used for compaction. Real table writes are persisted by appliers after Raft apply.
 
 ## Topology & Sharding
 
@@ -44,8 +44,8 @@ KalamDB uses a multi-Raft topology (OpenRaft 0.9) to replicate metadata, jobs, u
 
 ## Network Layer
 
-- Service surface: `RaftRpc` (vote, append_entries, install_snapshot) and `ClientProposal` (follower→leader proposal forwarding) defined in [backend/crates/kalamdb-raft/src/network/service.rs](../../backend/crates/kalamdb-raft/src/network/service.rs).
-- Client side: each `RaftNetworkFactory` produces `RaftNetwork` clients per group, but all Raft consensus groups in a `RaftManager` share one node-level tonic channel pool keyed by peer `NodeId` ([backend/crates/kalamdb-raft/src/network/network.rs](../../backend/crates/kalamdb-raft/src/network/network.rs)). This keeps the multi-Raft topology from opening one persistent HTTP/2 transport per `(group, peer)` pair.
+- Service surface: `RaftRpc` (vote, pre-vote, append entries, snapshot chunks, leadership transfer) and `ClientProposal` (follower→leader proposal forwarding) defined in [backend/crates/kalamdb-raft/src/network/service.rs](../../backend/crates/kalamdb-raft/src/network/service.rs). The client implements OpenRaft `RaftNetworkV2`. `RaftRpcKind` is the envelope discriminant for that one RPC.
+- Client side: each `RaftNetworkFactory` produces `RaftNetwork` clients per group, but all Raft consensus groups in a `RaftManager` share one node-level tonic channel pool keyed by peer `NodeId` ([backend/crates/kalamdb-raft/src/network/network.rs](../../backend/crates/kalamdb-raft/src/network/network.rs)). This keeps the multi-Raft topology from opening one persistent HTTP/2 transport per `(group, peer)` pair. A snapshot larger than one chunk is split into 1 MiB pieces and installed only after reassembly.
 - Non-Raft cluster RPCs (`ForwardSql`, `Ping`, and `GetNodeInfo`) use a separate node-level tonic channel pool, also keyed by peer `NodeId`. This keeps long-running follower→leader SQL forwarding from sharing an HTTP/2 transport with Raft heartbeats, append entries, votes, and snapshots.
 - RPC call construction is centralized in the network layer: OpenRaft RPCs use a typed `RaftRpcKind` plus shared encode/send/decode helpers, follower proposal forwarding uses `RaftNetworkFactory::send_client_proposal`, and non-Raft cluster messages use `ClusterClient` shared request/metadata/error handling. This keeps channel reuse, auth metadata, and serde boundaries consistent across inter-node calls.
 - Serialization boundaries are intentionally layered: tonic/prost frames the gRPC messages, MessagePack encodes OpenRaft request/response payloads, FlexBuffers encodes committed Raft commands and apply responses, and follower SQL forwarding returns already-serialized HTTP JSON bytes from the leader so followers do not deserialize and reserialize result bodies.
@@ -60,7 +60,7 @@ Implemented in [backend/crates/kalamdb-raft/src/manager/raft_manager.rs](../../b
 - **Start**: Registers configured peers with every group, starts the RPC server, then starts all Raft groups with OpenRaft configs (heartbeat/election timeouts from `RaftManagerConfig`).
 - **Bootstrap (first node)**: `initialize_cluster` seeds every group with this node as the sole voter, then optionally adds peers as learners and promotes them.
 - **Adding nodes**: `add_node` registers a learner in every group, waits for catch-up per group, then promotes to voter.
-- **Shutdown**: Attempts best-effort leadership transfer (OpenRaft 0.9 lacks explicit transfer) then marks the manager stopped.
+- **Shutdown**: Each group this node leads transfers leadership to its most caught-up other voter and waits for that transfer, then the groups shut down.
 - **Replication controls**: `replication_mode` (Quorum/All) and `replication_timeout` are applied per proposal; `total_nodes` drives `propose_with_all_replicas` when strong replication is requested.
 
 ## Raft Groups
@@ -70,7 +70,7 @@ Defined in [backend/crates/kalamdb-raft/src/manager/raft_group.rs](../../backend
 - Wraps an OpenRaft `Raft` instance plus combined storage and network factory for a single group.
 - Key operations: `start`, `initialize`, `add_learner`, `wait_for_learner_catchup`, `promote_learner`, `change_membership`, `propose`, `propose_with_all_replicas`, and `propose_with_forward`.
 - Forwarding retries with exponential backoff and returns `NotLeader` errors with leader hints when forwarding fails.
-- Leadership transfer is a no-op placeholder (OpenRaft 0.9 lacks direct support).
+- Leadership transfer uses `trigger().transfer_leader` and waits until the target is the current leader. A target that is not a current voter is rejected. Pre-Vote is enabled, so a timed-out voter cannot raise the term while another voter still acks the leader.
 
 ## Storage & Snapshots
 
@@ -80,7 +80,7 @@ Implemented by `KalamRaftStorage` in [backend/crates/kalamdb-raft/src/storage/ra
 - Conflict-log truncation deletes the divergent suffix from both the in-memory cache and durable Raft partition so stale entries cannot reappear after restart.
 - OpenRaft RPC/snapshot serialization continues to use bincode helpers in [backend/crates/kalamdb-raft/src/state_machine/serde_helpers.rs](../../backend/crates/kalamdb-raft/src/state_machine/serde_helpers.rs).
 - State machine apply runs on every node. Deterministic command rejections can be surfaced as response payloads, but hard state-machine or storage apply failures must fail the OpenRaft apply call so `last_applied` is not advanced before local materialization succeeds.
-- **Current limitation**: log/state storage is in-memory; durability relies on higher layers persisting real data via appliers. Crash restart currently depends on application-level recovery.
+- Persisted Raft records are KalamDB-owned. The leader id on the wire is the standard single-leader-per-term id. `truncate_after` keeps the named index. Standalone defers the log flush into the apply batch; a cluster flushes the log before the append is acknowledged. Snapshot files older than `max_snapshots_to_keep` are deleted after the new snapshot is durable. `system.cluster_groups.committed` is the cluster commit index.
 
 ## State Machines & Appliers
 
@@ -108,8 +108,8 @@ Responses are serialized FlexBuffers payloads returned after apply.
 
 ## Operational Notes & Limitations
 
-- Leadership transfer is best-effort only during shutdown; OpenRaft re-elects leaders after a departing leader stops.
-- Automatic leader balancing across user shards is not implemented yet. OpenRaft 0.9 does not expose a direct leadership-transfer API in the current wrapper, so balancing requires either a newer OpenRaft surface or coordinated restart/election controls.
+- Shutdown transfers each local leadership to the voter with the furthest matching log and waits. A group with no other voter stays as it is.
+- Data-group leader rebalance uses the same transfer. The Meta leader is not treated as the leader of every group.
 - Strong replication (`All`) waits for every configured node to apply; cluster size drives the wait set. Misconfigured peer counts can block proposals.
 - Raft log/vote/commit/purge metadata is durable in persistent manager mode. Appliers still own table-row durability (RocksDB hot path, later Parquet flush), so both Raft storage and provider apply health matter for crash recovery.
 - Snapshot size is driven by state machine caches; large snapshots can impact install_snapshot traffic. Purge thresholds (`max_in_snapshot_log_to_keep`, `purge_batch_size`) are set in `RaftGroup::start`.
@@ -119,7 +119,7 @@ Responses are serialized FlexBuffers payloads returned after apply.
 
 - **Storage engine hardening**: Keep the durable `RaftPartitionStore` path as the production default, then add more targeted tests and metrics around suffix truncation, purge, restart recovery, and snapshot install under fault injection.
 - **Snapshot tuning**: Enable streaming or chunked snapshot sends and compress snapshot payloads to reduce memory spikes; lower `max_in_snapshot_log_to_keep` and tune snapshot trigger thresholds per group size to minimize in-memory log growth.
-- **Stronger failover hygiene**: Add pre-vote and staggered election timeouts per group to reduce split votes; expose health probes and replication-lag metrics for each group via `RaftManager` so the API tier can drain traffic from lagging nodes.
+- **Stronger failover hygiene**: Pre-Vote is enabled on every group. Staggered election timeouts per group are not. `system.cluster_groups` exposes `committed`, `local_committed`, `flushed`, and `lag`, and `system.cluster` exposes `leaders`, `followers`, `lagging_groups`, `worst_lag`, and `heartbeat_age`.
 - **Leader balancing across data shards**: Add shard-leader placement goals and metrics first, then implement a safe transfer or drain mechanism when the OpenRaft API surface supports it. Keep the meta group stable and allow user shards to spread leaders for write throughput.
 - **Proposal backpressure**: Add queue depth/lag-based backpressure in `RaftExecutor` before proposing, and surface `NotLeader` + `leader_hint` telemetry to callers to cut retry storms during elections.
 - **Membership safety rails**: Validate peer counts against `replication_mode` (e.g., prevent `All` with missing voters), and add a periodic reconciler that re-registers peers into all `RaftGroup` network factories to heal stale channel caches.
@@ -128,6 +128,19 @@ Responses are serialized FlexBuffers payloads returned after apply.
 - **Adaptive networking**: Batch and pipeline append_entries per target where possible; reuse tonic channels aggressively (already cached) and add exponential backoff jitter for client-proposal forwarding to reduce thundering herds.
 - **Observability hooks**: Export per-group gauges for `last_applied`, `replication_lag`, snapshot send/receive sizes, and propose latency; wire them into `ClusterInfo` so operators can alert on lag before it impacts HA.
 - **Column-family consolidation**: Replace per-shard/per-table RocksDB column families with a small fixed set of column families and prefix keys by table/user/shard. This should be done behind storage abstractions so Raft group count and storage layout remain independently tunable.
+
+## Rolling upgrade
+
+OpenRaft 0.9 and 0.10 cannot share a Raft group. A 0.9 `ForwardToLeader` and `VoteRequest` do not decode on 0.10, and the standard leader id changes the `LogId` layout. KalamDB bincode-encodes those RPC bodies.
+
+The upgrade is a coordinated restart of the whole cluster:
+
+1. Stop every node. Do not leave a 0.9 node running beside a 0.10 node.
+2. Replace every binary with the same 0.10 build.
+3. Start the nodes. Each node reads its existing KalamDB Raft records and rejects an RPC whose `protocol_version` is not 1 before it decodes the payload.
+4. Confirm `system.cluster` and `system.cluster_groups` before taking writes. `committed` on `system.cluster_groups` is the cluster commit index.
+
+There is no mixed-version membership and no online binary roll.
 
 ## How to Run Cluster Mode (today)
 

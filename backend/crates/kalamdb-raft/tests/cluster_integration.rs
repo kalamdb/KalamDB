@@ -26,9 +26,10 @@ use kalamdb_commons::{
     TableId,
 };
 use kalamdb_raft::{
-    commands::{MetaCommand, SharedDataCommand, UserDataCommand},
-    manager::{PeerNode, RaftManager, RaftManagerConfig},
-    ApplyResult, GroupId, KalamRaftStorage, KalamStateMachine, RaftError, StateMachineSnapshot,
+    commands::{MetaCommand, RaftCommand, SharedDataCommand, UserDataCommand},
+    manager::{PeerNode, RaftGroup, RaftManager, RaftManagerConfig},
+    ApplyResult, GroupId, KalamNode, KalamRaftStorage, KalamStateMachine, MetaStateMachine,
+    RaftCommandBytes, RaftError, StateMachineSnapshot, UserDataStateMachine,
 };
 use kalamdb_sharding::ShardRouter;
 use kalamdb_system::{providers::jobs::models::Job, JobStatus, JobType};
@@ -205,17 +206,22 @@ async fn test_snapshot_restore_via_storage_install_snapshot() {
 
     let entries = vec![
         Entry {
-            log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
-            payload: EntryPayload::Normal(4u64.to_le_bytes().to_vec()),
+            log_id: LogId::new(openraft::vote::leader_id_std::CommittedLeaderId::new(1), 1),
+            payload: EntryPayload::Normal(RaftCommandBytes::new(4u64.to_le_bytes().to_vec())),
         },
         Entry {
-            log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 2),
-            payload: EntryPayload::Normal(6u64.to_le_bytes().to_vec()),
+            log_id: LogId::new(openraft::vote::leader_id_std::CommittedLeaderId::new(1), 2),
+            payload: EntryPayload::Normal(RaftCommandBytes::new(6u64.to_le_bytes().to_vec())),
         },
     ];
 
     let mut leader_storage_clone = leader_storage.clone();
-    RaftStateMachine::apply(&mut leader_storage_clone, entries).await.unwrap();
+    RaftStateMachine::apply(
+        &mut leader_storage_clone,
+        tokio_stream::iter(entries.into_iter().map(|entry| Ok((entry, None)))),
+    )
+    .await
+    .unwrap();
 
     let mut builder = leader_storage_clone.get_snapshot_builder().await;
     let snapshot = builder.build_snapshot().await.unwrap();
@@ -283,6 +289,24 @@ impl TestCluster {
             node.initialize_cluster().await?;
         }
         Ok(())
+    }
+
+    async fn wait_for_meta_voters(&self, count: usize, timeout: Duration) -> bool {
+        let start = std::time::Instant::now();
+        while start.elapsed() < timeout {
+            let ready = self.nodes.iter().any(|node| {
+                node.manager
+                    .meta()
+                    .metrics()
+                    .map(|metrics| metrics.membership_config.voter_ids().count() >= count)
+                    .unwrap_or(false)
+            });
+            if ready {
+                return true;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+        false
     }
 
     /// Wait for leader election to complete for all groups
@@ -368,6 +392,47 @@ impl TestCluster {
         }
         true
     }
+
+    async fn start_formed(self) -> Self {
+        self.start_all().await.expect("start cluster");
+        self.initialize().await.expect("initialize cluster");
+        assert!(self.wait_for_leaders(Duration::from_secs(8)).await, "leaders");
+        assert!(self.wait_for_meta_voters(3, Duration::from_secs(20)).await, "voters");
+        self
+    }
+}
+
+fn meta_applied(node: &TestNode) -> u64 {
+    node.manager
+        .meta()
+        .metrics()
+        .and_then(|metrics| metrics.last_applied.map(|log_id| log_id.index))
+        .unwrap_or(0)
+}
+
+async fn wait_meta_applied(node: &TestNode, index: u64) -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < Duration::from_secs(8) {
+        if meta_applied(node) >= index {
+            return true;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    false
+}
+
+async fn create_namespace(manager: &RaftManager, name: &str) -> Result<(), RaftError> {
+    manager
+        .propose_meta(MetaCommand::CreateNamespace {
+            namespace_id: SchemaId::from(name),
+            created_by: None,
+        })
+        .await
+        .map(|_| ())
+}
+
+fn block_meta(from: &TestNode, to: NodeId, blocked: bool) {
+    from.manager.meta().network_factory().block_peer(to, blocked);
 }
 
 // =============================================================================
@@ -1158,4 +1223,677 @@ async fn test_proposal_before_start_error() {
     assert!(result.is_err(), "Proposal before start should fail");
 
     println!("✅ Proposal before start error handling verified!");
+}
+
+/// 0.9 baseline: a follower Raft core stops and starts again, then the group
+/// still accepts a write. T093 must keep this passing after the leader-id change.
+#[tokio::test]
+#[ntest::timeout(120_000)]
+async fn follower_restart_then_more_writes() {
+    let cluster = TestCluster::new(3, 13000, 14000, 1);
+
+    cluster.start_all().await.expect("start cluster");
+    cluster.initialize().await.expect("initialize cluster");
+    assert!(
+        cluster.wait_for_leaders(Duration::from_secs(8)).await,
+        "leaders before follower restart"
+    );
+
+    let leader = cluster.get_leader_node(GroupId::Meta).expect("meta leader");
+    leader
+        .manager
+        .propose_meta(MetaCommand::CreateNamespace {
+            namespace_id: SchemaId::from("before_follower_restart"),
+            created_by: None,
+        })
+        .await
+        .expect("write before follower restart");
+
+    let follower = cluster.get_follower_node(GroupId::Meta).expect("meta follower");
+    let follower_id = follower.node_id;
+    follower.manager.shutdown().await.expect("shutdown follower");
+    follower.manager.start().await.expect("restart follower");
+
+    assert!(
+        cluster.wait_for_leaders(Duration::from_secs(8)).await,
+        "leaders after follower {follower_id} restart"
+    );
+
+    let leader = cluster.get_leader_node(GroupId::Meta).expect("meta leader after restart");
+    leader
+        .manager
+        .propose_meta(MetaCommand::CreateNamespace {
+            namespace_id: SchemaId::from("after_follower_restart"),
+            created_by: None,
+        })
+        .await
+        .expect("write after follower restart");
+}
+
+#[tokio::test]
+async fn standalone_group_rejects_add_learner() {
+    let group = RaftGroup::new(GroupId::Meta, MetaStateMachine::new());
+    let config =
+        RaftManagerConfig::for_single_node("standalone".to_string(), "127.0.0.1:0".to_string());
+    group.start(NodeId::new(1), &config).await.expect("start standalone group");
+
+    let err = group
+        .add_learner(NodeId::new(2), KalamNode::default())
+        .await
+        .expect_err("standalone add_learner");
+    assert!(err.to_string().contains("standalone"), "{err}");
+
+    group.shutdown().await.expect("shutdown standalone group");
+}
+
+#[tokio::test]
+async fn three_node_leadership_transfer() {
+    let cluster = TestCluster::new(3, 13100, 14100, 1);
+    cluster.start_all().await.expect("start");
+    cluster.initialize().await.expect("initialize");
+    assert!(cluster.wait_for_leaders(Duration::from_secs(8)).await, "leaders");
+    assert!(cluster.wait_for_meta_voters(3, Duration::from_secs(20)).await, "three voters");
+
+    let leader = cluster.get_leader_node(GroupId::Meta).expect("meta leader");
+    let leader_id = leader.node_id.as_u64();
+    let metrics = leader.manager.meta().metrics().expect("metrics");
+    let target = metrics
+        .membership_config
+        .voter_ids()
+        .find(|id| *id != leader_id)
+        .expect("another voter");
+
+    let rejected = leader
+        .manager
+        .meta()
+        .transfer_leadership(NodeId::new(99))
+        .await
+        .expect_err("non-voter transfer");
+    assert!(rejected.to_string().contains("voter"), "{rejected}");
+
+    leader
+        .manager
+        .meta()
+        .transfer_leadership(NodeId::new(target))
+        .await
+        .expect("transfer");
+    assert_eq!(
+        cluster
+            .nodes
+            .iter()
+            .find(|node| node.node_id.as_u64() == leader_id)
+            .unwrap()
+            .current_leader(GroupId::Meta),
+        Some(target)
+    );
+}
+
+#[tokio::test]
+async fn maintenance_failover_transfers_leadership() {
+    let cluster = TestCluster::new(3, 13200, 14200, 1);
+    cluster.start_all().await.expect("start");
+    cluster.initialize().await.expect("initialize");
+    assert!(cluster.wait_for_leaders(Duration::from_secs(8)).await, "leaders");
+    assert!(cluster.wait_for_meta_voters(3, Duration::from_secs(20)).await, "three voters");
+
+    let leader = cluster.get_leader_node(GroupId::Meta).expect("meta leader");
+    let leader_id = leader.node_id;
+    leader.manager.shutdown().await.expect("maintenance shutdown");
+
+    let started = std::time::Instant::now();
+    let mut new_leader = None;
+    while started.elapsed() < Duration::from_secs(8) {
+        new_leader = cluster
+            .nodes
+            .iter()
+            .filter(|node| node.node_id != leader_id)
+            .find_map(|node| node.current_leader(GroupId::Meta));
+        if new_leader.is_some_and(|id| id != leader_id.as_u64()) {
+            break;
+        }
+        new_leader = None;
+        sleep(Duration::from_millis(50)).await;
+    }
+    let new_leader = new_leader.expect("a remaining node should lead meta");
+    let successor = cluster
+        .nodes
+        .iter()
+        .find(|node| node.node_id.as_u64() == new_leader)
+        .expect("successor node");
+    successor
+        .manager
+        .propose_meta(MetaCommand::CreateNamespace {
+            namespace_id: SchemaId::from("after_maintenance_failover"),
+            created_by: None,
+        })
+        .await
+        .expect("write after maintenance failover");
+}
+
+#[tokio::test]
+async fn timed_out_voter_cannot_depose_quorum_leader() {
+    let cluster = TestCluster::new(3, 13300, 14300, 1);
+    cluster.start_all().await.expect("start");
+    cluster.initialize().await.expect("initialize");
+    assert!(cluster.wait_for_leaders(Duration::from_secs(8)).await, "leaders");
+    assert!(cluster.wait_for_meta_voters(3, Duration::from_secs(20)).await, "three voters");
+
+    let leader = cluster.get_leader_node(GroupId::Meta).expect("meta leader");
+    let leader_id = leader.node_id.as_u64();
+    let before = leader.manager.meta().metrics().expect("metrics");
+    let term = before.current_term;
+    let follower = before
+        .membership_config
+        .voter_ids()
+        .find(|id| *id != leader_id)
+        .expect("another voter");
+
+    // One-way partition: the follower stops hearing the leader and its election
+    // timer fires. The leader still replicates to the remaining voter, so the
+    // group keeps quorum. Pre-Vote must leave the leader and its term in place.
+    leader.manager.meta().network_factory().block_peer(NodeId::new(follower), true);
+
+    sleep(Duration::from_secs(2)).await;
+
+    let after = leader.manager.meta().metrics().expect("metrics after partition");
+    assert_eq!(after.current_leader, Some(leader_id), "leader deposed: {after:?}");
+    assert_eq!(after.current_term, term, "term changed: {after:?}");
+}
+
+#[tokio::test]
+async fn group_progress_reports_cluster_commit_index() {
+    let cluster = TestCluster::new(1, 13400, 14400, 1);
+    cluster.start_all().await.expect("start");
+    cluster.initialize().await.expect("initialize");
+    assert!(cluster.wait_for_leaders(Duration::from_secs(8)).await, "leaders");
+
+    let node = &cluster.nodes[0];
+    let started = std::time::Instant::now();
+    let mut progress = None;
+    while started.elapsed() < Duration::from_secs(2) {
+        progress = node.manager.group_progress(GroupId::Meta);
+        if progress.as_ref().is_some_and(|progress| progress.committed.is_some()) {
+            break;
+        }
+        sleep(Duration::from_millis(20)).await;
+    }
+    let progress = progress.expect("meta progress");
+    let committed = progress.committed.expect("cluster commit index");
+    let metrics = node.manager.meta_metrics().expect("metrics");
+    if let Some(cluster_committed) = &metrics.cluster_committed {
+        assert_eq!(committed, cluster_committed.index);
+    }
+    let applied = progress.applied.unwrap_or(0);
+    assert_eq!(progress.lag, Some(committed.saturating_sub(applied)));
+    assert!(node.manager.group_progress(GroupId::Meta).is_some());
+}
+
+#[tokio::test]
+async fn cluster_summary_counts_each_group_leader() {
+    let cluster = TestCluster::new(1, 13500, 14500, 1);
+    cluster.start_all().await.expect("start");
+    cluster.initialize().await.expect("initialize");
+    assert!(cluster.wait_for_leaders(Duration::from_secs(8)).await, "leaders");
+
+    let node = &cluster.nodes[0];
+    let executor = kalamdb_raft::RaftExecutor::new(node.manager.clone(), std::time::Instant::now());
+    let info = kalamdb_raft::CommandExecutor::get_cluster_info(&executor);
+    let self_node = info.nodes.iter().find(|node| node.is_self).expect("self");
+    assert!(self_node.is_leader);
+    assert!(
+        self_node.leaders.is_some_and(|leaders| leaders > 1),
+        "meta leadership counted as every group: {self_node:?}"
+    );
+    assert_eq!(self_node.leaders, Some(self_node.groups_leading));
+    assert_eq!(self_node.followers, Some(0));
+}
+
+fn scratch_dir(label: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "kalamdb-t110-{label}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    dir
+}
+
+async fn wait_manager_leader(manager: &RaftManager) {
+    let start = std::time::Instant::now();
+    while start.elapsed() < Duration::from_secs(5) {
+        if manager.is_leader(GroupId::Meta) {
+            return;
+        }
+        sleep(Duration::from_millis(20)).await;
+    }
+    panic!("meta leader did not appear");
+}
+
+/// Partition one follower, keep committing with the remaining quorum, then rejoin.
+#[tokio::test]
+#[ntest::timeout(60_000)]
+async fn partition_and_rejoin_keeps_the_group() {
+    let cluster = TestCluster::new(3, 13600, 14600, 1).start_formed().await;
+    let leader = cluster.get_leader_node(GroupId::Meta).expect("leader");
+    let follower = cluster.get_follower_node(GroupId::Meta).expect("follower");
+    let leader_id = leader.node_id;
+    let follower_id = follower.node_id;
+    block_meta(leader, follower_id, true);
+    block_meta(follower, leader_id, true);
+
+    create_namespace(&leader.manager, "during_partition")
+        .await
+        .expect("quorum write");
+    let committed = meta_applied(leader);
+
+    block_meta(leader, follower_id, false);
+    block_meta(follower, leader_id, false);
+    assert!(
+        wait_meta_applied(follower, committed).await,
+        "follower did not catch up after rejoin"
+    );
+    create_namespace(&leader.manager, "after_rejoin")
+        .await
+        .expect("write after rejoin");
+}
+
+/// A follower that misses replication stays behind, then catches up when the block lifts.
+#[tokio::test]
+#[ntest::timeout(60_000)]
+async fn lagging_follower_catches_up() {
+    let cluster = TestCluster::new(3, 13700, 14700, 1).start_formed().await;
+    let leader = cluster.get_leader_node(GroupId::Meta).expect("leader");
+    let follower = cluster.get_follower_node(GroupId::Meta).expect("follower");
+    block_meta(leader, follower.node_id, true);
+
+    create_namespace(&leader.manager, "while_lagging").await.expect("leader write");
+    let leader_applied = meta_applied(leader);
+    let follower_applied = meta_applied(follower);
+    assert!(
+        follower_applied < leader_applied,
+        "blocked follower applied {follower_applied}, leader applied {leader_applied}"
+    );
+
+    block_meta(leader, follower.node_id, false);
+    assert!(
+        wait_meta_applied(follower, leader_applied).await,
+        "lagging follower did not catch up"
+    );
+}
+
+/// A crash that leaves an undecodable tail fails startup and keeps that record.
+#[tokio::test]
+#[ntest::timeout(60_000)]
+async fn restart_during_append_reports_torn_tail() {
+    let backend = Arc::new(kalamdb_store::test_utils::InMemoryBackend::new());
+    let dir = scratch_dir("append");
+    let config = RaftManagerConfig {
+        node_id: NodeId::new(1),
+        rpc_addr: "127.0.0.1:13800".to_string(),
+        api_addr: "127.0.0.1:14800".to_string(),
+        peers: vec![],
+        user_shards: 1,
+        shared_shards: 1,
+        ..Default::default()
+    };
+    {
+        let manager = RaftManager::new_persistent(config.clone(), backend.clone(), dir.clone())
+            .expect("persistent manager");
+        manager.start().await.expect("start");
+        manager.initialize_cluster().await.expect("initialize");
+        wait_manager_leader(&manager).await;
+        create_namespace(&manager, "before_crash").await.expect("write");
+        manager.shutdown().await.expect("shutdown");
+    }
+
+    kalamdb_store::RaftPartitionStore::new(backend.clone(), GroupId::Meta)
+        .append_encoded(vec![(9_000, vec![0xff])])
+        .expect("append torn tail");
+    let err = RaftManager::new_persistent(config, backend.clone(), dir)
+        .expect_err("torn tail must fail startup");
+    let message = err.to_string();
+    assert!(
+        message.contains("undecodable log entry") || message.contains("torn log tail"),
+        "{message}"
+    );
+    assert!(
+        kalamdb_store::RaftPartitionStore::new(backend, GroupId::Meta)
+            .get_log(9_000)
+            .is_err(),
+        "startup failure deleted the torn record"
+    );
+}
+
+/// Shutdown while a snapshot is triggered, then accept another write.
+#[tokio::test]
+#[ntest::timeout(60_000)]
+async fn restart_during_snapshot_accepts_another_write() {
+    let cluster = TestCluster::new(1, 13900, 14900, 1);
+    cluster.start_all().await.expect("start");
+    cluster.initialize().await.expect("initialize");
+    assert!(cluster.wait_for_leaders(Duration::from_secs(5)).await, "leaders");
+    let manager = &cluster.nodes[0].manager;
+    create_namespace(manager, "before_snapshot").await.expect("write");
+    manager.meta().trigger_snapshot().await.expect("trigger snapshot");
+    manager.shutdown().await.expect("shutdown during snapshot");
+    manager.start().await.expect("restart");
+    assert!(cluster.wait_for_leaders(Duration::from_secs(5)).await, "leaders after restart");
+    create_namespace(manager, "after_snapshot")
+        .await
+        .expect("write after snapshot restart");
+}
+
+#[tokio::test]
+#[ntest::timeout(60_000)]
+async fn forced_election_recovers_a_leader() {
+    let cluster = TestCluster::new(3, 15000, 16000, 1).start_formed().await;
+    let term = cluster
+        .get_leader_node(GroupId::Meta)
+        .expect("leader")
+        .manager
+        .meta()
+        .metrics()
+        .expect("metrics")
+        .current_term;
+    cluster
+        .get_follower_node(GroupId::Meta)
+        .expect("follower")
+        .manager
+        .meta()
+        .raft()
+        .expect("follower raft")
+        .trigger()
+        .elect(false)
+        .await
+        .expect("forced election");
+    sleep(Duration::from_millis(800)).await;
+    assert!(cluster.wait_for_leaders(Duration::from_secs(8)).await, "leaders");
+    let later = cluster
+        .nodes
+        .iter()
+        .filter_map(|node| node.manager.meta().metrics().map(|metrics| metrics.current_term))
+        .max()
+        .unwrap_or(0);
+    assert!(later > term, "forced election left term {term}");
+    let leader = cluster.get_leader_node(GroupId::Meta).expect("leader after election");
+    create_namespace(&leader.manager, "after_forced_election")
+        .await
+        .expect("write after forced election");
+}
+
+#[tokio::test]
+#[ntest::timeout(60_000)]
+async fn leadership_transfer_under_load_recovers() {
+    let cluster = TestCluster::new(3, 15100, 16100, 1).start_formed().await;
+    let leader = cluster.get_leader_node(GroupId::Meta).expect("leader");
+    let metrics = leader.manager.meta().metrics().expect("metrics");
+    let target = metrics
+        .membership_config
+        .voter_ids()
+        .find(|id| *id != metrics.id)
+        .expect("other voter");
+    let leader_manager = leader.manager.clone();
+    let writes = tokio::spawn(async move {
+        for name in ["load_a", "load_b", "load_c", "load_d"] {
+            let _ = create_namespace(&leader_manager, name).await;
+        }
+    });
+    leader
+        .manager
+        .meta()
+        .transfer_leadership(NodeId::from(target))
+        .await
+        .expect("transfer under load");
+    writes.await.expect("load writes");
+    assert!(cluster.wait_for_leaders(Duration::from_secs(8)).await, "leaders");
+    let leader = cluster.get_leader_node(GroupId::Meta).expect("leader after transfer");
+    create_namespace(&leader.manager, "after_load_transfer")
+        .await
+        .expect("write after transfer");
+}
+
+#[tokio::test]
+#[ntest::timeout(60_000)]
+async fn quorum_loss_stops_commit_until_rejoin() {
+    let cluster = TestCluster::new(3, 15200, 16200, 1).start_formed().await;
+    let leader_manager = cluster.get_leader_node(GroupId::Meta).expect("leader").manager.clone();
+    for node in &cluster.nodes {
+        for other in &cluster.nodes {
+            if node.node_id != other.node_id {
+                block_meta(node, other.node_id, true);
+            }
+        }
+    }
+    let during = tokio::time::timeout(
+        Duration::from_secs(1),
+        create_namespace(&leader_manager, "during_quorum_loss"),
+    )
+    .await;
+    assert!(!matches!(during, Ok(Ok(()))), "a write committed while every peer was blocked");
+    for node in &cluster.nodes {
+        for other in &cluster.nodes {
+            if node.node_id != other.node_id {
+                block_meta(node, other.node_id, false);
+            }
+        }
+    }
+    assert!(cluster.wait_for_leaders(Duration::from_secs(8)).await, "leaders after rejoin");
+    let leader = cluster.get_leader_node(GroupId::Meta).expect("leader after rejoin");
+    create_namespace(&leader.manager, "after_quorum")
+        .await
+        .expect("write after quorum returns");
+}
+
+#[tokio::test]
+#[ntest::timeout(60_000)]
+async fn expired_leader_lease_recovers_after_heartbeat() {
+    let cluster = TestCluster::new(3, 15300, 16300, 1).start_formed().await;
+    let leader = cluster.get_leader_node(GroupId::Meta).expect("leader");
+    let term = leader.manager.meta().metrics().expect("metrics").current_term;
+    leader
+        .manager
+        .meta()
+        .raft()
+        .expect("leader raft")
+        .runtime_config()
+        .heartbeat(false);
+    sleep(Duration::from_secs(1)).await;
+    let raised = cluster.nodes.iter().any(|node| {
+        node.manager
+            .meta()
+            .metrics()
+            .map(|metrics| metrics.current_term > term)
+            .unwrap_or(false)
+    });
+    for node in &cluster.nodes {
+        if let Some(raft) = node.manager.meta().raft() {
+            raft.runtime_config().heartbeat(true);
+        }
+    }
+    assert!(raised, "stopping heartbeats did not expire the leader lease");
+    assert!(cluster.wait_for_leaders(Duration::from_secs(8)).await, "leaders");
+    let leader = cluster.get_leader_node(GroupId::Meta).expect("leader after lease");
+    create_namespace(&leader.manager, "after_lease")
+        .await
+        .expect("write after lease");
+}
+
+#[tokio::test]
+async fn corrupt_or_missing_snapshot_fails_startup() {
+    let missing_backend = Arc::new(kalamdb_store::test_utils::InMemoryBackend::new());
+    let missing_dir = scratch_dir("missing-snapshot");
+    KalamRaftStorage::<MetaStateMachine>::new_persistent(
+        GroupId::Meta,
+        MetaStateMachine::new(),
+        missing_backend.clone(),
+        missing_dir.clone(),
+    )
+    .expect("empty store");
+    kalamdb_store::RaftPartitionStore::new(missing_backend.clone(), GroupId::Meta)
+        .save_snapshot_meta(&kalamdb_store::RaftSnapshotMeta {
+            last_log_id: None,
+            snapshot_id: "missing".to_string(),
+            build_counter: 1,
+            size_bytes: 0,
+        })
+        .expect("save snapshot meta");
+    let missing = KalamRaftStorage::<MetaStateMachine>::new_persistent(
+        GroupId::Meta,
+        MetaStateMachine::new(),
+        missing_backend.clone(),
+        missing_dir,
+    )
+    .expect_err("missing snapshot data");
+    assert!(missing.to_string().contains("torn snapshot"), "{missing}");
+    assert!(kalamdb_store::RaftPartitionStore::new(missing_backend, GroupId::Meta)
+        .read_snapshot_meta()
+        .expect("read meta")
+        .is_some());
+
+    let corrupt_backend = Arc::new(kalamdb_store::test_utils::InMemoryBackend::new());
+    let corrupt_dir = scratch_dir("corrupt-snapshot");
+    let corrupt_path = corrupt_dir.join("garbage.bin");
+    KalamRaftStorage::<MetaStateMachine>::new_persistent(
+        GroupId::Meta,
+        MetaStateMachine::new(),
+        corrupt_backend.clone(),
+        corrupt_dir.clone(),
+    )
+    .expect("empty store");
+    std::fs::write(&corrupt_path, b"not-a-snapshot").expect("garbage snapshot");
+    let store = kalamdb_store::RaftPartitionStore::new(corrupt_backend.clone(), GroupId::Meta);
+    store
+        .save_snapshot_meta(&kalamdb_store::RaftSnapshotMeta {
+            last_log_id: None,
+            snapshot_id: "garbage".to_string(),
+            build_counter: 1,
+            size_bytes: 14,
+        })
+        .expect("snapshot meta");
+    store
+        .save_snapshot_data(&kalamdb_store::RaftSnapshotData::FilePath(
+            corrupt_path.display().to_string(),
+        ))
+        .expect("snapshot path");
+    let corrupt = KalamRaftStorage::<MetaStateMachine>::new_persistent(
+        GroupId::Meta,
+        MetaStateMachine::new(),
+        corrupt_backend,
+        corrupt_dir,
+    )
+    .expect_err("corrupt snapshot");
+    assert!(corrupt.to_string().contains("undecodable snapshot state"), "{corrupt}");
+    assert!(corrupt_path.is_file(), "startup deleted the corrupt snapshot");
+}
+
+#[tokio::test]
+async fn snapshot_larger_than_rpc_limit_splits_into_chunks() {
+    let data = vec![7u8; 4 * 1024 * 1024 + 1];
+    let chunks = kalamdb_raft::network::snapshot_payload_chunks(&data);
+    assert!(chunks.len() > 1, "a snapshot above 4 MiB must not be one RPC");
+    assert!(chunks.iter().all(|chunk| chunk.len() <= 1024 * 1024));
+    assert!(chunks.iter().all(|chunk| chunk.len() < 4 * 1024 * 1024));
+
+    let vote = kalamdb_raft::storage::KalamVote::new(1, 1);
+    let membership = kalamdb_raft::storage::KalamStoredMembership::default();
+    let transfer_id = std::process::id() as u64;
+    let chunk_count = chunks.len() as u32;
+    let mut finished = None;
+    for (index, chunk) in chunks.into_iter().enumerate() {
+        finished = kalamdb_raft::network::assemble_snapshot_chunk(
+            "t110-large-snapshot",
+            kalamdb_raft::network::SnapshotChunk {
+                vote: vote.clone(),
+                last_log_id: None,
+                last_membership: membership.clone(),
+                transfer_id,
+                chunk_index: index as u32,
+                chunk_count,
+                data: chunk,
+            },
+        )
+        .expect("assemble chunk");
+    }
+    let message = finished.expect("large snapshot reassembled");
+    assert_eq!(message.data, data);
+}
+
+#[tokio::test]
+#[ntest::timeout(60_000)]
+async fn transaction_commit_larger_than_rpc_limit_commits() {
+    let group = RaftGroup::new(GroupId::DataUserShard(0), UserDataStateMachine::new(0));
+    let config =
+        RaftManagerConfig::for_single_node("large-commit".to_string(), "127.0.0.1:0".to_string());
+    group.start(NodeId::new(1), &config).await.expect("start");
+    group
+        .initialize(NodeId::new(1), KalamNode::new("127.0.0.1:0", "127.0.0.1:0"))
+        .await
+        .expect("initialize");
+    let start = std::time::Instant::now();
+    while start.elapsed() < Duration::from_secs(5) && !group.is_leader() {
+        sleep(Duration::from_millis(20)).await;
+    }
+    assert!(group.is_leader(), "single-node group did not become leader");
+
+    let transaction_id =
+        kalamdb_commons::models::TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
+    let command = RaftCommand::TransactionCommit {
+        required_meta_index: 0,
+        transaction_id: transaction_id.clone(),
+        mutations: vec![kalamdb_transactions::StagedMutation::new(
+            transaction_id,
+            TableId::new(SchemaId::from("large"), TableName::from("rows")),
+            TableType::User,
+            Some(UserId::new("user1")),
+            kalamdb_commons::models::OperationKind::Insert,
+            "x".repeat(4 * 1024 * 1024 + 1),
+            Row::new(BTreeMap::new()),
+            false,
+        )],
+    };
+    let encoded =
+        kalamdb_raft::codec::command_codec::encode_raft_command(&command).expect("encode");
+    assert!(encoded.len() > 4 * 1024 * 1024, "entry is {} bytes", encoded.len());
+    group.propose(command).await.expect("commit one oversized transaction");
+    group.shutdown().await.expect("shutdown");
+}
+
+#[tokio::test]
+#[ntest::timeout(60_000)]
+async fn flooded_api_channel_still_commits() {
+    let config = RaftManagerConfig {
+        node_id: NodeId::new(1),
+        rpc_addr: "127.0.0.1:15400".to_string(),
+        api_addr: "127.0.0.1:16400".to_string(),
+        peers: vec![],
+        user_shards: 1,
+        shared_shards: 1,
+        api_channel_size: Some(1),
+        ..Default::default()
+    };
+    let manager = Arc::new(RaftManager::new(config));
+    manager.start().await.expect("start");
+    manager.initialize_cluster().await.expect("initialize");
+    wait_manager_leader(&manager).await;
+
+    let finished = tokio::time::timeout(Duration::from_secs(10), async {
+        let mut tasks = Vec::new();
+        for name in [
+            "flood_a", "flood_b", "flood_c", "flood_d", "flood_e", "flood_f",
+        ] {
+            let manager = manager.clone();
+            tasks.push(tokio::spawn(async move {
+                create_namespace(&manager, name).await.expect(name);
+            }));
+        }
+        for task in tasks {
+            task.await.expect("flood task");
+        }
+    })
+    .await;
+    assert!(finished.is_ok(), "a full API channel stalled the group");
+    manager.shutdown().await.expect("shutdown");
 }

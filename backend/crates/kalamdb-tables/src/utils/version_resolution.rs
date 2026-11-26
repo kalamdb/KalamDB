@@ -19,7 +19,7 @@ mod tests {
 
     use datafusion::{
         arrow::{
-            array::{BooleanArray, Int64Array, StringArray, UInt64Array},
+            array::{BooleanArray, Int64Array, StringArray},
             datatypes::{DataType, Field, Schema},
         },
         scalar::ScalarValue,
@@ -276,10 +276,30 @@ mod tests {
         assert!(resolved.iter().any(|(_, row)| row.pk == 1 && row.value == "hot-1"));
         assert!(resolved.iter().any(|(_, row)| row.pk == 2 && row.value == "cold-2"));
     }
+
+    #[test]
+    fn merge_row_metadata_keeps_tombstone_until_the_last_batch() {
+        fn meta(version: i64, deleted: bool, pk: &str) -> RowMetadata {
+            RowMetadata {
+                version: VersionId::try_from_i64(version).unwrap(),
+                deleted,
+                pk_bucket: PkBucketKey::Text(pk.to_string()),
+            }
+        }
+
+        let hot = vec![meta(1, false, "a"), meta(3, false, "b")];
+        let after_delete = merge_row_metadata("id", hot.clone(), vec![meta(2, true, "a")], None);
+        let winners = merge_row_metadata("id", after_delete, vec![meta(1, false, "a")], None);
+        let live = winners.iter().filter(|row| !row.deleted).count();
+        let one_shot =
+            count_merged_rows("id", hot, vec![meta(2, true, "a"), meta(1, false, "a")], None);
+        assert_eq!(live, 1);
+        assert_eq!(live, one_shot);
+    }
 }
 
 pub use kalamdb_datafusion_sources::exec::{
-    count_merged_rows, count_resolved_from_metadata, merge_versioned_rows,
+    count_merged_rows, count_resolved_from_metadata, merge_row_metadata, merge_versioned_rows,
     resolve_latest_kvs_from_cold_batch, ParquetRowData,
 };
 

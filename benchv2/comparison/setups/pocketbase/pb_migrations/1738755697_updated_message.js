@@ -2,9 +2,11 @@
 migrate((app) => {
   const collection = app.findCollectionByNameOrId("pbc_669929365")
 
-  // update collection data
+  // Both comparison workloads use a signed-in user without a room-membership check.
   unmarshal({
-    "createRule": "room = @collection.room_members.room && @request.auth.id = @collection.room_members.user"
+    "createRule": "@request.auth.id != ''",
+    "listRule": "@request.auth.id != ''",
+    "viewRule": "@request.auth.id != ''"
   }, collection)
 
   return app.save(collection)
@@ -13,7 +15,9 @@ migrate((app) => {
 
   // update collection data
   unmarshal({
-    "createRule": null
+    "createRule": null,
+    "listRule": null,
+    "viewRule": ""
   }, collection)
 
   return app.save(collection)

@@ -36,6 +36,16 @@ pub fn statement_row_version(log_index: u64, ordinal: u32) -> Result<VersionId, 
         .map_err(|error| KalamDbError::InvalidOperation(error.to_string()))
 }
 
+/// Next version in a direct statement, then advance `ordinal`.
+pub fn next_statement_version(
+    log_index: u64,
+    ordinal: &mut u32,
+) -> Result<VersionId, KalamDbError> {
+    let version = statement_row_version(log_index, *ordinal)?;
+    *ordinal = ordinal.saturating_add(1);
+    Ok(version)
+}
+
 /// Versions for a provider insert that is not staged through Raft.
 ///
 /// One allocated log index covers the batch. Callers that already have a

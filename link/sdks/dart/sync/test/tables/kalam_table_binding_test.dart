@@ -137,6 +137,41 @@ void main() {
     );
   });
 
+  test('remote delete accepts a key-only event', () async {
+    final messages = binding(KalamSyncMode.bidirectional);
+    localRows.add(const Message(id: 'message-1', text: 'hello'));
+    await messages.applyRemoteChange(
+      const KalamRemoteChange(
+        kind: KalamChangeKind.delete,
+        seq: VersionId(1),
+        row: {'id': 'message-1'},
+      ),
+    );
+    expect(localRows, isEmpty);
+  });
+
+  test('consumer defaults to the table live query', () {
+    final messages = binding(KalamSyncMode.bidirectional);
+    expect(messages.consumer().sql, messages.spec.liveSql);
+    expect(
+      messages.consumer(sql: 'SELECT * FROM app.messages').sql,
+      'SELECT * FROM app.messages',
+    );
+  });
+
+  test('remote partial update combines old and new columns', () async {
+    final messages = binding(KalamSyncMode.bidirectional);
+    await messages.applyRemoteChange(
+      const KalamRemoteChange(
+        kind: KalamChangeKind.update,
+        seq: VersionId(2),
+        row: {'text': 'updated'},
+        oldRow: {'id': 'message-1', 'text': 'before'},
+      ),
+    );
+    expect(localRows, [const Message(id: 'message-1', text: 'updated')]);
+  });
+
   test('optimistic replica row is visible with pending sync state', () async {
     final messages = binding(KalamSyncMode.replicaOnly);
     final pending = messages.watchWithSyncState().firstWhere(

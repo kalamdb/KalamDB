@@ -10,7 +10,7 @@
 //! # Architecture
 //!
 //! The publisher is called **synchronously** from table providers (SharedTableProvider,
-//! UserTableProvider, StreamTableProvider) during insert/update/delete operations.
+//! UserTableProvider, StreamTableEngine) during insert/update/delete operations.
 //! This ensures topic messages are durable before the write is acknowledged.
 //!
 //! ```text
@@ -25,6 +25,15 @@ mod partition;
 mod payload;
 mod routing;
 mod service;
+pub mod storage;
 
 pub use models::TopicCacheStats;
 pub use service::{TopicPrimaryKeyLookup, TopicPublisherService};
+pub use storage::{
+    topic_message_models::{
+        TopicMessage, TopicMessageId, TopicRetentionDeletionStats, TopicRetentionIndexEntry,
+        TopicRetentionIndexKey,
+    },
+    topic_message_schema::topic_message_schema,
+    topic_message_store::{TopicMessageStore, TOPIC_RETENTION_INDEX_PARTITION_NAME},
+};

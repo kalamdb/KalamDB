@@ -1,14 +1,12 @@
-use std::{
-    collections::BTreeSet,
-    sync::{Arc, OnceLock},
-};
+use std::{collections::BTreeSet, sync::Arc};
 
 use datafusion::arrow::{
     array::{ArrayRef, BooleanBuilder, Int64Builder, StringBuilder},
-    datatypes::{DataType, Field, Schema, SchemaRef},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use kalamdb_commons::{CatalogTypeKind, Role};
+use kalamdb_macros::table;
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
@@ -20,23 +18,36 @@ use crate::{
     },
 };
 
+#[table(
+    name = "pg_type",
+    namespace = SchemaId::pg_catalog(),
+    view = true,
+    comment = "Data types"
+)]
+#[derive(Debug)]
+struct PgTypeRow {
+    /// Type oid
+    oid: i64,
+    /// Type name
+    typname: String,
+    /// Namespace oid
+    typnamespace: i64,
+    /// Relation oid for composite types
+    typrelid: i64,
+    /// Type kind
+    typtype: String,
+    /// Whether the type rejects nulls
+    typnotnull: bool,
+    /// Type modifier
+    typtypmod: i64,
+    /// Base type oid
+    typbasetype: i64,
+    /// Type length
+    typlen: i64,
+}
+
 fn schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("oid", DataType::Int64, false),
-                Field::new("typname", DataType::Utf8, false),
-                Field::new("typnamespace", DataType::Int64, false),
-                Field::new("typrelid", DataType::Int64, false),
-                Field::new("typtype", DataType::Utf8, false),
-                Field::new("typnotnull", DataType::Boolean, false),
-                Field::new("typtypmod", DataType::Int64, false),
-                Field::new("typbasetype", DataType::Int64, false),
-                Field::new("typlen", DataType::Int64, false),
-            ]))
-        })
-        .clone()
+    PgTypeRow::arrow_schema()
 }
 
 #[derive(Debug)]

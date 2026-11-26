@@ -64,7 +64,7 @@ fn create_test_jwt_token(
     };
 
     let header = Header::new(Algorithm::HS256);
-    let encoding_key = EncodingKey::from_secret(secret.as_bytes());
+    let encoding_key = EncodingKey::from_secret(secret.as_bytes()).unwrap();
     encode(&header, &claims, &encoding_key).expect("Failed to encode JWT")
 }
 
@@ -312,7 +312,7 @@ async fn test_jwt_auth_missing_sub_claim() {
     };
 
     let header = Header::new(Algorithm::HS256);
-    let encoding_key = EncodingKey::from_secret(secret.as_bytes());
+    let encoding_key = EncodingKey::from_secret(secret.as_bytes()).unwrap();
     let token = encode(&header, &claims, &encoding_key).expect("Failed to encode JWT");
     let auth_header = format!("Bearer {}", token);
 

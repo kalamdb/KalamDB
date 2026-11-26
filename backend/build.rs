@@ -134,7 +134,7 @@ fn build_early_memory_policy_if_needed(repo_root: &Path, package_name: &str) {
     }
 
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    if target_os != "linux" && target_os != "android" {
+    if target_os != "linux" && target_os != "android" && target_os != "macos" {
         return;
     }
 

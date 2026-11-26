@@ -88,7 +88,7 @@ so consuming apps do not need Rust or cross-compilation toolchains.
 |----------|----------|----------|
 | Android arm64-v8a | `.so` (shared) | `android/src/main/jniLibs/arm64-v8a/` |
 | Android x86_64 | `.so` (shared) | `android/src/main/jniLibs/x86_64/` |
-| iOS (aarch64) | `.a` (static) | `ios/Frameworks/` |
+| iOS (arm64 device and simulator) | `.xcframework` (static) | `ios/Frameworks/` |
 | macOS (universal) | `.dylib` (shared) | `macos/Libs/` |
 | Linux x86_64 | `.so` (shared) | `linux/lib/` |
 | Windows x86_64 | `.dll` (shared) | `windows/lib/` |

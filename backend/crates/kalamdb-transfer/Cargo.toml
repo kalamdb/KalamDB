@@ -10,10 +10,10 @@ description = "Shared archive and data transfer utilities for KalamDB backup, re
 
 [dependencies]
 kalamdb-commons = { workspace = true, features = ["full"] }
-kalamdb-core = { path = "../kalamdb-core" }
 kalamdb-system = { path = "../kalamdb-system" }
 
 chrono = { workspace = true }
+thiserror = { workspace = true }
 flate2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

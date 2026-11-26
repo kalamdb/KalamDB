@@ -1,11 +1,14 @@
 use std::{collections::HashMap, sync::Arc};
 
+use futures_util::SinkExt;
 use serde_json::json;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::Mutex,
+    sync::{Mutex, Notify},
+    time::timeout,
 };
+use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 use super::*;
 use crate::error::KalamLinkError;
@@ -258,9 +261,9 @@ async fn handle_test_request(
 }
 
 struct TestRequest {
-    target: String,
+    target:  String,
     headers: HashMap<String, String>,
-    body: String,
+    body:    String,
 }
 
 async fn read_test_request(stream: &mut TcpStream) -> std::io::Result<TestRequest> {
@@ -318,4 +321,64 @@ async fn read_test_request(stream: &mut TcpStream) -> std::io::Result<TestReques
         headers,
         body,
     })
+}
+
+#[tokio::test]
+async fn test_connect_reopens_after_retry_budget_is_exhausted() {
+    let listener = match TcpListener::bind("127.0.0.1:0").await {
+        Ok(listener) => listener,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
+        Err(error) => panic!("could not bind WebSocket fixture: {error}"),
+    };
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let drop_first = Arc::new(Notify::new());
+    let server_drop = Arc::clone(&drop_first);
+    let server = tokio::spawn(async move {
+        let auth = json!({
+            "type": "auth_success",
+            "user": "fixture",
+            "role": "user",
+            "protocol": { "serialization": "json", "compression": "none" },
+        });
+        let (first, _) = listener.accept().await.unwrap();
+        let mut first = accept_async(first).await.unwrap();
+        first.send(Message::Text(auth.to_string().into())).await.unwrap();
+        server_drop.notified().await;
+        first.close(None).await.unwrap();
+
+        let (rejected, _) = listener.accept().await.unwrap();
+        drop(rejected);
+
+        let (manual, _) = listener.accept().await.unwrap();
+        let mut manual = accept_async(manual).await.unwrap();
+        manual.send(Message::Text(auth.to_string().into())).await.unwrap();
+        std::future::pending::<()>().await;
+    });
+    let exhausted = Arc::new(Notify::new());
+    let handler_exhausted = Arc::clone(&exhausted);
+    let client = KalamLinkClient::builder()
+        .base_url(&url)
+        .jwt_token("fixture-token")
+        .connection_options(
+            ConnectionOptions::default()
+                .with_reconnect_delay_ms(10)
+                .with_max_reconnect_attempts(Some(1)),
+        )
+        .event_handlers(EventHandlers::default().on_error(move |error| {
+            if error.message == "Max reconnection attempts reached" {
+                handler_exhausted.notify_one();
+            }
+        }))
+        .build()
+        .unwrap();
+
+    let deadline = Duration::from_secs(3);
+    timeout(deadline, client.connect()).await.unwrap().unwrap();
+    drop_first.notify_one();
+    timeout(deadline, exhausted.notified()).await.unwrap();
+    assert!(!client.is_connected().await);
+    timeout(deadline, client.connect()).await.unwrap().unwrap();
+    assert!(client.is_connected().await);
+    client.disconnect().await;
+    server.abort();
 }

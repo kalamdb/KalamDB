@@ -148,29 +148,9 @@ impl<T: JobParams> JobContext<T> {
         }
     }
 
-    /// Create a new job context with cancellation token
-    pub fn with_cancellation(
-        app_ctx: Arc<AppContext>,
-        job_id: String,
-        params: T,
-        token: CancellationToken,
-    ) -> Self {
-        Self {
-            app_ctx,
-            cancellation_token: token,
-            job_id,
-            params,
-        }
-    }
-
     /// Get typed parameters (zero-cost access)
     pub fn params(&self) -> &T {
         &self.params
-    }
-
-    /// Consume context and return parameters
-    pub fn into_params(self) -> T {
-        self.params
     }
 
     /// Log debug message with [JobId] prefix

@@ -45,6 +45,7 @@ final class KalamSyncCoordinator {
   bool _connectInProgress = false;
   int _inFlightApplies = 0;
   int _lifecycleGeneration = 0;
+  int _lastConsumerDeliveryGeneration = -1;
 
   KalamSyncState get state => _state;
   Stream<KalamSyncState> get states async* {
@@ -71,12 +72,23 @@ final class KalamSyncCoordinator {
     if (_paused || _disposed) return;
     final generation = ++_lifecycleGeneration;
     _paused = true;
+    // A new foreground session gets its own bounded cancellation recovery.
+    for (final active in _consumers.values) {
+      active.cancelRecoveries = 0;
+    }
     _emit(_state.copyWith(phase: KalamSyncPhase.paused, clearError: true));
     await _waitForIdle(generation);
     if (generation != _lifecycleGeneration || _disposed || !_paused) return;
     for (final active in _consumers.values) {
-      await active.subscription?.cancel();
-      active.subscription = null;
+      if (generation != _lifecycleGeneration || _disposed || !_paused) return;
+      final subscription = active.subscription;
+      if (subscription == null) continue;
+      await subscription.cancel();
+      // Resume may have installed a replacement while this cancel was in
+      // flight. Only drop the subscription this pause actually cancelled.
+      if (identical(active.subscription, subscription)) {
+        active.subscription = null;
+      }
     }
     if (generation != _lifecycleGeneration || _disposed || !_paused) return;
     await transport.pause();
@@ -100,12 +112,17 @@ final class KalamSyncCoordinator {
       await _flushWhenIdle(generation);
       if (generation != _lifecycleGeneration || _disposed || _paused) return;
     }
-    _emit(
-      _state.copyWith(
-        phase: KalamSyncPhase.catchingUp,
-        clearError: true,
-      ),
-    );
+    // A consumer delivery during this resume already reached live. Forcing
+    // catchingUp here is what made the chip drop back to connecting.
+    if (_lastConsumerDeliveryGeneration != generation &&
+        _state.phase != KalamSyncPhase.live) {
+      _emit(
+        _state.copyWith(
+          phase: KalamSyncPhase.catchingUp,
+          clearError: true,
+        ),
+      );
+    }
   }
 
   Future<void> _flushWhenIdle(int generation) async {
@@ -149,12 +166,31 @@ final class KalamSyncCoordinator {
   }
 
   Future<void> _open(_ActiveConsumer active) async {
-    if (active.subscription != null) return;
+    while (!active.isCancelled && !_disposed && !_paused) {
+      if (active.subscription != null) return;
+      final inFlight = active.opening;
+      if (inFlight != null) {
+        await inFlight;
+        continue;
+      }
+      final opening = _startSubscription(active);
+      active.opening = opening;
+      try {
+        await opening;
+      } finally {
+        if (identical(active.opening, opening)) active.opening = null;
+      }
+      return;
+    }
+  }
+
+  Future<void> _startSubscription(_ActiveConsumer active) async {
     final checkpoint = await store.readCheckpoint(
       accountKey: accountKey,
       subscriptionId: active.consumer.id,
     );
     if (_paused || active.isCancelled || _disposed) return;
+    if (active.subscription != null) return;
     if (!_connected || _state.phase != KalamSyncPhase.live) {
       _emit(
         _state.copyWith(phase: KalamSyncPhase.catchingUp, clearError: true),
@@ -172,7 +208,9 @@ final class KalamSyncCoordinator {
         .asyncMap((batch) => _applyBatch(active.consumer, batch))
         .listen(
           (_) {
+            active.cancelRecoveries = 0;
             if (_connected && !_paused) {
+              _lastConsumerDeliveryGeneration = _lifecycleGeneration;
               _emit(
                 _state.copyWith(
                   phase: KalamSyncPhase.live,
@@ -183,7 +221,8 @@ final class KalamSyncCoordinator {
             }
           },
           onError: (Object error, StackTrace stackTrace) {
-            if (active.generation == generation) active.subscription = null;
+            if (active.generation != generation) return;
+            active.subscription = null;
             unawaited(_handleSubscribeError(active, error, stackTrace));
           },
           onDone: () {
@@ -199,6 +238,16 @@ final class KalamSyncCoordinator {
     StackTrace stackTrace,
   ) async {
     if (_disposed || active.isCancelled) return;
+    if (_isCancellation(error)) {
+      if (_paused || !_connected) return;
+      if (active.cancelRecoveries >= 1) {
+        _onError(error, stackTrace);
+        return;
+      }
+      active.cancelRecoveries++;
+      await _open(active);
+      return;
+    }
     if (_isExpiredCursor(error) &&
         !active.rebootstrapAttempted &&
         !_paused) {
@@ -363,6 +412,12 @@ final class KalamSyncCoordinator {
     );
   }
 
+  bool _isCancellation(Object error) {
+    final text = error.toString().toLowerCase();
+    return text.contains('operation cancelled') ||
+        text.contains('operation canceled');
+  }
+
   bool _isExpiredCursor(Object error) {
     if (error is KalamSubscriptionException) return error.isExpiredCursor;
     final text = error.toString().toLowerCase();
@@ -394,7 +449,9 @@ final class _ActiveConsumer {
 
   final KalamEventConsumer consumer;
   StreamSubscription<dynamic>? subscription;
+  Future<void>? opening;
   int generation = 0;
+  int cancelRecoveries = 0;
   bool cancelled = false;
   bool rebootstrapAttempted = false;
 

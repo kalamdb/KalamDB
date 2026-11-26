@@ -19,4 +19,4 @@ pub use config::{
     PeerNode, RaftManagerConfig, RpcTlsConfig, DEFAULT_SHARED_DATA_SHARDS, DEFAULT_USER_DATA_SHARDS,
 };
 pub use raft_group::RaftGroup;
-pub use raft_manager::{RaftManager, SnapshotInfo, SnapshotsSummary};
+pub use raft_manager::{GroupProgressSnapshot, RaftManager, SnapshotInfo, SnapshotsSummary};

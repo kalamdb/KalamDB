@@ -161,7 +161,7 @@ pub(super) async fn eval_plpgsql_expr(
         .prepare_statement_metadata(&sql, ctx)
         .map_err(|err| KalamDbError::InvalidSql(err.to_string()))?;
     let result = Box::pin(executor.execute_with_metadata(&metadata, ctx, params)).await?;
-    super::convert::execution_result_to_routine(result)
+    super::convert::execution_result_to_routine(result).await
 }
 
 async fn eval_plpgsql_bool(

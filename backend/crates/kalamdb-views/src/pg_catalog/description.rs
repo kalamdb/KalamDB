@@ -1,11 +1,12 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, Int64Builder, StringBuilder},
-    datatypes::{DataType, Field, Schema, SchemaRef},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use kalamdb_commons::{CatalogTypeKind, Role};
+use kalamdb_macros::table;
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
@@ -20,18 +21,26 @@ const PG_TYPE_OID: i64 = 1247;
 const PG_PROC_OID: i64 = 1255;
 const PG_NAMESPACE_OID: i64 = 2615;
 
+#[table(
+    name = "pg_description",
+    namespace = SchemaId::pg_catalog(),
+    view = true,
+    comment = "Object descriptions"
+)]
+#[derive(Debug)]
+struct PgDescriptionRow {
+    /// Object oid
+    objoid: i64,
+    /// Catalog class oid
+    classoid: i64,
+    /// Sub-object id
+    objsubid: i64,
+    /// Description text
+    description: String,
+}
+
 fn schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("objoid", DataType::Int64, false),
-                Field::new("classoid", DataType::Int64, false),
-                Field::new("objsubid", DataType::Int64, false),
-                Field::new("description", DataType::Utf8, false),
-            ]))
-        })
-        .clone()
+    PgDescriptionRow::arrow_schema()
 }
 
 #[derive(Debug)]

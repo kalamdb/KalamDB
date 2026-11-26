@@ -23,7 +23,7 @@ use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBacken
 
 use crate::{
     common::{ensure_partition, new_indexed_store_with_pk, partition_name, table_prefix_indexes},
-    row_codec::UserRowCodec,
+    versioned::VersionedRowCodec,
 };
 
 // KSerializable for UserTableRow is implemented in kalamdb-store
@@ -112,7 +112,7 @@ pub fn new_indexed_user_table_store(
     let name =
         partition_name(kalamdb_commons::constants::ColumnFamilyNames::USER_TABLE_PREFIX, table_id);
     let indexes = table_prefix_indexes(table_id, pk_field_name, scalar_indexes, columns, true);
-    new_indexed_store_with_pk(backend, name, indexes, Arc::new(UserRowCodec::new(schema)))
+    new_indexed_store_with_pk(backend, name, indexes, Arc::new(VersionedRowCodec::new(schema)))
 }
 
 #[cfg(test)]

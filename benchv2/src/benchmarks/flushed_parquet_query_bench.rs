@@ -39,15 +39,15 @@ impl Benchmark for FlushedParquetQueryBench {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
             client
-                .sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace))
+                .sql_ok(&format!("CREATE SCHEMA IF NOT EXISTS {}", config.namespace))
                 .await?;
             let _ = client
                 .sql(&format!("DROP TABLE IF EXISTS {}.parquet_bench", config.namespace))
                 .await;
             client
                 .sql_ok(&format!(
-                    "CREATE SHARED TABLE {}.parquet_bench (id INT PRIMARY KEY, category TEXT, \
-                     amount INT, description TEXT)",
+                    "CREATE TABLE {}.parquet_bench (id INT PRIMARY KEY, category TEXT, \
+                     amount INT, description TEXT) WITH (TYPE = 'SHARED')",
                     config.namespace
                 ))
                 .await?;

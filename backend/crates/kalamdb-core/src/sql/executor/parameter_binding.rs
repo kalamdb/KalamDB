@@ -149,6 +149,30 @@ fn placeholder_index(id: &str) -> Option<usize> {
     index.checked_sub(1)
 }
 
+/// Resolve a single `$n` placeholder against `params` with field coercion.
+/// Returns `Ok(None)` if the placeholder id is not a numeric `$n` placeholder.
+pub fn bind_placeholder_value(
+    placeholder: &datafusion::logical_expr::expr::Placeholder,
+    params: &[ScalarValue],
+) -> Result<Option<ScalarValue>, KalamDbError> {
+    let Some(index) = placeholder_index(&placeholder.id) else {
+        return Ok(None);
+    };
+    let Some(mut value) = params.get(index).cloned() else {
+        return Err(KalamDbError::ParameterBindingError {
+            message: format!(
+                "placeholder {} is out of range for {} parameters",
+                placeholder.id,
+                params.len()
+            ),
+        });
+    };
+    if let Some(field) = placeholder.field.as_deref() {
+        value = coerce_bound_parameter(value, field)?;
+    }
+    Ok(Some(value))
+}
+
 /// Replace `$n` placeholders in a single expression. Used by the point-get fast
 /// path so a PK bind does not clone the full cached `LogicalPlan`.
 pub fn bind_placeholders_in_expr(expr: Expr, params: &[ScalarValue]) -> Result<Expr, KalamDbError> {

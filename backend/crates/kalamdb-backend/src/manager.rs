@@ -289,6 +289,22 @@ impl BackendSessionManager {
         Ok(())
     }
 
+    /// Check that the session is not in a failed transaction block and return
+    /// its pinned transaction id in a single session lookup.
+    pub fn active_transaction_for_work(
+        &self,
+        session_id: &str,
+    ) -> BackendSessionResult<Option<TransactionId>> {
+        let session = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| BackendSessionError::SessionNotFound(session_id.to_string()))?;
+        if matches!(session.block_state(), BackendSessionState::InFailedTransaction) {
+            return Err(BackendSessionError::FailedBlock(session_id.to_string()));
+        }
+        Ok(session.pinned_transaction_id())
+    }
+
     pub async fn close_session(&self, session_id: &str) -> BackendSessionResult<()> {
         if let Some(transaction_id) = self
             .sessions

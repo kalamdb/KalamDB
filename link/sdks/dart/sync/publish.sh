@@ -23,11 +23,11 @@ fi
 echo "==> Running flutter pub get..."
 flutter pub get
 
-echo "==> Running dart analyze..."
-dart analyze lib
+echo "==> Running full package static analysis..."
+dart analyze --fatal-infos .
 
-echo "==> Running tests..."
-flutter test || true   # warn but don't block (e2e tests may require a running server)
+echo "==> Running tests (fail release on failing tests)..."
+flutter test
 
 if $DRY_RUN; then
   echo "==> Dry run — validating package (no upload)..."
@@ -36,5 +36,5 @@ if $DRY_RUN; then
   echo "Dry run complete. Run './publish.sh' (without --dry-run) to publish."
 else
   echo "==> Publishing kalam_sync to pub.dev..."
-  echo "y" | flutter pub publish
+  flutter pub publish --force
 fi

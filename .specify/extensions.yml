@@ -1,0 +1,24 @@
+installed:
+- assess
+- git
+settings:
+  auto_execute_hooks: true
+hooks:
+  before_constitution:
+  - extension: git
+    command: speckit.git.initialize
+    enabled: true
+    optional: false
+    priority: 10
+    prompt: Execute speckit.git.initialize?
+    description: Initialize Git repository before constitution setup
+    condition: null
+  before_specify:
+  - extension: git
+    command: speckit.git.feature
+    enabled: true
+    optional: false
+    priority: 10
+    prompt: Execute speckit.git.feature?
+    description: Create feature branch before specification
+    condition: null

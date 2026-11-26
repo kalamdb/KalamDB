@@ -59,19 +59,19 @@ impl Benchmark for ConnectionScaleBench {
         Box::pin(async move {
             run_sql_ok_on_all_urls(
                 client,
-                &format!("CREATE NAMESPACE IF NOT EXISTS {}", config.namespace),
+                &format!("CREATE SCHEMA IF NOT EXISTS {}", config.namespace),
             )
             .await?;
             let _ = run_sql_ok_on_all_urls(
                 client,
-                &format!("DROP SHARED TABLE IF EXISTS {}.conn_scale", config.namespace),
+                &format!("DROP TABLE IF EXISTS {}.conn_scale", config.namespace),
             )
             .await;
             run_sql_ok_on_all_urls(
                 client,
                 &format!(
-                    "CREATE SHARED TABLE IF NOT EXISTS {}.conn_scale (id INT PRIMARY KEY, payload \
-                     TEXT)",
+                    "CREATE TABLE IF NOT EXISTS {}.conn_scale (id INT PRIMARY KEY, payload \
+                     TEXT) WITH (TYPE = 'SHARED')",
                     config.namespace
                 ),
             )
@@ -684,7 +684,7 @@ impl Benchmark for ConnectionScaleBench {
 
             let _ = run_sql_ok_on_all_urls(
                 client,
-                &format!("DROP SHARED TABLE IF EXISTS {}.conn_scale", config.namespace),
+                &format!("DROP TABLE IF EXISTS {}.conn_scale", config.namespace),
             )
             .await;
             Ok(())

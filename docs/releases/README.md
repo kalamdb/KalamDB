@@ -2,10 +2,15 @@
 
 Product notes for [GitHub Releases](https://github.com/kalamdb/KalamDB/releases). One file per version. Newest first.
 
-When cutting a release, paste the version file into the Release workflow's `release_description` input. That box is one line, so replace each line break with the two characters `\n` before pasting. The workflow turns those into real lines, then GitHub renders the markdown. Leave the input empty to use auto-generated notes. Mark prereleases as prereleases on GitHub.
+When cutting a release, paste the version file into the Release workflow's `release_description` input. That box is one line, so replace each line break with the two characters `\n` before pasting. The workflow turns those into real lines, then GitHub renders the markdown. Leave the input empty to use auto-generated notes. The workflow saves the GitHub Release as a draft. Edit that draft to mark it a pre-release or a release, then publish it.
+
+## Unreleased
+
+[0.9.0](0.9.0.md) is the draft for this branch. The Python schema-generation pull requests are not merged yet.
 
 ## Versions
 
+- [0.9.0](0.9.0.md) — one table provider, single-group atomic commits, OpenRaft 0.10.1
 - [0.8.0](0.8.0.md) — PostgreSQL grammar and wire clients, one binary frame, index seeks
 - [0.7.1](0.7.1.md) — Raft-derived row versions and one persisted owner per shared table
 - [0.7.0-beta.0](0.7.0-beta.0.md) — typed nested data, scalar indexes, server functions, everyday CLI

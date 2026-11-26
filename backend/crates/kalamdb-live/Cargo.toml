@@ -45,7 +45,10 @@ log = { workspace = true }
 once_cell = { workspace = true }
 
 [dev-dependencies]
+arrow = { workspace = true }
+datafusion = { workspace = true }
 ntest = { workspace = true }
+tokio = { workspace = true }
 
 [features]
 test-helpers = []

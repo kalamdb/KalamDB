@@ -229,7 +229,7 @@ pub fn create_jwt_token(username: &str, secret: &str, exp_seconds: i64) -> Strin
     };
 
     let header = Header::new(Algorithm::HS256);
-    let encoding_key = EncodingKey::from_secret(secret.as_bytes());
+    let encoding_key = EncodingKey::from_secret(secret.as_bytes()).unwrap();
     encode(&header, &claims, &encoding_key).expect("Failed to create JWT token")
 }
 

@@ -1,9 +1,6 @@
 //! KalamDB comparison driver (hot storage only).
 //!
-//! Protocol mirrors TrailBase's Rust harness:
-//! - concurrency [`comparison_common::LIMIT`]
-//! - 100k insert wall time
-//! - 10k insert latency + 1M point-read latency
+//! Uses the shared workload with validated insert acknowledgments and point reads.
 //!
 //! Hot-only guarantees:
 //! 1. Table is created **without** `FLUSH_POLICY` (scheduler skips tables with no policy).
@@ -14,18 +11,14 @@
 //! - INSERT/SELECT use `$1` placeholders + `params` (stable SQL text).
 //! - Literal-interpolated SQL would miss the plan cache on every request.
 
+use anyhow::Context;
 use comparison_common::{
-    message_data, print_latencies, KALAMDB_NAMESPACE, KALAMDB_PASSWORD, KALAMDB_USER,
-    LATENCY_INSERTS, LATENCY_READS, LIMIT, N,
+    expect_kalam_row, message_data, one, run, KALAMDB_NAMESPACE, KALAMDB_PASSWORD, KALAMDB_USER,
 };
-use crossbeam_queue::SegQueue;
-use lazy_static::lazy_static;
 use reqwest::{Client, Version};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::env;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::Semaphore;
+use std::time::Duration;
 
 fn base_url() -> String {
     env::var("KALAMDB_URL").unwrap_or_else(|_| "http://127.0.0.1:2900".to_string())
@@ -96,11 +89,11 @@ async fn sql_ok(
     base: &str,
     token: &str,
     sql: &str,
-    params: Option<Vec<serde_json::Value>>,
-) -> anyhow::Result<serde_json::Value> {
+    params: Option<Value>,
+) -> anyhow::Result<Value> {
     let mut body = json!({ "sql": sql });
     if let Some(params) = params {
-        body["params"] = json!(params);
+        body["params"] = params;
     }
     let resp = http
         .post(format!("{base}/v1/api/sql"))
@@ -109,14 +102,15 @@ async fn sql_ok(
         .send()
         .await?;
     let status = resp.status();
-    let resp_body: serde_json::Value = resp.json().await.unwrap_or_else(|_| json!({}));
-    if !status.is_success()
-        || resp_body.get("status").and_then(|v| v.as_str()) == Some("error")
-        || resp_body.get("success") == Some(&json!(false))
-    {
-        anyhow::bail!("sql failed status={status} body={resp_body} sql={sql}");
-    }
-    Ok(resp_body)
+    let bytes = resp.bytes().await?;
+    anyhow::ensure!(
+        status.is_success(),
+        "sql failed status={status} body={} sql={sql}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let result: Value = serde_json::from_slice(&bytes).context("decode KalamDB SQL response")?;
+    anyhow::ensure!(result["status"] == "success", "sql failed body={result} sql={sql}");
+    Ok(result)
 }
 
 /// Stable SQL text so the server plan cache can hit across requests.
@@ -124,133 +118,25 @@ const INSERT_SQL: &str =
     "INSERT INTO bench.message (id, owner, room, data) VALUES ($1, $2, $3, $4)";
 const SELECT_SQL: &str = "SELECT id, owner, room, data FROM bench.message WHERE id = $1";
 
-async fn create_message(http: &Client, base: &str, token: &str, i: i64) -> anyhow::Result<()> {
-    let resp = http
-        .post(format!("{base}/v1/api/sql"))
-        .bearer_auth(token)
-        .json(&json!({
-            "sql": INSERT_SQL,
-            "params": [i, "user1", "room0", message_data(i)],
-        }))
-        .send()
-        .await?;
-    let status = resp.status();
-    let body = resp.bytes().await?;
-    if !status.is_success() {
-        anyhow::bail!(
-            "insert failed status={status} body={} sql={INSERT_SQL}",
-            String::from_utf8_lossy(&body)
-        );
-    }
-    Ok(())
+async fn create_message(http: &Client, base: &str, token: &str, id: i64) -> anyhow::Result<i64> {
+    let response = sql_ok(
+        http,
+        base,
+        token,
+        INSERT_SQL,
+        Some(json!([id, "user1", "room0", message_data(id)])),
+    )
+    .await?;
+    let result = one(&response["results"])?;
+    anyhow::ensure!(result["row_count"] == 1, "expected one inserted row: {result}");
+    Ok(id)
 }
 
 async fn read_message(http: &Client, base: &str, token: &str, id: i64) -> anyhow::Result<()> {
-    let resp = http
-        .post(format!("{base}/v1/api/sql"))
-        .bearer_auth(token)
-        .json(&json!({
-            "sql": SELECT_SQL,
-            "params": [id],
-        }))
-        .send()
-        .await?;
-    let status = resp.status();
-    let body = resp.bytes().await?;
-    if !status.is_success() {
-        anyhow::bail!(
-            "read failed status={status} body={} sql={SELECT_SQL}",
-            String::from_utf8_lossy(&body)
-        );
-    }
-    Ok(())
-}
-
-async fn insert_benchmark(http: &Client, base: &str, token: &str) -> anyhow::Result<()> {
-    lazy_static! {
-        static ref THROTTLER: Semaphore = Semaphore::new(LIMIT);
-    }
-    let start = Instant::now();
-    for id in 0..N {
-        let http = http.clone();
-        let base = base.to_string();
-        let token = token.to_string();
-        let handle = THROTTLER.acquire().await?;
-        tokio::spawn(async move {
-            create_message(&http, &base, &token, id)
-                .await
-                .expect("insert");
-            drop(handle);
-        });
-    }
-    let _ = THROTTLER.acquire_many(LIMIT as u32).await?;
-    println!("Inserted {N} rows in {:?}", start.elapsed());
-    Ok(())
-}
-
-async fn latency_benchmark(http: &Client, base: &str, token: &str) -> anyhow::Result<()> {
-    {
-        lazy_static! {
-            static ref THROTTLER: Semaphore = Semaphore::new(LIMIT);
-        }
-        let insert_latencies = Arc::new(SegQueue::<Duration>::new());
-        let start = Instant::now();
-        for id in 0..LATENCY_INSERTS {
-            let http = http.clone();
-            let base = base.to_string();
-            let token = token.to_string();
-            let latencies = insert_latencies.clone();
-            let row_id = 1_000_000 + id;
-            let handle = THROTTLER.acquire().await?;
-            tokio::spawn(async move {
-                let t0 = Instant::now();
-                create_message(&http, &base, &token, row_id)
-                    .await
-                    .expect("insert");
-                latencies.push(t0.elapsed());
-                drop(handle);
-            });
-        }
-        let _ = THROTTLER.acquire_many(LIMIT as u32).await?;
-        println!("Inserted {LATENCY_INSERTS} rows in {:?}", start.elapsed());
-        print_latencies(
-            Arc::into_inner(insert_latencies)
-                .unwrap()
-                .into_iter()
-                .collect(),
-        );
-    }
-
-    {
-        lazy_static! {
-            static ref THROTTLER: Semaphore = Semaphore::new(LIMIT);
-        }
-        let read_latencies = Arc::new(SegQueue::<Duration>::new());
-        let start = Instant::now();
-        for idx in 0..LATENCY_READS {
-            let http = http.clone();
-            let base = base.to_string();
-            let token = token.to_string();
-            let latencies = read_latencies.clone();
-            let id = 1_000_000 + (idx % LATENCY_INSERTS);
-            let handle = THROTTLER.acquire().await?;
-            tokio::spawn(async move {
-                let t0 = Instant::now();
-                read_message(&http, &base, &token, id).await.expect("read");
-                latencies.push(t0.elapsed());
-                drop(handle);
-            });
-        }
-        let _ = THROTTLER.acquire_many(LIMIT as u32).await?;
-        println!("Read {LATENCY_READS} rows in {:?}", start.elapsed());
-        print_latencies(
-            Arc::into_inner(read_latencies)
-                .unwrap()
-                .into_iter()
-                .collect(),
-        );
-    }
-    Ok(())
+    let response = sql_ok(http, base, token, SELECT_SQL, Some(json!([id]))).await?;
+    let result = one(&response["results"])?;
+    anyhow::ensure!(result["row_count"] == 1, "expected one returned row: {result}");
+    expect_kalam_row(one(&result["rows"])?, id)
 }
 
 #[tokio::main]
@@ -271,7 +157,7 @@ async fn main() -> anyhow::Result<()> {
     println!("logged in to {base}");
     println!("mode=hot-only (no FLUSH_POLICY, flush scheduler disabled)");
     println!("sql=parameterized ($1..) for plan-cache reuse");
-    println!("timed_read_response=bytes (HTTP status validation only; matches TB/PB)");
+    println!("response_validation=SQL status, affected row count, and returned row");
 
     sql_ok(
         &http,
@@ -281,14 +167,14 @@ async fn main() -> anyhow::Result<()> {
         None,
     )
     .await?;
-    let _ = sql_ok(
+    sql_ok(
         &http,
         &base,
         &token,
         &format!("DROP TABLE IF EXISTS {KALAMDB_NAMESPACE}.message"),
         None,
     )
-    .await;
+    .await?;
 
     // Intentionally omit FLUSH_POLICY so the table stays RocksDB-hot only.
     sql_ok(
@@ -307,9 +193,11 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
 
-    insert_benchmark(&http, &base, &token).await?;
-    latency_benchmark(&http, &base, &token).await?;
-    Ok(())
+    run(
+        |id| create_message(&http, &base, &token, id),
+        |id, _| read_message(&http, &base, &token, id),
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -329,7 +217,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn timed_read_validates_http_status_without_parsing_sql_envelope() {
+    async fn timed_read_rejects_sql_error_with_successful_http_status() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
         let address = listener.local_addr().expect("read test server address");
         let server = thread::spawn(move || {
@@ -351,6 +239,6 @@ mod tests {
             read_message(&Client::new(), &format!("http://{address}"), "test-token", 1).await;
 
         server.join().expect("join test server");
-        assert!(result.is_ok(), "timed reads should consume bytes like peer drivers");
+        assert!(result.is_err());
     }
 }

@@ -19,13 +19,9 @@ use kalamdb_commons::{
 use kalamdb_serialization::StorageSchema;
 use kalamdb_sharding::ShardRouter;
 use kalamdb_store::storage_trait::{Result, StorageError};
-use kalamdb_streams::{
-    bucket_for_ttl, FileStreamLogStore, MemoryStreamLogStore, StreamLogConfig, StreamLogStore,
-};
+use kalamdb_streams::{bucket_for_ttl, FileStreamLogStore, MemoryStreamLogStore, StreamLogConfig};
 
 use crate::common::partition_name;
-
-const MAX_SCAN_LIMIT: usize = 100000;
 
 /// Configuration for StreamTableStore.
 #[derive(Debug, Clone)]
@@ -96,20 +92,49 @@ impl StreamLogStoreBackend {
         }
     }
 
-    fn read_in_time_range(
+    fn walk_ordered<F>(
         &self,
-        table_id: &TableId,
+        _table_id: &TableId,
         user_id: &UserId,
         start_time: u64,
         end_time: u64,
-        limit: usize,
-    ) -> Result<HashMap<StreamTableRowId, StreamTableRow>> {
+        start_seq: Option<i64>,
+        ttl_ms: Option<u64>,
+        now_ms: u64,
+        page_rows: usize,
+        max_rows: Option<usize>,
+        mut on_page: F,
+    ) -> Result<()>
+    where
+        F: FnMut(Vec<(StreamTableRowId, StreamTableRow)>) -> Result<bool>,
+    {
+        let adapt = |error: StorageError| kalamdb_streams::StreamLogError::Io(error.to_string());
         match self {
             Self::Memory(store) => store
-                .read_in_time_range(table_id, user_id, start_time, end_time, limit)
+                .walk_ordered(
+                    user_id,
+                    start_time,
+                    end_time,
+                    start_seq,
+                    ttl_ms,
+                    now_ms,
+                    page_rows,
+                    max_rows,
+                    |page| on_page(page).map_err(adapt),
+                )
                 .map_err(map_stream_error),
             Self::File(store) => store
-                .read_in_time_range(table_id, user_id, start_time, end_time, limit)
+                .walk_ordered(
+                    user_id,
+                    start_time,
+                    end_time,
+                    start_seq,
+                    ttl_ms,
+                    now_ms,
+                    page_rows,
+                    max_rows,
+                    |page| on_page(page).map_err(adapt),
+                )
                 .map_err(map_stream_error),
         }
     }
@@ -267,15 +292,15 @@ impl StreamTableStore {
 
     /// Retrieve a row by key.
     pub fn get(&self, key: &StreamTableRowId) -> Result<Option<StreamTableRow>> {
-        // Do not derive time from VersionId; scan the user partition and match the key.
-        let rows = self.log_store.read_in_time_range(
-            &self.table_id,
-            key.user_id(),
-            0,
-            u64::MAX,
-            MAX_SCAN_LIMIT,
-        )?;
-        Ok(rows.get(key).cloned())
+        let mut found = None;
+        self.for_each_user_streaming_page(key.user_id(), None, None, 0, 1_024, None, |page| {
+            if let Some((_, row)) = page.into_iter().find(|(row_id, _)| row_id == key) {
+                found = Some(row);
+                return Ok(false);
+            }
+            Ok(true)
+        })?;
+        Ok(found)
     }
 
     /// Delete a row by key (append tombstone).
@@ -300,8 +325,7 @@ impl StreamTableStore {
         &self,
         limit: Option<usize>,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>> {
-        let limit = limit.unwrap_or(MAX_SCAN_LIMIT);
-        if limit == 0 {
+        if limit == Some(0) {
             return Ok(Vec::new());
         }
 
@@ -309,23 +333,21 @@ impl StreamTableStore {
         let mut results: Vec<(StreamTableRowId, StreamTableRow)> = Vec::new();
 
         for user_id in users {
-            let remaining = limit.saturating_sub(results.len());
-            if remaining == 0 {
+            let remaining = limit.map(|limit| limit.saturating_sub(results.len()));
+            if remaining == Some(0) {
                 break;
             }
-            let rows = self.log_store.read_in_time_range(
-                &self.table_id,
-                &user_id,
-                0,
-                u64::MAX,
-                remaining,
-            )?;
-            results.extend(rows.into_iter());
+            self.for_each_user_streaming_page(&user_id, None, None, 0, 8_192, remaining, |page| {
+                results.extend(page);
+                Ok(true)
+            })?;
         }
 
         results.sort_by(|(a, _), (b, _)| a.cmp(b));
-        if results.len() > limit {
-            results.truncate(limit);
+        if let Some(limit) = limit {
+            if results.len() > limit {
+                results.truncate(limit);
+            }
         }
         Ok(results)
     }
@@ -341,22 +363,20 @@ impl StreamTableStore {
             return Ok(Vec::new());
         }
 
-        // Version bounds are not time bounds; scan by time then filter by VersionId.
-        let rows = self.log_store.read_in_time_range(
-            &self.table_id,
+        let mut result = Vec::new();
+        self.for_each_user_streaming_page(
             user_id,
+            start_seq,
+            None,
             0,
-            u64::MAX,
-            MAX_SCAN_LIMIT,
+            limit,
+            Some(limit),
+            |page| {
+                result.extend(page);
+                Ok(true)
+            },
         )?;
-
-        let mut vec: Vec<(StreamTableRowId, StreamTableRow)> = rows
-            .into_iter()
-            .filter(|(key, _)| start_seq.map(|seq| key.version() >= seq).unwrap_or(true))
-            .take(limit)
-            .collect();
-        vec.sort_by(|(a, _), (b, _)| a.cmp(b));
-        Ok(vec)
+        Ok(result)
     }
 
     /// Streaming scan for a single user with TTL filtering and early termination.
@@ -390,55 +410,50 @@ impl StreamTableStore {
             return Ok(Vec::new());
         }
 
-        let mut start_time: u64 = 0;
-        if let Some(ttl) = ttl_ms {
-            start_time = now_ms.saturating_sub(ttl).saturating_add(1);
-        }
-        let read_limit = if start_seq.is_some() {
-            MAX_SCAN_LIMIT
-        } else {
-            limit
-        };
-        let rows = self.log_store.read_in_time_range(
+        let mut result = Vec::with_capacity(limit.min(1024));
+        self.for_each_user_streaming_page(
+            user_id,
+            start_seq,
+            ttl_ms,
+            now_ms,
+            limit,
+            Some(limit),
+            |page| {
+                result.extend(page);
+                Ok(true)
+            },
+        )?;
+        Ok(result)
+    }
+
+    /// Read every visible row for one user, one ordered page at a time.
+    pub fn for_each_user_streaming_page<F>(
+        &self,
+        user_id: &UserId,
+        start_seq: Option<VersionId>,
+        ttl_ms: Option<u64>,
+        now_ms: u64,
+        page_rows: usize,
+        max_rows: Option<usize>,
+        on_page: F,
+    ) -> Result<()>
+    where
+        F: FnMut(Vec<(StreamTableRowId, StreamTableRow)>) -> Result<bool>,
+    {
+        let start_time =
+            ttl_ms.map(|ttl| now_ms.saturating_sub(ttl).saturating_add(1)).unwrap_or(0);
+        self.log_store.walk_ordered(
             &self.table_id,
             user_id,
             start_time,
             u64::MAX,
-            read_limit,
-        )?;
-
-        // Filter by start_seq, apply TTL, and collect with early termination
-        let mut result = Vec::with_capacity(limit.min(1024));
-
-        // Sort by key for deterministic ordering
-        let mut sorted: Vec<_> = rows.into_iter().collect();
-        sorted.sort_by(|(a, _), (b, _)| a.cmp(b));
-
-        for (key, row) in sorted {
-            // Filter by start_seq
-            if let Some(seq) = start_seq {
-                if key.version() < seq {
-                    continue;
-                }
-            }
-
-            // TTL filtering: skip expired rows (use ingestion _timestamp, not VersionId)
-            if let Some(ttl) = ttl_ms {
-                let row_ts = row._timestamp as u64;
-                if row_ts + ttl <= now_ms {
-                    continue; // Row has expired
-                }
-            }
-
-            result.push((key, row));
-
-            // Early termination on limit
-            if result.len() >= limit {
-                break;
-            }
-        }
-
-        Ok(result)
+            start_seq.map(|seq| seq.as_i64()),
+            ttl_ms,
+            now_ms,
+            page_rows,
+            max_rows,
+            on_page,
+        )
     }
 
     /// Async version of scan_user_streaming to avoid blocking the async runtime.

@@ -102,7 +102,7 @@ impl JobExecutor for RestoreExecutor {
 
         let result = tokio::task::spawn_blocking(move || -> Result<(), KalamDbError> {
             let _transfer_guard = acquire_database_transfer_lock_blocking()?;
-            let plan = prepare_database_restore(&backup_source)?;
+            let plan = prepare_database_restore(&backup_source).map_err(super::transfer_error)?;
             let rocksdb_backup_dir = plan.rocksdb_dir();
 
             // 1. RocksDB native restore (overwrites current data)
@@ -113,13 +113,14 @@ impl JobExecutor for RestoreExecutor {
             }
 
             // 2. Parquet storage files
-            copy_dir_to_dir(&plan.storage_dir(), &dst_storage)?;
+            copy_dir_to_dir(&plan.storage_dir(), &dst_storage).map_err(super::transfer_error)?;
 
             // 3. Snapshot files
-            copy_dir_to_dir(&plan.snapshots_dir(), &dst_snapshots)?;
+            copy_dir_to_dir(&plan.snapshots_dir(), &dst_snapshots)
+                .map_err(super::transfer_error)?;
 
             // 4. Stream commit log files
-            copy_dir_to_dir(&plan.streams_dir(), &dst_streams)?;
+            copy_dir_to_dir(&plan.streams_dir(), &dst_streams).map_err(super::transfer_error)?;
 
             // 5. server.toml (optional)
             let backup_toml = plan.server_toml_path();

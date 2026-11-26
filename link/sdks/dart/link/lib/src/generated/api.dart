@@ -16,7 +16,7 @@ Uint8List dartEncodeRoutineRequest(
         argumentsJson: argumentsJson, paramsJson: paramsJson);
 
 /// Decode a function result frame with the shared Rust domain codec.
-String dartDecodeRoutineResult({required Uint8List frame}) =>
+String dartDecodeRoutineResult({required List<int> frame}) =>
     RustLib.instance.api.crateApiDartDecodeRoutineResult(frame: frame);
 
 /// Build a FILE download URL using the canonical `link-common` FileRef model.
@@ -117,6 +117,14 @@ Future<DartKalamClient> dartCreateClient(
 Future<void> dartUpdateAuth(
         {required DartKalamClient client, required DartAuthProvider auth}) =>
     RustLib.instance.api.crateApiDartUpdateAuth(client: client, auth: auth);
+
+/// Supply fresh credentials when the native WebSocket connection dials.
+Future<void> dartSetWebsocketAuthProvider(
+        {required DartKalamClient client,
+        required DartAuthProvider initialAuth,
+        required FutureOr<DartAuthProvider?> Function() provider}) =>
+    RustLib.instance.api.crateApiDartSetWebsocketAuthProvider(
+        client: client, initialAuth: initialAuth, provider: provider);
 
 /// Execute a SQL query, optionally with parameters and namespace.
 ///

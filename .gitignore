@@ -164,3 +164,4 @@ rust-toolchain.toml
 /cli/kalam-cli-e2e/logs
 /cli/kalam-cli-e2e/logs
 /scripts/__pycache__
+benchv2/comparison/results/spacetimedb.pid

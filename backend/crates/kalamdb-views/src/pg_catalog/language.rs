@@ -1,11 +1,12 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, BooleanBuilder, Int64Builder, StringBuilder},
-    datatypes::{DataType, Field, Schema, SchemaRef},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use kalamdb_commons::Role;
+use kalamdb_macros::table;
 
 use crate::{error::RegistryError, pg_catalog::PgCatalogView};
 
@@ -17,19 +18,28 @@ const PG_LANGUAGES: &[(&str, i64, bool, bool)] = &[
     ("javascript", 13001, true, true),
 ];
 
+#[table(
+    name = "pg_language",
+    namespace = SchemaId::pg_catalog(),
+    view = true,
+    comment = "Procedural languages"
+)]
+#[derive(Debug)]
+struct PgLanguageRow {
+    /// Language oid
+    oid: i64,
+    /// Language name
+    lanname: String,
+    /// Owner oid
+    lanowner: Option<i64>,
+    /// Whether the language is a procedural language
+    lanispl: Option<bool>,
+    /// Whether the language is trusted
+    lanpltrusted: Option<bool>,
+}
+
 fn schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            Arc::new(Schema::new(vec![
-                Field::new("oid", DataType::Int64, false),
-                Field::new("lanname", DataType::Utf8, false),
-                Field::new("lanowner", DataType::Int64, true),
-                Field::new("lanispl", DataType::Boolean, true),
-                Field::new("lanpltrusted", DataType::Boolean, true),
-            ]))
-        })
-        .clone()
+    PgLanguageRow::arrow_schema()
 }
 
 #[derive(Debug)]

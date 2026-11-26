@@ -1,21 +1,28 @@
 name: kalam_sync
-description: Local-first Flutter sync for KalamDB — Drift cache, live SQL, and offline actions.
-version: 0.8.0
+description: Offline-first Flutter database with SQLite/Drift cache, realtime KalamDB sync, optimistic writes, and durable offline actions.
+version: 0.9.0
 homepage: https://kalamdb.org
 repository: https://github.com/kalamdb/KalamDB
 issue_tracker: https://github.com/kalamdb/KalamDB/issues
 documentation: https://kalamdb.org/docs/dart-sdk/sync
+topics:
+  - offline-first
+  - local-first
+  - sqlite
+  - flutter
+  - sync
 
 environment:
   sdk: ">=3.10.0 <4.0.0"
   flutter: ">=3.38.0"
 
 dependencies:
+  crypto: ^3.0.3
   drift: ">=2.31.0 <3.0.0"
   drift_flutter: ">=0.2.8 <0.4.0"
   flutter:
     sdk: flutter
-  kalam_link: ">=0.8.0 <0.9.0"
+  kalam_link: ">=0.9.0 <0.10.0"
 
 dev_dependencies:
   build_runner: 2.15.1

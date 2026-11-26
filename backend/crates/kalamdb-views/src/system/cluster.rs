@@ -36,21 +36,87 @@ use datafusion::{
     logical_expr::{Expr, TableProviderFilterPushDown},
     physical_expr::PhysicalExpr,
 };
-use kalamdb_commons::{
-    datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
-};
+use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_datafusion_sources::{
     exec::{finalize_deferred_batch, DeferredBatchExec, DeferredBatchSource},
     provider::{combined_filter, pushdown_results_for_filters, FilterCapability},
 };
+use kalamdb_macros::table;
 use kalamdb_raft::{ClusterInfo, CommandExecutor, RaftExecutor, ServerStateExt};
 use kalamdb_system::SystemTable;
 
-use super::common::system_view_definition;
 use crate::{error::RegistryError, view_base::VirtualView};
 
 crate::memoized_view_schema!(cluster_schema, ClusterView);
+
+#[table(
+    name = "cluster",
+    view = true,
+    comment = "Live OpenRaft cluster status and metrics (read-only view)"
+)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ClusterRow {
+    /// Cluster identifier
+    pub cluster_id: String,
+    /// Node ID within the cluster
+    pub node_id: i64,
+    /// Node role (leader, follower, learner, candidate)
+    pub role: String,
+    /// Node status
+    pub status: String,
+    /// RPC address for Raft communication
+    pub rpc_addr: String,
+    /// API address for client requests
+    pub api_addr: String,
+    /// Whether this is the current node
+    pub is_self: bool,
+    /// Whether this node is the leader
+    pub is_leader: bool,
+    /// Number of Raft groups this node leads
+    pub groups_leading: i32,
+    /// Total number of Raft groups
+    pub total_groups: i32,
+    /// Current Raft term
+    pub current_term: Option<i64>,
+    /// Last applied log index
+    pub last_applied_log: Option<i64>,
+    /// Leader's last log index
+    pub leader_last_log_index: Option<i64>,
+    /// Last snapshot index
+    pub snapshot_index: Option<i64>,
+    /// Catchup progress percentage (0-100)
+    pub catchup_progress_pct: Option<i16>,
+    /// Replication lag (entries behind leader)
+    pub replication_lag: Option<i64>,
+    /// Machine hostname
+    pub hostname: Option<String>,
+    /// KalamDB version
+    pub version: Option<String>,
+    /// Total system memory in MB
+    pub memory_mb: Option<i64>,
+    /// Current KalamDB process memory usage in MB
+    pub memory_usage_mb: Option<i64>,
+    /// Current KalamDB process CPU usage percentage
+    pub cpu_usage_percent: Option<f32>,
+    /// KalamDB server uptime in seconds
+    pub uptime_seconds: Option<i64>,
+    /// KalamDB server uptime in compact human-readable form
+    pub uptime_human: Option<String>,
+    /// Operating system
+    pub os: Option<String>,
+    /// CPU architecture
+    pub arch: Option<String>,
+    /// Groups this node leads. Unknown for a remote node with no `GetNodeInfo` sample.
+    pub leaders: Option<i32>,
+    /// Groups this node follows. Unknown for a remote node.
+    pub followers: Option<i32>,
+    /// Groups on this node whose apply index lags the cluster commit.
+    pub lagging_groups: Option<i32>,
+    /// Largest apply lag on this node, in log entries.
+    pub worst_lag: Option<i64>,
+    /// Milliseconds since the freshest quorum ack or heartbeat sample. Unknown when absent.
+    pub heartbeat_age: Option<i64>,
+}
 
 /// ClusterView - Displays live Raft cluster status
 ///
@@ -74,7 +140,7 @@ pub struct ClusterView {
 impl ClusterView {
     /// Get the TableDefinition for system.cluster view
     ///
-    /// Schema (25 columns):
+    /// Schema (30 columns):
     /// - cluster_id TEXT NOT NULL
     /// - node_id BIGINT NOT NULL
     /// - role TEXT NOT NULL
@@ -100,292 +166,13 @@ impl ClusterView {
     /// - uptime_human TEXT (nullable)
     /// - os TEXT (nullable)
     /// - arch TEXT (nullable)
+    /// - leaders INT (nullable)
+    /// - followers INT (nullable)
+    /// - lagging_groups INT (nullable)
+    /// - worst_lag BIGINT (nullable)
+    /// - heartbeat_age BIGINT (nullable)
     pub fn definition() -> TableDefinition {
-        let columns = vec![
-            ColumnDefinition::new(
-                1,
-                "cluster_id",
-                1,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Cluster identifier".to_string()),
-            ),
-            ColumnDefinition::new(
-                2,
-                "node_id",
-                2,
-                KalamDataType::BigInt,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Node ID within the cluster".to_string()),
-            ),
-            ColumnDefinition::new(
-                3,
-                "role",
-                3,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Node role (leader, follower, learner, candidate)".to_string()),
-            ),
-            ColumnDefinition::new(
-                4,
-                "status",
-                4,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Node status".to_string()),
-            ),
-            ColumnDefinition::new(
-                5,
-                "rpc_addr",
-                5,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("RPC address for Raft communication".to_string()),
-            ),
-            ColumnDefinition::new(
-                6,
-                "api_addr",
-                6,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("API address for client requests".to_string()),
-            ),
-            ColumnDefinition::new(
-                7,
-                "is_self",
-                7,
-                KalamDataType::Boolean,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Whether this is the current node".to_string()),
-            ),
-            ColumnDefinition::new(
-                8,
-                "is_leader",
-                8,
-                KalamDataType::Boolean,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Whether this node is the leader".to_string()),
-            ),
-            ColumnDefinition::new(
-                9,
-                "groups_leading",
-                9,
-                KalamDataType::Int,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Number of Raft groups this node leads".to_string()),
-            ),
-            ColumnDefinition::new(
-                10,
-                "total_groups",
-                10,
-                KalamDataType::Int,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Total number of Raft groups".to_string()),
-            ),
-            // OpenRaft metrics (nullable - may not be available for all nodes)
-            ColumnDefinition::new(
-                11,
-                "current_term",
-                11,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Current Raft term".to_string()),
-            ),
-            ColumnDefinition::new(
-                12,
-                "last_applied_log",
-                12,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Last applied log index".to_string()),
-            ),
-            ColumnDefinition::new(
-                13,
-                "leader_last_log_index",
-                13,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Leader's last log index".to_string()),
-            ),
-            ColumnDefinition::new(
-                14,
-                "snapshot_index",
-                14,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Last snapshot index".to_string()),
-            ),
-            ColumnDefinition::new(
-                15,
-                "catchup_progress_pct",
-                15,
-                KalamDataType::SmallInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Catchup progress percentage (0-100)".to_string()),
-            ),
-            ColumnDefinition::new(
-                16,
-                "replication_lag",
-                16,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Replication lag (entries behind leader)".to_string()),
-            ),
-            // Node metadata (replicated via OpenRaft membership)
-            ColumnDefinition::new(
-                17,
-                "hostname",
-                17,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Machine hostname".to_string()),
-            ),
-            ColumnDefinition::new(
-                18,
-                "version",
-                18,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("KalamDB version".to_string()),
-            ),
-            ColumnDefinition::new(
-                19,
-                "memory_mb",
-                19,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Total system memory in MB".to_string()),
-            ),
-            ColumnDefinition::new(
-                20,
-                "memory_usage_mb",
-                20,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Current KalamDB process memory usage in MB".to_string()),
-            ),
-            ColumnDefinition::new(
-                21,
-                "cpu_usage_percent",
-                21,
-                KalamDataType::Float,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Current KalamDB process CPU usage percentage".to_string()),
-            ),
-            ColumnDefinition::new(
-                22,
-                "uptime_seconds",
-                22,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("KalamDB server uptime in seconds".to_string()),
-            ),
-            ColumnDefinition::new(
-                23,
-                "uptime_human",
-                23,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("KalamDB server uptime in compact human-readable form".to_string()),
-            ),
-            ColumnDefinition::new(
-                24,
-                "os",
-                24,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Operating system".to_string()),
-            ),
-            ColumnDefinition::new(
-                25,
-                "arch",
-                25,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("CPU architecture".to_string()),
-            ),
-        ];
-
-        system_view_definition(
-            SystemTable::Cluster,
-            columns,
-            "Live OpenRaft cluster status and metrics (read-only view)",
-        )
+        ClusterRow::definition()
     }
 
     /// Create a new cluster view
@@ -450,6 +237,11 @@ impl VirtualView for ClusterView {
         let mut uptime_humans: Vec<Option<&str>> = Vec::with_capacity(num_nodes);
         let mut oses: Vec<Option<&str>> = Vec::with_capacity(num_nodes);
         let mut archs: Vec<Option<&str>> = Vec::with_capacity(num_nodes);
+        let mut leaders: Vec<Option<i32>> = Vec::with_capacity(num_nodes);
+        let mut followers: Vec<Option<i32>> = Vec::with_capacity(num_nodes);
+        let mut lagging_groups: Vec<Option<i32>> = Vec::with_capacity(num_nodes);
+        let mut worst_lags: Vec<Option<i64>> = Vec::with_capacity(num_nodes);
+        let mut heartbeat_ages: Vec<Option<i64>> = Vec::with_capacity(num_nodes);
 
         // Single pass through nodes - collect all data
         for node in &info.nodes {
@@ -479,6 +271,11 @@ impl VirtualView for ClusterView {
             uptime_humans.push(node.uptime_human.as_deref());
             oses.push(node.os.as_deref());
             archs.push(node.arch.as_deref());
+            leaders.push(node.leaders.map(|value| value as i32));
+            followers.push(node.followers.map(|value| value as i32));
+            lagging_groups.push(node.lagging_groups.map(|value| value as i32));
+            worst_lags.push(node.worst_lag.map(|value| value as i64));
+            heartbeat_ages.push(node.millis_since_last_heartbeat.map(|value| value as i64));
         }
 
         // Build RecordBatch with direct Arrow array construction
@@ -511,6 +308,11 @@ impl VirtualView for ClusterView {
                 Arc::new(StringArray::from(uptime_humans)) as ArrayRef,
                 Arc::new(StringArray::from(oses)) as ArrayRef,
                 Arc::new(StringArray::from(archs)) as ArrayRef,
+                Arc::new(Int32Array::from(leaders)) as ArrayRef,
+                Arc::new(Int32Array::from(followers)) as ArrayRef,
+                Arc::new(Int32Array::from(lagging_groups)) as ArrayRef,
+                Arc::new(Int64Array::from(worst_lags)) as ArrayRef,
+                Arc::new(Int64Array::from(heartbeat_ages)) as ArrayRef,
             ],
         )
         .map_err(|e| RegistryError::Other(format!("Failed to build cluster batch: {}", e)))
@@ -641,7 +443,7 @@ mod tests {
     #[test]
     fn test_schema() {
         let schema = cluster_schema();
-        assert_eq!(schema.fields().len(), 25);
+        assert_eq!(schema.fields().len(), 30);
         assert_eq!(schema.field(0).name(), "cluster_id");
         assert_eq!(schema.field(1).name(), "node_id");
         assert_eq!(schema.field(2).name(), "role");
@@ -656,6 +458,11 @@ mod tests {
         assert_eq!(schema.field(22).name(), "uptime_human");
         assert_eq!(schema.field(23).name(), "os");
         assert_eq!(schema.field(24).name(), "arch");
+        assert_eq!(schema.field(25).name(), "leaders");
+        assert_eq!(schema.field(26).name(), "followers");
+        assert_eq!(schema.field(27).name(), "lagging_groups");
+        assert_eq!(schema.field(28).name(), "worst_lag");
+        assert_eq!(schema.field(29).name(), "heartbeat_age");
     }
 
     #[test]

@@ -37,6 +37,11 @@ pub(crate) fn apply_db_settings(db_opts: &mut Options, settings: &RocksDbSetting
     db_opts.set_avoid_unnecessary_blocking_io(true);
     db_opts.set_bytes_per_sync(BYTES_PER_SYNC);
     db_opts.set_wal_bytes_per_sync(BYTES_PER_SYNC);
+    if settings.sync_writes && !settings.disable_wal {
+        // Group commit calls `flush_wal(true)` before acknowledging writes, so
+        // buffering WAL bytes in user space avoids a per-write kernel flush.
+        db_opts.set_manual_wal_flush(true);
+    }
     // A flush storm writes tens of kilobytes of info log per second. Roll it.
     db_opts.set_max_log_file_size(INFO_LOG_MAX_BYTES);
     db_opts.set_keep_log_file_num(INFO_LOG_KEEP_FILES);
@@ -55,16 +60,17 @@ pub(crate) fn apply_db_settings(db_opts: &mut Options, settings: &RocksDbSetting
 pub(crate) fn install_write_buffer_manager(
     db_opts: &mut Options,
     settings: &RocksDbSettings,
-    column_family_count: usize,
+    cf_names: &[String],
 ) -> WriteBufferManager {
-    let budget = db_write_buffer_budget(settings, column_family_count);
+    let budget = db_write_buffer_budget_for_cfs(settings, cf_names);
     let manager = WriteBufferManager::new_write_buffer_manager(budget, false);
     db_opts.set_db_write_buffer_size(budget);
     db_opts.set_write_buffer_manager(&manager);
     manager
 }
 
-/// Shared memtable cap for `column_family_count` open families.
+/// Shared memtable cap for `column_family_count` open families (worst-case profile arena).
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn db_write_buffer_budget(
     settings: &RocksDbSettings,
     column_family_count: usize,
@@ -72,6 +78,28 @@ pub(crate) fn db_write_buffer_budget(
     let families = column_family_count.max(1);
     let floor = families
         .saturating_mul(largest_arena_block(settings))
+        .saturating_mul(MEMTABLE_BUDGET_HEADROOM);
+    shared_profile_budget(settings).max(floor)
+}
+
+/// Shared memtable cap sized from the actual profile of each open column family.
+///
+/// Using each CF's own profile arena block avoids multiplying every `hot_index` (8KB)
+/// and `system_*` (4KB) family by `raft`'s larger arena block (32KB).
+pub(crate) fn db_write_buffer_budget_for_cfs(
+    settings: &RocksDbSettings,
+    cf_names: &[String],
+) -> usize {
+    if cf_names.is_empty() {
+        return shared_profile_budget(settings)
+            .max(MIN_ARENA_BLOCK.saturating_mul(MEMTABLE_BUDGET_HEADROOM));
+    }
+    let floor = cf_names
+        .iter()
+        .fold(0usize, |sum, name| {
+            let profile = profile_settings(settings, classify_column_family_name(name));
+            sum.saturating_add(arena_block_size(profile.write_buffer_size))
+        })
         .saturating_mul(MEMTABLE_BUDGET_HEADROOM);
     shared_profile_budget(settings).max(floor)
 }

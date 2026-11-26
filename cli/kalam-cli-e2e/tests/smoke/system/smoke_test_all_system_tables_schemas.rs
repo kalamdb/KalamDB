@@ -6,8 +6,13 @@
 //! Covers:
 //! - Persisted tables: users, namespaces, schemas, storages, jobs, job_nodes, audit_log, manifest,
 //!   topics, topic_offsets
-//! - Virtual views: live, stats, settings, server_logs, cluster, cluster_groups, datatypes, tables,
-//!   columns
+//! - Virtual views: live, stats, settings, server_logs, cluster, cluster_groups, datatypes,
+//!   sessions, active_procedure_runs, procedure_logs, module_instances, procedures, modules,
+//!   module_revisions
+//!
+//! Table and column catalogs are `information_schema.tables` / `information_schema.columns`
+//! (with `kdb_*` columns) and, on the wire, `pg_catalog`. `system.tables` and `system.columns`
+//! are not registered.
 //!
 //! This test prevents schema definition bugs like the topic_offsets
 //! updated_at column mismatch (BigInt vs Timestamp).
@@ -55,7 +60,7 @@ fn smoke_test_all_system_tables_and_views_queryable() {
         "trigger_attempts",
     ];
 
-    // Virtual system views (9)
+    // Virtual system views. Table and column catalogs live in information_schema.
     let virtual_views = vec![
         "live",
         "stats",
@@ -64,8 +69,6 @@ fn smoke_test_all_system_tables_and_views_queryable() {
         "cluster",
         "cluster_groups",
         "datatypes",
-        "tables",
-        "columns",
         "sessions",
         "active_procedure_runs",
         "procedure_logs",

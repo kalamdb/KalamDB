@@ -20,6 +20,12 @@ use tonic::{
 use tonic_prost::ProstCodec;
 use tower::{Service, ServiceExt};
 
+/// Current Raft RPC envelope version. A different version is rejected before payload decode.
+pub const RAFT_RPC_PROTOCOL_VERSION: u32 = 1;
+
+/// Largest Raft gRPC message this node will encode or decode.
+pub const RAFT_RPC_MAX_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
+
 /// Raft RPC request message
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct RaftRpcRequest {
@@ -27,13 +33,28 @@ pub struct RaftRpcRequest {
     #[prost(string, tag = "1")]
     pub group_id: String,
 
-    /// RPC type: "vote", "append_entries", "install_snapshot"
+    /// RPC type: "vote", "append_entries", "install_snapshot", "pre_vote", "transfer_leader"
     #[prost(string, tag = "2")]
     pub rpc_type: String,
 
     /// Serialized RPC payload
     #[prost(bytes = "vec", tag = "3")]
     pub payload: Vec<u8>,
+
+    /// Envelope version. Missing on an older peer, which prost reads as 0.
+    #[prost(uint32, tag = "4")]
+    pub protocol_version: u32,
+}
+
+/// Reject a Raft envelope whose version is not [`RAFT_RPC_PROTOCOL_VERSION`].
+pub fn reject_foreign_protocol(version: u32) -> Result<(), Status> {
+    if version == RAFT_RPC_PROTOCOL_VERSION {
+        Ok(())
+    } else {
+        Err(Status::failed_precondition(format!(
+            "raft rpc protocol version {version} rejected; this node speaks {RAFT_RPC_PROTOCOL_VERSION}"
+        )))
+    }
 }
 
 /// Raft RPC response message
@@ -54,6 +75,8 @@ pub enum RaftRpcKind {
     Vote,
     AppendEntries,
     InstallSnapshot,
+    PreVote,
+    TransferLeader,
 }
 
 impl RaftRpcKind {
@@ -62,6 +85,8 @@ impl RaftRpcKind {
             Self::Vote => "vote",
             Self::AppendEntries => "append_entries",
             Self::InstallSnapshot => "install_snapshot",
+            Self::PreVote => "pre_vote",
+            Self::TransferLeader => "transfer_leader",
         }
     }
 }
@@ -80,6 +105,8 @@ impl std::str::FromStr for RaftRpcKind {
             "vote" => Ok(Self::Vote),
             "append_entries" => Ok(Self::AppendEntries),
             "install_snapshot" => Ok(Self::InstallSnapshot),
+            "pre_vote" => Ok(Self::PreVote),
+            "transfer_leader" => Ok(Self::TransferLeader),
             other => Err(format!("Unknown RPC type: {}", other)),
         }
     }
@@ -138,7 +165,9 @@ pub mod raft_client {
     impl RaftClient<tonic::transport::Channel> {
         /// Create a new client from a channel
         pub fn new(channel: tonic::transport::Channel) -> Self {
-            let inner = tonic::client::Grpc::new(channel);
+            let inner = tonic::client::Grpc::new(channel)
+                .max_decoding_message_size(RAFT_RPC_MAX_MESSAGE_BYTES)
+                .max_encoding_message_size(RAFT_RPC_MAX_MESSAGE_BYTES);
             Self { inner }
         }
     }
@@ -252,7 +281,9 @@ pub mod raft_server {
             match req.uri().path() {
                 "/kalamdb.raft.Raft/RaftRpc" => {
                     let fut = async move {
-                        let mut grpc = tonic::server::Grpc::new(ProstCodec::default());
+                        let mut grpc = tonic::server::Grpc::new(ProstCodec::default())
+                            .max_decoding_message_size(RAFT_RPC_MAX_MESSAGE_BYTES)
+                            .max_encoding_message_size(RAFT_RPC_MAX_MESSAGE_BYTES);
                         let method = RaftRpcSvc(inner);
                         let res = grpc.unary(method, req).await;
                         Ok(res)
@@ -261,7 +292,9 @@ pub mod raft_server {
                 },
                 "/kalamdb.raft.Raft/ClientProposal" => {
                     let fut = async move {
-                        let mut grpc = tonic::server::Grpc::new(ProstCodec::default());
+                        let mut grpc = tonic::server::Grpc::new(ProstCodec::default())
+                            .max_decoding_message_size(RAFT_RPC_MAX_MESSAGE_BYTES)
+                            .max_encoding_message_size(RAFT_RPC_MAX_MESSAGE_BYTES);
                         let method = ClientProposalSvc(inner);
                         let res = grpc.unary(method, req).await;
                         Ok(res)
@@ -330,6 +363,7 @@ impl raft_server::Raft for RaftService {
     ) -> Result<Response<RaftRpcResponse>, Status> {
         self.manager.authorize_incoming_rpc(&request)?;
         let req = request.into_inner();
+        reject_foreign_protocol(req.protocol_version)?;
 
         // Parse group ID
         let group_id = req
@@ -346,6 +380,10 @@ impl raft_server::Raft for RaftService {
             },
             RaftRpcKind::InstallSnapshot => {
                 self.manager.handle_install_snapshot(group_id, &req.payload).await
+            },
+            RaftRpcKind::PreVote => self.manager.handle_pre_vote(group_id, &req.payload).await,
+            RaftRpcKind::TransferLeader => {
+                self.manager.handle_transfer_leader(group_id, &req.payload).await
             },
         };
 
@@ -638,9 +676,18 @@ mod tests {
             group_id: "MetaSystem".to_string(),
             rpc_type: RaftRpcKind::Vote.to_string(),
             payload: vec![1, 2, 3],
+            protocol_version: RAFT_RPC_PROTOCOL_VERSION,
         };
 
         assert_eq!(req.group_id, "MetaSystem");
         assert_eq!(req.rpc_type, RaftRpcKind::Vote.as_str());
+        assert_eq!(req.protocol_version, RAFT_RPC_PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn foreign_protocol_version_is_rejected_before_payload_decode() {
+        assert!(reject_foreign_protocol(0).is_err());
+        assert!(reject_foreign_protocol(RAFT_RPC_PROTOCOL_VERSION + 1).is_err());
+        assert!(reject_foreign_protocol(RAFT_RPC_PROTOCOL_VERSION).is_ok());
     }
 }

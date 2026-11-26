@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, BooleanArray, Float64Array, Int64Array, ListBuilder, StringArray},
-    datatypes::{DataType, Field, Schema, SchemaRef},
+    datatypes::{DataType, Field, SchemaRef},
     record_batch::RecordBatch,
 };
 use kalamdb_commons::Role;
@@ -16,11 +16,9 @@ pub struct EmptyPgCatalogView {
 }
 
 impl EmptyPgCatalogView {
-    pub fn new(name: &'static str, fields: Vec<Field>) -> Self {
-        Self {
-            name,
-            schema: Arc::new(Schema::new(fields)),
-        }
+    /// Empty relation with a fixed schema.
+    pub fn new(name: &'static str, schema: SchemaRef) -> Self {
+        Self { name, schema }
     }
 }
 

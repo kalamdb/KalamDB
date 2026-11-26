@@ -217,7 +217,7 @@ async fn e2e_transaction_duplicate_primary_key_commit_fails() {
 
     let message = postgres_error_text(&err);
     assert!(
-        message.contains("Primary key violation")
+        message.to_ascii_lowercase().contains("primary key")
             || message.contains("already exists")
             || message.contains("appears multiple times")
             || message.contains("db error"),
@@ -431,7 +431,7 @@ async fn e2e_transaction_kalamdb_commit_failure_rolls_back_native_postgres_rows(
         .expect_err("duplicate foreign key should abort mixed transaction at commit");
     let message = postgres_error_text(&err);
     assert!(
-        message.contains("Primary key violation")
+        message.to_ascii_lowercase().contains("primary key")
             || message.contains("already exists")
             || message.contains("appears multiple times")
             || message.contains("db error"),

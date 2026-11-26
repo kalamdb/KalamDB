@@ -12,17 +12,58 @@ use datafusion::arrow::{
     datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
-use kalamdb_commons::{
-    datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
-};
+use kalamdb_commons::schemas::TableDefinition;
+use kalamdb_macros::table;
 use kalamdb_raft::{CommandExecutor, GroupId};
 use kalamdb_system::SystemTable;
 
-use super::common::{system_view_definition, view_provider_with, SystemViewProvider};
+use super::common::{view_provider_with, Json, SystemViewProvider};
 use crate::{error::RegistryError, view_base::VirtualView};
 
 crate::memoized_view_schema!(cluster_groups_schema, ClusterGroupsView);
+
+#[table(
+    name = "cluster_groups",
+    view = true,
+    comment = "Per-Raft-group membership and replication status (read-only view)"
+)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClusterGroupRow {
+    /// Raft group numeric ID
+    pub group_id: i64,
+    /// Cluster identifier
+    pub cluster_id: String,
+    /// Raft node ID (this node's ID for the group)
+    pub node_id: i64,
+    /// Group type: meta, user_data, shared_data
+    pub group_type: String,
+    /// Current Raft term
+    pub current_term: Option<i64>,
+    /// Last accepted vote (JSON format)
+    pub vote: Option<Json>,
+    /// Last log index appended to this node's log
+    pub last_log_index: Option<i64>,
+    /// Last log index applied to state machine
+    pub last_applied: Option<i64>,
+    /// Last log index included in snapshot
+    pub snapshot: Option<i64>,
+    /// Last log index purged from storage (inclusive)
+    pub purged: Option<i64>,
+    /// Last log index committed by the cluster
+    pub committed: Option<i64>,
+    /// Server state: Leader, Follower, Candidate, Learner, Shutdown
+    pub state: Option<String>,
+    /// Current cluster leader node ID
+    pub current_leader: Option<i64>,
+    /// Milliseconds since most recent quorum acknowledgment (leader only)
+    pub millis_since_quorum_ack: Option<i64>,
+    /// This node's local commit index. Distinct from the cluster `committed` index.
+    pub local_committed: Option<i64>,
+    /// Last log index flushed to storage for this group.
+    pub flushed: Option<i64>,
+    /// Cluster commit index minus the applied index of this same group.
+    pub lag: Option<i64>,
+}
 
 #[derive(Debug)]
 pub struct ClusterGroupsView {
@@ -31,171 +72,7 @@ pub struct ClusterGroupsView {
 
 impl ClusterGroupsView {
     pub fn definition() -> TableDefinition {
-        let columns = vec![
-            ColumnDefinition::new(
-                1,
-                "group_id",
-                1,
-                KalamDataType::BigInt,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Raft group numeric ID".to_string()),
-            ),
-            ColumnDefinition::new(
-                2,
-                "cluster_id",
-                2,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Cluster identifier".to_string()),
-            ),
-            ColumnDefinition::new(
-                3,
-                "node_id",
-                3,
-                KalamDataType::BigInt,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Raft node ID (this node's ID for the group)".to_string()),
-            ),
-            ColumnDefinition::new(
-                4,
-                "group_type",
-                4,
-                KalamDataType::Text,
-                false,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Group type: meta, user_data, shared_data".to_string()),
-            ),
-            ColumnDefinition::new(
-                5,
-                "current_term",
-                5,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Current Raft term".to_string()),
-            ),
-            ColumnDefinition::new(
-                6,
-                "vote",
-                6,
-                KalamDataType::Json,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Last accepted vote (JSON format)".to_string()),
-            ),
-            ColumnDefinition::new(
-                7,
-                "last_log_index",
-                7,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Last log index appended to this node's log".to_string()),
-            ),
-            ColumnDefinition::new(
-                8,
-                "last_applied",
-                8,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Last log index applied to state machine".to_string()),
-            ),
-            ColumnDefinition::new(
-                9,
-                "snapshot",
-                9,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Last log index included in snapshot".to_string()),
-            ),
-            ColumnDefinition::new(
-                10,
-                "purged",
-                10,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Last log index purged from storage (inclusive)".to_string()),
-            ),
-            ColumnDefinition::new(
-                11,
-                "committed",
-                11,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Last log index committed by the cluster".to_string()),
-            ),
-            ColumnDefinition::new(
-                12,
-                "state",
-                12,
-                KalamDataType::Text,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Server state: Leader, Follower, Candidate, Learner, Shutdown".to_string()),
-            ),
-            ColumnDefinition::new(
-                13,
-                "current_leader",
-                13,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some("Current cluster leader node ID".to_string()),
-            ),
-            ColumnDefinition::new(
-                14,
-                "millis_since_quorum_ack",
-                14,
-                KalamDataType::BigInt,
-                true,
-                false,
-                false,
-                ColumnDefault::None,
-                Some(
-                    "Milliseconds since most recent quorum acknowledgment (leader only)"
-                        .to_string(),
-                ),
-            ),
-        ];
-
-        system_view_definition(
-            SystemTable::ClusterGroups,
-            columns,
-            "Per-Raft-group membership and replication status (read-only view)",
-        )
+        ClusterGroupRow::definition()
     }
 
     pub fn new(executor: Arc<dyn CommandExecutor>) -> Self {
@@ -249,6 +126,9 @@ impl VirtualView for ClusterGroupsView {
         let mut states: Vec<Option<String>> = Vec::with_capacity(estimated_rows);
         let mut current_leaders: Vec<Option<i64>> = Vec::with_capacity(estimated_rows);
         let mut millis_since_quorum_acks: Vec<Option<i64>> = Vec::with_capacity(estimated_rows);
+        let mut local_committeds: Vec<Option<i64>> = Vec::with_capacity(estimated_rows);
+        let mut flusheds: Vec<Option<i64>> = Vec::with_capacity(estimated_rows);
+        let mut lags: Vec<Option<i64>> = Vec::with_capacity(estimated_rows);
 
         for gid in &group_ids {
             // New order: group_id, cluster_id, node_id, group_type, ...
@@ -275,12 +155,35 @@ impl VirtualView for ClusterGroupsView {
                 last_applieds.push(metrics.last_applied.map(|log_id| log_id.index as i64));
                 snapshots.push(metrics.snapshot.map(|log_id| log_id.index as i64));
                 purgeds.push(metrics.purged.map(|log_id| log_id.index as i64));
-                // Note: RaftMetrics doesn't directly expose committed; we'd need to get it from
-                // storage/log For now, use None
-                committeds.push(None);
+                let progress = raft_exec.and_then(|re| re.manager().group_progress(*gid));
+                committeds.push(
+                    progress
+                        .as_ref()
+                        .and_then(|progress| progress.committed)
+                        .map(|index| index as i64),
+                );
                 states.push(Some(format!("{:?}", metrics.state)));
                 current_leaders.push(metrics.current_leader.map(|id| id as i64));
-                millis_since_quorum_acks.push(metrics.millis_since_quorum_ack.map(|ms| ms as i64));
+                millis_since_quorum_acks.push(
+                    raft_exec
+                        .and_then(|re| re.manager().quorum_ack_age_ms(*gid))
+                        .map(|ms| ms as i64),
+                );
+                local_committeds.push(
+                    progress
+                        .as_ref()
+                        .and_then(|progress| progress.local_committed)
+                        .map(|index| index as i64),
+                );
+                flusheds.push(
+                    progress
+                        .as_ref()
+                        .and_then(|progress| progress.flushed)
+                        .map(|index| index as i64),
+                );
+                lags.push(
+                    progress.as_ref().and_then(|progress| progress.lag).map(|index| index as i64),
+                );
             } else {
                 // No metrics available - use defaults/NULLs
                 node_ids.push(info.current_node_id.as_u64() as i64);
@@ -294,6 +197,9 @@ impl VirtualView for ClusterGroupsView {
                 states.push(None);
                 current_leaders.push(None);
                 millis_since_quorum_acks.push(None);
+                local_committeds.push(None);
+                flusheds.push(None);
+                lags.push(None);
             }
         }
 
@@ -325,6 +231,9 @@ impl VirtualView for ClusterGroupsView {
                 },
                 Arc::new(Int64Array::from(current_leaders)) as ArrayRef,
                 Arc::new(Int64Array::from(millis_since_quorum_acks)) as ArrayRef,
+                Arc::new(Int64Array::from(local_committeds)) as ArrayRef,
+                Arc::new(Int64Array::from(flusheds)) as ArrayRef,
+                Arc::new(Int64Array::from(lags)) as ArrayRef,
             ],
         )
         .map_err(|e| RegistryError::Other(format!("Failed to build cluster_groups batch: {}", e)))
@@ -346,7 +255,7 @@ mod tests {
     #[test]
     fn test_schema() {
         let schema = cluster_groups_schema();
-        assert_eq!(schema.fields().len(), 14);
+        assert_eq!(schema.fields().len(), 17);
         assert_eq!(schema.field(0).name(), "group_id");
         assert_eq!(schema.field(1).name(), "cluster_id");
         assert_eq!(schema.field(2).name(), "node_id");
@@ -361,5 +270,8 @@ mod tests {
         assert_eq!(schema.field(11).name(), "state");
         assert_eq!(schema.field(12).name(), "current_leader");
         assert_eq!(schema.field(13).name(), "millis_since_quorum_ack");
+        assert_eq!(schema.field(14).name(), "local_committed");
+        assert_eq!(schema.field(15).name(), "flushed");
+        assert_eq!(schema.field(16).name(), "lag");
     }
 }

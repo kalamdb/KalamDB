@@ -21,6 +21,7 @@ final class FakeTransport implements KalamSyncTransport {
   var pauseCount = 0;
   var resumeCount = 0;
   var ensureConnectedCount = 0;
+  KalamRemoteBatch? emitOnSubscribe;
 
   @override
   Stream<KalamTransportConnection> get connectionStates => connections.stream;
@@ -43,9 +44,17 @@ final class FakeTransport implements KalamSyncTransport {
       batchSize: batchSize,
       params: params,
     ));
-    return streams
-        .putIfAbsent(subscriptionId, StreamController.broadcast)
-        .stream;
+    final controller = streams.putIfAbsent(
+      subscriptionId,
+      StreamController.broadcast,
+    );
+    final batch = emitOnSubscribe;
+    if (batch != null) {
+      scheduleMicrotask(() {
+        if (!controller.isClosed) controller.add(batch);
+      });
+    }
+    return controller.stream;
   }
 
   @override
@@ -636,6 +645,146 @@ void main() {
       isNull,
     );
   });
+
+  test('resume opens each consumer once', () async {
+    await coordinator.subscribe(
+      KalamEventConsumer(
+        id: 'messages',
+        sql: 'SELECT * FROM public.messages',
+        apply: (_) {},
+      ),
+    );
+    await coordinator.subscribe(
+      KalamEventConsumer(
+        id: 'notifications',
+        sql: 'SELECT * FROM public.notifications',
+        apply: (_) {},
+      ),
+    );
+    transport.connections.add(KalamTransportConnection.connected);
+    await coordinator.states.firstWhere(
+      (state) => state.phase == KalamSyncPhase.live,
+    );
+
+    final subscribed = transport.calls.length;
+    await coordinator.pause();
+    await coordinator.resume();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(transport.calls.length, subscribed + 2);
+    expect(coordinator.state.phase, isNot(KalamSyncPhase.error));
+    expect(coordinator.state.error, isNull);
+  });
+
+  test('cancellation recovery is renewed after pause and resume', () async {
+    await coordinator.subscribe(
+      KalamEventConsumer(
+        id: 'messages',
+        sql: 'SELECT * FROM public.messages',
+        apply: (_) {},
+      ),
+    );
+    transport.connections.add(KalamTransportConnection.connected);
+    await coordinator.states.firstWhere(
+      (state) => state.phase == KalamSyncPhase.live,
+    );
+    transport.streams['messages']!.addError(
+      Exception('AnyhowException(Operation cancelled)'),
+    );
+    await _eventually(() => transport.calls.length == 2);
+
+    await coordinator.pause();
+    await coordinator.resume();
+    await _eventually(() => transport.calls.length == 3);
+    transport.streams['messages']!.addError(
+      Exception('AnyhowException(Operation cancelled)'),
+    );
+    await _eventually(() => transport.calls.length == 4);
+    expect(coordinator.state.phase, isNot(KalamSyncPhase.error));
+  });
+
+  test('a cancelled live query resumes without an error phase', () async {
+    final states = <KalamSyncPhase>[];
+    final statesSubscription = coordinator.states.listen(
+      (state) => states.add(state.phase),
+    );
+    addTearDown(statesSubscription.cancel);
+
+    await coordinator.subscribe(
+      KalamEventConsumer(
+        id: 'messages',
+        sql: 'SELECT * FROM public.messages',
+        apply: (_) {},
+      ),
+    );
+    transport.connections.add(KalamTransportConnection.connected);
+    await coordinator.states.firstWhere(
+      (state) => state.phase == KalamSyncPhase.live,
+    );
+
+    transport.streams['messages']!.addError(
+      Exception('AnyhowException(Operation cancelled)'),
+    );
+    await _eventually(() => transport.calls.length == 2);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(transport.calls.length, 2);
+    expect(states, isNot(contains(KalamSyncPhase.error)));
+    expect(coordinator.state.phase, isNot(KalamSyncPhase.error));
+  });
+
+  test(
+    'resume keeps live after a consumer delivery during catch-up',
+    () async {
+      await coordinator.dispose();
+      coordinator = KalamSyncCoordinator(
+        accountKey: 'server/user-a',
+        store: store,
+        transport: transport,
+        actions: KalamActionRunner(
+          accountKey: 'server/user-a',
+          store: store,
+          registry: KalamActionRegistry([
+            KalamActionDefinition<Map<String, Object?>>(
+              key: 'messages.markRead',
+              codec: KalamActionCodec(
+                encode: (payload) => payload,
+                decode: (json) => json,
+              ),
+              execute: (_, _) async {
+                await Future<void>.delayed(const Duration(milliseconds: 30));
+              },
+            ),
+          ]),
+          clock: () => now,
+        ),
+      );
+
+      await coordinator.subscribe(
+        KalamEventConsumer(
+          id: 'messages',
+          sql: 'SELECT * FROM public.messages',
+          apply: (_) {},
+        ),
+      );
+      transport.connections.add(KalamTransportConnection.connected);
+      await coordinator.states.firstWhere(
+        (state) => state.phase == KalamSyncPhase.live,
+      );
+      await coordinator.pause();
+      await coordinator.actions.enqueue(
+        actionKey: 'messages.markRead',
+        actionId: 'action-resume-1',
+        payload: <String, Object?>{'messageId': 'm1'},
+      );
+      transport.emitOnSubscribe = _batch([4]);
+
+      await coordinator.resume();
+
+      expect(coordinator.state.phase, KalamSyncPhase.live);
+      expect(coordinator.state.error, isNull);
+    },
+  );
 
   test('resume cancels an in-flight pause before disconnect', () async {
     final applyStarted = Completer<void>();

@@ -21,6 +21,7 @@ use kalamdb_commons::{
     ids::VersionId,
     models::{rows::Row, TableId, UserId},
     websocket::{RowData, SharedChangePayload, WireNotification},
+    TableType,
 };
 use kalamdb_system::NotificationService as NotificationServiceTrait;
 use tokio::sync::mpsc;
@@ -549,8 +550,18 @@ impl NotificationService {
                 FanoutOwnerScope::User(user_id) => Some(user_id.clone()),
             };
 
+            let table_type = match &dispatch.owner_scope {
+                FanoutOwnerScope::Shared => TableType::Shared,
+                FanoutOwnerScope::User(_) => TableType::User,
+            };
             for notification in &dispatch.notifications {
-                self.notify_async(user_id.clone(), dispatch.table_id.clone(), notification.clone());
+                kalamdb_system::publish_live_table_change(
+                    Some(self),
+                    table_type,
+                    user_id.as_ref(),
+                    &dispatch.table_id,
+                    notification.clone(),
+                );
                 dispatched += 1;
             }
         }

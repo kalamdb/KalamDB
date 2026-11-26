@@ -414,7 +414,7 @@ fn test_hs256_with_external_issuer_rejected() {
         encode(
             &Header::new(Algorithm::HS256),
             &claims,
-            &EncodingKey::from_secret(secret.as_bytes()),
+            &EncodingKey::from_secret(secret.as_bytes()).unwrap(),
         )
         .expect("Failed to encode forged HS256 token")
     };
@@ -472,7 +472,7 @@ fn test_untrusted_issuer_rejected() {
         encode(
             &Header::new(Algorithm::HS256),
             &claims,
-            &EncodingKey::from_secret(secret.as_bytes()),
+            &EncodingKey::from_secret(secret.as_bytes()).unwrap(),
         )
         .expect("encode")
     };

@@ -1,0 +1,14 @@
+# Cursor treats every AGENTS.md and CLAUDE.md as a rule. Skill copies of those
+# names were injected into every chat. The on-demand entry is SKILL.md; the
+# long React guides live in REFERENCE.md. Ignore the rule filenames if a
+# skill rebuild writes them back.
+.agents/skills/**/AGENTS.md
+.agents/skills/**/CLAUDE.md
+
+# Claude Code keeps .claude/skills. Cursor already loads .agents/skills and
+# .cursor/skills, so the Claude copies are a second catalog.
+.claude/skills/**
+
+# Nested benchmark checkouts carry their own skill trees.
+benchv2/**/.agents/**
+benchv2/**/.claude/**

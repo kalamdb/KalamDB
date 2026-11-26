@@ -6,11 +6,7 @@ use tokio::process::Command as TokioCommand;
 
 /// Shell used to run script strings (`cmd /C` on Windows, `sh -c` elsewhere).
 pub fn shell_command_program() -> &'static str {
-    if cfg!(windows) {
-        "cmd"
-    } else {
-        "sh"
-    }
+    if cfg!(windows) { "cmd" } else { "sh" }
 }
 
 /// Configure `command` to run `script` through the platform shell.

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 /// Normalize a directory path to absolute form.
 ///
-/// - If path is already absolute, return as-is
+/// - If path is already absolute, keep it and use the platform separator
 /// - If path is relative, resolve against current working directory
 /// - Empty paths are returned unchanged
 ///
@@ -28,16 +28,34 @@ pub fn normalize_dir_path(path: &str) -> String {
         return path.to_string();
     }
 
-    let p = Path::new(path);
-    if p.is_absolute() {
-        path.to_string()
+    let p = Path::new(path.trim());
+    let absolute = if p.is_absolute() {
+        p.to_path_buf()
     } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(p)
-            .to_string_lossy()
-            .into_owned()
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(p)
+    };
+    platform_native_path(&absolute.to_string_lossy())
+}
+
+fn platform_native_path(path: &str) -> String {
+    #[cfg(windows)]
+    {
+        windows_native_path(path)
     }
+    #[cfg(not(windows))]
+    {
+        path.to_string()
+    }
+}
+
+/// Windows display form: strip the `\\?\` verbatim prefix and use `\` separators.
+#[cfg(any(windows, test))]
+fn windows_native_path(path: &str) -> String {
+    let normalized = path.replace('/', "\\");
+    if let Some(rest) = normalized.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    normalized.strip_prefix(r"\\?\").unwrap_or(&normalized).to_string()
 }
 
 /// Join a base directory with a subdirectory name.
@@ -76,9 +94,21 @@ mod tests {
 
         #[cfg(windows)]
         {
-            let abs_path = "C:/tmp/data";
-            assert_eq!(normalize_dir_path(abs_path), abs_path);
+            assert_eq!(normalize_dir_path("C:/tmp/data"), r"C:\tmp\data");
         }
+    }
+
+    #[test]
+    fn windows_native_path_strips_verbatim_prefix_and_uses_backslashes() {
+        assert_eq!(
+            windows_native_path(r"\\?\C:\Users\Jamal\.kalam\servers\default"),
+            r"C:\Users\Jamal\.kalam\servers\default"
+        );
+        assert_eq!(windows_native_path(r"\\?\UNC\server\share\data"), r"\\server\share\data");
+        assert_eq!(
+            windows_native_path(r"C:\tmp\kalamdb-v8\.kalam/data\rocksdb"),
+            r"C:\tmp\kalamdb-v8\.kalam\data\rocksdb"
+        );
     }
 
     #[test]

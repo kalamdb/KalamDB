@@ -28,7 +28,11 @@ pub async fn execute_single_statement_raw(
         sql_executor.execute_with_metadata(metadata, exec_ctx, params).await
     };
 
-    exec_result.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+    let exec_result = exec_result.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+    exec_result
+        .into_materialized_rows()
+        .await
+        .map_err(|e| Box::new(std::io::Error::other(e)) as Box<dyn std::error::Error>)
 }
 
 pub fn execution_result_to_query_result(
@@ -40,6 +44,9 @@ pub fn execution_result_to_query_result(
         ExecutionResult::Rows {
             batches, schema, ..
         } => record_batch_to_query_result(batches, schema, user_role),
+        ExecutionResult::StreamingRows { .. } => Err(Box::new(std::io::Error::other(
+            "streaming rows must be materialized before HTTP JSON encoding",
+        ))),
         ExecutionResult::ScalarRows { rows, schema, .. } => {
             scalar_rows_to_query_result(rows, schema, user_role)
         },

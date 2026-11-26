@@ -50,7 +50,7 @@ fn init_job_manager(app_context: &Arc<AppContext>) {
         registry,
         Arc::clone(app_context),
     ));
-    app_context.set_job_manager(job_manager.clone(), job_manager);
+    kalamdb_jobs::install_job_manager(app_context, job_manager);
 }
 
 /// Helper to create AppContext with temporary RocksDB for testing

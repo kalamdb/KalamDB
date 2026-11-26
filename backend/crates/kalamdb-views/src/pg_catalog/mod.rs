@@ -6,22 +6,20 @@ use async_trait::async_trait;
 use datafusion::{
     arrow::{datatypes::SchemaRef, record_batch::RecordBatch},
     catalog::{SchemaProvider, Session},
-    common::DFSchema,
     datasource::{TableProvider, TableType},
     error::{DataFusionError, Result as DataFusionResult},
     logical_expr::{Expr, TableProviderFilterPushDown},
-    physical_expr::PhysicalExpr,
     physical_plan::ExecutionPlan,
 };
 use kalamdb_commons::{constants::LOGICAL_DATABASE_NAME, Role, SystemTable};
-use kalamdb_datafusion_sources::{
-    exec::{finalize_deferred_batch, DeferredBatchExec, DeferredBatchSource},
-    provider::{combined_filter, pushdown_results_for_filters, FilterCapability},
-};
-use kalamdb_session_datafusion::{extract_user_role, PermissionChecker, SessionConfigValues};
+use kalamdb_session_datafusion::SessionConfigValues;
 use kalamdb_system::SystemTablesRegistry;
 
-use crate::{error::RegistryError, system::sessions::SessionsSnapshotCallback};
+use crate::{
+    catalog_provider::{CatalogScanCtx, CatalogSource, ComputedCatalogProvider},
+    error::RegistryError,
+    system::sessions::SessionsSnapshotCallback,
+};
 
 pub mod attrdef;
 pub mod attribute;
@@ -76,76 +74,80 @@ pub trait PgCatalogView: Send + Sync + std::fmt::Debug {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct PgCatalogViewTableProvider<V: PgCatalogView> {
+/// Adapts a [`PgCatalogView`] to the shared catalog scan shell.
+pub struct PgCatalogViewSource<V: PgCatalogView> {
     view: Arc<V>,
 }
 
-impl<V: PgCatalogView> PgCatalogViewTableProvider<V> {
-    pub fn new(view: Arc<V>) -> Self {
-        Self { view }
-    }
-}
-
-struct PgCatalogScanSource<V: PgCatalogView> {
-    view: Arc<V>,
-    physical_filter: Option<Arc<dyn PhysicalExpr>>,
-    projection: Option<Vec<usize>>,
-    limit: Option<usize>,
-    output_schema: SchemaRef,
-    role: Role,
-    settings: Option<SessionConfigValues>,
-}
-
-impl<V: PgCatalogView> std::fmt::Debug for PgCatalogScanSource<V> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PgCatalogScanSource")
-            .field("view_name", &self.view.name())
-            .field("projection", &self.projection)
-            .field("limit", &self.limit)
+impl<V: PgCatalogView> std::fmt::Debug for PgCatalogViewSource<V> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PgCatalogViewSource")
+            .field("view", &self.view.name())
             .finish()
     }
 }
 
 #[async_trait]
-impl<V: PgCatalogView + 'static> DeferredBatchSource for PgCatalogScanSource<V> {
-    fn source_name(&self) -> &'static str {
-        "pg_catalog_view_scan"
-    }
-
+impl<V: PgCatalogView + 'static> CatalogSource for PgCatalogViewSource<V> {
     fn schema(&self) -> SchemaRef {
-        Arc::clone(&self.output_schema)
+        self.view.schema()
     }
 
-    async fn produce_batch(&self) -> DataFusionResult<RecordBatch> {
-        let batch = self.view.compute_session_batch(self.role, self.settings.as_ref()).map_err(
-            |error| {
-                DataFusionError::Execution(format!(
-                    "failed to compute pg_catalog.{}: {}",
-                    self.view.name(),
-                    error
-                ))
-            },
-        )?;
+    fn required_system_table(&self) -> Option<SystemTable> {
+        self.view.required_system_table()
+    }
 
-        finalize_deferred_batch(
-            batch,
-            self.physical_filter.as_ref(),
-            self.projection.as_deref(),
-            self.limit,
-            self.source_name(),
-        )
+    async fn batch(&self, ctx: &CatalogScanCtx<'_>) -> DataFusionResult<RecordBatch> {
+        self.view.compute_session_batch(ctx.role, ctx.settings).map_err(|error| {
+            DataFusionError::Execution(format!(
+                "failed to compute pg_catalog.{}: {}",
+                self.view.name(),
+                error
+            ))
+        })
+    }
+}
+
+/// [`TableProvider`] for a [`PgCatalogView`].
+pub struct PgCatalogViewTableProvider<V: PgCatalogView + 'static> {
+    inner: ComputedCatalogProvider<PgCatalogViewSource<V>>,
+}
+
+impl<V: PgCatalogView + 'static> Clone for PgCatalogViewTableProvider<V> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+impl<V: PgCatalogView + 'static> std::fmt::Debug for PgCatalogViewTableProvider<V> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PgCatalogViewTableProvider")
+            .field("inner", &self.inner)
+            .finish()
+    }
+}
+
+impl<V: PgCatalogView + 'static> PgCatalogViewTableProvider<V> {
+    /// Wrap a pg_catalog view.
+    pub fn new(view: Arc<V>) -> Self {
+        Self {
+            inner: ComputedCatalogProvider::new(Arc::new(PgCatalogViewSource { view })),
+        }
     }
 }
 
 #[async_trait]
 impl<V: PgCatalogView + 'static> TableProvider for PgCatalogViewTableProvider<V> {
     fn schema(&self) -> SchemaRef {
-        self.view.schema()
+        self.inner.schema()
     }
 
     fn table_type(&self) -> TableType {
-        TableType::View
+        self.inner.table_type()
     }
 
     async fn scan(
@@ -155,42 +157,14 @@ impl<V: PgCatalogView + 'static> TableProvider for PgCatalogViewTableProvider<V>
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        if let Some(system_table) = self.view.required_system_table() {
-            PermissionChecker::check_system_table(state, &system_table.table_id())?;
-        }
-
-        let base_schema = self.view.schema();
-        let output_schema = match projection {
-            Some(indices) => base_schema
-                .project(indices)
-                .map(Arc::new)
-                .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?,
-            None => Arc::clone(&base_schema),
-        };
-        let physical_filter = if let Some(filter) = combined_filter(filters) {
-            let df_schema = DFSchema::try_from(Arc::clone(&base_schema))?;
-            Some(state.create_physical_expr(filter, &df_schema)?)
-        } else {
-            None
-        };
-        let role = extract_user_role(state);
-
-        Ok(Arc::new(DeferredBatchExec::new(Arc::new(PgCatalogScanSource {
-            view: Arc::clone(&self.view),
-            physical_filter,
-            projection: projection.cloned(),
-            limit,
-            output_schema,
-            role,
-            settings: state.config_options().extensions.get::<SessionConfigValues>().cloned(),
-        }))))
+        self.inner.scan(state, projection, filters, limit).await
     }
 
     fn supports_filters_pushdown(
         &self,
         filters: &[&Expr],
     ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
-        Ok(pushdown_results_for_filters(filters, |_| FilterCapability::Exact))
+        self.inner.supports_filters_pushdown(filters)
     }
 }
 
@@ -330,6 +304,16 @@ fn register_empty_pg_catalog_views(providers: &mut BTreeMap<String, Arc<dyn Tabl
                 name, fields,
             )))),
         );
+    }
+}
+
+/// Column names for a `#[table]` pg_catalog relation, in ordinal order.
+pub fn relation_column_order(name: &str) -> Option<&'static [&'static str]> {
+    match name {
+        "pg_class" => Some(class::column_order()),
+        "pg_attribute" => Some(attribute::column_order()),
+        "pg_namespace" => Some(namespace::column_order()),
+        _ => None,
     }
 }
 

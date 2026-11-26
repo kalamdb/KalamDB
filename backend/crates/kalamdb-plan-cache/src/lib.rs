@@ -1,11 +1,13 @@
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     time::Duration,
 };
+
+use tokio::sync::Notify;
 
 use datafusion::{logical_expr::LogicalPlan, scalar::ScalarValue};
 use kalamdb_commons::{models::UserId, schemas::TableType, Role, SchemaId, TableId};
@@ -16,6 +18,7 @@ const DEFAULT_IDLE_TTL_SECS: u64 = 900;
 const DEFAULT_INSERT_METADATA_MAX_ENTRIES: u64 = 2048;
 const DEFAULT_PLAN_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const DEFAULT_PLAN_PER_ENTRY_MAX_BYTES: u64 = 1024 * 1024;
+const MAX_PLAN_WAITERS: usize = 32;
 
 #[derive(Debug, Clone)]
 pub struct SqlCacheRegistryConfig {
@@ -74,6 +77,8 @@ pub struct PlanCacheKey {
     pub sql: String,
     database: String,
     search_path: String,
+    /// `true` for PostgreSQL wire and bridge sessions, where `*` omits storage columns.
+    postgres_star: bool,
     parameter_oids: Vec<u32>,
     session_settings: String,
     parser_revision: u64,
@@ -91,6 +96,7 @@ impl PlanCacheKey {
             sql: sql.into(),
             database: String::new(),
             search_path: String::new(),
+            postgres_star: false,
             parameter_oids: Vec::new(),
             session_settings: String::new(),
             parser_revision: 0,
@@ -107,6 +113,15 @@ impl PlanCacheKey {
 
     pub fn search_path(mut self, search_path: impl Into<String>) -> Self {
         self.search_path = search_path.into();
+        self
+    }
+
+    /// Partitions `SELECT *` plans by PostgreSQL star visibility.
+    ///
+    /// Wire and bridge sessions pass `true`. HTTP SQL sessions pass `false` so
+    /// `_version` and `_deleted` stay in the wildcard projection.
+    pub fn postgres_star(mut self, postgres_star: bool) -> Self {
+        self.postgres_star = postgres_star;
         self
     }
 
@@ -160,6 +175,81 @@ struct CachedPlan {
     estimated_bytes: u64,
 }
 
+enum InflightOutcome {
+    Building,
+    Ready(Arc<LogicalPlan>),
+    Released,
+}
+
+struct InflightBuild {
+    notify: Notify,
+    outcome: Mutex<InflightOutcome>,
+    waiters: AtomicUsize,
+}
+
+impl InflightBuild {
+    fn building() -> Self {
+        Self {
+            notify: Notify::new(),
+            outcome: Mutex::new(InflightOutcome::Building),
+            waiters: AtomicUsize::new(0),
+        }
+    }
+
+    fn publish(&self, outcome: InflightOutcome) {
+        *self.outcome.lock().expect("plan cache inflight lock poisoned") = outcome;
+        self.notify.notify_waiters();
+    }
+
+    async fn wait_outcome(&self) -> Option<Arc<LogicalPlan>> {
+        loop {
+            let notified = self.notify.notified();
+            {
+                let outcome = self.outcome.lock().expect("plan cache inflight lock poisoned");
+                match &*outcome {
+                    InflightOutcome::Ready(plan) => return Some(Arc::clone(plan)),
+                    InflightOutcome::Released => return None,
+                    InflightOutcome::Building => {},
+                }
+            }
+            notified.await;
+        }
+    }
+}
+
+/// Result of joining one in-flight logical-plan build.
+#[derive(Clone)]
+pub enum PlanCoordination {
+    /// This caller owns the build and must [`PlanCache::finish_lead`] or [`PlanCache::cancel_lead`].
+    Lead,
+    /// The completed template. Bind parameters in the caller's own session.
+    Shared(Arc<LogicalPlan>),
+    /// The waiter bound is full, or the leader released the build. Plan alone.
+    Uncoordinated,
+}
+
+/// Drops as [`PlanCache::cancel_lead`] unless [`PlanLead::finish`] runs.
+pub struct PlanLead {
+    cache: Arc<PlanCache>,
+    key: PlanCacheKey,
+    active: bool,
+}
+
+impl PlanLead {
+    pub fn finish(mut self, plan: LogicalPlan) -> PlanAdmission {
+        self.active = false;
+        self.cache.finish_lead(self.key.clone(), plan)
+    }
+}
+
+impl Drop for PlanLead {
+    fn drop(&mut self) {
+        if self.active {
+            self.cache.cancel_lead(&self.key);
+        }
+    }
+}
+
 pub struct PlanCache {
     cache: Cache<PlanCacheKey, CachedPlan>,
     max_entries: u64,
@@ -168,7 +258,7 @@ pub struct PlanCache {
     retained_bytes: Arc<AtomicU64>,
     dependency_epoch: AtomicU64,
     permission_epoch: AtomicU64,
-    inflight: Mutex<HashSet<PlanCacheKey>>,
+    inflight: Mutex<HashMap<PlanCacheKey, Arc<InflightBuild>>>,
 }
 
 impl PlanCache {
@@ -208,13 +298,18 @@ impl PlanCache {
             retained_bytes,
             dependency_epoch: AtomicU64::new(0),
             permission_epoch: AtomicU64::new(0),
-            inflight: Mutex::new(HashSet::new()),
+            inflight: Mutex::new(HashMap::new()),
         }
     }
 
     /// Build a query-plan identity using the current dependency and permission epochs.
     /// Callers must not construct zero-epoch keys after a DDL or permission change.
-    pub fn current_key(&self, namespace: SchemaId, role: Role, sql: impl Into<String>) -> PlanCacheKey {
+    pub fn current_key(
+        &self,
+        namespace: SchemaId,
+        role: Role,
+        sql: impl Into<String>,
+    ) -> PlanCacheKey {
         PlanCacheKey::new(namespace, role, sql)
             .epochs(self.dependency_epoch(), self.permission_epoch())
     }
@@ -233,17 +328,25 @@ impl PlanCache {
     /// admission, so a plan built against the previous epoch cannot be stored
     /// after the bump.
     pub fn bump_dependency_epoch(&self) -> u64 {
-        let _admission = self.inflight.lock().expect("plan cache admission lock poisoned");
-        let next = self.dependency_epoch.fetch_add(1, Ordering::AcqRel) + 1;
-        self.invalidate_plans();
-        next
+        self.bump_epoch(&self.dependency_epoch)
     }
 
     /// Grant, revoke, role, and row-security changes use this epoch.
     pub fn bump_permission_epoch(&self) -> u64 {
-        let _admission = self.inflight.lock().expect("plan cache admission lock poisoned");
-        let next = self.permission_epoch.fetch_add(1, Ordering::AcqRel) + 1;
-        self.invalidate_plans();
+        self.bump_epoch(&self.permission_epoch)
+    }
+
+    fn bump_epoch(&self, epoch: &AtomicU64) -> u64 {
+        let (next, released) = {
+            let mut inflight = self.inflight.lock().expect("plan cache admission lock poisoned");
+            let next = epoch.fetch_add(1, Ordering::AcqRel) + 1;
+            self.invalidate_plans();
+            let released: Vec<_> = inflight.drain().map(|(_, build)| build).collect();
+            (next, released)
+        };
+        for build in released {
+            build.publish(InflightOutcome::Released);
+        }
         next
     }
 
@@ -293,25 +396,90 @@ impl PlanCache {
         let mut inflight = self.inflight.lock().expect("plan cache admission lock poisoned");
         if !self.epochs_current(cache_key)
             || self.cache.contains_key(cache_key)
-            || inflight.contains(cache_key)
+            || inflight.contains_key(cache_key)
         {
             return false;
         }
-        inflight.insert(cache_key.clone());
+        inflight.insert(cache_key.clone(), Arc::new(InflightBuild::building()));
         true
     }
 
+    /// One build for this key. Followers wait on the leader's completion.
+    ///
+    /// Planning stays outside the cache lock. A follower does not call
+    /// [`Self::try_lead`] in a loop.
+    pub async fn coordinate(self: &Arc<Self>, cache_key: &PlanCacheKey) -> PlanCoordination {
+        if let Some(plan) = self.get(cache_key) {
+            return PlanCoordination::Shared(plan);
+        }
+        if self.try_lead(cache_key) {
+            return PlanCoordination::Lead;
+        }
+        let build = {
+            let inflight = self.inflight.lock().expect("plan cache admission lock poisoned");
+            inflight.get(cache_key).cloned()
+        };
+        let Some(build) = build else {
+            return self.coordinate_after_release(cache_key);
+        };
+        if build.waiters.fetch_add(1, Ordering::AcqRel) >= MAX_PLAN_WAITERS {
+            build.waiters.fetch_sub(1, Ordering::AcqRel);
+            return PlanCoordination::Uncoordinated;
+        }
+        let shared = build.wait_outcome().await;
+        build.waiters.fetch_sub(1, Ordering::AcqRel);
+        match shared {
+            Some(plan) => PlanCoordination::Shared(plan),
+            None => self.coordinate_after_release(cache_key),
+        }
+    }
+
+    fn coordinate_after_release(self: &Arc<Self>, cache_key: &PlanCacheKey) -> PlanCoordination {
+        if let Some(plan) = self.get(cache_key) {
+            return PlanCoordination::Shared(plan);
+        }
+        if self.try_lead(cache_key) {
+            PlanCoordination::Lead
+        } else {
+            PlanCoordination::Uncoordinated
+        }
+    }
+
+    /// Caller already won [`Self::try_lead`] or [`Self::coordinate`].
+    pub fn lead_guard(self: &Arc<Self>, key: PlanCacheKey) -> PlanLead {
+        PlanLead {
+            cache: Arc::clone(self),
+            key,
+            active: true,
+        }
+    }
+
     pub fn finish_lead(&self, cache_key: PlanCacheKey, plan: LogicalPlan) -> PlanAdmission {
-        let admission = self.insert(cache_key.clone(), plan);
-        self.cancel_lead(&cache_key);
+        let admission = self.insert(cache_key.clone(), plan.clone());
+        let outcome = match admission {
+            PlanAdmission::StaleEpoch => InflightOutcome::Released,
+            PlanAdmission::Admitted => {
+                InflightOutcome::Ready(self.get(&cache_key).unwrap_or_else(|| Arc::new(plan)))
+            },
+            PlanAdmission::Rejected => InflightOutcome::Ready(Arc::new(plan)),
+        };
+        self.publish_inflight(&cache_key, outcome);
         admission
     }
 
     pub fn cancel_lead(&self, cache_key: &PlanCacheKey) {
-        self.inflight
+        self.publish_inflight(cache_key, InflightOutcome::Released);
+    }
+
+    fn publish_inflight(&self, cache_key: &PlanCacheKey, outcome: InflightOutcome) {
+        let build = self
+            .inflight
             .lock()
             .expect("plan cache admission lock poisoned")
             .remove(cache_key);
+        if let Some(build) = build {
+            build.publish(outcome);
+        }
     }
 
     pub fn clear(&self) {
@@ -440,19 +608,19 @@ impl InsertMetadataCache {
 }
 
 pub struct SqlCacheRegistry {
-    plan_cache: PlanCache,
+    plan_cache: Arc<PlanCache>,
     insert_metadata_cache: InsertMetadataCache,
 }
 
 impl SqlCacheRegistry {
     pub fn new(config: SqlCacheRegistryConfig) -> Self {
         Self {
-            plan_cache: PlanCache::with_limits(
+            plan_cache: Arc::new(PlanCache::with_limits(
                 config.plan_max_entries,
                 config.plan_max_bytes,
                 config.plan_per_entry_max_bytes,
                 config.plan_idle_ttl,
-            ),
+            )),
             insert_metadata_cache: InsertMetadataCache::with_config(
                 config.insert_metadata_max_entries,
                 config.insert_metadata_idle_ttl,
@@ -462,6 +630,10 @@ impl SqlCacheRegistry {
 
     pub fn plan_cache(&self) -> &PlanCache {
         &self.plan_cache
+    }
+
+    pub fn plan_cache_arc(&self) -> Arc<PlanCache> {
+        Arc::clone(&self.plan_cache)
     }
 
     pub fn insert_metadata_cache(&self) -> &InsertMetadataCache {
@@ -482,9 +654,13 @@ impl Default for SqlCacheRegistry {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
 
     use datafusion::{common::DFSchema, logical_expr::EmptyRelation};
+    use tokio::sync::Notify;
 
     use super::*;
 
@@ -632,5 +808,122 @@ mod tests {
         assert_eq!(cache.finish_lead(prepared.clone(), empty_plan()), PlanAdmission::Admitted);
         assert!(!cache.try_lead(&prepared));
         assert!(cache.get(&prepared).is_some());
+    }
+
+    #[test]
+    fn postgres_star_keys_do_not_share_plans_in_either_warmup_order() {
+        let sql = "SELECT * FROM t";
+        let http = key(sql);
+        let wire = key(sql).postgres_star(true);
+        assert_ne!(http, wire);
+
+        let wire_first = PlanCache::new();
+        assert_eq!(wire_first.insert(wire.clone(), empty_plan()), PlanAdmission::Admitted);
+        assert!(wire_first.get(&http).is_none(), "HTTP SQL must not reuse a wire star plan");
+        assert!(wire_first.get(&wire).is_some());
+
+        let http_first = PlanCache::new();
+        assert_eq!(http_first.insert(http.clone(), empty_plan()), PlanAdmission::Admitted);
+        assert!(http_first.get(&wire).is_none(), "wire must not reuse an HTTP SQL star plan");
+        assert!(http_first.get(&http).is_some());
+    }
+
+    #[test]
+    fn cancelled_singleflight_leader_releases_the_slot() {
+        let cache = PlanCache::new();
+        let prepared = key("SELECT * FROM t");
+        assert!(cache.try_lead(&prepared));
+        assert!(!cache.try_lead(&prepared));
+        cache.cancel_lead(&prepared);
+        assert!(
+            cache.try_lead(&prepared),
+            "a cancelled leader must release waiters so another caller can plan"
+        );
+        cache.cancel_lead(&prepared);
+    }
+
+    #[tokio::test]
+    async fn thirty_two_callers_share_one_plan_build() {
+        let cache = Arc::new(PlanCache::new());
+        let prepared = key("SELECT one");
+        let builds = Arc::new(AtomicUsize::new(0));
+        let mut tasks = Vec::with_capacity(32);
+        for _ in 0..32 {
+            let cache = Arc::clone(&cache);
+            let prepared = prepared.clone();
+            let builds = Arc::clone(&builds);
+            tasks.push(tokio::spawn(async move {
+                match cache.coordinate(&prepared).await {
+                    PlanCoordination::Lead => {
+                        builds.fetch_add(1, Ordering::SeqCst);
+                        let _guard = cache.lead_guard(prepared.clone());
+                        _guard.finish(empty_plan());
+                        true
+                    },
+                    PlanCoordination::Shared(_) => true,
+                    PlanCoordination::Uncoordinated => false,
+                }
+            }));
+        }
+        for task in tasks {
+            assert!(task.await.expect("planner task"));
+        }
+        assert_eq!(builds.load(Ordering::SeqCst), 1);
+        assert!(cache.get(&prepared).is_some());
+    }
+
+    #[tokio::test]
+    async fn rejected_plan_is_shared_with_waiters_and_not_retained() {
+        let cache = Arc::new(PlanCache::with_limits(1, 64, 32, Duration::from_secs(60)));
+        let prepared = key(&format!("SELECT {}", "x".repeat(5_000)));
+        let leader_cache = Arc::clone(&cache);
+        let leader_key = prepared.clone();
+        let started = Arc::new(Notify::new());
+        let started_for_leader = Arc::clone(&started);
+        let leader = tokio::spawn(async move {
+            assert!(matches!(leader_cache.coordinate(&leader_key).await, PlanCoordination::Lead));
+            started_for_leader.notify_one();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            leader_cache.finish_lead(leader_key, empty_plan())
+        });
+        started.notified().await;
+        let shared = cache.coordinate(&prepared).await;
+        assert_eq!(leader.await.expect("leader"), PlanAdmission::Rejected);
+        assert!(cache.get(&prepared).is_none());
+        assert!(matches!(shared, PlanCoordination::Shared(_)));
+        assert_eq!(cache.retained_bytes(), 0);
+    }
+
+    #[tokio::test]
+    async fn cancel_and_epoch_bump_release_followers() {
+        let cache = Arc::new(PlanCache::new());
+        let prepared = key("SELECT cancel");
+        assert!(cache.try_lead(&prepared));
+        let follower_cache = Arc::clone(&cache);
+        let follower_key = prepared.clone();
+        let follower = tokio::spawn(async move { follower_cache.coordinate(&follower_key).await });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        cache.cancel_lead(&prepared);
+        let slot = tokio::time::timeout(Duration::from_secs(2), follower)
+            .await
+            .expect("cancel wakes the follower")
+            .expect("follower");
+        assert!(matches!(slot, PlanCoordination::Lead));
+        cache.cancel_lead(&prepared);
+        assert!(cache.get(&prepared).is_none());
+
+        let prepared = cache.current_key(SchemaId::new("default"), Role::User, "SELECT epoch");
+        assert!(cache.try_lead(&prepared));
+        let follower_cache = Arc::clone(&cache);
+        let follower_key = prepared.clone();
+        let follower = tokio::spawn(async move { follower_cache.coordinate(&follower_key).await });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        cache.bump_dependency_epoch();
+        let slot = tokio::time::timeout(Duration::from_secs(2), follower)
+            .await
+            .expect("epoch bump wakes the follower")
+            .expect("follower");
+        assert!(matches!(slot, PlanCoordination::Uncoordinated));
+        assert!(cache.get(&prepared).is_none());
     }
 }

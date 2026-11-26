@@ -33,8 +33,8 @@ on:
         required: false
         default: true
 
-      pre_release:
-        description: "Mark GitHub release as pre-release"
+      draft:
+        description: "Save GitHub Release as a draft. Leave this checked, then choose pre-release or release when you edit the draft."
         type: boolean
         required: false
         default: true
@@ -55,18 +55,6 @@ on:
         description: "Docker Hub repo (owner/name)"
         required: false
         default: "kalamdb/kalamdb"
-
-      publish_npm_cli:
-        description: "Publish @kalamdb/cli to npm (skips if version already published)"
-        type: boolean
-        required: false
-        default: false
-
-      publish_github_packages_cli:
-        description: "Publish @kalamdb/cli to GitHub Packages (skips if version already published)"
-        type: boolean
-        required: false
-        default: false
 
       build_pg_extension:
         description: "Build, test, and publish the PostgreSQL extension"
@@ -89,8 +77,8 @@ env:
   RUSTC_WRAPPER: ""
   CARGO_BUILD_RUSTC_WRAPPER: ""
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  # kalamdb-server default features are empty. Linux/macOS used to cargo-build
-  # without this list, so GitHub server archives shipped with UI: disabled.
+  # kalamdb-server default features only enable mimalloc. Linux/macOS used to
+  # cargo-build without this list, so GitHub server archives shipped with UI: disabled.
   # Same feature set on every platform so GitHub binaries match Docker/runtime.
   KALAMDB_SERVER_RELEASE_FEATURES: embedded-ui,traceability,mimalloc,cloud-aws
 
@@ -655,7 +643,7 @@ jobs:
 
   build_cli_macos_arm:
     name: Build CLI macOS ARM
-    runs-on: macos-14
+    runs-on: macos-15
     needs: [resolve_platforms, read_version, cli_build_wave]
     if: ${{ github.event.inputs.platform_macos_aarch64 == 'true' }}
 
@@ -674,11 +662,11 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.cargo/bin:$PATH"
-          command -v rustup
-          "$HOME/.cargo/bin/rustup" --version
-          "$HOME/.cargo/bin/rustup" show active-toolchain
-          "$HOME/.cargo/bin/rustup" run "${{ env.RUST_VERSION }}" cargo --version
-          "$HOME/.cargo/bin/rustup" run "${{ env.RUST_VERSION }}" rustc --version
+          rustup_bin="$(command -v rustup)"
+          "$rustup_bin" --version
+          "$rustup_bin" show active-toolchain
+          "$rustup_bin" run "${{ env.RUST_VERSION }}" cargo --version
+          "$rustup_bin" run "${{ env.RUST_VERSION }}" rustc --version
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -703,7 +691,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          "$HOME/.cargo/bin/rustup" run "${{ env.RUST_VERSION }}" cargo build \
+          "$(command -v rustup)" run "${{ env.RUST_VERSION }}" cargo build \
             --profile release-dist \
             --target aarch64-apple-darwin \
             --bin kalam
@@ -855,6 +843,11 @@ jobs:
         env:
           CROSS_CONTAINER_ENGINE_NO_BUILDKIT: "0"
           SKIP_UI_BUILD: "1"
+          # Full LTO of kalamdb-server is SIGKILL'd inside the cross container
+          # on GitHub-hosted runners. Thin LTO and parallel codegen keep a
+          # release-quality binary and finish the link.
+          CARGO_PROFILE_DOCKER_LTO: thin
+          CARGO_PROFILE_DOCKER_CODEGEN_UNITS: "16"
         run: |
           set -euo pipefail
           cross build \
@@ -1071,7 +1064,7 @@ jobs:
 
   build_macos_arm:
     name: Build Server macOS ARM
-    runs-on: macos-14
+    runs-on: macos-15
     needs: [resolve_platforms, build_ui, read_version, server_build_wave]
     if: ${{ github.event.inputs.platform_macos_aarch64 == 'true' }}
 
@@ -1100,11 +1093,11 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.cargo/bin:$PATH"
-          command -v rustup
-          "$HOME/.cargo/bin/rustup" --version
-          "$HOME/.cargo/bin/rustup" show active-toolchain
-          "$HOME/.cargo/bin/rustup" run "${{ env.RUST_VERSION }}" cargo --version
-          "$HOME/.cargo/bin/rustup" run "${{ env.RUST_VERSION }}" rustc --version
+          rustup_bin="$(command -v rustup)"
+          "$rustup_bin" --version
+          "$rustup_bin" show active-toolchain
+          "$rustup_bin" run "${{ env.RUST_VERSION }}" cargo --version
+          "$rustup_bin" run "${{ env.RUST_VERSION }}" rustc --version
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -1131,7 +1124,7 @@ jobs:
           SKIP_UI_BUILD: "1"
         run: |
           set -euo pipefail
-          "$HOME/.cargo/bin/rustup" run "${{ env.RUST_VERSION }}" cargo build \
+          "$(command -v rustup)" run "${{ env.RUST_VERSION }}" cargo build \
             -p kalamdb-server \
             --no-default-features \
             --features "${KALAMDB_SERVER_RELEASE_FEATURES}" \
@@ -1762,6 +1755,9 @@ jobs:
   release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
+    outputs:
+      draft: ${{ steps.release_visibility.outputs.draft }}
+      prerelease: ${{ steps.release_visibility.outputs.prerelease }}
     needs:
       - sync_versions_manifest
       - license_compliance
@@ -1915,8 +1911,8 @@ jobs:
 
           echo "Stamped packages.core_components.cli.build_date=${BUILD_DATE} into versions.json"
 
-      - name: Determine prerelease flag
-        id: prerelease_flag
+      - name: Determine release visibility
+        id: release_visibility
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1924,18 +1920,23 @@ jobs:
           set -euo pipefail
           TAG="${{ needs.read_version.outputs.tag }}"
 
-          # If a release for this tag already exists, preserve its current
-          # prerelease status instead of overwriting it with the workflow input.
-          if EXISTING_PRERELEASE="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq '.isPrerelease' 2>/dev/null)"; then
-            echo "Release $TAG already exists; preserving prerelease=${EXISTING_PRERELEASE}"
-            echo "prerelease=${EXISTING_PRERELEASE}" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ github.event.inputs.pre_release }}" == "true" ]]; then
-            echo "Release $TAG does not exist; creating as prerelease"
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          # A second run keeps the draft and prerelease choices already saved
+          # on GitHub. A new release is a draft, and prerelease is chosen there.
+          if EXISTING="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease --jq '[.isDraft, .isPrerelease] | @tsv' 2>/dev/null)"; then
+            DRAFT="$(printf '%s' "$EXISTING" | cut -f1)"
+            PRERELEASE="$(printf '%s' "$EXISTING" | cut -f2)"
+            echo "Release $TAG already exists; preserving draft=${DRAFT} prerelease=${PRERELEASE}"
+          elif [[ "${{ github.event.inputs.draft }}" == "false" ]]; then
+            DRAFT=false
+            PRERELEASE=false
+            echo "Release $TAG does not exist; publishing immediately"
           else
-            echo "Release $TAG does not exist; creating as full release"
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            DRAFT=true
+            PRERELEASE=false
+            echo "Release $TAG does not exist; saving as a draft"
           fi
+          echo "draft=${DRAFT}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
 
       - name: Prepare release notes
         id: release_notes
@@ -1975,7 +1976,8 @@ jobs:
         with:
           tag_name: ${{ needs.read_version.outputs.tag }}
           target_commitish: ${{ needs.sync_versions_manifest.outputs.commit_sha }}
-          prerelease: ${{ steps.prerelease_flag.outputs.prerelease }}
+          draft: ${{ steps.release_visibility.outputs.draft }}
+          prerelease: ${{ steps.release_visibility.outputs.prerelease }}
           body_path: ${{ steps.release_notes.outputs.body_path }}
           generate_release_notes: ${{ steps.release_notes.outputs.generate }}
           files: |
@@ -2000,11 +2002,15 @@ jobs:
           TAG="${{ needs.read_version.outputs.tag }}"
           VERSION="${{ needs.read_version.outputs.version }}"
           SHA="${{ needs.sync_versions_manifest.outputs.commit_sha }}"
-          PRERELEASE="${{ steps.prerelease_flag.outputs.prerelease }}"
+          DRAFT="${{ steps.release_visibility.outputs.draft }}"
+          PRERELEASE="${{ steps.release_visibility.outputs.prerelease }}"
           NOTES_PATH="${{ steps.release_notes.outputs.body_path }}"
 
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             create_args=(--target "$SHA" --repo "$GITHUB_REPOSITORY")
+            if [[ "$DRAFT" == "true" ]]; then
+              create_args+=(--draft)
+            fi
             if [[ "$PRERELEASE" == "true" ]]; then
               create_args+=(--prerelease)
             fi
@@ -2052,118 +2058,6 @@ jobs:
           if [[ "$missing" -ne 0 ]]; then
             exit 1
           fi
-
-  publish_npm_cli:
-    name: Publish npm CLI
-    runs-on: ubuntu-latest
-    needs:
-      - sync_versions_manifest
-      - read_version
-      - release
-
-    if: ${{ github.event.inputs.publish_npm_cli == 'true' }}
-    permissions:
-      contents: write
-      id-token: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.sync_versions_manifest.outputs.commit_sha }}
-
-      - name: Setup Node 24
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
-
-      - name: Validate npm CLI package
-        shell: bash
-        working-directory: link/sdks/typescript/cli
-        run: |
-          set -euo pipefail
-          test "$(node -p "require('./package.json').version")" = "${{ needs.read_version.outputs.version }}"
-          bash ./test.sh
-
-      - name: Publish @kalamdb/cli
-        id: publish_npm_cli
-        shell: bash
-        working-directory: link/sdks/typescript/cli
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
-            echo "NPM_TOKEN is not configured; skipping npm publish"
-            echo "published=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          chmod +x ./publish.sh
-          ./publish.sh --version "${{ needs.read_version.outputs.version }}"
-          echo "published=true" >> "$GITHUB_OUTPUT"
-
-      - name: Record published npm CLI version
-        if: github.ref == 'refs/heads/main' && steps.publish_npm_cli.outputs.published == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/versions.py mark-published --group npm --write
-          if git diff --quiet -- versions.json; then
-            echo "published versions already recorded"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add versions.json
-          git commit -m "chore: record published npm CLI version"
-          git push origin HEAD:main
-
-  publish_github_packages_cli:
-    name: Publish CLI to GitHub Packages
-    runs-on: ubuntu-latest
-    needs:
-      - sync_versions_manifest
-      - read_version
-      - release
-
-    if: ${{ github.event.inputs.publish_github_packages_cli == 'true' }}
-    permissions:
-      contents: read
-      packages: write
-    env:
-      PUBLISH_REGISTRY_URL: 'https://npm.pkg.github.com'
-      PUBLISH_REGISTRY_NAME: 'GitHub Packages'
-      PUBLISH_ACCESS: ''
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.sync_versions_manifest.outputs.commit_sha }}
-
-      - name: Setup Node 24
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          registry-url: https://npm.pkg.github.com
-
-      - name: Validate npm CLI package
-        shell: bash
-        working-directory: link/sdks/typescript/cli
-        run: |
-          set -euo pipefail
-          test "$(node -p "require('./package.json').version")" = "${{ needs.read_version.outputs.version }}"
-          bash ./test.sh
-
-      - name: Publish @kalamdb/cli to GitHub Packages
-        shell: bash
-        working-directory: link/sdks/typescript/cli
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
-        run: |
-          set -euo pipefail
-          chmod +x ./publish.sh
-          ./publish.sh --version "${{ needs.read_version.outputs.version }}"
 
   docker:
     name: Push Docker image (Docker Hub + GHCR)
@@ -2435,12 +2329,8 @@ jobs:
             "${REPO}:${VERSION}-amd64" \
             "${REPO}:${VERSION}-arm64"
 
-          # Create manifest for latest tag
-          docker buildx imagetools create -t "${REPO}:latest" \
-            "${REPO}:${VERSION}-amd64" \
-            "${REPO}:${VERSION}-arm64"
-
-          echo "✅ Multi-arch manifest created for ${REPO}:${VERSION}, ${REPO}:${VERSION_COMMIT_TAG}, and ${REPO}:latest"
+          # Floating latest is promoted only after a successful stable GitHub release.
+          echo "✅ Versioned multi-arch manifests created for ${REPO}:${VERSION} and ${REPO}:${VERSION_COMMIT_TAG}"
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
@@ -2463,7 +2353,6 @@ jobs:
           TAGS=(
             "${VERSION}"
             "${VERSION_COMMIT_TAG}"
-            "latest"
             "${VERSION}-amd64"
             "${VERSION}-arm64"
           )
@@ -2746,7 +2635,7 @@ jobs:
           VERSION="${{ needs.read_version.outputs.version }}"
           CANDIDATE_TAG="${{ steps.pg_vars.outputs.pg_candidate_tag }}"
           docker buildx imagetools create -t "${REPO}:${VERSION}-${PG_EXTENSION_FLAVOR}" "${REPO}:${CANDIDATE_TAG}"
-          docker buildx imagetools create -t "${REPO}:latest-${PG_EXTENSION_FLAVOR}" "${REPO}:${CANDIDATE_TAG}"
+          # latest-pg16 is promoted only after a successful stable GitHub release.
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
@@ -2767,7 +2656,6 @@ jobs:
 
           TAGS=(
             "${VERSION}-${PG_EXTENSION_FLAVOR}"
-            "latest-${PG_EXTENSION_FLAVOR}"
           )
 
           for tag in "${TAGS[@]}"; do
@@ -2784,4 +2672,81 @@ jobs:
           echo "::warning::Docker Hub PG image publish succeeded, but GHCR mirror failed."
           echo "::warning::Ensure the workflow has packages:write permission and GHCR login uses the lowercase org/user name."
           echo "::warning::If the org restricts GITHUB_TOKEN package writes, add a GHCR_TOKEN secret with write:packages scope."
+
+
+  promote_latest:
+    name: Promote stable Docker latest tags
+    runs-on: ubuntu-latest
+    needs: [release, docker, docker_pg, read_version]
+    if: >-
+      ${{
+        needs.release.result == 'success' &&
+        needs.release.outputs.draft == 'false' &&
+        needs.release.outputs.prerelease == 'false' &&
+        needs.docker.result == 'success'
+      }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      DOCKER_REPO_INPUT: ${{ github.event.inputs.docker_repo }}
+
+    steps:
+      - name: Set image repositories
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPO="${DOCKER_REPO_INPUT:-kalamdb/kalamdb}"
+          OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          echo "docker_repo=$REPO" >> "$GITHUB_OUTPUT"
+          echo "ghcr_repo=ghcr.io/$OWNER/kalamdb" >> "$GITHUB_OUTPUT"
+          echo "ghcr_pg_repo=ghcr.io/$OWNER/pg-kalam" >> "$GITHUB_OUTPUT"
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Promote stable KalamDB latest tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPO="${{ steps.vars.outputs.docker_repo }}"
+          VERSION="${{ needs.read_version.outputs.version }}"
+          docker buildx imagetools create -t "${REPO}:latest" "${REPO}:${VERSION}"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_TOKEN || github.token }}
+
+      - name: Mirror stable KalamDB latest tag to GHCR
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            -t "${{ steps.vars.outputs.ghcr_repo }}:latest" \
+            "${{ steps.vars.outputs.docker_repo }}:latest"
+
+      - name: Promote stable PostgreSQL extension latest tag
+        if: needs.docker_pg.result == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            -t "jamals86/pg-kalam:latest-${PG_EXTENSION_FLAVOR}" \
+            "jamals86/pg-kalam:${{ needs.read_version.outputs.version }}-${PG_EXTENSION_FLAVOR}"
+
+      - name: Mirror stable PostgreSQL extension latest tag to GHCR
+        if: needs.docker_pg.result == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            -t "${{ steps.vars.outputs.ghcr_pg_repo }}:latest-${PG_EXTENSION_FLAVOR}" \
+            "jamals86/pg-kalam:latest-${PG_EXTENSION_FLAVOR}"
 

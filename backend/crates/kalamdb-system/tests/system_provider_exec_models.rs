@@ -3,11 +3,12 @@ use std::sync::Arc;
 use datafusion::{
     datasource::TableProvider, execution::context::SessionContext, physical_plan::collect,
 };
-use kalamdb_commons::{StorageId, UserId};
+use kalamdb_commons::{models::ReadContext, StorageId, UserId};
 use kalamdb_datafusion_sources::exec::DeferredBatchExec;
 use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
 use kalamdb_system::{
-    providers::storages::models::StorageMode, AuthType, Role, User, UsersTableProvider,
+    providers::storages::models::StorageMode, AuthType, Role, SessionUserContext, User,
+    UsersTableProvider,
 };
 
 fn total_rows(batches: &[datafusion::arrow::record_batch::RecordBatch]) -> usize {
@@ -42,7 +43,13 @@ async fn users_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
         })
         .expect("seed user row");
 
-    let ctx = SessionContext::new();
+    let mut state = SessionContext::new().state().clone();
+    state.config_mut().options_mut().extensions.insert(SessionUserContext::new(
+        UserId::new("exec-model-admin"),
+        Role::System,
+        ReadContext::Internal,
+    ));
+    let ctx = SessionContext::new_with_state(state);
     let state = ctx.state();
     let plan = provider.scan(&state, None, &[], None).await.expect("build users plan");
 

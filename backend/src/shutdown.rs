@@ -117,6 +117,7 @@ pub(crate) async fn shutdown_server(
     app_context: Arc<AppContext>,
     job_drain_timeout: Duration,
 ) -> Result<()> {
+    kalamdb_observability::dml_stage::eprint_snapshot();
     reason.log();
     let mut cleanup_error = None;
 

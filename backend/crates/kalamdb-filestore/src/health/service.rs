@@ -255,11 +255,13 @@ impl StorageHealthService {
         let base_path = Path::new(base);
         let canonical = base_path.canonicalize().unwrap_or_else(|_| base_path.to_path_buf());
 
-        let disks = Disks::new_with_refreshed_list();
+        let Ok(disks) = Disks::new_with_refreshed_list() else {
+            return None;
+        };
         let mut best: Option<&sysinfo::Disk> = None;
         let mut best_len = 0usize;
 
-        for disk in disks.list() {
+        for disk in &disks {
             let mount = disk.mount_point();
             if canonical.starts_with(mount) {
                 let mount_len = mount.as_os_str().len();

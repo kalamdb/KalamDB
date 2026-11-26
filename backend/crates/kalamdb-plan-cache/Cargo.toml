@@ -11,6 +11,7 @@ repository.workspace = true
 kalamdb-commons = { workspace = true, features = ["full"] }
 datafusion = { workspace = true }
 moka = { workspace = true }
+tokio = { workspace = true }
 
 [lib]
 doctest = false

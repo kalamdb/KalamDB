@@ -391,7 +391,9 @@ impl ChunkReader for PrefetchedBloom {
         let offset = (start - self.start) as usize;
         let end = offset.saturating_add(length);
         if end > self.bytes.len() {
-            return Err(ParquetError::General("bloom filter prefetch is shorter than requested".into()));
+            return Err(ParquetError::General(
+                "bloom filter prefetch is shorter than requested".into(),
+            ));
         }
         Ok(self.bytes.slice(offset..end))
     }
@@ -409,7 +411,8 @@ async fn prune_row_groups_by_pk_bloom(
         return Ok(row_groups.to_vec());
     }
 
-    let Some(column_idx) = schema.columns().iter().position(|column| column.name() == pruning.column)
+    let Some(column_idx) =
+        schema.columns().iter().position(|column| column.name() == pruning.column)
     else {
         return Ok(row_groups.to_vec());
     };
@@ -484,7 +487,11 @@ async fn prune_row_groups_by_pk_bloom(
     }
 
     let kept = std::collections::HashSet::<usize>::from_iter(selected);
-    Ok(row_groups.iter().copied().filter(|row_group| kept.contains(row_group)).collect())
+    Ok(row_groups
+        .iter()
+        .copied()
+        .filter(|row_group| kept.contains(row_group))
+        .collect())
 }
 
 /// Row count and `_version` bounds read from a Parquet footer.

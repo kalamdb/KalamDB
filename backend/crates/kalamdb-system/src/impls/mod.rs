@@ -8,7 +8,10 @@ use crate::{Manifest, ManifestCacheEntry};
 
 // Notification service trait for data change notifications
 mod notification_service;
-pub use notification_service::NotificationService;
+pub use notification_service::{
+    classify_live_history, live_history_gap_message, live_notify_scope, publish_live_table_change,
+    LiveHistoryDecision, LiveReadContract, NotificationService,
+};
 
 // Topic publisher trait for synchronous CDC publishing from table providers
 mod topic_publisher;
@@ -141,6 +144,17 @@ pub trait ClusterCoordinator: Send + Sync {
         _updates: Vec<kalamdb_commons::models::rows::Row>,
     ) -> Result<usize, String> {
         Err("shared autocommit update is not replicated through this coordinator".into())
+    }
+
+    /// Replicate one autocommit statement as a single transaction commit.
+    ///
+    /// Primary-key moves are an insert and a delete. They share this entry so
+    /// a failure cannot leave the new key without removing the old one.
+    async fn propose_shared_statement(
+        &self,
+        _mutations: Vec<kalamdb_transactions::staged_mutation::StagedMutation>,
+    ) -> Result<usize, String> {
+        Err("shared autocommit statement is not replicated through this coordinator".into())
     }
 
     /// Replicate an autocommit delete. One entry covers every final row.

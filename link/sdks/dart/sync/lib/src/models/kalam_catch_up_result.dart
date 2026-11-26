@@ -1,4 +1,4 @@
-/// Outcome of a bounded, isolate-safe HTTP catch-up pass.
+/// Outcome of a bounded, isolate-safe catch-up pass.
 final class KalamCatchUpResult {
   const KalamCatchUpResult({
     required this.appliedCount,

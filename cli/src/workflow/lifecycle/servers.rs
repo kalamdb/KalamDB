@@ -94,7 +94,7 @@ pub(super) fn tracked_servers(
                 Err(error) => {
                     output.warn(format!(
                         "Could not read server in '{}': {error}",
-                        entry.folder.display()
+                        crate::workflow::io::display_path(&entry.folder)
                     ));
                     None
                 },
@@ -171,7 +171,7 @@ mod tests {
         record.http_port = 3001;
         record.url = instance::default_http_url(3001);
         instance::save_instance(&layout, &record).unwrap();
-        assert_eq!(read_record(&entries[0]).unwrap().unwrap().url, "http://127.0.0.1:3001");
+        assert_eq!(read_record(&entries[0]).unwrap().unwrap().url, "http://localhost:3001");
         fs::remove_dir_all(&folder).unwrap();
         assert!(read_record(&entries[0]).unwrap().is_none());
         assert!(!folder.exists());
